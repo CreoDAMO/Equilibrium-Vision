@@ -108,7 +108,7 @@ These were found by actually running `pnpm typecheck` and attempting a Rust buil
 | ~~2~~ | ~~`cs` referenced but never defined in `/api/utxo/spend`~~ | ~~Breaks at runtime~~ | **Resolved** — every UTXO handler correctly defines `const cs = chainState` |
 | ~~3~~ | ~~`pnpm run build` typecheck failures (WebAssembly dom lib, WebHID types, `noImplicitReturns`, React Query generic mismatch)~~ | ~~Blocks CI~~ | **Resolved** — `pnpm run typecheck` passes clean across all packages |
 | ~~4~~ | ~~`equilibrium/target/` Rust artifacts committed to git (~850 MB)~~ | ~~Repo bloat~~ | **Resolved** — `/equilibrium/target/` is gitignored |
-| 5 | No automated tests anywhere (Rust or TypeScript) | Regressions ship silently | Open |
+| ~~5~~ | ~~No automated tests anywhere (Rust or TypeScript)~~ | ~~Regressions ship silently~~ | **Resolved** — 62 tests passing (`pnpm --filter @workspace/api-server test`) |
 
 ---
 
@@ -425,10 +425,13 @@ The stack is small enough for a single low-cost VPS at testnet scale, and horizo
 
 ## Remaining Work
 
-- [ ] **Automated test suite** — no Rust or TypeScript tests exist; regressions ship silently
+All planned testnet features and pre-mainnet hardening items are complete. There is no remaining open work.
 
-Everything else is done. Previously-listed items now resolved:
+Previously-listed items now resolved:
 
+- [x] **Automated test suite** — 62 tests across 2 files, all passing. Run with `pnpm --filter @workspace/api-server test`.
+  - `src/__tests__/chain.unit.test.ts` — 40 unit tests covering `hash256`, `merkleRoot`, `addressFromSeed`, `fpEncode`, `blockHashToFields`, `generateZkProof`/`verifyZkProof` (including tamper detection), and `ChainState.updateDifficulty` (±20% clamp, floor enforcement, on-target no-change)
+  - `src/__tests__/api.integration.test.ts` — 22 integration tests via Supertest covering health, chain status, blocks (list/by-height/by-hash/404), mempool, `POST /api/blocks/submit` (missing fields → 400, above threshold → 422, stale prevHash → 409, valid → 201), UTXO, peers, and validators
 - [x] **Real ZK proof circuit** — `chain/zkproof.ts` uses real BN254 elliptic-curve scalar multiplication via `@noble/curves/bn254` (genuine G1/G2 points, not hash-derived fakes); the TS prover is a documented fallback for when the Rust sidecar is unavailable. `src/bin/consensus-api.rs` is the full Groth16 prover with a real circuit witness.
 - [x] **Wallet crypto v3 migration** — `artifacts/explorer/src/wallet/crypto.ts` already uses the `@noble/ed25519` v3 API throughout: `ed.utils.randomSecretKey()`, `ed.etc.hexToBytes()`, `ed.getPublicKeyAsync()`, `ed.signAsync()`. Known Issues #1 is resolved.
 - [x] **`equilibrium/target/` gitignore** — `/equilibrium/target/` is on line 53 of `.gitignore`; build artifacts are no longer committed.
