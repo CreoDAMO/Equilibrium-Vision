@@ -733,6 +733,32 @@ function seedDexPools(state: ChainState): void {
   });
 }
 
+/**
+ * Replay a persisted block list into a freshly-seeded ChainState.
+ * Call this on startup when blocks are loaded from Postgres; it seeds the
+ * same validators, DEX pools, and peers as buildGenesisChain so the running
+ * state is consistent, then replays every block through addBlock().
+ */
+export function buildChainFromBlocks(blocks: BlockRecord[]): ChainState {
+  const state = new ChainState();
+  seedValidators(state);
+  seedDexPools(state);
+  state.peers = [
+    { peerId: randomHex(20), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: randomHex(20), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: randomHex(20), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
+    { peerId: randomHex(20), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
+  ];
+
+  for (const block of blocks) {
+    state.addBlock(block);
+    for (const peer of state.peers) {
+      if (peer.connected) peer.height = block.height;
+    }
+  }
+  return state;
+}
+
 export function buildGenesisChain(): ChainState {
   const state = new ChainState();
 

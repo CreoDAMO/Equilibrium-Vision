@@ -10,6 +10,7 @@ out-tsc
 
 # dependencies
 node_modules
+.pgdata/
 
 # IDEs and editors
 /.idea

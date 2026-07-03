@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "rust-stable", "web"]
+modules = ["nodejs-20", "rust-stable", "web", "postgresql-16"]
 
 [deployment]
 router = "application"
@@ -24,17 +24,21 @@ args = "API Server"
 task = "workflow.run"
 args = "Explorer"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Postgres"
+
 [[workflows.workflow]]
 name = "API Server"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PORT=8080 pnpm --filter @workspace/api-server run dev"
-waitForPort = 8080
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "DATABASE_URL=postgresql://runner@127.0.0.1:5432/equilibrium PORT=8080 pnpm --filter @workspace/api-server run dev"
+waitForPort = 8080
 
 [[workflows.workflow]]
 name = "Explorer"
@@ -47,6 +51,17 @@ waitForPort = 5000
 
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow]]
+name = "Postgres"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/start-postgres.sh"
 
 [agent]
 stack = "BEST_EFFORT_FALLBACK"

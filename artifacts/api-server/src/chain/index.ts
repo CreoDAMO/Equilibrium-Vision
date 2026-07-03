@@ -1,12 +1,44 @@
-import { buildGenesisChain, mineNextBlock } from "./state.js";
+import { buildGenesisChain, buildChainFromBlocks, mineNextBlock } from "./state.js";
+import type { ChainState } from "./state.js";
 import { addressFromSeed } from "./crypto.js";
 import { logger } from "../lib/logger.js";
 import { broadcast } from "../lib/ws-server.js";
-
-export const chainState = buildGenesisChain();
+import { loadBlocksFromDb, persistBlock, persistBlocks } from "./persistence.js";
 
 // Node's own mining address
 export const minerAddress = addressFromSeed("equilibrium-node-rpc-miner");
+
+// chainState is assigned by initChain() before the server starts listening.
+// Exported as `let` so tests and routes import a single stable reference.
+export let chainState: ChainState;
+
+// ── Async initialisation ──────────────────────────────────────────────────────
+
+/**
+ * Load chain from Postgres (if available) or build the 25-block genesis chain.
+ * Must be awaited before the HTTP server starts.
+ */
+export async function initChain(): Promise<void> {
+  const dbBlocks = await loadBlocksFromDb();
+
+  if (dbBlocks) {
+    logger.info({ blockCount: dbBlocks.length }, "Restoring chain from Postgres");
+    chainState = buildChainFromBlocks(dbBlocks);
+    logger.info({ height: chainState.height }, "Chain restored");
+  } else {
+    logger.info("Building genesis chain (in-memory or first boot)");
+    chainState = buildGenesisChain();
+    // Await genesis persist so the DB is fully consistent before mining starts.
+    // If this fails (no DB configured) it is silently swallowed — the server
+    // continues in pure in-memory mode.
+    try {
+      await persistBlocks(chainState.blocks);
+      logger.info({ blockCount: chainState.blocks.length }, "Genesis blocks persisted");
+    } catch (err) {
+      logger.warn({ err }, "Genesis persistence failed — continuing in-memory");
+    }
+  }
+}
 
 // ── Stop-safe mining loop ────────────────────────────────────────────────────
 //
@@ -28,6 +60,11 @@ function runMiningCycle(generation: number): void {
     logger.info(
       { height: block.height, hash: block.hash.slice(0, 16), txCount: block.txCount, residual: block.residual },
       "Block mined",
+    );
+
+    // Persist to Postgres (fire-and-forget — never blocks the mining loop)
+    persistBlock(block).catch((err) =>
+      logger.warn({ err, height: block.height }, "Block persistence failed"),
     );
 
     // Notify WebSocket clients of the new block
@@ -72,13 +109,12 @@ export function startMining(): void {
   miningGeneration++;
   const gen = miningGeneration;
   logger.info({ minerAddress }, "Mining started");
-  // Kick off first cycle immediately; subsequent cycles are scheduled in finally
   miningTimer = setTimeout(() => runMiningCycle(gen), 0);
 }
 
 export function stopMining(): void {
   miningEnabled = false;
-  miningGeneration++; // invalidates any in-flight cycle's generation token
+  miningGeneration++;
   if (miningTimer) {
     clearTimeout(miningTimer);
     miningTimer = null;
