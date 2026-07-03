@@ -5,10 +5,18 @@ description: Workflow config, port assignments, and known route conflict for the
 
 ## Workflow commands
 
-- API Server: `PORT=8080 pnpm --filter @workspace/api-server run dev` — waitForPort 8080, console output
-- Explorer: `PORT=20087 BASE_PATH=/explorer/ pnpm --filter @workspace/explorer run dev` — webview output, port 20087
+Managed artifact workflows (created automatically from artifact.toml — do not recreate manually):
+- `artifacts/api-server: API Server` — runs `pnpm --filter @workspace/api-server run dev`, port 8080, console
+- `artifacts/explorer: web` — runs `pnpm --filter @workspace/explorer run dev`, port 5000, webview
 
-**Why:** The artifact.toml files have localPort hardcoded (8080 / 20087). PORT must be set inline in the workflow command because the workflow system doesn't read from artifact.toml env blocks.
+**Why:** After artifact registration, Replit creates managed workflows that inject [services.env] (PORT, BASE_PATH) automatically. Do not create manual workflows for these services — they conflict and cause EADDRINUSE on restart.
+
+**Port kill:** If both workflows fail with EADDRINUSE after a workflow removal, the old processes linger. Kill by PID (`ps aux | grep pnpm`, then `kill -9 <pids>`) before restarting managed workflows.
+
+## Explorer base path
+
+Explorer artifact.toml: `paths = ["/"]`, `BASE_PATH = "/"`, `localPort = 5000`.
+Previously was `/explorer/` which caused a 404 at the root URL in deployment.
 
 ## Route conflict
 

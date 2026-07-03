@@ -1,5 +1,5 @@
 kind = "web"
-previewPath = "/explorer/"
+previewPath = "/"
 title = "Equilibrium Block Explorer"
 version = "1.0.0"
 id = "artifacts/explorer"
@@ -11,8 +11,8 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/explorer/" ]
-localPort = 20087
+paths = [ "/" ]
+localPort = 5000
 
 [services.development]
 run = "pnpm --filter @workspace/explorer run dev"
@@ -27,5 +27,5 @@ from = "/*"
 to = "/index.html"
 
 [services.env]
-PORT = "20087"
-BASE_PATH = "/explorer/"
+PORT = "5000"
+BASE_PATH = "/"
