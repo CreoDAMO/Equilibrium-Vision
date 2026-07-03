@@ -12,6 +12,11 @@ import AddressDetail from "@/pages/AddressDetail";
 import MempoolPage from "@/pages/Mempool";
 import NetworkPage from "@/pages/Network";
 import NotFound from "@/pages/not-found";
+import { WalletProvider } from "@/wallet/context";
+import WalletHome from "@/pages/wallet/WalletHome";
+import WalletCreate from "@/pages/wallet/WalletCreate";
+import WalletImport from "@/pages/wallet/WalletImport";
+import WalletSend from "@/pages/wallet/WalletSend";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -36,6 +41,10 @@ function AppRouter() {
           <Route path="/address/:addr" component={AddressDetail} />
           <Route path="/mempool" component={MempoolPage} />
           <Route path="/network" component={NetworkPage} />
+          <Route path="/wallet" component={WalletHome} />
+          <Route path="/wallet/create" component={WalletCreate} />
+          <Route path="/wallet/import" component={WalletImport} />
+          <Route path="/wallet/send" component={WalletSend} />
           <Route component={NotFound} />
         </Switch>
       </Layout>
@@ -47,7 +56,9 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <AppRouter />
+        <WalletProvider>
+          <AppRouter />
+        </WalletProvider>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>
