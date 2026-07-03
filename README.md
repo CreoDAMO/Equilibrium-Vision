@@ -2,6 +2,8 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
+> **Status (as of this update):** Core protocol, wallet, explorer, and API surface are functionally complete for testnet. The project currently has known type-check failures and a wallet-crypto regression — see [Known Issues](#known-issues) before you demo the wallet. See `TODO.md` for the full outstanding work list.
+
 ---
 
 ## What is Proof-of-Stationarity?
@@ -17,31 +19,44 @@ Proof-of-Stationarity replaces energy-wasting hashing with a **Lagrangian optimi
 ## Repository Layout
 
 ```
-equilibrium/              # Rust core library + binaries
+equilibrium/              # Rust core library + binaries (independent implementation — see Architecture Notes)
   src/
     chain_state.rs        # Block and transaction state machine
     stationary_solver.rs  # Lagrangian optimizer (the "mining" engine)
-    consensus.rs          # Proof-of-Stationarity block validation
-    zk_proof.rs           # ZK proof stubs (Arkworks/Groth16)
-    p2p.rs                # libp2p networking layer
-    ffi.rs                # C-ABI FFI for Android/iOS integration
-    crypto.rs             # SHA-256 / SHA-512 utilities
-    wallet.rs             # Ed25519 keypair, address derivation, signing
+    consensus.rs           # Proof-of-Stationarity block validation
+    zk_proof.rs             # ZK proof stubs (Arkworks/Groth16)
+    p2p.rs                   # libp2p networking layer
+    ffi.rs                    # C-ABI FFI for Android/iOS integration
+    crypto.rs                  # SHA-256 / SHA-512 utilities
+    wallet.rs                   # Ed25519 keypair, address derivation, signing
   testnet/node/main.rs    # Testnet node binary
-  src/bin/wallet.rs       # CLI wallet binary
+  src/bin/wallet.rs        # CLI wallet binary
+  mobile/                    # Loose Android/iOS source files — not a buildable app yet (see Known Issues)
 
 artifacts/
-  api-server/             # TypeScript Express node (in-memory chain, auto-miner)
+  api-server/             # TypeScript Express node (in-memory chain, auto-miner) — the system that actually runs
   explorer/               # React + Vite block explorer + browser wallet
+  mockup-sandbox/         # Design sandbox, not part of the running stack
 
 lib/
   api-spec/               # OpenAPI 3.1 contract (source of truth)
   api-client-react/       # Generated React Query hooks (Orval)
   api-zod/                # Generated Zod validation schemas (Orval)
-  db/                     # Drizzle ORM schema (reserved for persistence layer)
+  db/                     # Drizzle ORM schema (written, not yet wired into api-server)
 
 Dockerfile                # Single-image build for the API node
 ```
+
+---
+
+## Architecture Notes
+
+**The Rust core and the TypeScript API server are two separate, unconnected implementations of the protocol.** There is no FFI/WASM/IPC bridge between them today:
+
+- The explorer, browser wallet, and everything at `/api/*` run entirely on `artifacts/api-server`'s in-memory TypeScript `ChainState` — this is what you actually interact with when you run the project.
+- `equilibrium/` (the Rust crate) is a standalone consensus engine with its own `testnet-node` and `wallet` binaries, and mobile FFI exports. It doesn't currently talk to the TS server.
+
+This is a reasonable split for rapid iteration on a testnet UX, but the two can drift (reward math, address derivation, ZK proof format). Decide and document which one is canonical before mainnet — see `TODO.md`.
 
 ---
 
@@ -83,6 +98,20 @@ docker run -p 8080:8080 equilibrium-node
 
 ---
 
+## Known Issues
+
+These were found by actually running `pnpm typecheck` and attempting a Rust build — fix before your next demo or deploy. Full detail and file/line references in `TODO.md`.
+
+| # | Issue | Severity | Where |
+|---|-------|----------|-------|
+| 1 | `@noble/ed25519` was bumped to v3, but `wallet/crypto.ts` still calls the v2 API (`ed.utils.randomPrivateKey`, `ed.utils.hexToBytes`) | **Breaks at runtime** — raw keypair creation, private-key import, and multisig sign/verify all throw | `artifacts/explorer/src/wallet/crypto.ts` |
+| 2 | `cs` is referenced but never defined in the `/api/utxo/spend` handler | **Breaks at runtime** — `ReferenceError` on that route | `artifacts/api-server/src/routes/utxo.ts` |
+| 3 | `pnpm run build` currently fails typecheck (missing `dom` lib for `WebAssembly`, missing WebHID/WebUSB ambient types, `noImplicitReturns` violations, React Query `queryKey` generic mismatch) | Blocks CI / clean builds, not a runtime break | `api-server` + `explorer` tsconfigs |
+| 4 | `equilibrium/target/` (Rust build artifacts, ~850MB / 3,376 files) is committed to git | Repo bloat, slow clones | not gitignored |
+| 5 | No automated tests anywhere (Rust or TypeScript) | Regressions like #1/#2 ship silently | — |
+
+---
+
 ## API
 
 The node exposes a REST API documented in `lib/api-spec/openapi.yaml`.
@@ -111,6 +140,35 @@ The node exposes a REST API documented in `lib/api-spec/openapi.yaml`.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/address/:addr` | Balance, nonce, transaction history |
+
+### UTXO model
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/utxo/:address` | Unspent outputs and balance for an address |
+| GET | `/api/utxo/:txHash/:outputIndex` | Specific UTXO detail |
+| GET | `/api/utxo/stats` | UTXO set size and total supply |
+| POST | `/api/utxo/build` | Coin selection for a spend (returns inputs/outputs/fee) |
+| POST | `/api/utxo/spend` | Broadcast a UTXO transaction — **currently broken, see Known Issues #2** |
+
+### Smart Contracts (WASM)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/contracts` | List deployed contracts |
+| GET | `/api/contracts/examples` | Example contract bytecode/ABI |
+| GET | `/api/contracts/:address` | Contract detail |
+| GET | `/api/contracts/:address/storage` | Contract storage dump |
+| POST | `/api/contracts/deploy` | Deploy WASM bytecode |
+| POST | `/api/contracts/:address/call` | Call a contract method |
+
+### EVM Compatibility
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/evm` | EVM-style JSON-RPC endpoint (chain ID 1337) |
+| GET | `/evm/chainid` | EVM chain ID |
+| GET | `/evm/accounts` | EVM-format account listing |
 
 ### Validators & Staking
 
@@ -148,7 +206,7 @@ The node exposes a REST API documented in `lib/api-spec/openapi.yaml`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/faucet` | Drip 1 000 EQU to any address (1 h cooldown) |
+| POST | `/api/faucet` | Drip 1,000 EQU to any address (1 h cooldown) |
 | GET | `/api/faucet/status/:address` | Faucet cooldown status |
 | GET | `/metrics` | Prometheus-compatible metrics (chain, validators, DEX) |
 
@@ -181,14 +239,17 @@ All data refreshes every 10 seconds via React Query.
 
 Available at `/explorer/wallet`. Fully self-custody, browser-side.
 
-- **Create** — generates an Ed25519 keypair locally using `@noble/ed25519` + Web Crypto; keys are never transmitted
-- **Import** — restore from a 64-char hex private key
-- **Send** — builds and signs a transaction, broadcasts to the mempool
-- **Balance** — live balance and nonce from the chain, recent transaction history
+- **Create — Seed phrase (recommended):** BIP-39 mnemonic (12/24-word) + SLIP-0010 Ed25519 HD derivation (`m/44'/600'/account'/0'/index'`), with a mnemonic-confirmation step and optional AES-256-GCM (PBKDF2, 100k iterations) encrypted keystore in `localStorage`.
+- **Create — Raw keypair:** single Ed25519 key, no recovery phrase.
+- **Import:** restore from a 64-char hex private key, a mnemonic, or an encrypted keystore file.
+- **Hardware wallet:** Ledger support via WebHID/WebUSB transport (`wallet/ledger.ts`).
+- **Multi-sig:** m-of-n Ed25519 threshold signing (`WalletMultisig.tsx`, `createMultisigAddress` / `signForMultisig` / `verifyMultisigThreshold`).
+- **Send:** builds and signs a transaction, broadcasts to the mempool.
+- **Balance:** live balance and nonce from the chain, recent transaction history.
+
+**Currently broken — see Known Issues #1:** raw-keypair creation, private-key import, and multisig signing call an outdated `@noble/ed25519` v2 API against the installed v3 package and will throw at runtime until fixed.
 
 Address derivation: `SHA-256(publicKeyHex).slice(0, 40)` — identical to the Rust wallet.
-
-Keys are persisted in browser `localStorage`. For testnet use only.
 
 ---
 
@@ -217,6 +278,10 @@ Four genesis validators (Miner-Alpha, Miner-Beta, Validator-Gamma, Validator-Del
 | `downtime` | 1% of stake | Uptime penalty; jail after 3 events |
 | `invalid_block` | 1% of stake | Uptime penalty |
 
+### ZK Proof of Stationarity
+
+`chain/zkproof.ts` generates a Groth16-shaped proof (BN254 field elements, `pi_a`/`pi_b`/`pi_c`) over the residual. **This is an honestly-labeled simulation, not a real SNARK** — points are deterministic SHA-256 derivations, not actual elliptic-curve pairings, and the code comments say so. Wiring this to a real `arkworks`/`circom` circuit is the single biggest piece of unfinished cryptographic work — see `TODO.md`.
+
 ---
 
 ## DEX (Automated Market Maker)
@@ -234,6 +299,13 @@ Features: swap, add liquidity, price quotes with impact calculation, swap histor
 ## Staking
 
 Any address can bond EQU to a validator via `POST /api/stake`. Unbonding has a **10-block waiting period** before funds are returned. Delegators share in block rewards proportionally to their bonded stake.
+
+---
+
+## Smart Contracts & EVM
+
+- `chain/wasm.ts` implements a deterministic WASM execution environment using Node's built-in `WebAssembly` — contract deploy, storage get/set, gas accounting.
+- `routes/evm.ts` exposes an EVM-shaped JSON-RPC endpoint (chain ID `1337`) with address/block/transaction format translation, for tooling that expects an Ethereum-style interface.
 
 ---
 
@@ -272,7 +344,7 @@ Key metrics:
 
 ## Rust Crate
 
-The `equilibrium-core` crate exposes:
+The `equilibrium-core` crate exposes (see **Architecture Notes** — not currently connected to the TS server):
 
 - `ChainState` — block DAG + UTXO-style ledger
 - `StationarySolver` — gradient descent Lagrangian optimizer
@@ -292,39 +364,68 @@ The `equilibrium-core` crate exposes:
 | Node RPC | TypeScript, Express 5, in-memory chain state |
 | API contract | OpenAPI 3.1, Orval codegen |
 | Explorer/Wallet | React 18, Vite 7, Tailwind CSS v4, React Query, Wouter, Recharts |
-| Wallet crypto | `@noble/ed25519`, Web Crypto API |
-| Monorepo | pnpm workspaces, Node.js 20, TypeScript 5.9 |
+| Wallet crypto | `@noble/ed25519` v3, `@scure/bip39`, `@scure/bip32`, Web Crypto API |
+| Monorepo | pnpm workspaces, Node.js 20+, TypeScript 5.9 |
 | Containerization | Docker (single-image node) |
+
+---
+
+## Deployment / Infrastructure
+
+The stack is small enough for a single low-cost VPS at testnet scale, and horizontally splittable later (API node / DB / explorer / seed nodes on separate boxes). **Hetzner** is a reasonable default: NVMe-backed, generous EU bandwidth (20TB+ included), and a straightforward Docker deploy path matching this repo's `Dockerfile`.
+
+**Important — Hetzner repriced cloud servers four times in 2026** (Feb, Apr 1, Apr 29, and a large Jun 15 adjustment). The cost-optimized/ARM lines (CX, CAX) only rose ~30–38% total; the shared-AMD and dedicated-vCPU lines (CPX, CCX) rose 113–204% in the June round alone. **Treat the figures below as directional, not quotes — check [hetzner.com/cloud](https://www.hetzner.com/cloud) and the [price-adjustment notice](https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/) before ordering.** Existing servers keep their price when you don't rescale them, so once you pick a size, avoid resizing it later purely to save money.
+
+### Suggested sizing by component
+
+| Component | Workload | Suggested tier | Approx. spec | Why |
+|---|---|---|---|---|
+| **Testnet all-in-one** (API + explorer + faucet, low traffic) | Light | **CX23** (Cost-Optimized) | 2 vCPU / 4GB / 40GB NVMe | Cheapest tier that still barely moved in the 2026 price rounds; plenty for the in-memory TS chain + explorer |
+| **API node** (once split out, moderate mempool/tx load) | Light–medium | **CX33** or **CAX21** (ARM) | 4 vCPU / 8GB | CAX (ARM) is now the best price/performance line if you don't need x86; Node.js/Docker both run fine on ARM64 |
+| **Postgres** (once the Drizzle persistence layer is wired in) | I/O-bound, RAM-hungry | **CX33/CX43** or a small **dedicated root server (AX line)** | 4–8 vCPU / 16GB+, NVMe | CCX (dedicated vCPU cloud) is no longer the value play post-June-2026 — a small AX dedicated box is now often cheaper per unit of DB performance for a stable, always-on workload |
+| **Explorer / static frontend** | Very light | **CX22/CX23** or bundle onto the API box | 2 vCPU / 4GB | Vite build is static; doesn't need much beyond the Node process serving it |
+| **Rust testnet-node / seed & validator peers** (multi-region for realistic P2P testing) | Light per-node, want geographic spread | Multiple **CX23** across Falkenstein / Helsinki / Ashburn | 2 vCPU / 4GB each | Cheap enough to run 3–5 seed nodes for genuine libp2p peer diversity instead of one box |
+| **CI / build runners** (Rust `cargo build` with `libp2p full`, first-build heavy) | Bursty, CPU-heavy | On-demand **CPX** or **CCX**, hourly-billed | 8+ vCPU | Spin up for the build, delete after — Hetzner bills hourly rounded up, so this avoids paying the higher monthly CPX/CCX rate for idle time |
+
+### Notes
+
+- **CX (Cost-Optimized, Intel/AMD, EU-only)** and **CAX (ARM, Ampere Altra, EU-only)** are the current best-value lines — both stayed close to their pre-2026 pricing. Good default for anything that isn't latency- or CPU-bound.
+- **CPX (shared AMD EPYC, global incl. US/Singapore)** and **CCX (dedicated vCPU)** took the brunt of the June 2026 increase (up to ~2–3x). Only reach for these if you need guaranteed non-shared cores (e.g., a production validator under real load) or a non-EU region.
+- **Dedicated root servers (AX line)** were restructured into `-1`/`-2`/`-3`/`-1-Ltd` tiers in 2026 with lower setup fees and a comparatively modest price increase — worth pricing out for anything long-running and RAM-heavy (Postgres, an archive node) instead of CCX.
+- All Hetzner cloud tiers include a firewall, DDoS protection, IPv4/IPv6, and (in EU regions) large bandwidth allowances at no extra cost — no need for a separate CDN/WAF at testnet scale.
+- Since horizontal scaling (adding new small nodes) doesn't trigger repricing but vertical rescaling does, prefer **more small CX/CAX boxes** over resizing one box, both for cost stability and for genuine P2P topology testing.
 
 ---
 
 ## Future Work
 
+See `TODO.md` for the complete, prioritized breakdown. Summary of what's genuinely still open (not already built):
+
+### Correctness (do first)
+- [ ] Fix `@noble/ed25519` v3 API calls in `wallet/crypto.ts`
+- [ ] Fix undefined `cs` in `POST /api/utxo/spend`
+- [ ] Fix `pnpm run build` typecheck failures (tsconfig `lib` gaps, `noImplicitReturns` violations)
+- [ ] Remove `equilibrium/target/` from git, add to `.gitignore`
+- [ ] Add a test suite (Rust + TypeScript) — there currently isn't one
+
 ### Consensus & Protocol
-- [ ] **ZK proof circuit integration** — wire Groth16 circuits to the stationarity proof so every block carries a verifiable ZK proof of residual quality
-- [ ] **Full UTXO model** — replace the ledger balance model with a proper UTXO set for parallel validation
-
-### Wallet
-- [ ] **BIP-39 mnemonic generation** — 12/24-word seed phrases instead of raw hex private keys
-- [ ] **HD wallet derivation** — BIP-44 path derivation from a master seed
-- [ ] **Hardware wallet support** — Ledger transport via WebHID / WebUSB
-- [ ] **Multi-sig accounts** — m-of-n Ed25519 multi-signature scheme
-- [ ] **Encrypted keystore** — AES-GCM password-protected key storage in localStorage
-
-### Mobile Mining
-- [ ] **Android mining app** — Kotlin + JNI calling the Rust FFI; foreground service with battery-aware throttling
-- [ ] **iOS mining app** — Swift + Rust via `cargo-swift`; BackgroundTasks API integration
-- [ ] **Mining pool protocol** — Stratum-style pool for phones that can't maintain a full node
-
-### Smart Contracts
-- [ ] **WASM execution environment** — deterministic WASM runtime for smart contracts (e.g., ink! or custom)
-- [ ] **EVM compatibility layer** — optional EVM precompile for Solidity contract migration
+- [ ] **Real ZK proof circuit** — wire actual Groth16 (arkworks/circom) to replace the current hash-based simulation
+- [ ] **Decide Rust-core vs. TS-server canonicity** — either bridge them (WASM/FFI) or clearly document TS as the reference implementation
 
 ### Infrastructure
-- [ ] **Full persistence layer** — PostgreSQL-backed chain state replacing the in-memory store (Drizzle schema is already stubbed)
-- [ ] **WebSocket subscriptions** — real-time push for new blocks and mempool updates (no more polling)
-- [ ] **Multi-region testnet** — geographically distributed seed nodes with public DNS
+- [ ] **Full persistence layer** — wire the existing Drizzle/Postgres schema into `api-server` (currently unused)
+- [ ] **WebSocket subscriptions** — real-time push for new blocks and mempool updates (no more 10s polling)
+- [ ] **Multi-region testnet** — geographically distributed seed nodes (see Deployment section above)
 - [ ] **TypeScript SDK** — `@equilibrium/sdk` npm package wrapping the REST API with typed helpers
+
+### Mobile Mining
+- [ ] **Android mining app** — currently just loose `.kt` files, no Gradle project; needs actual app scaffolding, JNI bridge to the Rust FFI, foreground service with battery-aware throttling
+- [ ] **iOS mining app** — currently just loose `.swift`/`.h` files, no Xcode project; needs `cargo-swift` bridge, BackgroundTasks API integration
+- [ ] **Mining pool protocol** — Stratum-style pool for phones that can't maintain a full node
+
+### Consensus robustness (flagged in earlier review, still open)
+- [ ] **Floating-point determinism** — `f64` residuals/gradients can diverge microscopically across ARM vs. x86; consider fixed-point arithmetic for consensus-critical paths
+- [ ] **P2P catch-up sync robustness** — mobile nodes drop offline frequently; need a resilient resync protocol beyond the current headers-first sync
 
 ---
 
