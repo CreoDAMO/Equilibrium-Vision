@@ -1,69 +1,34 @@
 ---
-name: Equilibrium project setup
-description: Workflow config, port assignments, and known route conflict for the Equilibrium blockchain project
+name: Equilibrium setup & architecture
+description: Run commands, port assignments, known quirks, and encoding conventions for the Equilibrium blockchain project.
 ---
 
-## Workflow commands
+## Run commands
+- API Server: `PORT=8080 pnpm --filter @workspace/api-server run dev` (console workflow, port 8080)
+- Explorer: `PORT=5000 BASE_PATH=/ pnpm --filter @workspace/explorer run dev` (webview workflow, port 5000)
+- Explorer Vite proxies /api and /ws → localhost:8080, so API Server must be running first.
+- Before typechecking api-server: run `pnpm run typecheck:libs` first (builds lib/api-zod dist).
 
-Managed artifact workflows (created automatically from artifact.toml — do not recreate manually):
-- `artifacts/api-server: API Server` — runs `pnpm --filter @workspace/api-server run dev`, port 8080, console
-- `artifacts/explorer: web` — runs `pnpm --filter @workspace/explorer run dev`, port 5000, webview
+## Port assignments
+- API Server: 8080 (console workflow)
+- Explorer: 5000 (webview workflow) — was 20087 originally but 20087 is not in Replit's supported port list; changed to 5000 with BASE_PATH=/.
 
-**Why:** After artifact registration, Replit creates managed workflows that inject [services.env] (PORT, BASE_PATH) automatically. Do not create manual workflows for these services — they conflict and cause EADDRINUSE on restart.
+## Route conflicts (historical)
+- /api/blocks/headers conflicts with /api/blocks/:hashOrHeight — use /api/sync/headers instead.
 
-**Port kill:** If both workflows fail with EADDRINUSE after a workflow removal, the old processes linger. Kill by PID (`ps aux | grep pnpm`, then `kill -9 <pids>`) before restarting managed workflows.
+## ZK encoding — single source of truth
+- `artifacts/api-server/src/chain/zk-encoding.ts` holds canonical `fpEncode()` and `blockHashToFields()`.
+- Both `zkproof.ts` (TS fallback prover) and `consensus-bridge.ts` (Rust sidecar bridge) import from zk-encoding.ts.
+- `zkproof.ts` re-exports `blockHashToFields as encodeBlockHash` for backward compat with existing callers.
+- **Why:** Prior to this, the bridge used Math.round and inline hash splitting; the TS prover used Math.floor with a different helper. They produced different public inputs for the same block, breaking proof verification.
 
-## Explorer base path
+## Mining loop (stop-safety)
+- `artifacts/api-server/src/chain/index.ts` uses setTimeout recursion + generation-token pattern, NOT setInterval.
+- `miningGeneration` is incremented on both `startMining()` and `stopMining()`.
+- `runMiningCycle(generation)` only reschedules in `finally` if `generation === miningGeneration && miningEnabled`.
+- **Why:** setInterval with async mining (or rapid stop→start) can create duplicate concurrent cycles. Generation token makes any in-flight cycle's finally block see a stale generation and exit without rescheduling.
 
-Explorer artifact.toml: `paths = ["/"]`, `BASE_PATH = "/"`, `localPort = 5000`.
-Previously was `/explorer/` which caused a 404 at the root URL in deployment.
-
-## Route conflict
-
-`/api/blocks/headers` is caught by `/api/blocks/:hashOrHeight` in the blocks router (registered first). The headers-first sync endpoint must live at `/api/sync/headers`.
-
-**How to apply:** Any new route that could match an existing `:param` must either be registered before that router in index.ts, or use a path that doesn't collide.
-
-## Architecture summary
-
-- `artifacts/api-server/src/chain/state.ts` — single ChainState singleton with: Ledger, Mempool (size/pressure are **getter properties**, not methods), adaptive difficulty, validator set, BFT finality rounds, DEX AMM pools, staking/unbonding, gossip log
-- `artifacts/api-server/src/routes/` — one file per feature domain (validators, dex, staking, network, faucet, metrics)
-- Prometheus metrics at `/metrics` (not under /api) — registered directly on app, not on the api sub-router
-
-## WebSocket
-
-- Server: `artifacts/api-server/src/lib/ws-server.ts` — `/ws` path, broadcasts `new_block` and `mempool_update`
-- index.ts wraps Express in `http.createServer(app)` then calls `createWsServer(server)`
-- Explorer hook: `artifacts/explorer/src/hooks/useChainWebSocket.ts` — called in `AppRouter` (inside QueryClientProvider)
-- Vite proxy: `/ws` proxied to `ws://localhost:8080` with `ws: true` in both server and preview sections
-- Stratum server: `artifacts/api-server/src/lib/stratum-server.ts` — only starts when `STRATUM_PORT` env var is set
-
-## SDK
-
-- `lib/sdk/src/index.ts` — `EquilibriumClient` class (namespaced: chain, blocks, tx, addresses, mempool, validators, dex, faucet) + `subscribeToChain()` WS helper
-- `lib/sdk/tsconfig.json` must include `"lib": ["ES2022", "DOM"]` for fetch/WebSocket/URL globals
-- `lib/sdk` added to root tsconfig.json project references
-
-## DB schema
-
-- `lib/db/src/schema/blocks.ts`, `transactions.ts`, `validators.ts` — Drizzle/Postgres tables defined
-- Not yet wired into api-server (still in-memory) — needs DATABASE_URL + `pnpm run push`
-
-## CI
-
-- `.github/workflows/ci.yml` — typecheck (pnpm) + rust-check (cargo check + clippy) + rust-test jobs
-
-## Android scaffold
-
-- `equilibrium/mobile/android/` — full Gradle project: settings.gradle.kts, build.gradle.kts, app/build.gradle.kts, AndroidManifest.xml, gradle wrapper, libs.versions.toml
-- JNI libs expected at `app/src/main/jniLibs/` (built by cargo-ndk)
-
-## iOS scaffold
-
-- `equilibrium/mobile/ios/Package.swift` — Swift package with EquilibriumMiner + EquilibriumCoreStub targets
-- `MiningCoordinator.swift` — BackgroundTasks API integration, requires external power + network
-- Swap stub for real xcframework: `cargo swift package --platforms ios --name EquilibriumCore`
-
-## Docs
-
-- `docs/testnet-deployment.md` — Hetzner sizing, multi-node libp2p bootstrap, Caddy TLS, Postgres setup, firewall rules
+## Rust sidecar
+- Binary path: `equilibrium/target/release/consensus-api` (not built by default — cargo build takes several minutes).
+- Bridge in `consensus-bridge.ts` falls back to TS prover silently when sidecar is unavailable.
+- The TS prover (zkproof.ts) is NOT a real ZK circuit proof — it derives valid BN254 curve points deterministically but without a circuit witness.

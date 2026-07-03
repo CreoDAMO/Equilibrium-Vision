@@ -1,2 +1,1 @@
-- [Equilibrium setup](equilibrium-setup.md) — workflows need PORT env var; two services on 8080 (API) and 20087 (Explorer at /explorer/)
-- [Equilibrium route conflicts](equilibrium-setup.md) — /api/blocks/headers conflicts with /api/blocks/:hashOrHeight; use /api/sync/headers instead
+- [Equilibrium setup](equilibrium-setup.md) — run cmds, ports (API 8080 console / Explorer 5000 webview), ZK encoding rules, mining loop pattern

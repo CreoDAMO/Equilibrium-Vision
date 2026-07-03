@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { bn254, bn254_Fr } from "@noble/curves/bn254.js";
 import type { Fp2 } from "@noble/curves/abstract/tower.js";
+import { fpEncode, blockHashToFields } from "./zk-encoding.js";
 
 // ── Groth16-style ZK proof for Proof-of-Stationarity ──────────────────────────
 //
@@ -122,24 +123,9 @@ const CIRCUIT_ID = "stationarity-v2-groth16-bn254";
 const DEFAULT_THRESHOLD = 1e-7;
 
 // ── Fixed-point encoding ──────────────────────────────────────────────────────
-
-/** Encode a floating-point value as a BN254 scalar field element (val × 10^18 mod Fr). */
-export function fpEncode(val: number): string {
-  // Encode as residual × 10^18 in the BN254 scalar field
-  return (BigInt(Math.floor(val * 1e18)) % Fr_MOD).toString(10);
-}
-
-/**
- * Encode a block hash into the two BN254 public inputs expected by the stationarity circuit.
- * Takes the first 128 bits of the hash (32 hex chars) and splits into low/high 128-bit halves.
- * The hash is at most 128 bits wide so blockHashHigh is always 0.
- */
-export function encodeBlockHash(blockHash: string): { blockHashLow: string; blockHashHigh: string } {
-  const hashInt       = BigInt("0x" + blockHash.slice(0, 32));
-  const blockHashLow  = (hashInt & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFn).toString(10);
-  const blockHashHigh = (hashInt >> 128n).toString(10);
-  return { blockHashLow, blockHashHigh };
-}
+// Canonical implementations live in zk-encoding.ts; re-export for callers
+// that already depend on this module's public surface.
+export { fpEncode, blockHashToFields as encodeBlockHash } from "./zk-encoding.js";
 
 // ── Proof generation (TS fallback prover) ────────────────────────────────────
 //
@@ -161,9 +147,7 @@ export function generateZkProof(
   // Public inputs as BN254 scalar field elements
   const residualFp  = fpEncode(residual);
   const thresholdFp = fpEncode(threshold);
-  const hashInt     = BigInt("0x" + blockHash.slice(0, 32));
-  const blockHashLow  = (hashInt & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFn).toString(10);
-  const blockHashHigh = (hashInt >> 128n).toString(10);
+  const { blockHashLow, blockHashHigh } = blockHashToFields(blockHash);
 
   // π_A = BASE * scalar_A,  π_C = BASE * scalar_C  (G1)
   // π_B = G2_BASE * scalar_B                        (G2)

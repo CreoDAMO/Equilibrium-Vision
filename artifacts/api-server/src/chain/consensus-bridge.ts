@@ -3,7 +3,8 @@ import { createInterface } from "readline";
 import path from "path";
 import { fileURLToPath } from "url";
 import { logger } from "../lib/logger.js";
-import { generateZkProof, verifyZkProof, fpEncode, encodeBlockHash, type ZkProof } from "./zkproof.js";
+import { generateZkProof, verifyZkProof, type ZkProof } from "./zkproof.js";
+import { fpEncode, blockHashToFields } from "./zk-encoding.js";
 
 // ── Rust consensus-api sidecar bridge ────────────────────────────────────────
 //
@@ -138,7 +139,7 @@ class ConsensusBridge {
       // Reconstruct public inputs deterministically from request args using the
       // same encoding as zkproof.ts — the Rust sidecar only returns
       // { ok, proof, vkHash, circuitId, provedAt } and does not echo them back.
-      const { blockHashLow, blockHashHigh } = encodeBlockHash(blockHash);
+      const { blockHashLow, blockHashHigh } = blockHashToFields(blockHash);
       return {
         proof:        res["proof"] as ZkProof["proof"],
         publicInputs: {
