@@ -1,0 +1,123 @@
+Run cargo clippy --all-targets -- -D warnings
+  cargo clippy --all-targets -- -D warnings
+  shell: /usr/bin/bash -e {0}
+  env:
+    CARGO_HOME: /home/runner/.cargo
+    CARGO_INCREMENTAL: 0
+    CARGO_TERM_COLOR: always
+    CACHE_ON_FAILURE: false
+    Checking equilibrium-core v0.2.0 (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/equilibrium)
+error: unused import: `TxCandidate`
+ --> src/ffi.rs:2:51
+  |
+2 | use crate::chain_state::{BlockHeader, ChainState, TxCandidate};
+  |                                                   ^^^^^^^^^^^
+  |
+  = note: `-D unused-imports` implied by `-D warnings`
+  = help: to override `-D warnings` add `#[allow(unused_imports)]`
+
+error: unused variable: `txs`
+ --> src/consensus.rs:9:9
+  |
+9 |         txs: &[TxCandidate],
+  |         ^^^ help: if this is intentional, prefix it with an underscore: `_txs`
+  |
+  = note: `-D unused-variables` implied by `-D warnings`
+  = help: to override `-D warnings` add `#[allow(unused_variables)]`
+
+error: the borrowed expression implements the required traits
+  --> src/stationary_solver.rs:26:23
+   |
+26 |         hasher.update(&header.merkle_root);
+   |                       ^^^^^^^^^^^^^^^^^^^ help: change this to: `header.merkle_root`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_borrows_for_generic_args
+   = note: `-D clippy::needless-borrows-for-generic-args` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::needless_borrows_for_generic_args)]`
+
+error: the borrowed expression implements the required traits
+  --> src/stationary_solver.rs:30:27
+   |
+30 |             hasher.update(&tx.hash);
+   |                           ^^^^^^^^ help: change this to: `tx.hash`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_borrows_for_generic_args
+
+error: the borrowed expression implements the required traits
+   --> src/stationary_solver.rs:117:31
+    |
+117 |                 hasher.update(&header.merkle_root);
+    |                               ^^^^^^^^^^^^^^^^^^^ help: change this to: `header.merkle_root`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_borrows_for_generic_args
+
+error: the borrowed expression implements the required traits
+   --> src/stationary_solver.rs:121:35
+    |
+121 |                     hasher.update(&tx.hash);
+    |                                   ^^^^^^^^ help: change this to: `tx.hash`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_borrows_for_generic_args
+
+error: the borrowed expression implements the required traits
+   --> src/zk_proof.rs:285:22
+    |
+285 |         sigma.update(&header.merkle_root);
+    |                      ^^^^^^^^^^^^^^^^^^^ help: change this to: `header.merkle_root`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_borrows_for_generic_args
+
+error: this public function might dereference a raw pointer but is not marked `unsafe`
+  --> src/ffi.rs:18:47
+   |
+18 |     let prev = unsafe { slice::from_raw_parts(prev_hash, 32) };
+   |                                               ^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#not_unsafe_ptr_arg_deref
+   = note: `#[deny(clippy::not_unsafe_ptr_arg_deref)]` on by default
+
+error: this public function might dereference a raw pointer but is not marked `unsafe`
+  --> src/ffi.rs:19:49
+   |
+19 |     let merkle = unsafe { slice::from_raw_parts(merkle_root, 32) };
+   |                                                 ^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#not_unsafe_ptr_arg_deref
+
+error: this public function might dereference a raw pointer but is not marked `unsafe`
+  --> src/ffi.rs:43:14
+   |
+43 |             *out_nonce = solution.nonce;
+   |              ^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#not_unsafe_ptr_arg_deref
+
+error: this public function might dereference a raw pointer but is not marked `unsafe`
+  --> src/ffi.rs:44:14
+   |
+44 |             *out_residual = solution.residual;
+   |              ^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#not_unsafe_ptr_arg_deref
+
+error: this `impl` can be derived
+   --> src/wallet.rs:213:1
+    |
+213 | / impl Default for Account {
+214 | |     fn default() -> Self { Self { balance: 0, nonce: 0 } }
+215 | | }
+    | |_^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#derivable_impls
+    = note: `-D clippy::derivable-impls` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::derivable_impls)]`
+help: replace the manual implementation with a derive attribute
+    |
+208 + #[derive(Default)]
+209 | pub struct Account {
+    |
+
+error: could not compile `equilibrium-core` (lib test) due to 12 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `equilibrium-core` (lib) due to 12 previous errors
+Error: Process completed with exit code 101.
