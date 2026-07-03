@@ -17,7 +17,7 @@ pub fn address_from_pubkey(pubkey: &VerifyingKey) -> Address {
 
 /// Human-readable hex address.
 pub fn address_to_hex(addr: &Address) -> String {
-    addr.iter().map(|b| format!("{:02x}", b)).collect()
+    addr.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Parse a hex address string back to bytes.
@@ -204,14 +204,10 @@ pub struct Ledger {
     accounts: std::collections::HashMap<String, Account>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Account {
     pub balance: u64,
     pub nonce:   u64,
-}
-
-impl Default for Account {
-    fn default() -> Self { Self { balance: 0, nonce: 0 } }
 }
 
 impl Ledger {

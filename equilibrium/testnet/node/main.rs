@@ -39,7 +39,7 @@ async fn main() {
         let reward = compute_coinbase_reward(50_000_000, solution.residual);
         let mut ledger = Ledger::new();
         ledger.credit(&miner.address, reward);
-        println!("Coinbase     : {} EQU → miner\n", reward);
+        println!("Coinbase     : {reward} EQU → miner\n");
 
         // ── Alice gets a grant from the miner ─────────────────────────────────
         let miner_nonce = std::time::SystemTime::now()
@@ -49,7 +49,7 @@ async fn main() {
         let fund_alice = miner.sign_tx(alice.address, 10_000_000, 1_000, miner_nonce);
         match ledger.apply_tx(&fund_alice) {
             Ok(()) => println!("Transfer OK  : miner → alice, 10_000_000 EQU"),
-            Err(e) => println!("Transfer ERR : {}", e),
+            Err(e) => println!("Transfer ERR : {e}"),
         }
 
         // ── Alice sends to Bob ─────────────────────────────────────────────────
@@ -57,14 +57,14 @@ async fn main() {
         let alice_to_bob = alice.sign_tx(bob.address, 3_000_000, 500, alice_nonce);
         match ledger.apply_tx(&alice_to_bob) {
             Ok(()) => println!("Transfer OK  : alice → bob,  3_000_000 EQU"),
-            Err(e) => println!("Transfer ERR : {}", e),
+            Err(e) => println!("Transfer ERR : {e}"),
         }
 
         // ── Replay protection: same nonce should fail ──────────────────────────
         let replay = alice.sign_tx(bob.address, 1_000, 100, alice_to_bob.nonce);
         match ledger.apply_tx(&replay) {
             Ok(())  => println!("Replay PASSED (BUG)"),
-            Err(e)  => println!("Replay blocked: {}", e),
+            Err(e)  => println!("Replay blocked: {e}"),
         }
 
         // ── Balances ───────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ async fn main() {
         println!("\n── Signature verification ──────────────────────");
         match alice_to_bob.verify() {
             Ok(())  => println!("alice→bob tx: signature valid ✓"),
-            Err(e)  => println!("alice→bob tx: INVALID — {}", e),
+            Err(e)  => println!("alice→bob tx: INVALID — {e}"),
         }
     } else {
         println!("No block found.");

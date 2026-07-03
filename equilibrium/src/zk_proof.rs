@@ -282,7 +282,7 @@ impl StationarityProof {
         // Legacy sigma fields
         let mut sigma = Sha256::new();
         sigma.update(header.prev_hash);
-        sigma.update(&header.merkle_root);
+        sigma.update(header.merkle_root);
         sigma.update(header.timestamp.to_le_bytes());
         let challenge: [u8; 32] = sigma.finalize().into();
 

@@ -6,7 +6,7 @@ pub struct Consensus;
 impl Consensus {
     pub fn validate_block(
         header: &BlockHeader,
-        txs: &[TxCandidate],
+        _txs: &[TxCandidate],
         proof: &StationarityProof,
         prev_state: &ChainState,
         current_state: &ChainState,

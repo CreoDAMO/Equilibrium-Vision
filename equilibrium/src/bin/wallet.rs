@@ -6,7 +6,6 @@
 ///   wallet balance <keystore> <ledger>   — print EQU balance
 ///   wallet send <keystore> <to> <amount> <fee> <nonce> — build & print a signed tx (JSON)
 ///   wallet verify <tx-json>              — verify a signed tx JSON from stdin or file
-
 use equilibrium_core::wallet::{
     Wallet, Ledger, SignedTx, address_from_hex, address_to_hex,
 };
@@ -70,7 +69,7 @@ fn usage() {
 
 fn require_args(args: &[String], n: usize, usage_hint: &str) {
     if args.len() < n {
-        eprintln!("Usage: {}", usage_hint);
+        eprintln!("Usage: {usage_hint}");
         process::exit(1);
     }
 }
@@ -79,7 +78,7 @@ fn cmd_new() {
     let w = Wallet::generate();
     let path = Path::new("wallet.json");
     if let Err(e) = w.save(path) {
-        eprintln!("Failed to save keystore: {}", e);
+        eprintln!("Failed to save keystore: {e}");
         process::exit(1);
     }
     println!("New wallet generated.");
@@ -104,35 +103,35 @@ fn cmd_send(keystore: &str, to_hex: &str, amount_s: &str, fee_s: &str, nonce_s: 
     let w = load_wallet(keystore);
 
     let to = address_from_hex(to_hex).unwrap_or_else(|_| {
-        eprintln!("Invalid recipient address: {}", to_hex);
+        eprintln!("Invalid recipient address: {to_hex}");
         process::exit(1);
     });
     let amount: u64 = amount_s.parse().unwrap_or_else(|_| {
-        eprintln!("Invalid amount: {}", amount_s);
+        eprintln!("Invalid amount: {amount_s}");
         process::exit(1);
     });
     let fee: u64 = fee_s.parse().unwrap_or_else(|_| {
-        eprintln!("Invalid fee: {}", fee_s);
+        eprintln!("Invalid fee: {fee_s}");
         process::exit(1);
     });
     let nonce: u64 = nonce_s.parse().unwrap_or_else(|_| {
-        eprintln!("Invalid nonce: {}", nonce_s);
+        eprintln!("Invalid nonce: {nonce_s}");
         process::exit(1);
     });
 
     let tx = w.sign_tx(to, amount, fee, nonce);
     let json = serde_json::to_string_pretty(&tx).unwrap();
-    println!("{}", json);
+    println!("{json}");
     eprintln!("Tx hash: {}", hex::encode(tx.hash()));
 }
 
 fn cmd_verify(tx_path: &str) {
     let raw = fs::read_to_string(tx_path).unwrap_or_else(|e| {
-        eprintln!("Cannot read {}: {}", tx_path, e);
+        eprintln!("Cannot read {tx_path}: {e}");
         process::exit(1);
     });
     let tx: SignedTx = serde_json::from_str(&raw).unwrap_or_else(|e| {
-        eprintln!("Invalid transaction JSON: {}", e);
+        eprintln!("Invalid transaction JSON: {e}");
         process::exit(1);
     });
     match tx.verify() {
@@ -146,7 +145,7 @@ fn cmd_verify(tx_path: &str) {
             println!("  Nonce  : {}", tx.nonce);
         }
         Err(e) => {
-            eprintln!("Signature INVALID: {}", e);
+            eprintln!("Signature INVALID: {e}");
             process::exit(1);
         }
     }
@@ -154,18 +153,18 @@ fn cmd_verify(tx_path: &str) {
 
 fn load_wallet(path: &str) -> Wallet {
     Wallet::load(Path::new(path)).unwrap_or_else(|e| {
-        eprintln!("Failed to load keystore '{}': {}", path, e);
+        eprintln!("Failed to load keystore '{path}': {e}");
         process::exit(1);
     })
 }
 
 fn load_ledger(path: &str) -> Ledger {
     let raw = fs::read_to_string(path).unwrap_or_else(|e| {
-        eprintln!("Cannot read ledger '{}': {}", path, e);
+        eprintln!("Cannot read ledger '{path}': {e}");
         process::exit(1);
     });
     serde_json::from_str(&raw).unwrap_or_else(|e| {
-        eprintln!("Invalid ledger JSON: {}", e);
+        eprintln!("Invalid ledger JSON: {e}");
         process::exit(1);
     })
 }

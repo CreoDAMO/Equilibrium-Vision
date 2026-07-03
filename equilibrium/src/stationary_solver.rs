@@ -23,11 +23,11 @@ impl StationarySolver {
         // 1. Hash constraint
         let mut hasher = Sha256::new();
         hasher.update(header.prev_hash);
-        hasher.update(&header.merkle_root);
+        hasher.update(header.merkle_root);
         hasher.update(header.timestamp.to_le_bytes());
         hasher.update(header.nonce.to_le_bytes());
         for tx in txs {
-            hasher.update(&tx.hash);
+            hasher.update(tx.hash);
         }
         let hash = hasher.finalize();
         let hash_val = u64::from_le_bytes(hash[0..8].try_into().unwrap());
@@ -114,11 +114,11 @@ impl StationarySolver {
             let hash_val = {
                 let mut hasher = Sha256::new();
                 hasher.update(header.prev_hash);
-                hasher.update(&header.merkle_root);
+                hasher.update(header.merkle_root);
                 hasher.update(header.timestamp.to_le_bytes());
                 hasher.update(header.nonce.to_le_bytes());
                 for tx in &txs {
-                    hasher.update(&tx.hash);
+                    hasher.update(tx.hash);
                 }
                 u64::from_le_bytes(hasher.finalize()[0..8].try_into().unwrap()) as f64
             };

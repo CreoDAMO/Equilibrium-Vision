@@ -100,7 +100,7 @@ enum Response {
 
 fn hex_to_bytes32(s: &str) -> [u8; 32] {
     let clean = s.trim_start_matches("0x");
-    let padded = format!("{:0>64}", clean);
+    let padded = format!("{clean:0>64}");
     let mut out = [0u8; 32];
     for i in 0..32 {
         out[i] = u8::from_str_radix(&padded[i * 2..i * 2 + 2], 16).unwrap_or(0);
