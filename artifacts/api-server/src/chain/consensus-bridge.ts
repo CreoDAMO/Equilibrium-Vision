@@ -3,7 +3,7 @@ import { createInterface } from "readline";
 import path from "path";
 import { fileURLToPath } from "url";
 import { logger } from "../lib/logger.js";
-import { generateZkProof, verifyZkProof, type ZkProof } from "./zkproof.js";
+import { generateZkProof, verifyZkProof, fpEncode, encodeBlockHash, type ZkProof } from "./zkproof.js";
 
 // ── Rust consensus-api sidecar bridge ────────────────────────────────────────
 //
@@ -135,13 +135,17 @@ class ConsensusBridge {
       const res = await this.sendRaw({
         method: "prove", residual, threshold, blockHash, height,
       }) as Record<string, unknown>;
+      // Reconstruct public inputs deterministically from request args using the
+      // same encoding as zkproof.ts — the Rust sidecar only returns
+      // { ok, proof, vkHash, circuitId, provedAt } and does not echo them back.
+      const { blockHashLow, blockHashHigh } = encodeBlockHash(blockHash);
       return {
         proof:        res["proof"] as ZkProof["proof"],
         publicInputs: {
-          residual:      String(res["residual"] ?? ""),
-          threshold:     String(res["threshold"] ?? ""),
-          blockHashLow:  String(res["blockHashLow"] ?? ""),
-          blockHashHigh: String(res["blockHashHigh"] ?? ""),
+          residual:  fpEncode(residual),
+          threshold: fpEncode(threshold),
+          blockHashLow,
+          blockHashHigh,
         },
         vkHash:    String(res["vkHash"] ?? ""),
         valid:     Boolean(res["valid"]),
@@ -160,12 +164,20 @@ class ConsensusBridge {
       return verifyZkProof(zkp, threshold);
     }
     try {
+      // Reconstruct the 32-hex-char block hash prefix that was bound at prove time.
+      // encodeBlockHash stores blockHash.slice(0, 32) as blockHashLow (≤128 bits,
+      // so blockHashHigh is always 0).  Reversing: low → 32 hex chars, pad to 64.
+      const blockHashPrefix = BigInt(zkp.publicInputs.blockHashLow)
+        .toString(16)
+        .padStart(32, "0");
+      const blockHash = blockHashPrefix + "0".repeat(32);
+
       const res = await this.sendRaw({
         method: "verify",
         proof: zkp.proof,
         residual: Number(BigInt(zkp.publicInputs.residual)) / 1e18,
         threshold,
-        blockHash: "0000000000000000000000000000000000000000000000000000000000000000",
+        blockHash,
       }) as Record<string, unknown>;
       return Boolean(res["valid"]);
     } catch {

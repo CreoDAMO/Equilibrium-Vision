@@ -123,9 +123,22 @@ const DEFAULT_THRESHOLD = 1e-7;
 
 // ── Fixed-point encoding ──────────────────────────────────────────────────────
 
-function fpEncode(val: number): string {
+/** Encode a floating-point value as a BN254 scalar field element (val × 10^18 mod Fr). */
+export function fpEncode(val: number): string {
   // Encode as residual × 10^18 in the BN254 scalar field
   return (BigInt(Math.floor(val * 1e18)) % Fr_MOD).toString(10);
+}
+
+/**
+ * Encode a block hash into the two BN254 public inputs expected by the stationarity circuit.
+ * Takes the first 128 bits of the hash (32 hex chars) and splits into low/high 128-bit halves.
+ * The hash is at most 128 bits wide so blockHashHigh is always 0.
+ */
+export function encodeBlockHash(blockHash: string): { blockHashLow: string; blockHashHigh: string } {
+  const hashInt       = BigInt("0x" + blockHash.slice(0, 32));
+  const blockHashLow  = (hashInt & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFn).toString(10);
+  const blockHashHigh = (hashInt >> 128n).toString(10);
+  return { blockHashLow, blockHashHigh };
 }
 
 // ── Proof generation (TS fallback prover) ────────────────────────────────────
