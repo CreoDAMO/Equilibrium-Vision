@@ -41,12 +41,12 @@ impl StationarySolver {
         let structural_grad = 2.0 * ((hash_val as f64) - difficulty / phi);
 
         // 3. Chain continuity
-        let chain_violation = if state.cumulative_work > 0 { 0.0 } else { 1.0 };
-        let chain_grad = 0.0;
+        let chain_violation: f64 = if state.cumulative_work > 0 { 0.0 } else { 1.0 };
+        let chain_grad: f64 = 0.0;
 
         // 4. Network pressure (mempool stress)
-        let mempool_violation = state.mempool_pressure;
-        let mempool_grad = 0.0;
+        let mempool_violation: f64 = state.mempool_pressure;
+        let mempool_grad: f64 = 0.0;
 
         // 5. Transaction fee cross-term
         let total_fees: u64 = txs.iter().map(|tx| tx.fee).sum();

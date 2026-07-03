@@ -6,7 +6,9 @@
     "outDir": "dist",
     "rootDir": "src",
     "lib": ["es2022", "dom"],
-    "types": ["node"]
+    "types": ["node"],
+    "module": "node16",
+    "moduleResolution": "node16"
   },
   "include": ["src"],
   "references": [

@@ -28,10 +28,12 @@ impl Consensus {
     }
 
     pub fn choose_fork(blocks: &[(BlockHeader, f64)]) -> &BlockHeader {
-        blocks
+        let idx = blocks
             .iter()
-            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-            .unwrap()
-            .0
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.1.partial_cmp(&b.1).unwrap())
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        &blocks[idx].0
     }
 }

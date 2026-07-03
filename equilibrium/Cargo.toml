@@ -2,6 +2,7 @@
 name = "equilibrium-core"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.79"
 
 [[bin]]
 name = "testnet-node"
@@ -26,3 +27,10 @@ libp2p = { version = "0.53", features = ["full"] }
 tokio = { version = "1.0", features = ["full"] }
 ark-std = "0.4"
 ark-snark = "0.4"
+ark-ff = "0.4"
+ark-ec = "0.4"
+ark-serialize = "0.4"
+ark-relations = "0.4"
+ark-r1cs-std = "0.4"
+ark-groth16 = "0.4"
+ark-bn254 = "0.4"

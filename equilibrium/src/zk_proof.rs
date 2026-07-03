@@ -1,60 +1,158 @@
 use sha2::{Sha256, Digest};
-use rand::Rng;
+use serde::{Serialize, Deserialize};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use crate::chain_state::{BlockHeader, TxCandidate, ChainState};
 
-// ── Groth16 Proof on BN254 (alt_bn128) ───────────────────────────────────────
+// ── Groth16 on BN254 (ark-groth16 + ark-bn254) ───────────────────────────────
 //
-// The Stationarity Circuit proves:
-//   ∃ witness (∇L_0, ∇L_1, …, ∇L_k) such that:
-//     ‖∇L_k‖ < threshold          (residual satisfies termination)
-//     L(x_k) = ∑ w_i·f_i(x_k)    (Lagrangian evaluation)
+// Circuit: proves ∃ difference > 0 such that residual_fp + difference = threshold_fp
+// and difference fits in 64 bits.
 //
-// Public inputs: [residual_fp, threshold_fp, block_hash_lo, block_hash_hi]
-//   where _fp denotes a fixed-point BN254 scalar field element (×10^18)
+// Public inputs:  [residual_fp, threshold_fp, block_hash_lo, block_hash_hi]
+// Private witness: difference = threshold_fp - residual_fp
 //
-// Proof elements:  π_A ∈ G1,  π_B ∈ G2,  π_C ∈ G1
-//
-// Verification (simplified Groth16 Miller-loop pairing check):
-//   e(π_A, π_B) = e(α, β) · ∏ e(pub_in[i]·IC[i], γ) · e(π_C, δ)
+// ⚠ TESTNET NOTE: The proving key is generated from a fixed seed (not a ceremony).
+// This is suitable for testnet but must be replaced with a MPC ceremony for mainnet.
 
-/// A BN254 G1 point (affine, uncompressed)
-#[derive(Debug, Clone)]
+use ark_bn254::{Bn254, Fr};
+use ark_groth16::{Groth16, ProvingKey, PreparedVerifyingKey, prepare_verifying_key};
+use ark_r1cs_std::prelude::*;
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
+use ark_snark::SNARK;
+use std::sync::OnceLock;
+
+// ── Circuit definition ────────────────────────────────────────────────────────
+
+/// R1CS circuit proving residual_fp < threshold_fp.
+#[derive(Clone)]
+pub struct StationarityCircuit {
+    // Public inputs
+    pub residual_fp: u64,   // residual × 10^18 as fixed-point integer
+    pub threshold_fp: u64,  // threshold × 10^18 as fixed-point integer
+    pub block_hash_lo: u64, // block_hash bytes [0..8]
+    pub block_hash_hi: u64, // block_hash bytes [8..16]
+    // Private witness
+    pub difference: u64,    // threshold_fp − residual_fp  (must be > 0)
+}
+
+impl ConstraintSynthesizer<Fr> for StationarityCircuit {
+    fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
+        use ark_r1cs_std::fields::fp::FpVar;
+
+        // Allocate public inputs ─────────────────────────────────────────────
+        let residual_var = FpVar::<Fr>::new_input(
+            ark_relations::ns!(cs, "residual"),
+            || Ok(Fr::from(self.residual_fp)),
+        )?;
+        let threshold_var = FpVar::<Fr>::new_input(
+            ark_relations::ns!(cs, "threshold"),
+            || Ok(Fr::from(self.threshold_fp)),
+        )?;
+        // Block hash public inputs bind the proof to this specific block.
+        let _hash_lo = FpVar::<Fr>::new_input(
+            ark_relations::ns!(cs, "hash_lo"),
+            || Ok(Fr::from(self.block_hash_lo)),
+        )?;
+        let _hash_hi = FpVar::<Fr>::new_input(
+            ark_relations::ns!(cs, "hash_hi"),
+            || Ok(Fr::from(self.block_hash_hi)),
+        )?;
+
+        // Allocate private witness ───────────────────────────────────────────
+        let diff_var = FpVar::<Fr>::new_witness(
+            ark_relations::ns!(cs, "diff"),
+            || Ok(Fr::from(self.difference)),
+        )?;
+
+        // Constraint 1: residual + diff == threshold
+        let expected = &residual_var + &diff_var;
+        expected.enforce_equal(&threshold_var)?;
+
+        // Constraint 2: diff ≠ 0  (strict inequality: residual < threshold)
+        diff_var.enforce_not_equal(&FpVar::zero())?;
+
+        // Constraint 3: diff fits in 64 bits (range proof)
+        // Decompose diff into 254 bits; enforce bits [64..254] are zero.
+        let diff_bits = diff_var.to_bits_le()?;
+        for bit in diff_bits.iter().skip(64) {
+            bit.enforce_equal(&Boolean::FALSE)?;
+        }
+
+        Ok(())
+    }
+}
+
+// ── Proving key cache (generated once per process) ───────────────────────────
+
+struct Groth16Keys {
+    pk: ProvingKey<Bn254>,
+    pvk: PreparedVerifyingKey<Bn254>,
+}
+
+// SAFETY: ark-bn254 types are purely data (no raw pointers), so Send + Sync hold.
+unsafe impl Send for Groth16Keys {}
+unsafe impl Sync for Groth16Keys {}
+
+static KEYS: OnceLock<Groth16Keys> = OnceLock::new();
+
+/// Returns the cached proving/verifying keys.
+/// On first call, generates a test CRS from a fixed seed (~100 ms on first run).
+///
+/// ⚠ TESTNET ONLY — replace with a proper MPC ceremony output before mainnet.
+fn keys() -> &'static Groth16Keys {
+    KEYS.get_or_init(|| {
+        let mut rng = StdRng::seed_from_u64(0xCAFE_BABE_DEAD_BEEF);
+        // Use a satisfiable witness for setup
+        let circuit = StationarityCircuit {
+            residual_fp:  5_000_000_000_000_000,  // 0.005
+            threshold_fp: 10_000_000_000_000_000, // 0.01
+            block_hash_lo: 0,
+            block_hash_hi: 0,
+            difference:   5_000_000_000_000_000,
+        };
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit, &mut rng)
+            .expect("Groth16 setup failed");
+        let pvk = prepare_verifying_key(&vk);
+        Groth16Keys { pk, pvk }
+    })
+}
+
+// ── Public proof types (wire format) ─────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct G1Point {
     pub x: [u8; 32],
     pub y: [u8; 32],
 }
 
-/// A BN254 G2 point (affine, uncompressed, Fp2 coords)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct G2Point {
     pub x: [[u8; 32]; 2],
     pub y: [[u8; 32]; 2],
 }
 
-/// Groth16 proof elements
-#[derive(Debug, Clone)]
-pub struct Groth16Proof {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Groth16ProofBytes {
     pub pi_a: G1Point,
     pub pi_b: G2Point,
     pub pi_c: G1Point,
+    /// Raw canonical serialization for verification
+    pub raw: Vec<u8>,
 }
 
-/// Public inputs for the stationarity circuit
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StationarityPublicInputs {
-    /// residual × 10^18 as 32-byte big-endian BN254 scalar field element
-    pub residual_fp: [u8; 32],
-    /// threshold × 10^18 as 32-byte big-endian BN254 scalar field element
+    pub residual_fp:  [u8; 32],
     pub threshold_fp: [u8; 32],
-    /// block_hash bytes [0..16] as field element
     pub block_hash_lo: [u8; 32],
-    /// block_hash bytes [16..32] as field element
     pub block_hash_hi: [u8; 32],
 }
 
-/// Full ZK proof package carried inside each block header
+/// Full ZK proof package carried inside each block header.
 pub struct StationarityProof {
-    pub proof: Groth16Proof,
+    pub proof: Groth16ProofBytes,
     pub public_inputs: StationarityPublicInputs,
     pub vk_hash: [u8; 32],
     pub valid: bool,
@@ -64,132 +162,201 @@ pub struct StationarityProof {
     pub revealed_txs: Vec<TxCandidate>,
 }
 
-// ── Deterministic point derivation (substitutes for actual proving key) ───────
+// ── Encoding helpers ──────────────────────────────────────────────────────────
 
-fn g1_from_seed(seed: &[u8]) -> G1Point {
-    let mut hx = Sha256::new(); hx.update(seed); hx.update(b":x");
-    let mut hy = Sha256::new(); hy.update(seed); hy.update(b":y");
-    G1Point { x: hx.finalize().into(), y: hy.finalize().into() }
-}
-
-fn g2_from_seed(seed: &[u8]) -> G2Point {
-    let mut hx0 = Sha256::new(); hx0.update(seed); hx0.update(b":x0");
-    let mut hx1 = Sha256::new(); hx1.update(seed); hx1.update(b":x1");
-    let mut hy0 = Sha256::new(); hy0.update(seed); hy0.update(b":y0");
-    let mut hy1 = Sha256::new(); hy1.update(seed); hy1.update(b":y1");
-    G2Point {
-        x: [hx0.finalize().into(), hx1.finalize().into()],
-        y: [hy0.finalize().into(), hy1.finalize().into()],
-    }
-}
-
-fn canonical_vk_hash() -> [u8; 32] {
-    let mut h = Sha256::new();
-    for label in &[b"alpha", b"beta", b"gamma", b"delta"] {
-        h.update(b"equilibrium:vk:");
-        h.update(*label);
-    }
-    h.finalize().into()
-}
-
-fn fp_encode(val: f64) -> [u8; 32] {
-    let fixed: u128 = (val * 1e18) as u128;
+fn u64_to_fr_bytes(v: u64) -> [u8; 32] {
     let mut out = [0u8; 32];
-    out[16..].copy_from_slice(&fixed.to_be_bytes());
+    out[24..].copy_from_slice(&v.to_be_bytes());
     out
 }
 
-// ── Proof generation ──────────────────────────────────────────────────────────
+fn current_vk_hash() -> [u8; 32] {
+    let mut raw = Vec::new();
+    keys().pvk.vk.alpha_g1.serialize_compressed(&mut raw).unwrap_or(());
+    let mut h = Sha256::new();
+    h.update(&raw);
+    h.update(b"equilibrium:stationarity-v2-groth16-bn254");
+    h.finalize().into()
+}
+
+/// Returns the expected VK hash for the current (test) proving key.
+pub fn expected_vk_hash() -> [u8; 32] {
+    current_vk_hash()
+}
+
+fn proof_to_wire(proof: &ark_groth16::Proof<Bn254>) -> Groth16ProofBytes {
+    // Serialize π_A (G1, compressed 32 bytes)
+    let mut a_buf = Vec::new();
+    proof.a.serialize_compressed(&mut a_buf).unwrap_or(());
+    let mut pi_a = G1Point { x: [0u8; 32], y: [0u8; 32] };
+    if a_buf.len() >= 32 { pi_a.x.copy_from_slice(&a_buf[..32]); }
+    if a_buf.len() >= 64 { pi_a.y.copy_from_slice(&a_buf[32..64]); }
+
+    // Serialize π_B (G2, compressed 64 bytes)
+    let mut b_buf = Vec::new();
+    proof.b.serialize_compressed(&mut b_buf).unwrap_or(());
+    let mut pi_b = G2Point { x: [[0u8; 32]; 2], y: [[0u8; 32]; 2] };
+    if b_buf.len() >= 128 {
+        pi_b.x[0].copy_from_slice(&b_buf[0..32]);
+        pi_b.x[1].copy_from_slice(&b_buf[32..64]);
+        pi_b.y[0].copy_from_slice(&b_buf[64..96]);
+        pi_b.y[1].copy_from_slice(&b_buf[96..128]);
+    }
+
+    // Serialize π_C (G1, compressed 32 bytes)
+    let mut c_buf = Vec::new();
+    proof.c.serialize_compressed(&mut c_buf).unwrap_or(());
+    let mut pi_c = G1Point { x: [0u8; 32], y: [0u8; 32] };
+    if c_buf.len() >= 32 { pi_c.x.copy_from_slice(&c_buf[..32]); }
+    if c_buf.len() >= 64 { pi_c.y.copy_from_slice(&c_buf[32..64]); }
+
+    // Full raw serialization for compact re-verification
+    let mut raw = Vec::new();
+    proof.serialize_compressed(&mut raw).unwrap_or(());
+
+    Groth16ProofBytes { pi_a, pi_b, pi_c, raw }
+}
+
+fn do_prove(
+    residual_fp_val:  u64,
+    threshold_fp_val: u64,
+    hash_lo: u64,
+    hash_hi: u64,
+    difference: u64,
+) -> Groth16ProofBytes {
+    let circuit = StationarityCircuit {
+        residual_fp: residual_fp_val,
+        threshold_fp: threshold_fp_val,
+        block_hash_lo: hash_lo,
+        block_hash_hi: hash_hi,
+        difference,
+    };
+    let mut rng = StdRng::from_entropy();
+    let ark_proof = Groth16::<Bn254>::prove(&keys().pk, circuit, &mut rng)
+        .expect("Groth16 proving failed");
+    proof_to_wire(&ark_proof)
+}
+
+// ── Proof generation and verification ────────────────────────────────────────
 
 impl StationarityProof {
+    /// Generate a real Groth16 proof using arkworks + BN254.
     pub fn prove(
         header: &BlockHeader,
         txs: &[TxCandidate],
         _state: &ChainState,
         target_residual: f64,
     ) -> Self {
-        let mut rng = rand::thread_rng();
-        let nonce_blinding: u64 = rng.gen();
+        // Fixed-point encode residual and threshold
+        let residual_fp_val  = (header.residual * 1e18) as u64;
+        let threshold_fp_val = (target_residual * 1e18) as u64;
+        let satisfies = header.residual < target_residual;
 
-        // Legacy sigma-protocol challenge/response
+        // Block hash binding (lo/hi from prev_hash)
+        let hash_lo = u64::from_be_bytes(header.prev_hash[..8].try_into().unwrap_or([0u8; 8]));
+        let hash_hi = u64::from_be_bytes(header.prev_hash[8..16].try_into().unwrap_or([0u8; 8]));
+
+        // Compute witness: difference = threshold − residual (clamped to 1 if equal)
+        let difference = if satisfies {
+            threshold_fp_val.saturating_sub(residual_fp_val).max(1)
+        } else {
+            // Unsatisfiable — produce a dummy proof; verifier will reject it
+            5_000_000_000_000_000
+        };
+        let (actual_r, actual_t, actual_lo, actual_hi, actual_diff) = if satisfies {
+            (residual_fp_val, threshold_fp_val, hash_lo, hash_hi, difference)
+        } else {
+            (5_000_000_000_000_000, 10_000_000_000_000_000, 0, 0, 5_000_000_000_000_000)
+        };
+
+        let proof_bytes = do_prove(actual_r, actual_t, actual_lo, actual_hi, actual_diff);
+        let vk_hash = current_vk_hash();
+
+        let public_inputs = StationarityPublicInputs {
+            residual_fp:  u64_to_fr_bytes(residual_fp_val),
+            threshold_fp: u64_to_fr_bytes(threshold_fp_val),
+            block_hash_lo: u64_to_fr_bytes(hash_lo),
+            block_hash_hi: u64_to_fr_bytes(hash_hi),
+        };
+
+        // Legacy sigma fields
         let mut sigma = Sha256::new();
         sigma.update(header.prev_hash);
         sigma.update(&header.merkle_root);
         sigma.update(header.timestamp.to_le_bytes());
-        sigma.update(nonce_blinding.to_le_bytes());
-        for tx in txs { sigma.update(&tx.hash); }
         let challenge: [u8; 32] = sigma.finalize().into();
-        let response = header.nonce ^ nonce_blinding;
-
-        // Block-specific proof seed (replaces actual proving key computation)
-        let mut seed_hasher = Sha256::new();
-        seed_hasher.update(header.prev_hash);
-        seed_hasher.update(&header.merkle_root);
-        seed_hasher.update(header.timestamp.to_le_bytes());
-        let seed: [u8; 32] = seed_hasher.finalize().into();
-
-        let proof = Groth16Proof {
-            pi_a: g1_from_seed(&[&seed, b":pi_a"].concat()),
-            pi_b: g2_from_seed(&[&seed, b":pi_b"].concat()),
-            pi_c: g1_from_seed(&[&seed, b":pi_c"].concat()),
-        };
-
-        // Encode public inputs as BN254 scalar field elements
-        let block_hash_lo = {
-            let mut out = [0u8; 32];
-            if header.prev_hash.len() >= 16 {
-                out[16..].copy_from_slice(&header.prev_hash[..16]);
-            }
-            out
-        };
-        let block_hash_hi = {
-            let mut out = [0u8; 32];
-            if header.prev_hash.len() >= 32 {
-                out[16..].copy_from_slice(&header.prev_hash[16..32]);
-            }
-            out
-        };
-
-        let public_inputs = StationarityPublicInputs {
-            residual_fp:  fp_encode(header.residual),
-            threshold_fp: fp_encode(target_residual),
-            block_hash_lo,
-            block_hash_hi,
-        };
 
         Self {
-            proof,
+            proof: proof_bytes,
             public_inputs,
-            vk_hash: canonical_vk_hash(),
-            valid: header.residual < target_residual,
+            vk_hash,
+            valid: satisfies,
             challenge,
-            response,
+            response: header.nonce,
             revealed_txs: txs.to_vec(),
         }
     }
 
-    /// Groth16 verification:
-    /// In production — perform the full BN254 Miller-loop pairing check via arkworks.
-    /// Here — check VK hash + public input consistency + constraint satisfaction.
+    /// Verify a real Groth16 proof using the prepared verification key.
     pub fn verify(
-        &self,
+        proof: &Self,
         header: &BlockHeader,
         _state: &ChainState,
         target_residual: f64,
     ) -> bool {
         // 1. VK hash must match the canonical circuit VK
-        if self.vk_hash != canonical_vk_hash() { return false; }
+        if proof.vk_hash != current_vk_hash() { return false; }
 
-        // 2. Threshold field element must match
-        if self.public_inputs.threshold_fp != fp_encode(target_residual) { return false; }
+        // 2. Deserialize the proof bytes
+        let ark_proof = match ark_groth16::Proof::<Bn254>::deserialize_compressed(
+            proof.proof.raw.as_slice()
+        ) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
 
-        // 3. Residual must satisfy the circuit constraint ‖∇L_k‖ < threshold
-        let residual_fp = u128::from_be_bytes(
-            self.public_inputs.residual_fp[16..]
-                .try_into()
-                .unwrap_or([0u8; 16])
-        ) as f64 / 1e18;
+        // 3. Reconstruct public inputs
+        let residual_fp_val  = (header.residual * 1e18) as u64;
+        let threshold_fp_val = (target_residual * 1e18) as u64;
+        let hash_lo = u64::from_be_bytes(header.prev_hash[..8].try_into().unwrap_or([0u8; 8]));
+        let hash_hi = u64::from_be_bytes(header.prev_hash[8..16].try_into().unwrap_or([0u8; 8]));
 
-        residual_fp < target_residual
+        let public_inputs = vec![
+            Fr::from(residual_fp_val),
+            Fr::from(threshold_fp_val),
+            Fr::from(hash_lo),
+            Fr::from(hash_hi),
+        ];
+
+        // 4. Run the pairing-based Groth16 verifier
+        matches!(
+            Groth16::<Bn254>::verify_with_processed_vk(&keys().pvk, &public_inputs, &ark_proof),
+            Ok(true)
+        )
     }
+}
+
+/// Verify a raw proof given just the proof bytes and block context.
+/// Used by the consensus-api sidecar to avoid reconstructing the full proof struct.
+pub fn verify_raw_proof(
+    proof_bytes: &Groth16ProofBytes,
+    header: &BlockHeader,
+    target_residual: f64,
+) -> bool {
+    let full = StationarityProof {
+        proof: proof_bytes.clone(),
+        public_inputs: StationarityPublicInputs {
+            residual_fp:  [0u8; 32],
+            threshold_fp: [0u8; 32],
+            block_hash_lo: [0u8; 32],
+            block_hash_hi: [0u8; 32],
+        },
+        vk_hash: current_vk_hash(),
+        valid: false,
+        challenge: [0u8; 32],
+        response: 0,
+        revealed_txs: vec![],
+    };
+    let dummy_state = ChainState::default();
+    StationarityProof::verify(&full, header, &dummy_state, target_residual)
 }

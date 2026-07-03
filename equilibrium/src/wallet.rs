@@ -39,6 +39,22 @@ pub fn address_from_hex(s: &str) -> Result<Address, WalletError> {
 
 // ── Transaction ───────────────────────────────────────────────────────────────
 
+// ── Serde helpers for byte arrays > 32 elements ───────────────────────────────
+// serde's built-in array support covers up to [T; 32]; we need [u8; 64].
+
+mod bytes64 {
+    use serde::{Deserialize, Deserializer, Serializer, ser::SerializeSeq};
+    pub fn serialize<S: Serializer>(v: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        let mut seq = s.serialize_seq(Some(64))?;
+        for b in v.iter() { seq.serialize_element(b)?; }
+        seq.end()
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        let v: Vec<u8> = Vec::deserialize(d)?;
+        v.try_into().map_err(|_| serde::de::Error::custom("expected 64 bytes"))
+    }
+}
+
 /// A fully-signed transaction ready for inclusion in a block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedTx {
@@ -49,6 +65,7 @@ pub struct SignedTx {
     /// Per-sender sequence number — prevents replay.
     pub nonce:     u64,
     /// Ed25519 signature over the canonical tx body bytes.
+    #[serde(with = "bytes64")]
     pub signature: [u8; 64],
     /// Sender's Ed25519 verifying key (32 bytes).
     pub public_key: [u8; 32],
