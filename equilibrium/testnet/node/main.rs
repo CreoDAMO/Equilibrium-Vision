@@ -42,7 +42,10 @@ async fn main() {
         println!("Coinbase     : {} EQU → miner\n", reward);
 
         // ── Alice gets a grant from the miner ─────────────────────────────────
-        let miner_nonce = 0u64;
+        let miner_nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
         let fund_alice = miner.sign_tx(alice.address, 10_000_000, 1_000, miner_nonce);
         match ledger.apply_tx(&fund_alice) {
             Ok(()) => println!("Transfer OK  : miner → alice, 10_000_000 EQU"),
