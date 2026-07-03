@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (as of this update):** Core protocol, wallet, explorer, and API surface are functionally complete for testnet. The project currently has known type-check failures and a wallet-crypto regression — see [Known Issues](#known-issues) before you demo the wallet. See `TODO.md` for the full outstanding work list.
+> **Status (as of this update):** Core protocol, wallet, explorer, API surface, Postgres persistence, Android JNI bridge, and mobile block submission are all complete for testnet. The project currently has known type-check failures and a wallet-crypto regression — see [Known Issues](#known-issues) before you demo the wallet.
 
 ---
 
@@ -131,6 +131,7 @@ The node exposes a REST API documented in `lib/api-spec/openapi.yaml`.
 |--------|------|-------------|
 | GET | `/api/blocks` | Paginated block list |
 | GET | `/api/blocks/:hashOrHeight` | Block detail |
+| POST | `/api/blocks/submit` | Submit a solved PoS block from an external miner (Android, CLI, or peer node) — validates residual threshold, rejects stale work (409), broadcasts `new_block` over WebSocket, persists to Postgres |
 | GET | `/api/tx/:hash` | Transaction detail |
 | POST | `/api/tx/broadcast` | Submit a signed transaction (triggers Gossipsub propagation) |
 | GET | `/api/mempool` | Pending transaction pool |
@@ -415,11 +416,21 @@ The stack is small enough for a single low-cost VPS at testnet scale, and horizo
 - [x] **Android Gradle project** — full scaffold under `equilibrium/mobile/android/`: `settings.gradle.kts`, `build.gradle.kts`, `app/build.gradle.kts`, `AndroidManifest.xml` (foreground service, WorkManager constraints, JNI libs path), version catalog, and Gradle wrapper
 - [x] **iOS Swift Package** — `Package.swift` with `EquilibriumMiner` and stub `EquilibriumCoreStub` targets; `MiningCoordinator.swift` integrates the BackgroundTasks API (`requiresExternalPower`, `requiresNetworkConnectivity`) with auto-rescheduling
 - [x] **Stratum v1 mining pool** — TCP server in `artifacts/api-server/src/lib/stratum-server.ts` implementing `mining.subscribe`, `mining.authorize`, `mining.notify`, and `mining.submit`; starts automatically when the `STRATUM_PORT` environment variable is set
+- [x] **Android JNI bridge** — `equilibrium/src/jni_bridge.rs` with `Java_com_equilibrium_MiningWorker_solveBlock` entry point; Android-only `jni = "0.21"` Cargo dependency; `build-jni.sh` `cargo-ndk` cross-compile script targeting `armeabi-v7a`, `arm64-v8a`, and `x86_64`; `cargoNdkBuild` Gradle task wired into `app/build.gradle.kts`; `jniLibs/` stub directories committed with `.gitkeep`
+- [x] **Mobile block submission round trip** — `MiningWorker.kt` completes the full cycle: (1) `GET /api/chain/status` to fetch the live tip hash, difficulty, and mempool pressure; (2) Rust `solveBlock()` JNI call with those parameters; (3) `POST /api/blocks/submit` with the solved nonce, residual, and `prevHash` for stale-work detection. OkHttp handles timeouts, retry-on-5xx, and no-retry on 409/422. `MiningService.kt` passes `KEY_NODE_URL` and `KEY_MINER_ADDRESS` as typed `WorkerParameters` input data, with exponential backoff.
+- [x] **`POST /api/blocks/submit` node endpoint** — accepts external PoS solutions; validates residual < `1e-7` (HTTP 422 on miss), rejects stale `prevHash` (HTTP 409), pulls the live mempool, builds the full `BlockRecord`, credits the miner, calls `addBlock()` + `gossipBlock()`, broadcasts `new_block` and `mempool_update` over WebSocket, and fire-and-forget persists to Postgres
+
+### Infrastructure
+- [x] **Postgres persistence** — Drizzle ORM schema (`blocks`, `transactions`, `validators` tables with indexes) pushed to both local and Helium databases; `persistBlock` wired into the auto-miner loop and the external block submission endpoint; API server reads from Postgres on startup and falls back to in-memory genesis chain if the DB is empty
 
 ## Remaining Work
 
-- [ ] **Postgres persistence** — needs a `DATABASE_URL`; provision via direct download (it's open source), then run `pnpm run push` to migrate the schema
-- [ ] **Android JNI bridge** — needs `cargo ndk` to cross-compile the Rust core to `armeabi-v7a`/`arm64-v8a` (Gradle project scaffold and foreground service are already in place)
+All planned testnet features are complete. Outstanding hardening items before mainnet:
+
+- [ ] **Real ZK proof circuit** — replace the Groth16-shaped SHA-256 simulation in `chain/zkproof.ts` with an actual `arkworks`/`circom` circuit and verifier
+- [ ] **Wallet crypto regression** — `@noble/ed25519` v3 API migration in `artifacts/explorer/src/wallet/crypto.ts` (see Known Issues #1)
+- [ ] **Automated test suite** — no Rust or TypeScript tests exist; regressions ship silently
+- [ ] **`equilibrium/target/` gitignore** — ~850 MB of Rust build artifacts committed to the repo (see Known Issues #4)
 
 ---
 
