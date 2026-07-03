@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (as of this update):** Core protocol, wallet, explorer, API surface, Postgres persistence, Android JNI bridge, and mobile block submission are all complete for testnet. Two known issues remain before a production demo: the `/api/utxo/spend` handler has a `ReferenceError` (Known Issue #2), and there are no automated tests (Known Issue #5). See [Known Issues](#known-issues) for details.
+> **Status (as of this update):** All runtime bugs are resolved. Core protocol, wallet, explorer, API surface, Postgres persistence, Android JNI bridge, and mobile block submission are complete for testnet. The only outstanding item is an automated test suite (Known Issue #5). `pnpm run typecheck` passes clean across all packages.
 
 ---
 
@@ -102,13 +102,13 @@ docker run -p 8080:8080 equilibrium-node
 
 These were found by actually running `pnpm typecheck` and attempting a Rust build — fix before your next demo or deploy. Full detail and file/line references in `TODO.md`.
 
-| # | Issue | Severity | Where |
-|---|-------|----------|-------|
-| ~~1~~ | ~~`@noble/ed25519` was bumped to v3, but `wallet/crypto.ts` still calls the v2 API~~ | ~~**Breaks at runtime**~~ | **Resolved** — `wallet/crypto.ts` uses `randomSecretKey`, `etc.hexToBytes`, `getPublicKeyAsync`, `signAsync` throughout |
-| 2 | `cs` is referenced but never defined in the `/api/utxo/spend` handler | **Breaks at runtime** — `ReferenceError` on that route | `artifacts/api-server/src/routes/utxo.ts` |
-| 3 | `pnpm run build` currently fails typecheck (missing `dom` lib for `WebAssembly`, missing WebHID/WebUSB ambient types, `noImplicitReturns` violations, React Query `queryKey` generic mismatch) | Blocks CI / clean builds, not a runtime break | `api-server` + `explorer` tsconfigs |
-| ~~4~~ | ~~`equilibrium/target/` (Rust build artifacts, ~850MB) is committed to git~~ | ~~Repo bloat~~ | **Resolved** — `/equilibrium/target/` is gitignored |
-| 5 | No automated tests anywhere (Rust or TypeScript) | Regressions ship silently | — |
+| # | Issue | Severity | Status |
+|---|-------|----------|--------|
+| ~~1~~ | ~~`@noble/ed25519` v2 API calls in `wallet/crypto.ts`~~ | ~~Breaks at runtime~~ | **Resolved** — fully migrated to v3 (`randomSecretKey`, `etc.hexToBytes`, `getPublicKeyAsync`, `signAsync`) |
+| ~~2~~ | ~~`cs` referenced but never defined in `/api/utxo/spend`~~ | ~~Breaks at runtime~~ | **Resolved** — every UTXO handler correctly defines `const cs = chainState` |
+| ~~3~~ | ~~`pnpm run build` typecheck failures (WebAssembly dom lib, WebHID types, `noImplicitReturns`, React Query generic mismatch)~~ | ~~Blocks CI~~ | **Resolved** — `pnpm run typecheck` passes clean across all packages |
+| ~~4~~ | ~~`equilibrium/target/` Rust artifacts committed to git (~850 MB)~~ | ~~Repo bloat~~ | **Resolved** — `/equilibrium/target/` is gitignored |
+| 5 | No automated tests anywhere (Rust or TypeScript) | Regressions ship silently | Open |
 
 ---
 
