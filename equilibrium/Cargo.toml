@@ -34,3 +34,9 @@ ark-relations = "0.4"
 ark-r1cs-std = "0.4"
 ark-groth16 = "0.4"
 ark-bn254 = "0.4"
+
+# ── Android JNI bridge ────────────────────────────────────────────────────────
+# The `jni` crate is only pulled in when cross-compiling for Android via
+# cargo-ndk.  Host builds (consensus-api, testnet-node) remain unaffected.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21", default-features = false }
