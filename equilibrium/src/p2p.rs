@@ -1,6 +1,6 @@
 use libp2p::{
     gossipsub, identity, noise,
-    swarm::{Swarm, SwarmConfig},
+    swarm::{Config as SwarmConfig, Swarm},
     tcp, yamux,
     PeerId, Transport,
     core::upgrade::Version,

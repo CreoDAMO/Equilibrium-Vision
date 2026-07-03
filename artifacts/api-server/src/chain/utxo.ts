@@ -4,6 +4,37 @@
 // Transactions reference previous UTXOs as inputs and create new UTXOs as outputs.
 // This enables parallel validation: inputs from different tx can be validated concurrently.
 
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { createHash } from "crypto";
+
+function hexToBytes(hex: string): Uint8Array {
+  return new Uint8Array(Buffer.from(hex, "hex"));
+}
+
+/** Derive an address from a hex-encoded public key: SHA-256(pubKeyHex).slice(0, 40). */
+export function addressFromPubKey(pubKeyHex: string): string {
+  return createHash("sha256").update(pubKeyHex).digest("hex").slice(0, 40);
+}
+
+/**
+ * Canonical message each input's owner signs: binds the specific input being
+ * spent to the full set of outputs and fee, so a signature can't be replayed
+ * against a different spend of the same coin.
+ */
+export function utxoSigningMessage(
+  input: Pick<UTXOInput, "txHash" | "outputIndex">,
+  outputs: UTXOOutput[],
+  fee: number,
+): Uint8Array {
+  const payload = JSON.stringify({
+    txHash: input.txHash,
+    outputIndex: input.outputIndex,
+    outputs,
+    fee,
+  });
+  return new TextEncoder().encode(payload);
+}
+
 export interface UTXO {
   txHash: string;
   outputIndex: number;
@@ -105,7 +136,8 @@ export class UTXOSet {
    * Validate a UTXO transaction:
    *  - All inputs must exist and be unspent
    *  - Input total must equal output total + fee
-   *  - Each input's address must match the signing key (simplified: no sig check here)
+   *  - Each input must carry a valid ed25519 signature from the key that
+   *    owns the UTXO being spent (publicKey's derived address == utxo.address)
    */
   validateTransaction(tx: UTXOTransaction): string | null {
     let inputTotal = 0;
@@ -114,6 +146,31 @@ export class UTXOSet {
       const utxo = this.get(input.txHash, input.outputIndex);
       if (!utxo) return `UTXO ${input.txHash}:${input.outputIndex} not found`;
       if (utxo.spent) return `UTXO ${input.txHash}:${input.outputIndex} already spent`;
+
+      if (!input.signature || !input.publicKey) {
+        return `Input ${input.txHash}:${input.outputIndex} missing signature or publicKey`;
+      }
+
+      const derivedAddress = addressFromPubKey(input.publicKey);
+      if (derivedAddress !== utxo.address) {
+        return `Input ${input.txHash}:${input.outputIndex} publicKey does not match UTXO owner`;
+      }
+
+      let sigValid = false;
+      try {
+        const message = utxoSigningMessage(input, tx.outputs, tx.fee);
+        sigValid = ed25519.verify(
+          hexToBytes(input.signature),
+          message,
+          hexToBytes(input.publicKey),
+        );
+      } catch {
+        sigValid = false;
+      }
+      if (!sigValid) {
+        return `Input ${input.txHash}:${input.outputIndex} has an invalid signature`;
+      }
+
       inputTotal += utxo.amount;
     }
 
@@ -152,6 +209,47 @@ export class UTXOSet {
         spent: false,
       });
     }
+  }
+
+  /**
+   * Undo a previously-applied UTXO transaction (used for chain reorgs):
+   * un-spends the inputs and removes the outputs it created.
+   */
+  undoTransaction(tx: UTXOTransaction): void {
+    for (const input of tx.inputs) {
+      const k = this.key(input.txHash, input.outputIndex);
+      const utxo = this.utxos.get(k);
+      if (utxo && utxo.spent && utxo.spentByTxHash === tx.hash) {
+        utxo.spent = false;
+        utxo.spentByTxHash = undefined;
+      }
+    }
+    for (let i = 0; i < tx.outputs.length; i++) {
+      const k = this.key(tx.hash, i);
+      const utxo = this.utxos.get(k);
+      if (utxo) {
+        this.utxos.delete(k);
+        this.addressIndex.get(utxo.address)?.delete(k);
+      }
+    }
+  }
+
+  /**
+   * Remove a single UTXO by (txHash, outputIndex) — used for chain reorgs
+   * when a block is rolled back and the coinbase/output it minted must be
+   * un-created. No-op if the UTXO doesn't exist.
+   */
+  remove(txHash: string, outputIndex: number): void {
+    const k = this.key(txHash, outputIndex);
+    const utxo = this.utxos.get(k);
+    if (!utxo) return;
+    this.utxos.delete(k);
+    this.addressIndex.get(utxo.address)?.delete(k);
+  }
+
+  /** Convenience alias for removing a coinbase UTXO (always outputIndex 0). */
+  removeCoinbase(txHash: string): void {
+    this.remove(txHash, 0);
   }
 
   /**

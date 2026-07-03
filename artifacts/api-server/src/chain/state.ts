@@ -253,6 +253,90 @@ export class ChainState {
     this.distributeBlockReward(block);
   }
 
+  // ── Chain reorganization ─────────────────────────────────────────────────────
+  //
+  // Rolls the chain back to `targetHeight` (inclusive of that block, exclusive
+  // of everything above it), undoing UTXO effects and returning any non-coinbase
+  // transactions to the mempool so they can be re-included by the winning fork.
+  // Never rolls back a finalized block — the finality gadget's decision is final.
+  rollbackToHeight(targetHeight: number): BlockRecord[] {
+    if (targetHeight >= this.height) return [];
+    if (targetHeight < this.finalizedHeight) {
+      throw new Error(
+        `Cannot roll back to height ${targetHeight}: chain is finalized up to ${this.finalizedHeight}`,
+      );
+    }
+
+    const removed: BlockRecord[] = [];
+    while (this.height > targetHeight) {
+      const block = this.blocks.pop();
+      if (!block) break;
+      removed.push(block);
+
+      // Undo coinbase UTXO for this block's reward.
+      const coinbaseTxHash = hash256(`coinbase-${block.height}-${block.hash}`);
+      this.utxoSet.removeCoinbase(coinbaseTxHash);
+
+      for (const tx of block.transactions) {
+        // Undo the recipient-output UTXO created for this transfer.
+        this.utxoSet.remove(tx.hash, 0);
+
+        // Return the tx to the mempool as pending (unless it no longer applies).
+        this.txIndex.delete(tx.hash);
+        const pending: TxRecord = { ...tx, blockHash: null, blockHeight: null, status: "pending" };
+        this.mempool.add(pending);
+
+        for (const addr of [tx.from, tx.to]) {
+          this.addressTxs.get(addr)?.delete(tx.hash);
+        }
+      }
+
+      // Drop stats/finality bookkeeping tied to the removed block.
+      this.blockStats = this.blockStats.filter((s) => s.height !== block.height);
+      this.finalityRounds.delete(block.height);
+    }
+
+    return removed;
+  }
+
+  /**
+   * Attempt a chain reorganization to a competing set of blocks. Follows the
+   * Rust consensus's fork-choice rule (`choose_fork`): the chain with the
+   * lower cumulative residual (higher stationarity quality) wins. `newBlocks`
+   * must chain from a common ancestor already present in `this.blocks`
+   * (i.e. `newBlocks[0].prevHash` must equal the hash of the block at the
+   * fork point).
+   */
+  reorganize(newBlocks: BlockRecord[]): { switched: boolean; reason: string } {
+    if (newBlocks.length === 0) return { switched: false, reason: "no candidate blocks" };
+
+    const forkPointHash = newBlocks[0]!.prevHash;
+    const forkHeight = this.blocks.findIndex((b) => b.hash === forkPointHash);
+    if (forkHeight === -1) {
+      return { switched: false, reason: "fork point not found on current chain" };
+    }
+
+    const currentTail = this.blocks.slice(forkHeight + 1);
+    const currentResidual = currentTail.reduce((s, b) => s + b.residual, 0);
+    const candidateResidual = newBlocks.reduce((s, b) => s + b.residual, 0);
+
+    if (candidateResidual >= currentResidual) {
+      return { switched: false, reason: "candidate chain does not have lower cumulative residual" };
+    }
+
+    try {
+      this.rollbackToHeight(forkHeight);
+    } catch (err) {
+      return { switched: false, reason: (err as Error).message };
+    }
+
+    for (const block of newBlocks) {
+      this.addBlock(block);
+    }
+
+    return { switched: true, reason: `reorganized ${currentTail.length} block(s) for ${newBlocks.length} block(s) with lower residual` };
+  }
+
   // ── Finality gadget ──────────────────────────────────────────────────────────
 
   runFinalityRound(block: BlockRecord): void {

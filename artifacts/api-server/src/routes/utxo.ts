@@ -74,16 +74,30 @@ router.post("/utxo/build", (req, res) => {
 });
 
 // POST /api/utxo/spend — broadcast a UTXO transaction
-// Body: { inputs: [{txHash, outputIndex}], outputs: [{address, amount}], fee, signature, publicKey }
+// Body: { inputs: [{txHash, outputIndex, signature, publicKey}], outputs: [{address, amount}], fee }
+// Each input must carry its own `signature` (hex) and `publicKey` (hex) —
+// the signature is an ed25519 signature over utxoSigningMessage(input, outputs, fee)
+// produced by the key that owns that specific UTXO. See chain/utxo.ts.
 router.post("/utxo/spend", (req, res) => {
-  const { inputs, outputs, fee = 1000, signature, publicKey } = req.body ?? {};
+  const { inputs, outputs, fee = 1000 } = req.body ?? {};
   const cs = chainState;
   if (!inputs?.length || !outputs?.length) {
     return res.status(400).json({ error: "inputs and outputs are required" });
   }
+  for (const input of inputs) {
+    if (!input?.signature || !input?.publicKey) {
+      return res.status(400).json({
+        error: `Input ${input?.txHash}:${input?.outputIndex} is missing signature/publicKey`,
+      });
+    }
+  }
 
   const txHash = createHash("sha256")
-    .update(JSON.stringify({ inputs, outputs, fee }))
+    .update(JSON.stringify({
+      inputs: inputs.map((i: { txHash: string; outputIndex: number }) => ({ txHash: i.txHash, outputIndex: i.outputIndex })),
+      outputs,
+      fee,
+    }))
     .digest("hex");
 
   const tx = {
