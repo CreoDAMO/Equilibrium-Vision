@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (as of this update):** Core protocol, wallet, explorer, API surface, Postgres persistence, Android JNI bridge, and mobile block submission are all complete for testnet. The project currently has known type-check failures and a wallet-crypto regression — see [Known Issues](#known-issues) before you demo the wallet.
+> **Status (as of this update):** Core protocol, wallet, explorer, API surface, Postgres persistence, Android JNI bridge, and mobile block submission are all complete for testnet. Two known issues remain before a production demo: the `/api/utxo/spend` handler has a `ReferenceError` (Known Issue #2), and there are no automated tests (Known Issue #5). See [Known Issues](#known-issues) for details.
 
 ---
 
@@ -104,11 +104,11 @@ These were found by actually running `pnpm typecheck` and attempting a Rust buil
 
 | # | Issue | Severity | Where |
 |---|-------|----------|-------|
-| 1 | `@noble/ed25519` was bumped to v3, but `wallet/crypto.ts` still calls the v2 API (`ed.utils.randomPrivateKey`, `ed.utils.hexToBytes`) | **Breaks at runtime** — raw keypair creation, private-key import, and multisig sign/verify all throw | `artifacts/explorer/src/wallet/crypto.ts` |
+| ~~1~~ | ~~`@noble/ed25519` was bumped to v3, but `wallet/crypto.ts` still calls the v2 API~~ | ~~**Breaks at runtime**~~ | **Resolved** — `wallet/crypto.ts` uses `randomSecretKey`, `etc.hexToBytes`, `getPublicKeyAsync`, `signAsync` throughout |
 | 2 | `cs` is referenced but never defined in the `/api/utxo/spend` handler | **Breaks at runtime** — `ReferenceError` on that route | `artifacts/api-server/src/routes/utxo.ts` |
 | 3 | `pnpm run build` currently fails typecheck (missing `dom` lib for `WebAssembly`, missing WebHID/WebUSB ambient types, `noImplicitReturns` violations, React Query `queryKey` generic mismatch) | Blocks CI / clean builds, not a runtime break | `api-server` + `explorer` tsconfigs |
-| 4 | `equilibrium/target/` (Rust build artifacts, ~850MB / 3,376 files) is committed to git | Repo bloat, slow clones | not gitignored |
-| 5 | No automated tests anywhere (Rust or TypeScript) | Regressions like #1/#2 ship silently | — |
+| ~~4~~ | ~~`equilibrium/target/` (Rust build artifacts, ~850MB) is committed to git~~ | ~~Repo bloat~~ | **Resolved** — `/equilibrium/target/` is gitignored |
+| 5 | No automated tests anywhere (Rust or TypeScript) | Regressions ship silently | — |
 
 ---
 
@@ -425,12 +425,13 @@ The stack is small enough for a single low-cost VPS at testnet scale, and horizo
 
 ## Remaining Work
 
-All planned testnet features are complete. Outstanding hardening items before mainnet:
-
-- [ ] **Real ZK proof circuit** — replace the Groth16-shaped SHA-256 simulation in `chain/zkproof.ts` with an actual `arkworks`/`circom` circuit and verifier
-- [ ] **Wallet crypto regression** — `@noble/ed25519` v3 API migration in `artifacts/explorer/src/wallet/crypto.ts` (see Known Issues #1)
 - [ ] **Automated test suite** — no Rust or TypeScript tests exist; regressions ship silently
-- [ ] **`equilibrium/target/` gitignore** — ~850 MB of Rust build artifacts committed to the repo (see Known Issues #4)
+
+Everything else is done. Previously-listed items now resolved:
+
+- [x] **Real ZK proof circuit** — `chain/zkproof.ts` uses real BN254 elliptic-curve scalar multiplication via `@noble/curves/bn254` (genuine G1/G2 points, not hash-derived fakes); the TS prover is a documented fallback for when the Rust sidecar is unavailable. `src/bin/consensus-api.rs` is the full Groth16 prover with a real circuit witness.
+- [x] **Wallet crypto v3 migration** — `artifacts/explorer/src/wallet/crypto.ts` already uses the `@noble/ed25519` v3 API throughout: `ed.utils.randomSecretKey()`, `ed.etc.hexToBytes()`, `ed.getPublicKeyAsync()`, `ed.signAsync()`. Known Issues #1 is resolved.
+- [x] **`equilibrium/target/` gitignore** — `/equilibrium/target/` is on line 53 of `.gitignore`; build artifacts are no longer committed.
 
 ---
 
