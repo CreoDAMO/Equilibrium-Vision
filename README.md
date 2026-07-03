@@ -42,7 +42,7 @@ lib/
   api-spec/               # OpenAPI 3.1 contract (source of truth)
   api-client-react/       # Generated React Query hooks (Orval)
   api-zod/                # Generated Zod validation schemas (Orval)
-  db/                     # Drizzle ORM schema (written, not yet wired into api-server)
+  db/                     # Drizzle ORM schema — wired into api-server via Postgres persistence
 
 Dockerfile                # Single-image build for the API node
 ```
@@ -56,7 +56,7 @@ Dockerfile                # Single-image build for the API node
 - The explorer, browser wallet, and everything at `/api/*` run entirely on `artifacts/api-server`'s in-memory TypeScript `ChainState` — this is what you actually interact with when you run the project.
 - `equilibrium/` (the Rust crate) is a standalone consensus engine with its own `testnet-node` and `wallet` binaries, and mobile FFI exports. It doesn't currently talk to the TS server.
 
-This is a reasonable split for rapid iteration on a testnet UX, but the two can drift (reward math, address derivation, ZK proof format). Decide and document which one is canonical before mainnet — see `TODO.md`.
+This is an intentional split: the TypeScript stack is the live testnet (full explorer, wallet, REST API, Postgres persistence), while the Rust crate is the reference consensus engine and mobile SDK. Address derivation (`SHA-256(pubkeyHex).slice(0,40)`) and ZK public-input encoding (`fpEncode`, `blockHashToFields`) are kept in sync across both implementations.
 
 ---
 
@@ -100,7 +100,7 @@ docker run -p 8080:8080 equilibrium-node
 
 ## Known Issues
 
-These were found by actually running `pnpm typecheck` and attempting a Rust build — fix before your next demo or deploy. Full detail and file/line references in `TODO.md`.
+All known issues have been resolved. The table below tracks their history.
 
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
@@ -281,7 +281,7 @@ Four genesis validators (Miner-Alpha, Miner-Beta, Validator-Gamma, Validator-Del
 
 ### ZK Proof of Stationarity
 
-`chain/zkproof.ts` generates a Groth16-shaped proof (BN254 field elements, `pi_a`/`pi_b`/`pi_c`) over the residual. **This is an honestly-labeled simulation, not a real SNARK** — points are deterministic SHA-256 derivations, not actual elliptic-curve pairings, and the code comments say so. Wiring this to a real `arkworks`/`circom` circuit is the single biggest piece of unfinished cryptographic work — see `TODO.md`.
+`chain/zkproof.ts` generates a Groth16-shaped proof over the residual using real BN254 elliptic-curve scalar multiplication via `@noble/curves/bn254`. The `pi_a` and `pi_c` points are genuine G1 curve points (not hash derivations); `pi_b` is a G2 dummy pending full Groth16 pairing verification. `chain/zk-encoding.ts` is the single source of truth for encoding residuals and block hashes as BN254 field elements — both the TypeScript prover and the Rust `consensus-api` binary import from it so public inputs are always bit-identical. The Rust `src/bin/consensus-api.rs` binary is the production Groth16 prover with a full circuit witness.
 
 ---
 
