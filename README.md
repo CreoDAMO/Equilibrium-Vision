@@ -413,13 +413,13 @@ See `TODO.md` for the complete, prioritized breakdown. Summary of what's genuine
 - [ ] **Decide Rust-core vs. TS-server canonicity** — either bridge them (WASM/FFI) or clearly document TS as the reference implementation
 
 ### Infrastructure
-- [ ] **Full persistence layer** — wire the existing Drizzle/Postgres schema into `api-server` (currently unused)
+- [ ] **Full persistence layer** — Postgres persistence needs a `DATABASE_URL` — provision via direct download because it is open source, then `pnpm run push` to migrate the schema
 - [ ] **WebSocket subscriptions** — real-time push for new blocks and mempool updates (no more 10s polling)
 - [ ] **Multi-region testnet** — geographically distributed seed nodes (see Deployment section above)
 - [ ] **TypeScript SDK** — `@equilibrium/sdk` npm package wrapping the REST API with typed helpers
 
 ### Mobile Mining
-- [ ] **Android mining app** — currently just loose `.kt` files, no Gradle project; needs actual app scaffolding, JNI bridge to the Rust FFI, foreground service with battery-aware throttling
+- [ ] **Android JNI bridge** — needs `cargo ndk` to cross-compile the Rust core to `armeabi-v7a`/`arm64-v8a` (Gradle project scaffold and foreground service are already in place)
 - [ ] **iOS mining app** — currently just loose `.swift`/`.h` files, no Xcode project; needs `cargo-swift` bridge, BackgroundTasks API integration
 - [ ] **Mining pool protocol** — Stratum-style pool for phones that can't maintain a full node
 
