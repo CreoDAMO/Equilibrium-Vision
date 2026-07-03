@@ -14,11 +14,14 @@ router.get("/chain/status", (_req, res) => {
     totalTxCount: s.totalTxCount,
     mempoolSize: s.mempool.size,
     mempoolPressure: s.mempool.pressure,
-    validatorCount: s.peers.filter((p) => p.connected).length + 1,
-    cumulativeWork: s.height * 1_000_000,
+    validatorCount: [...s.validators.values()].filter(v => !v.slashed && !v.jailed).length,
+    cumulativeWork: s.height * s.currentDifficulty,
     lastResidual: lb?.residual ?? 0,
     avgBlockTime: s.avgBlockTime,
     tps: s.tps,
+    difficulty: s.currentDifficulty,
+    finalizedHeight: s.finalizedHeight,
+    totalBondedStake: s.totalBondedStake,
   });
 });
 

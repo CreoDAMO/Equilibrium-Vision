@@ -59,6 +59,7 @@ router.post("/tx/broadcast", (req, res) => {
   };
 
   chainState.mempool.add(tx);
+  chainState.gossipTx(txHash);
   res.json({ txHash, status: "pending" });
 });
 

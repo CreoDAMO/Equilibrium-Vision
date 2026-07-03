@@ -5,6 +5,11 @@ import blocksRouter from "./blocks.js";
 import transactionsRouter from "./transactions.js";
 import addressesRouter from "./addresses.js";
 import mempoolRouter from "./mempool.js";
+import validatorsRouter from "./validators.js";
+import dexRouter from "./dex.js";
+import stakingRouter from "./staking.js";
+import networkRouter from "./network.js";
+import faucetRouter from "./faucet.js";
 
 const router: IRouter = Router();
 
@@ -14,5 +19,10 @@ router.use(blocksRouter);
 router.use(transactionsRouter);
 router.use(addressesRouter);
 router.use(mempoolRouter);
+router.use(validatorsRouter);
+router.use(dexRouter);
+router.use(stakingRouter);
+router.use(networkRouter);
+router.use(faucetRouter);
 
 export default router;
