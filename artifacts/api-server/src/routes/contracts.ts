@@ -53,7 +53,7 @@ router.get("/contracts/:address", (req, res) => {
   const cs = chainState;
   const contract = cs.wasmVM.getContract(req.params.address);
   if (!contract) return res.status(404).json({ error: "Contract not found" });
-  res.json({
+  return res.json({
     ...contract,
     bytecode: contract.bytecode.slice(0, 64) + (contract.bytecode.length > 64 ? "..." : ""),
   });
@@ -66,7 +66,7 @@ router.get("/contracts/:address/storage", (req, res) => {
   if (!cs.wasmVM.getContract(req.params.address)) {
     return res.status(404).json({ error: "Contract not found" });
   }
-  res.json({ address: req.params.address, storage, keys: Object.keys(storage).length });
+  return res.json({ address: req.params.address, storage, keys: Object.keys(storage).length });
 });
 
 // POST /api/contracts/deploy — deploy a WASM contract
@@ -86,7 +86,7 @@ router.post("/contracts/deploy", async (req, res) => {
     return res.status(400).json({ error: result.error });
   }
 
-  res.json({
+  return res.json({
     success: true,
     address: result.address,
     deployer,
@@ -115,7 +115,7 @@ router.post("/contracts/:address/call", async (req, res) => {
     });
   }
 
-  res.json({
+  return res.json({
     success: true,
     returnValue: result.returnValue,
     gasUsed: result.gasUsed,

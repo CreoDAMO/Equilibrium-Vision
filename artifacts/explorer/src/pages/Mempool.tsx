@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useGetMempool } from "@workspace/api-client-react";
+import { useGetMempool, getGetMempoolQueryKey } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +10,7 @@ import { ListTree, Flame, ArrowUpDown } from "lucide-react";
 import { BroadcastDialog } from "@/components/BroadcastDialog";
 
 export default function MempoolPage() {
-  const { data: mempool, isLoading } = useGetMempool({ query: { refetchInterval: 5000 } });
+  const { data: mempool, isLoading } = useGetMempool({ query: { queryKey: getGetMempoolQueryKey(), refetchInterval: 5000 } });
   const [sortField, setSortField] = useState<"timestamp" | "amount" | "fee">("timestamp");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 

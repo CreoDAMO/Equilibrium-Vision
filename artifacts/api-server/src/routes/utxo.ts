@@ -30,13 +30,13 @@ router.get("/utxo/:txHash/:outputIndex", (req, res) => {
   const cs = chainState;
   const utxo = cs.utxoSet.get(txHash, Number(outputIndex));
   if (!utxo) return res.status(404).json({ error: "UTXO not found" });
-  res.json(utxo);
+  return res.json(utxo);
 });
 
 // GET /api/utxo/stats — overall UTXO set statistics
 router.get("/utxo/stats", (_req, res) => {
   const cs = chainState;
-  res.json({
+  return res.json({
     utxoSetSize: cs.utxoSet.size(),
     totalSupply: cs.utxoSet.totalSupply(),
   });
@@ -64,7 +64,7 @@ router.post("/utxo/build", (req, res) => {
     outputs.push({ address: from, amount: change });
   }
 
-  res.json({
+  return res.json({
     inputs: selected.map(u => ({ txHash: u.txHash, outputIndex: u.outputIndex, amount: u.amount })),
     outputs,
     fee: Number(fee),
@@ -77,6 +77,7 @@ router.post("/utxo/build", (req, res) => {
 // Body: { inputs: [{txHash, outputIndex}], outputs: [{address, amount}], fee, signature, publicKey }
 router.post("/utxo/spend", (req, res) => {
   const { inputs, outputs, fee = 1000, signature, publicKey } = req.body ?? {};
+  const cs = chainState;
   if (!inputs?.length || !outputs?.length) {
     return res.status(400).json({ error: "inputs and outputs are required" });
   }
@@ -100,7 +101,7 @@ router.post("/utxo/spend", (req, res) => {
 
   cs.utxoSet.applyTransaction(tx);
 
-  res.json({ success: true, txHash, message: "UTXO transaction applied" });
+  return res.json({ success: true, txHash, message: "UTXO transaction applied" });
 });
 
 export default router;

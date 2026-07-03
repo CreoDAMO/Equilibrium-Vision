@@ -1,5 +1,5 @@
 import React from "react";
-import { useGetChainStatus, useGetChainStats, useListBlocks, useGetMempool, getGetChainStatusQueryKey, getListBlocksQueryKey } from "@workspace/api-client-react";
+import { useGetChainStatus, useGetChainStats, useListBlocks, useGetMempool, getGetChainStatusQueryKey, getGetChainStatsQueryKey, getListBlocksQueryKey, getGetMempoolQueryKey } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Activity, Box, Database, HardDrive, Cpu, Hash, ArrowRight, ArrowRightLeft } from "lucide-react";
 import { Link } from "wouter";
@@ -7,10 +7,10 @@ import { truncateHash, timeAgo, formatAmount } from "@/lib/format";
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 export default function Dashboard() {
-  const { data: status, isLoading: statusLoading } = useGetChainStatus({ query: { refetchInterval: 10000 } });
-  const { data: stats } = useGetChainStats({ query: { refetchInterval: 10000 } });
-  const { data: recentBlocks } = useListBlocks({ limit: 10 }, { query: { refetchInterval: 10000 } });
-  const { data: mempool } = useGetMempool({ query: { refetchInterval: 10000 } });
+  const { data: status, isLoading: statusLoading } = useGetChainStatus({ query: { queryKey: getGetChainStatusQueryKey(), refetchInterval: 10000 } });
+  const { data: stats } = useGetChainStats({ query: { queryKey: getGetChainStatsQueryKey(), refetchInterval: 10000 } });
+  const { data: recentBlocks } = useListBlocks({ limit: 10 }, { query: { queryKey: getListBlocksQueryKey({ limit: 10 }), refetchInterval: 10000 } });
+  const { data: mempool } = useGetMempool({ query: { queryKey: getGetMempoolQueryKey(), refetchInterval: 10000 } });
 
   // Get recent txs either from latest block or mempool
   const recentTxs = [...(mempool?.transactions || []), ...(recentBlocks?.blocks[0]?.transactions || [])].slice(0, 10);

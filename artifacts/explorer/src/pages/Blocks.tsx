@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useListBlocks } from "@workspace/api-client-react";
+import { useListBlocks, getListBlocksQueryKey } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ export default function Blocks() {
   const [page, setPage] = useState(1);
   const limit = 20;
   
-  const { data, isLoading } = useListBlocks({ page, limit }, { query: { refetchInterval: 10000 } });
+  const { data, isLoading } = useListBlocks({ page, limit }, { query: { queryKey: getListBlocksQueryKey({ page, limit }), refetchInterval: 10000 } });
 
   return (
     <div className="space-y-6">

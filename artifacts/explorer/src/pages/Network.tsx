@@ -1,12 +1,12 @@
 import React from "react";
-import { useGetNetworkPeers } from "@workspace/api-client-react";
+import { useGetNetworkPeers, getGetNetworkPeersQueryKey } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Users, Wifi, Globe, Clock } from "lucide-react";
 
 export default function NetworkPage() {
-  const { data: peers, isLoading } = useGetNetworkPeers({ query: { refetchInterval: 10000 } });
+  const { data: peers, isLoading } = useGetNetworkPeers({ query: { queryKey: getGetNetworkPeersQueryKey(), refetchInterval: 10000 } });
 
   const connectedCount = peers?.filter(p => p.connected).length || 0;
 

@@ -1,7 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
 import { useWallet } from "@/wallet/context";
-import { useGetAddress } from "@workspace/api-client-react";
+import { useGetAddress, getGetAddressQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/CopyButton";
@@ -26,6 +26,7 @@ export default function WalletHome() {
   
   const { data: addressInfo, isLoading } = useGetAddress(wallet?.address || "", {
     query: {
+      queryKey: getGetAddressQueryKey(wallet?.address || ""),
       enabled: !!wallet,
       refetchInterval: 10000,
     }

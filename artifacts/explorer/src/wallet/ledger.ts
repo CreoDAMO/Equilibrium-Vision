@@ -255,14 +255,14 @@ export class LedgerTransport {
       };
 
       for (const frame of frames) {
-        hid.sendReport(0x00, frame).catch(reject);
+        hid.sendReport(0x00, frame as Uint8Array<ArrayBuffer>).catch(reject);
       }
     });
   }
 
   private async exchangeUSB(apdu: Uint8Array): Promise<Uint8Array> {
     const usb = this.device as USBDevice;
-    await usb.transferOut(2, apdu);
+    await usb.transferOut(2, apdu as Uint8Array<ArrayBuffer>);
     const result = await usb.transferIn(2, 64);
     if (!result.data) throw new LedgerError("USB_ERROR", "No data received");
     const bytes = new Uint8Array(result.data.buffer);

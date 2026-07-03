@@ -19,7 +19,7 @@ export async function deriveAddress(pubKeyHex: string): Promise<string> {
 // ── Raw keypair ────────────────────────────────────────────────────────────────
 
 export async function generateWallet() {
-  const privateKey = ed.utils.randomPrivateKey();
+  const privateKey = ed.utils.randomSecretKey();
   const publicKey = await ed.getPublicKeyAsync(privateKey);
   const privHex = ed.etc.bytesToHex(privateKey);
   const pubHex = ed.etc.bytesToHex(publicKey);
@@ -28,7 +28,7 @@ export async function generateWallet() {
 }
 
 export async function importFromPrivKey(privHex: string) {
-  const privateKey = ed.utils.hexToBytes(privHex);
+  const privateKey = ed.etc.hexToBytes(privHex);
   const publicKey = await ed.getPublicKeyAsync(privateKey);
   const pubHex = ed.etc.bytesToHex(publicKey);
   const address = await deriveAddress(pubHex);
@@ -105,8 +105,8 @@ export interface EncryptedKeystore {
   ciphertext: string;
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
+function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(hex.length / 2) as Uint8Array<ArrayBuffer>;
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
@@ -121,7 +121,7 @@ function bytesToHex(bytes: Uint8Array): string {
 
 async function deriveAESKey(
   password: string,
-  salt: Uint8Array,
+  salt: Uint8Array<ArrayBuffer>,
   iterations: number,
   usage: KeyUsage[],
 ): Promise<CryptoKey> {
@@ -232,9 +232,10 @@ export async function signForMultisig(
   nonce: number,
 ): Promise<MultisigSignature> {
   const msg = new TextEncoder().encode(`${from}${to}${amount}${fee}${nonce}`);
-  const sig = await ed.signAsync(msg, privateKeyHex);
+  const privBytes = ed.etc.hexToBytes(privateKeyHex);
+  const sig = await ed.signAsync(msg, privBytes);
   const pubKey = ed.etc.bytesToHex(
-    await ed.getPublicKeyAsync(ed.utils.hexToBytes(privateKeyHex)),
+    await ed.getPublicKeyAsync(privBytes),
   );
   return { signerPubKey: pubKey, signature: ed.etc.bytesToHex(sig) };
 }
@@ -254,9 +255,9 @@ export async function verifyMultisigThreshold(
     if (!config.pubKeys.includes(signerPubKey)) continue;
     try {
       const ok = await ed.verifyAsync(
-        ed.utils.hexToBytes(signature),
+        ed.etc.hexToBytes(signature),
         msg,
-        ed.utils.hexToBytes(signerPubKey),
+        ed.etc.hexToBytes(signerPubKey),
       );
       if (ok) valid++;
     } catch {
@@ -277,6 +278,6 @@ export async function signTx(
   nonce: number,
 ): Promise<string> {
   const msg = new TextEncoder().encode(`${from}${to}${amount}${fee}${nonce}`);
-  const sig = await ed.signAsync(msg, privHex);
+  const sig = await ed.signAsync(msg, ed.etc.hexToBytes(privHex));
   return ed.etc.bytesToHex(sig);
 }

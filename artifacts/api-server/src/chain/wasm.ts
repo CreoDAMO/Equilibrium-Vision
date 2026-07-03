@@ -60,7 +60,7 @@ export class WasmVM {
     // Validate WASM binary
     try {
       const bytes = hexToBytes(bytecodeHex);
-      await WebAssembly.validate(bytes); // throws if invalid
+      await WebAssembly.validate(bytes as Uint8Array<ArrayBuffer>); // throws if invalid
     } catch (e) {
       return { address: "", error: `Invalid WASM bytecode: ${(e as Error).message}` };
     }
@@ -131,7 +131,7 @@ export class WasmVM {
 
     try {
       const bytes = hexToBytes(contract.bytecode);
-      const result = await WebAssembly.instantiate(bytes, importObject);
+      const result = await WebAssembly.instantiate(bytes as Uint8Array<ArrayBuffer>, importObject);
       const instance = result.instance;
 
       // Wire up memory (may be exported or in imports)

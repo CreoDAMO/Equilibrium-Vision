@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useWallet } from "@/wallet/context";
-import { useGetAddress } from "@workspace/api-client-react";
+import { useGetAddress, getGetAddressQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ export default function WalletSend() {
   const { toast } = useToast();
   
   const { data: addressInfo } = useGetAddress(wallet?.address || "", {
-    query: { enabled: !!wallet }
+    query: { queryKey: getGetAddressQueryKey(wallet?.address || ""), enabled: !!wallet }
   });
 
   const [to, setTo] = useState("");
