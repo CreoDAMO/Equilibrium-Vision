@@ -197,7 +197,7 @@ The `equilibrium-core` crate exposes:
 ### Smart Contracts & DeFi
 - [ ] **WASM execution environment** — deterministic WASM runtime for smart contracts (e.g., ink! or custom)
 - [ ] **EVM compatibility layer** — optional EVM precompile for Solidity contract migration
-- [ ] **Native DEX** — on-chain automated market maker for EQU token pairs
+- [ ] **Native DEX** — on-chain automated market maker for EQU coin pairs
 - [ ] **Staking contract** — lock EQU to participate in validator set, earn block rewards
 
 ### Developer Experience
