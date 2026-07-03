@@ -8,6 +8,24 @@ import type { Plugin } from "vite";
 const MOCKUPS_DIR = "src/components/mockups";
 const GENERATED_MODULE = "src/.generated/mockup-components.ts";
 
+const UNSAFE_CHAR_MAP: Record<string, string> = {
+  "<": "\\u003C",
+  ">": "\\u003E",
+  "/": "\\u002F",
+  "\b": "\\b",
+  "\f": "\\f",
+  "\n": "\\n",
+  "\r": "\\r",
+  "\t": "\\t",
+  "\0": "\\0",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
+function escapeUnsafeChars(str: string): string {
+  return str.replace(/[<>/\b\f\n\r\t\0\u2028\u2029]/g, (ch) => UNSAFE_CHAR_MAP[ch] ?? ch);
+}
+
 interface DiscoveredComponent {
   globKey: string;
   importPath: string;
@@ -55,7 +73,7 @@ export function mockupPreviewPlugin(): Plugin {
     const entries = components
       .map(
         (c) =>
-          `  ${JSON.stringify(c.globKey)}: () => import(${JSON.stringify(c.importPath)})`,
+          `  ${escapeUnsafeChars(JSON.stringify(c.globKey))}: () => import(${escapeUnsafeChars(JSON.stringify(c.importPath))})`,
       )
       .join(",\n");
 
