@@ -56,7 +56,7 @@ async fn main() {
         }
 
         // ── Replay protection: same nonce should fail ──────────────────────────
-        let replay = alice.sign_tx(bob.address, 1_000, 100, 0);
+        let replay = alice.sign_tx(bob.address, 1_000, 100, alice_to_bob.nonce);
         match ledger.apply_tx(&replay) {
             Ok(())  => println!("Replay PASSED (BUG)"),
             Err(e)  => println!("Replay blocked: {}", e),
