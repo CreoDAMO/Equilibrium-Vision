@@ -42,14 +42,16 @@ async fn main() {
         println!("Coinbase     : {} EQU → miner\n", reward);
 
         // ── Alice gets a grant from the miner ─────────────────────────────────
-        let fund_alice = miner.sign_tx(alice.address, 10_000_000, 1_000, 0);
+        let miner_nonce = 0u64;
+        let fund_alice = miner.sign_tx(alice.address, 10_000_000, 1_000, miner_nonce);
         match ledger.apply_tx(&fund_alice) {
             Ok(()) => println!("Transfer OK  : miner → alice, 10_000_000 EQU"),
             Err(e) => println!("Transfer ERR : {}", e),
         }
 
         // ── Alice sends to Bob ─────────────────────────────────────────────────
-        let alice_to_bob = alice.sign_tx(bob.address, 3_000_000, 500, 0);
+        let alice_nonce = 0u64;
+        let alice_to_bob = alice.sign_tx(bob.address, 3_000_000, 500, alice_nonce);
         match ledger.apply_tx(&alice_to_bob) {
             Ok(()) => println!("Transfer OK  : alice → bob,  3_000_000 EQU"),
             Err(e) => println!("Transfer ERR : {}", e),
