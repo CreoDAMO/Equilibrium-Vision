@@ -38,7 +38,7 @@ const EQU_COIN_TYPE = 600;
 function serializePath(path: string): Uint8Array {
   const segments = path.replace("m/", "").split("/").map(s => {
     const hardened = s.endsWith("'");
-    const index = parseInt(s.replace("'", ""), 10);
+    const index = parseInt(s.replace(/'/g, ""), 10);
     return hardened ? (index | 0x80000000) >>> 0 : index;
   });
   const buf = new Uint8Array(1 + segments.length * 4);
