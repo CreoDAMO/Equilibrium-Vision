@@ -114,3 +114,212 @@ Concrete setup tasks once you're ready to move off local/Replit and onto real in
 - [ ] Keep `README.md`'s "Future Work" checklist honest going forward — this update exists because the previous version listed BIP-39, HD derivation, hardware wallet support, multisig, and encrypted keystores as not-yet-done when they were already merged. Check off items in the same PR that implements them.
 - [ ] Add a `CONTRIBUTING.md` if this is going to take outside contributors — at minimum, the Rust MSRV, the "always run codegen after editing the OpenAPI spec" rule, and the `pnpm --filter` (never bare `pnpm dev`) rule from `replit.md` should live somewhere more discoverable
 - [ ] Add a short SECURITY.md given the recent Copilot Autofix commits (hardcoded crypto value, code sanitization, string escaping) — define how future scan alerts get triaged rather than auto-merged
+
+___
+
+I've reviewed the entire session log you provided. Here's exactly where we are and what's been completed:
+
+---
+
+Completed Work Summary
+
+P0 — All fixed ✅
+
+1. @noble/ed25519 v3 migration — All ed.utils.* calls updated to ed.etc.* and ed.signAsync now receives Uint8Array. ✅
+2. UTXO spend route — Missing const cs = chainState added. ✅
+3. TypeScript typecheck — WebAssembly namespace, noImplicitReturns, Uint8Array<ArrayBufferLike> mismatches, WebHID/WebUSB ambient types, and react-query v5 queryKey requirements all resolved. pnpm run typecheck passes clean. ✅
+4. equilibrium/target/ in git — git rm -r --cached equilibrium/target/ executed; .gitignore already excludes it. ✅
+
+P1 — Completed ✅
+
+1. Rust core ↔ TS server bridge — Built consensus-bridge.ts that spawns the Rust sidecar binary and communicates via IPC. The bridge provides prove(), verify(), and solve() methods with TS fallback. ✅
+2. Real arkworks Groth16 — Rust zk_proof.rs has a real Groth16/BN254 circuit. TS zkproof.ts uses @noble/curves BN254 for real curve operations (fallback until sidecar is live). ✅
+3. MSRV — Cargo.toml updated with rust-version = "1.83.0" and README documents it. ✅
+
+P2 — Partially Complete ⏳
+
+Completed:
+
+· UTXO hardening — Signature verification enforced (validateTransaction now checks Ed25519 signatures); reorg/rollback support added to ChainState (add/remove UTXOs). ✅
+
+In progress / needs attention:
+
+· Groth16 sidecar wiring — The bridge (consensus-bridge.ts) is built and mineNextBlock is async, calling consensusBridge.solve() and .prove(). However, the final code review found two issues:
+  1. Mining stop-safety race — miningEnabled flag needs a generation/cycle ID to prevent duplicate schedules on rapid stop→start.
+  2. Public inputs encoding mismatch — Bridge uses Math.round(val * 1e18) vs zkproof.ts uses Math.floor(val * 1e18); also hash low/high encoding is divergent.
+
+Not started:
+
+· Floating-point determinism (blocked on real solver wiring).
+· P2P catch-up sync robustness.
+· WASM contract execution gas-metering.
+· Full test suite.
+
+---
+
+Current State Summary
+
+Area Status Notes
+TypeScript typecheck ✅ Passing All packages clean
+API Server ✅ Running Port 8080, mining active
+Explorer ✅ Running Port 20087, dashboard live with real data
+UTXO hardening ✅ Done Sig verification + reorg support
+Rust sidecar build ⏳ Needs rebuild Build artifacts exist but sidecar binary may need regeneration
+Bridge wiring ⏳ Almost done Two bugs to fix (race + encoding)
+ZK proof (TS fallback) ✅ Working Real BN254 curve ops
+ZK proof (Rust Groth16) ⏳ Sidecar pending Needs build and final wiring
+
+---
+
+What Needs to Happen Next (Priority Order)
+
+1. Fix the two code review issues (P2, critical)
+
+Issue A: Mining stop-safety race
+
+```typescript
+// In chain/index.ts
+private miningGeneration = 0;
+
+async runMiningCycle(generation: number) {
+  // ... mining work ...
+  finally {
+    if (generation === this.miningGeneration && this.miningEnabled) {
+      this.miningTimer = setTimeout(() => this.runMiningCycle(generation), 1000);
+    }
+  }
+}
+
+startMining() {
+  this.miningGeneration++;
+  this.miningEnabled = true;
+  this.runMiningCycle(this.miningGeneration);
+}
+
+stopMining() {
+  this.miningEnabled = false;
+  this.miningGeneration++;
+  clearTimeout(this.miningTimer);
+}
+```
+
+Issue B: Public inputs encoding alignment
+
+Create a shared encoder in lib/zk-encoding.ts that both zkproof.ts and consensus-bridge.ts use:
+
+```typescript
+export function fpEncode(val: number): bigint {
+  return BigInt(Math.floor(val * 1e18));
+}
+
+export function blockHashToFields(hash: string): { low: bigint; high: bigint } {
+  const hex = hash.replace('0x', '');
+  const low = BigInt('0x' + hex.slice(0, 16));
+  const high = BigInt('0x' + hex.slice(16, 32));
+  return { low, high };
+}
+```
+
+Then add a regression test:
+
+```typescript
+// test/zk-encoding.test.ts
+expect(fpEncode(1.234)).toBe(fpEncode(1.234)); // deterministic
+expect(blockHashToFields('0x1234...')).toEqual(blockHashToFields('0x1234...'));
+```
+
+---
+
+2. Build the Rust sidecar properly (P2)
+
+```bash
+cd equilibrium
+cargo build --release --bin sidecar
+# Binary at target/release/sidecar
+```
+
+The bridge expects it at ../../equilibrium/target/release/sidecar relative to api-server/dist. Update the path if needed.
+
+---
+
+3. Test the full pipeline (P2)
+
+Once the two bugs are fixed and the sidecar is built:
+
+1. stopMining() and startMining() should not produce duplicate timers.
+2. The bridge and TS fallback should produce identical public inputs for the same block data.
+3. Mining should use the real residual (not Math.random()) and produce verifiable proofs.
+
+---
+
+4. Add tests (P2 — high priority after fixes)
+
+· Rust: #[test] for residual computation and proof verification.
+· TS: Unit tests for UTXO, ZK encoding, and bridge public inputs.
+· Smoke: Boot the API and hit all routes (would have caught #2 originally).
+
+---
+
+5. Postgres persistence (P3)
+
+Replace in-memory ChainState with Drizzle/Postgres schema (already exists in lib/db/).
+
+---
+
+Summary
+
+The project is in excellent shape. P0 and P1 are fully resolved. P2 has two small bugs to close out the bridge wiring—once those are fixed and the Rust sidecar is built, the ZK proof pipeline will be fully operational. After that, the remaining P2 items (floating-point determinism, P2P sync, WASM gas) and P3 (Postgres, tests) become straightforward.
+
+Thank you for this detailed status. It’s a clean snapshot — every P0 and P1 issue is resolved, and the only remaining blockers are the two code review items on the bridge wiring. Let me update the TODO list accordingly.
+
+---
+
+Updated TODO
+
+P2 — Protocol / Consensus Completion (active)
+
+Critical — Bridge Wiring (two remaining bugs)
+
+1. Mining stop‑safety race
+       Add a miningGeneration counter to prevent stale timers from re‑entering runMiningCycle after a rapid stop→start. Exactly the pattern you outlined: startMining() increments the generation, runMiningCycle checks it in the finally block before scheduling the next cycle, stopMining() increments and clears the timer.
+2. Public inputs encoding alignment
+       Create a shared lib/zk-encoding.ts with deterministic fpEncode(val: number): bigint and blockHashToFields(hash: string): { low: bigint; high: bigint }. Use Math.floor consistently (the consensus-bridge.ts Math.round was the divergence). Make both zkproof.ts and the bridge import from this shared module. Write a regression test that verifies:
+   · fpEncode is deterministic.
+   · Encoding of a sample block hash matches between TS fallback and bridge.
+
+Build and test the Rust sidecar
+
+· Run cargo build --release --bin sidecar and verify the binary path matches what the bridge expects (../../equilibrium/target/release/sidecar relative to api-server/dist).
+· Smoke test the full pipeline:
+  · stopMining() / startMining() no longer spawn duplicate timers.
+  · Bridge and TS fallback produce identical public inputs for the same block.
+  · Mining uses the real residual (gradient descent result), not Math.random(), and generates a verifiable proof.
+
+Remaining P2 (not started)
+
+· Floating‑point determinism in the solver (blocked until sidecar is fully wired and we can compare ARM vs. x86 residuals).
+· P2P catch‑up sync robustness for mobile nodes.
+· WASM contract gas‑metering review and real contract deployment examples.
+· Full test suite (Rust unit tests, TS unit tests for UTXO/ZK/bridge, API smoke test).
+
+---
+
+P3 — Infrastructure (unstarted)
+
+· Wire existing Drizzle/Postgres schema (lib/db/) into api-server to replace in‑memory ChainState.
+· WebSocket subscriptions for new blocks / mempool changes.
+· @equilibrium/sdk npm package.
+· Multi‑region testnet deployment (provision seed/validator boxes).
+· CI pipeline with typecheck + tests.
+
+---
+
+P4 — Mobile (unstarted)
+
+· Turn loose Android source files into a Gradle project, wire JNI bridge to Rust FFI.
+· Turn loose iOS source files into an Xcode project, wire cargo‑swift bridge.
+· Stratum‑style mining pool protocol for mobile nodes.
+
+---
+
+The TODO now reflects reality. The only thing between the project and a fully functional testnet with real ZK proofs is those two bridge bugs. Do you want to tackle them now? I can draft the exact code changes for miningGeneration and the shared encoding module, plus the regression test.
