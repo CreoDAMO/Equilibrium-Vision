@@ -10,6 +10,9 @@ import dexRouter from "./dex.js";
 import stakingRouter from "./staking.js";
 import networkRouter from "./network.js";
 import faucetRouter from "./faucet.js";
+import utxoRouter from "./utxo.js";
+import contractsRouter from "./contracts.js";
+import evmRouter from "./evm.js";
 
 const router: IRouter = Router();
 
@@ -24,5 +27,8 @@ router.use(dexRouter);
 router.use(stakingRouter);
 router.use(networkRouter);
 router.use(faucetRouter);
+router.use(utxoRouter);
+router.use(contractsRouter);
+router.use(evmRouter);
 
 export default router;

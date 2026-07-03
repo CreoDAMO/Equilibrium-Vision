@@ -21,6 +21,31 @@ export interface TxRecord {
   status: "pending" | "confirmed" | "failed";
 }
 
+// ── ZK Proof (Groth16 / BN254) ────────────────────────────────────────────────
+
+export interface ZkG1Point { x: string; y: string; }
+export interface ZkG2Point { x: [string, string]; y: [string, string]; }
+
+export interface ZkGroth16Proof {
+  pi_a: ZkG1Point;
+  pi_b: ZkG2Point;
+  pi_c: ZkG1Point;
+}
+
+export interface ZkProof {
+  proof: ZkGroth16Proof;
+  publicInputs: {
+    residual: string;
+    threshold: string;
+    blockHashLow: string;
+    blockHashHigh: string;
+  };
+  vkHash: string;
+  valid: boolean;
+  provedAt: number;
+  circuitId: string;
+}
+
 export interface BlockRecord {
   hash: string;
   height: number;
@@ -36,6 +61,7 @@ export interface BlockRecord {
   txCount: number;
   transactions: TxRecord[];
   finalized?: boolean;
+  zkProof?: ZkProof;
 }
 
 export interface AccountState {

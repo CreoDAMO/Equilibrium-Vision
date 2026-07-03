@@ -4,6 +4,9 @@ import type {
   DexPool, LiquidityPosition, SwapEvent, StakeRecord, UnbondingEntry, GossipEvent,
 } from "./types.js";
 import { merkleRoot, randomHex, addressFromSeed, hash256 } from "./crypto.js";
+import { UTXOSet } from "./utxo.js";
+import { WasmVM } from "./wasm.js";
+import { generateZkProof } from "./zkproof.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -140,6 +143,12 @@ export class ChainState {
   // Gossip log
   gossipLog: GossipEvent[] = [];
 
+  // UTXO set (parallel-validation coin model)
+  utxoSet = new UTXOSet();
+
+  // WASM smart contract VM
+  wasmVM = new WasmVM();
+
   get height(): number {
     return this.blocks.length - 1;
   }
@@ -195,6 +204,10 @@ export class ChainState {
   addBlock(block: BlockRecord): void {
     this.blocks.push(block);
 
+    // Coinbase UTXO for block reward
+    const coinbaseTxHash = hash256(`coinbase-${block.height}-${block.hash}`);
+    this.utxoSet.addCoinbase(coinbaseTxHash, block.miner, block.coinbaseReward, block.height);
+
     for (const tx of block.transactions) {
       const confirmed: TxRecord = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" };
       this.txIndex.set(tx.hash, confirmed);
@@ -203,6 +216,20 @@ export class ChainState {
       for (const addr of [tx.from, tx.to]) {
         if (!this.addressTxs.has(addr)) this.addressTxs.set(addr, new Set());
         this.addressTxs.get(addr)!.add(tx.hash);
+      }
+
+      // Create UTXOs for confirmed transfers (recipient output + change output)
+      this.utxoSet.add({
+        txHash: tx.hash,
+        outputIndex: 0,
+        address: tx.to,
+        amount: tx.amount,
+        coinbase: false,
+        blockHeight: block.height,
+        spent: false,
+      });
+      if (tx.fee > 0) {
+        // Fee is burned (no UTXO created); change goes to miner implicitly via coinbase
       }
     }
 
@@ -784,6 +811,9 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
     status: "confirmed" as const,
   }));
 
+  // Generate ZK proof for this block's stationarity
+  const zkProof = generateZkProof(residual, blockHash, height);
+
   const block: BlockRecord = {
     hash: blockHash,
     height,
@@ -799,6 +829,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
     txCount: txs.length,
     transactions: txs,
     finalized: false,
+    zkProof,
   };
 
   state.ledger.credit(minerAddr, reward);
