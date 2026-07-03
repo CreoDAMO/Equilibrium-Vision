@@ -5,3 +5,4 @@ pub mod p2p;
 pub mod consensus;
 pub mod zk_proof;
 pub mod ffi;
+pub mod wallet;
