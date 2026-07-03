@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/explorer/"
+title = "Equilibrium Block Explorer"
+version = "1.0.0"
+id = "artifacts/explorer"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/explorer/" ]
+localPort = 20087
+
+[services.development]
+run = "pnpm --filter @workspace/explorer run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/explorer", "run", "build" ]
+publicDir = "artifacts/explorer/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20087"
+BASE_PATH = "/explorer/"

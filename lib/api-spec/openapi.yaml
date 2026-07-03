@@ -3,20 +3,30 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Equilibrium blockchain node RPC + block explorer API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: chain
+    description: Chain state and network info
+  - name: blocks
+    description: Block data
+  - name: transactions
+    description: Transaction data
+  - name: addresses
+    description: Address balances and history
+  - name: mempool
+    description: Pending transaction pool
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +34,422 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /chain/status:
+    get:
+      operationId: getChainStatus
+      tags: [chain]
+      summary: Current chain state and network metrics
+      responses:
+        "200":
+          description: Chain status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChainStatus"
+
+  /chain/stats:
+    get:
+      operationId: getChainStats
+      tags: [chain]
+      summary: Historical network stats for sparklines (last 20 blocks)
+      responses:
+        "200":
+          description: Stats array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BlockStat"
+
+  /network/peers:
+    get:
+      operationId: getNetworkPeers
+      tags: [chain]
+      summary: Connected peer list
+      responses:
+        "200":
+          description: Peer list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Peer"
+
+  /blocks:
+    get:
+      operationId: listBlocks
+      tags: [blocks]
+      summary: Paginated list of blocks (newest first)
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Block page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockPage"
+
+  /blocks/{hashOrHeight}:
+    get:
+      operationId: getBlock
+      tags: [blocks]
+      summary: Block detail by hash or height
+      parameters:
+        - name: hashOrHeight
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Block detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Block"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /tx/{hash}:
+    get:
+      operationId: getTransaction
+      tags: [transactions]
+      summary: Transaction detail by hash
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Transaction detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /tx/broadcast:
+    post:
+      operationId: broadcastTransaction
+      tags: [transactions]
+      summary: Submit a signed transaction to the mempool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignedTxInput"
+      responses:
+        "200":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BroadcastResult"
+        "400":
+          description: Invalid or rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /address/{addr}:
+    get:
+      operationId: getAddress
+      tags: [addresses]
+      summary: Address balance, nonce, and transaction history
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Address info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddressInfo"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /mempool:
+    get:
+      operationId: getMempool
+      tags: [mempool]
+      summary: Pending transactions in the mempool
+      responses:
+        "200":
+          description: Mempool contents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mempool"
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
 
+    ChainStatus:
+      type: object
+      required:
+        - height
+        - latestHash
+        - latestTimestamp
+        - totalTxCount
+        - mempoolSize
+        - mempoolPressure
+        - validatorCount
+        - cumulativeWork
+        - lastResidual
+        - avgBlockTime
+        - tps
+      properties:
+        height:
+          type: integer
+        latestHash:
+          type: string
+        latestTimestamp:
+          type: integer
+        totalTxCount:
+          type: integer
+        mempoolSize:
+          type: integer
+        mempoolPressure:
+          type: number
+        validatorCount:
+          type: integer
+        cumulativeWork:
+          type: integer
+        lastResidual:
+          type: number
+        avgBlockTime:
+          type: number
+        tps:
+          type: number
+
+    BlockStat:
+      type: object
+      required: [height, txCount, residual, mempoolPressure, timestamp]
+      properties:
+        height:
+          type: integer
+        txCount:
+          type: integer
+        residual:
+          type: number
+        mempoolPressure:
+          type: number
+        timestamp:
+          type: integer
+
+    Peer:
+      type: object
+      required: [peerId, address, latencyMs, height, connected]
+      properties:
+        peerId:
+          type: string
+        address:
+          type: string
+        latencyMs:
+          type: integer
+        height:
+          type: integer
+        connected:
+          type: boolean
+
+    Block:
+      type: object
+      required:
+        - hash
+        - height
+        - prevHash
+        - merkleRoot
+        - timestamp
+        - nonce
+        - difficulty
+        - residual
+        - recursionDepth
+        - coinbaseReward
+        - miner
+        - txCount
+        - transactions
+      properties:
+        hash:
+          type: string
+        height:
+          type: integer
+        prevHash:
+          type: string
+        merkleRoot:
+          type: string
+        timestamp:
+          type: integer
+        nonce:
+          type: integer
+        difficulty:
+          type: integer
+        residual:
+          type: number
+        recursionDepth:
+          type: integer
+        coinbaseReward:
+          type: integer
+        miner:
+          type: string
+        txCount:
+          type: integer
+        transactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transaction"
+
+    BlockPage:
+      type: object
+      required: [blocks, total, page, limit]
+      properties:
+        blocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Block"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+
+    Transaction:
+      type: object
+      required:
+        - hash
+        - from
+        - to
+        - amount
+        - fee
+        - nonce
+        - blockHash
+        - blockHeight
+        - timestamp
+        - status
+      properties:
+        hash:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+        amount:
+          type: integer
+        fee:
+          type: integer
+        nonce:
+          type: integer
+        blockHash:
+          type: ["string", "null"]
+        blockHeight:
+          type: ["integer", "null"]
+        timestamp:
+          type: integer
+        status:
+          type: string
+          enum: [pending, confirmed, failed]
+
+    SignedTxInput:
+      type: object
+      required: [from, to, amount, fee, nonce, signature, publicKey]
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        amount:
+          type: integer
+        fee:
+          type: integer
+        nonce:
+          type: integer
+        signature:
+          type: string
+        publicKey:
+          type: string
+
+    BroadcastResult:
+      type: object
+      required: [txHash, status]
+      properties:
+        txHash:
+          type: string
+        status:
+          type: string
+
+    AddressInfo:
+      type: object
+      required: [address, balance, nonce, txCount, transactions]
+      properties:
+        address:
+          type: string
+        balance:
+          type: integer
+        nonce:
+          type: integer
+        txCount:
+          type: integer
+        transactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transaction"
+
+    Mempool:
+      type: object
+      required: [count, pressure, transactions]
+      properties:
+        count:
+          type: integer
+        pressure:
+          type: number
+        transactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transaction"
+
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
