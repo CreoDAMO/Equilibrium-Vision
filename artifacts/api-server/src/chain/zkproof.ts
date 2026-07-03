@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
-import { bn254 } from "@noble/curves/bn254";
-import type { Fp2 } from "@noble/curves/abstract/tower";
+import { bn254, bn254_Fr } from "@noble/curves/bn254.js";
+import type { Fp2 } from "@noble/curves/abstract/tower.js";
 
 // ── Groth16-style ZK proof for Proof-of-Stationarity ──────────────────────────
 //
@@ -22,7 +22,7 @@ import type { Fp2 } from "@noble/curves/abstract/tower";
 // ── BN254 scalar field modulus ────────────────────────────────────────────────
 
 /** BN254 scalar field modulus r (order of G1, G2) */
-const Fr_MOD: bigint = bn254.G1.CURVE.n;
+const Fr_MOD: bigint = bn254_Fr.ORDER;
 
 // ── Point types (wire format) ─────────────────────────────────────────────────
 

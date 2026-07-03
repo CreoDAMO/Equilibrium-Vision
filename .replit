@@ -48,7 +48,7 @@ task = "shell.exec"
 args = "PORT=20087 BASE_PATH=/explorer/ pnpm --filter @workspace/explorer run dev"
 
 [agent]
-stack = "PNPM_WORKSPACE"
+stack = "BEST_EFFORT_FALLBACK"
 expertMode = true
 
 [postMerge]
