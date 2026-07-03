@@ -13,6 +13,7 @@ import MempoolPage from "@/pages/Mempool";
 import NetworkPage from "@/pages/Network";
 import NotFound from "@/pages/not-found";
 import { WalletProvider } from "@/wallet/context";
+import { useChainWebSocket } from "@/hooks/useChainWebSocket";
 import WalletHome from "@/pages/wallet/WalletHome";
 import WalletCreate from "@/pages/wallet/WalletCreate";
 import WalletImport from "@/pages/wallet/WalletImport";
@@ -31,6 +32,11 @@ const queryClient = new QueryClient({
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function AppRouter() {
+  // Open a single WebSocket connection for the whole app; invalidates React
+  // Query caches on new_block / mempool_update events so all pages update
+  // instantly without waiting for the next poll interval.
+  useChainWebSocket();
+
   return (
     <Router base={base}>
       <Layout>
