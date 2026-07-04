@@ -29,6 +29,9 @@ import type {
   ChainParameters,
   ChainStatus,
   DelegatorsResponse,
+  FaucetDripResponse,
+  FaucetRequest,
+  FaucetStatus,
   HealthStatus,
   ListBlocksParams,
   Mempool,
@@ -1432,6 +1435,153 @@ export function useGetChainParameters<TData = Awaited<ReturnType<typeof getChain
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetChainParametersQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRequestFaucetUrl = () => {
+
+
+
+
+  return `/api/faucet`
+}
+
+/**
+ * @summary Request testnet tokens (1-hour cooldown per address)
+ */
+export const requestFaucet = async (faucetRequest: FaucetRequest, options?: RequestInit): Promise<FaucetDripResponse> => {
+
+  return customFetch<FaucetDripResponse>(getRequestFaucetUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(faucetRequest)
+  }
+);}
+
+
+
+
+export const getRequestFaucetMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestFaucet>>, TError,{data: BodyType<FaucetRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof requestFaucet>>, TError,{data: BodyType<FaucetRequest>}, TContext> => {
+
+const mutationKey = ['requestFaucet'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof requestFaucet>>, {data: BodyType<FaucetRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  requestFaucet(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RequestFaucetMutationResult = NonNullable<Awaited<ReturnType<typeof requestFaucet>>>
+    export type RequestFaucetMutationBody = BodyType<FaucetRequest>
+    export type RequestFaucetMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Request testnet tokens (1-hour cooldown per address)
+ */
+export const useRequestFaucet = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestFaucet>>, TError,{data: BodyType<FaucetRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof requestFaucet>>,
+        TError,
+        {data: BodyType<FaucetRequest>},
+        TContext
+      > => {
+      return useMutation(getRequestFaucetMutationOptions(options));
+    }
+
+export const getGetFaucetStatusUrl = (address: string,) => {
+
+
+
+
+  return `/api/faucet/status/${address}`
+}
+
+/**
+ * @summary Check faucet cooldown status for an address
+ */
+export const getFaucetStatus = async (address: string, options?: RequestInit): Promise<FaucetStatus> => {
+
+  return customFetch<FaucetStatus>(getGetFaucetStatusUrl(address),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFaucetStatusQueryKey = (address: string,) => {
+    return [
+    `/api/faucet/status/${address}`
+    ] as const;
+    }
+
+
+export const getGetFaucetStatusQueryOptions = <TData = Awaited<ReturnType<typeof getFaucetStatus>>, TError = ErrorType<unknown>>(address: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFaucetStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFaucetStatusQueryKey(address);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFaucetStatus>>> = ({ signal }) => getFaucetStatus(address, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: address !== null && address !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFaucetStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetFaucetStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getFaucetStatus>>>
+export type GetFaucetStatusQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Check faucet cooldown status for an address
+ */
+
+export function useGetFaucetStatus<TData = Awaited<ReturnType<typeof getFaucetStatus>>, TError = ErrorType<unknown>>(
+ address: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFaucetStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetFaucetStatusQueryOptions(address,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

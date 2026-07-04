@@ -434,3 +434,40 @@ export const GetChainParametersResponse = zod.object({
 })
 
 
+/**
+ * @summary Request testnet tokens (1-hour cooldown per address)
+ */
+export const requestFaucetBodyAddressMin = 40;
+export const requestFaucetBodyAddressMax = 40;
+
+
+
+export const RequestFaucetBody = zod.object({
+  "address": zod.string().min(requestFaucetBodyAddressMin).max(requestFaucetBodyAddressMax).describe('40-character hex Equilibrium address')
+})
+
+export const RequestFaucetResponse = zod.object({
+  "success": zod.boolean(),
+  "address": zod.string(),
+  "amount": zod.number(),
+  "balance": zod.number(),
+  "cooldownSeconds": zod.number()
+})
+
+
+/**
+ * @summary Check faucet cooldown status for an address
+ */
+export const GetFaucetStatusParams = zod.object({
+  "address": zod.coerce.string()
+})
+
+export const GetFaucetStatusResponse = zod.object({
+  "address": zod.string(),
+  "lastDrip": zod.number().nullish(),
+  "cooldownRemaining": zod.number(),
+  "canDrip": zod.boolean(),
+  "dripAmount": zod.number()
+})
+
+

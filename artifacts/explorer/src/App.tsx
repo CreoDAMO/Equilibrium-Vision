@@ -14,6 +14,7 @@ import NetworkPage from "@/pages/Network";
 import Validators from "@/pages/Validators";
 import ValidatorDetail from "@/pages/ValidatorDetail";
 import GovernancePage from "@/pages/Governance";
+import FaucetPage from "@/pages/Faucet";
 import NotFound from "@/pages/not-found";
 import { WalletProvider } from "@/wallet/context";
 import { useChainWebSocket } from "@/hooks/useChainWebSocket";
@@ -54,6 +55,7 @@ function AppRouter() {
           <Route path="/validators" component={Validators} />
           <Route path="/validators/:addr" component={ValidatorDetail} />
           <Route path="/governance" component={GovernancePage} />
+          <Route path="/faucet" component={FaucetPage} />
           <Route path="/wallet" component={WalletHome} />
           <Route path="/wallet/create" component={WalletCreate} />
           <Route path="/wallet/import" component={WalletImport} />

@@ -397,14 +397,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [address]
-              properties:
-                address:
-                  type: string
-                  minLength: 40
-                  maxLength: 40
-                  description: 40-character hex Equilibrium address
+              $ref: "#/components/schemas/FaucetRequest"
       responses:
         "200":
           description: Tokens dripped successfully
@@ -937,4 +930,45 @@ components:
         maxMempoolSize:
           type: integer
         minValidatorStake:
+          type: number
+
+    FaucetRequest:
+      type: object
+      required: [address]
+      properties:
+        address:
+          type: string
+          minLength: 40
+          maxLength: 40
+          description: 40-character hex Equilibrium address
+
+    FaucetDripResponse:
+      type: object
+      required: [success, address, amount, balance, cooldownSeconds]
+      properties:
+        success:
+          type: boolean
+        address:
+          type: string
+        amount:
+          type: number
+        balance:
+          type: number
+        cooldownSeconds:
+          type: integer
+
+    FaucetStatus:
+      type: object
+      required: [address, cooldownRemaining, canDrip, dripAmount]
+      properties:
+        address:
+          type: string
+        lastDrip:
+          type: integer
+          nullable: true
+        cooldownRemaining:
+          type: integer
+        canDrip:
+          type: boolean
+        dripAmount:
           type: number

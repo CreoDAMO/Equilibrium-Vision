@@ -273,6 +273,31 @@ export interface ChainParameters {
   minValidatorStake: number;
 }
 
+export interface FaucetRequest {
+  /**
+     * 40-character hex Equilibrium address
+     * @minLength 40
+     * @maxLength 40
+     */
+  address: string;
+}
+
+export interface FaucetDripResponse {
+  success: boolean;
+  address: string;
+  amount: number;
+  balance: number;
+  cooldownSeconds: number;
+}
+
+export interface FaucetStatus {
+  address: string;
+  lastDrip?: number | null;
+  cooldownRemaining: number;
+  canDrip: boolean;
+  dripAmount: number;
+}
+
 export type ListBlocksParams = {
 page?: number;
 limit?: number;
