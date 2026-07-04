@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import supertest from "supertest";
-import { generateKeyPairSync, sign as cryptoSign, createHash } from "node:crypto";
+import { generateKeyPairSync, sign as cryptoSign, createHash, type KeyObject } from "node:crypto";
 import app from "../app.js";
 import { initChain, stopMining, chainState } from "../chain/index.js";
 
@@ -309,8 +309,8 @@ describe("GET /api/validators", () => {
  * Node.js exports Ed25519 public keys as 44-byte SPKI DER; the raw key is the
  * last 32 bytes (bytes 12–43).
  */
-function makeKeypair(): { privKey: ReturnType<typeof generateKeyPairSync>["privateKey"]; pubHex: string; address: string } {
-  const { privateKey: privKey, publicKey } = generateKeyPairSync("ed25519");
+function makeKeypair(): { privKey: KeyObject; pubHex: string; address: string } {
+  const { privateKey: privKey, publicKey } = generateKeyPairSync("ed25519") as { privateKey: KeyObject; publicKey: KeyObject };
   const spki   = publicKey.export({ type: "spki", format: "der" }) as Buffer;
   const rawPub = spki.slice(12); // 44 - 12 = 32 bytes
   const pubHex = rawPub.toString("hex");
@@ -319,7 +319,7 @@ function makeKeypair(): { privKey: ReturnType<typeof generateKeyPairSync>["priva
 }
 
 function signVote(
-  privKey: ReturnType<typeof generateKeyPairSync>["privateKey"],
+  privKey: KeyObject,
   proposalId: string,
   choice: string,
 ): string {

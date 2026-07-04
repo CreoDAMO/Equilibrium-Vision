@@ -1,0 +1,262 @@
+Run pnpm run typecheck
+
+
+ pnpm run typecheck
+
+
+ shell: /usr/bin/bash -e {0}
+
+
+ env:
+
+
+  PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+
+
+
+
+
+> workspace@0.0.0 typecheck /home/runner/work/Equilibrium-Vision/Equilibrium-Vision
+
+
+> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+
+
+
+
+
+
+
+
+> workspace@0.0.0 typecheck:libs /home/runner/work/Equilibrium-Vision/Equilibrium-Vision
+
+
+> tsc --build
+
+
+
+
+
+Scope: 4 of 11 workspace projects
+
+
+artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+
+
+artifacts/explorer typecheck$ tsc -p tsconfig.json --noEmit
+
+
+artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+
+
+scripts typecheck$ tsc -p tsconfig.json --noEmit
+
+
+scripts typecheck: Done
+
+
+Error: artifacts/api-server typecheck: src/__tests__/api.integration.test.ts(327,33): error TS2345: Argument of type 'string | NonSharedBuffer | KeyObject | JsonWebKey' is not assignable to parameter of type 'KeyLike | SignKeyObjectInput | SignPrivateKeyInput | SignJsonWebKeyInput'.
+
+
+artifacts/api-server typecheck:   Type 'JsonWebKey' is not assignable to type 'KeyLike | SignKeyObjectInput | SignPrivateKeyInput | SignJsonWebKeyInput'.
+
+
+artifacts/api-server typecheck: Failed
+
+
+/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server:
+
+
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 typecheck: `tsc -p tsconfig.json --noEmit`
+
+
+Exit status 2
+
+
+ ELIFECYCLE  Command failed with exit code 2.
+
+
+Error: Process completed with exit code 2.
+
+
+Here’s the exact plan to generate the final genesis.json for Equilibrium Mainnet.
+
+---
+
+What You Need to Decide
+
+Before we generate the file, you need to lock these values:
+
+Parameter Your Choice Example
+chain_id "equilibrium-1" (can be fixed)
+initial_supply Total supply at genesis 100,000,000 EQU
+Allocations Who gets what and vesting See below
+Initial validators Addresses and stakes Must be generated
+Parameters Difficulty, slashing, governance quorum See below
+
+Allocations (suggested from spec):
+
+· Core contributors: 20,000,000 EQU (4‑year linear vesting)
+· Early backers: 15,000,000 EQU (3‑year linear vesting)
+· Community treasury: 25,000,000 EQU (no vesting)
+· Mining reserve: 30,000,000 EQU (10‑year linear vesting)
+· Ecosystem fund: 10,000,000 EQU (no vesting)
+
+Initial validators:
+
+· You need Ed25519 addresses for each validator. If you don’t have them yet, we’ll generate them in the next step.
+· Minimum stake per validator: 500,000 EQU (suggested).
+
+Parameters (already defined in spec):
+
+```json
+{
+  "target_block_time_ms": 15000,
+  "residual_threshold": 1e-7,
+  "initial_difficulty": 1_000_000,
+  "slashing_double_sign_pct": 5,
+  "slashing_downtime_pct": 1,
+  "unbonding_period_blocks": 10,
+  "max_validators": 100,
+  "governance_quorum_pct": 33.4,
+  "governance_voting_period_blocks": 10080
+}
+```
+
+---
+
+Step-by-Step Execution
+
+1. Generate Validator Keypairs
+
+If you don’t already have validator keypairs, run:
+
+```bash
+# For each validator (replace index 1..N)
+cargo run --bin equilibrium keygen --output validator-1.key
+cargo run --bin equilibrium keygen --output validator-2.key
+# ... etc.
+```
+
+Then extract the addresses:
+
+```bash
+cargo run --bin equilibrium address --key validator-1.key > validator-1.addr
+```
+
+You’ll get a hex string like eq1abc.... Collect all validator addresses.
+
+---
+
+2. Create the Genesis Generation Script
+
+Save this as scripts/generate-genesis.ts (if it doesn’t already exist):
+
+```typescript
+import { writeFileSync } from 'fs';
+
+// === CONFIGURATION — EDIT THESE ===
+
+const CHAIN_ID = "equilibrium-1";
+const TIMESTAMP = new Date().toISOString(); // or a fixed date
+const INITIAL_SUPPLY = "100,000,000 EQU";
+
+const ALLOCATIONS = [
+  { address: "eq1contrib...", amount: "20,000,000 EQU", vesting: "4-year linear", category: "core_contributors" },
+  { address: "eq1backer...", amount: "15,000,000 EQU", vesting: "3-year linear", category: "early_backers" },
+  { address: "eq1treasury...", amount: "25,000,000 EQU", vesting: "none", category: "community_treasury" },
+  { address: "eq1mining...", amount: "30,000,000 EQU", vesting: "10-year linear", category: "mining_reserve" },
+  { address: "eq1ecosystem...", amount: "10,000,000 EQU", vesting: "none", category: "ecosystem_fund" },
+];
+
+// Replace with your actual validator addresses and stakes
+const INITIAL_VALIDATORS = [
+  { address: "eq1val1...", stake: "500,000 EQU", name: "Validator One" },
+  { address: "eq1val2...", stake: "500,000 EQU", name: "Validator Two" },
+  // ... add all validators
+];
+
+const PARAMETERS = {
+  target_block_time_ms: 15000,
+  residual_threshold: 1e-7,
+  initial_difficulty: 1_000_000,
+  slashing_double_sign_pct: 5,
+  slashing_downtime_pct: 1,
+  unbonding_period_blocks: 10,
+  max_validators: 100,
+  governance_quorum_pct: 33.4,
+  governance_voting_period_blocks: 10080,
+};
+
+// === GENERATE ===
+
+const genesis = {
+  chain_id: CHAIN_ID,
+  timestamp: TIMESTAMP,
+  initial_supply: INITIAL_SUPPLY,
+  allocations: ALLOCATIONS,
+  initial_validators: INITIAL_VALIDATORS,
+  parameters: PARAMETERS,
+};
+
+writeFileSync('genesis.json', JSON.stringify(genesis, null, 2));
+console.log('✅ genesis.json generated');
+```
+
+---
+
+3. Run the Script
+
+```bash
+pnpm --filter @workspace/scripts run generate-genesis
+# or if standalone:
+ts-node scripts/generate-genesis.ts
+```
+
+This produces genesis.json in the project root.
+
+---
+
+4. Verify the Genesis
+
+1. Check that all addresses are valid (40‑character hex strings, starting with eq1).
+2. Check total supply sums to exactly 100,000,000 EQU.
+3. Check vesting fields are correctly formatted.
+4. Check parameters match the spec.
+
+You can write a small validation script to ensure the JSON conforms to the expected schema (optional).
+
+---
+
+5. Place Genesis in the Chain
+
+The API server (api-server) should load genesis.json on first start. Check artifacts/api-server/src/chain/init.ts (or similar) to ensure it reads from genesis.json. If not, you may need to wire it.
+
+Typically, the chain will:
+
+· Look for genesis.json at the project root or a known path.
+· If the database is empty, it will load the genesis block and persist it.
+
+You can test this by stopping Postgres, clearing the blocks table, and restarting the API server – it should create the genesis block from the file.
+
+---
+
+What’s Left After Genesis Finalisation
+
+After you have a valid genesis.json:
+
+Next Step Why
+Commit the file Lock the genesis block in git so all nodes start from the same state.
+Share with validators Every validator must have the exact same genesis file to join the network.
+Test genesis loading Start a fresh node with the genesis file and verify the chain starts correctly.
+Prepare for launch Once genesis is finalised, you’re ready to coordinate the network start with validators.
+
+---
+
+Final Note
+
+Genesis finalisation is fully within your control – you don’t need external infrastructure or audits to do it. The only inputs you need are the validator addresses (which you can generate now) and the allocation addresses (which you can define now).
+
+Once you generate the genesis block, share it with all validators so they can start the network simultaneously.
+
+Would you like me to write the full script and validation tool for you? I can provide the exact code to generate, validate, and even test the genesis block against the chain logic.
