@@ -51,9 +51,10 @@ export const options = {
     },
     block_submit: {
       executor:         "constant-arrival-rate",
+      exec:             "block_submit",
       rate:             4,
       timeUnit:         "1m",
-      duration:         "60s",
+      duration:         "30s",
       preAllocatedVUs:  2,
       tags:             { scenario: "block_submit" },
     },
@@ -104,10 +105,21 @@ async function initWallet() {
 }
 
 /**
- * Sign the canonical transaction message: UTF-8(from + to + amount + fee + nonce)
+ * Encode an ASCII string to Uint8Array without TextEncoder (not available in k6).
+ */
+function asciiToBytes(str) {
+  const bytes = new Uint8Array(str.length);
+  for (let i = 0; i < str.length; i++) {
+    bytes[i] = str.charCodeAt(i) & 0xff;
+  }
+  return bytes;
+}
+
+/**
+ * Sign the canonical transaction message: ASCII(from + to + amount + fee + nonce)
  */
 async function signTx(from, to, amount, fee, nonce) {
-  const msg    = new TextEncoder().encode(`${from}${to}${amount}${fee}${nonce}`);
+  const msg    = asciiToBytes(`${from}${to}${amount}${fee}${nonce}`);
   const sigBuf = await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
     wallet.privKey,

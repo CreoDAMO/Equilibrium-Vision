@@ -69,6 +69,15 @@ psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -tc \
          -c "CREATE ROLE \"$OS_USER\" WITH LOGIN SUPERUSER;" 2>/dev/null \
        && echo "[postgres] Created role '$OS_USER'."; }
 
+# Also ensure the 'runner' role always exists (API server connects as runner).
+# Use a DO block so the CREATE is atomic — no TOCTOU race between check and create.
+psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -c \
+  "DO \$\$ BEGIN
+     CREATE ROLE runner WITH LOGIN SUPERUSER;
+   EXCEPTION WHEN duplicate_object THEN NULL;
+   END \$\$;" 2>/dev/null \
+  && echo "[postgres] Role 'runner' ensured."
+
 # Create application database if missing
 if ! psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -lqt 2>/dev/null | cut -d\| -f1 | grep -qw "$PGDB"; then
   echo "[postgres] Creating database '$PGDB' …"

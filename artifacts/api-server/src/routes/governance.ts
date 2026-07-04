@@ -128,15 +128,22 @@ router.post("/governance/proposals/:id/vote", (req, res) => {
     return;
   }
 
-  // ── Signature verification ─────────────────────────────────────────────────
-  // 1. Ensure the supplied public key actually maps to the claimed voter address.
-  let derivedAddr: string;
-  try {
-    derivedAddr = addressFromPublicKey(publicKey);
-  } catch {
-    res.status(400).json({ error: "publicKey is not valid hex" });
+  // ── Input validation ───────────────────────────────────────────────────────
+  // Ed25519 public key = 32 bytes = 64 hex chars
+  // Ed25519 signature  = 64 bytes = 128 hex chars
+  const hexRe = /^[0-9a-f]+$/i;
+  if (publicKey.length !== 64 || !hexRe.test(publicKey)) {
+    res.status(400).json({ error: "publicKey must be exactly 64 lowercase hex characters (32-byte Ed25519 key)" });
     return;
   }
+  if (signature.length !== 128 || !hexRe.test(signature)) {
+    res.status(400).json({ error: "signature must be exactly 128 hex characters (64-byte Ed25519 signature)" });
+    return;
+  }
+
+  // ── Signature verification ─────────────────────────────────────────────────
+  // 1. Ensure the supplied public key actually maps to the claimed voter address.
+  const derivedAddr = addressFromPublicKey(publicKey);
   if (derivedAddr !== voter) {
     res.status(403).json({ error: "publicKey does not correspond to voter address" });
     return;
@@ -150,17 +157,27 @@ router.post("/governance/proposals/:id/vote", (req, res) => {
   }
   // ──────────────────────────────────────────────────────────────────────────
 
-  // Voting power = bonded stake only (validators + their delegated stake).
-  // Ledger account balance is excluded so quorum math (denominator =
-  // totalBondedStake) remains coherent.
+  // ── Voting power — no double-counting ─────────────────────────────────────
+  // A validator's bondedStake already includes all delegated amounts (stake()
+  // increments v.bondedStake). So to avoid counting the same tokens twice:
+  //   • If voter is a validator: vote with self-bond only
+  //     (bondedStake − sum of active delegations to this validator).
+  //   • If voter is a delegator: vote with their delegated amount only.
+  // Total power across all participants = totalBondedStake (no overlap).
   const validatorRecord = chainState.validators.get(voter);
-  let votingPower = validatorRecord?.bondedStake ?? 0;
+  let votingPower = 0;
 
-  if (votingPower <= 0) {
-    // Check if voter has delegated stake in any validator
+  if (validatorRecord) {
+    // Compute self-bond = total bonded minus all active delegations
+    const delegatedToValidator = [...chainState.stakes.values()]
+      .filter(s => s.validator === voter && !s.unbonding)
+      .reduce((sum, s) => sum + s.amount, 0);
+    votingPower = Math.max(0, validatorRecord.bondedStake - delegatedToValidator);
+  } else {
+    // Not a validator — use own delegated stake in any validator
     votingPower = [...chainState.stakes.values()]
       .filter(s => s.delegator === voter && !s.unbonding)
-      .reduce((sum, s) => sum + s.amount, 0);
+      .reduce((acc, s) => acc + s.amount, 0);
   }
 
   if (votingPower <= 0) {

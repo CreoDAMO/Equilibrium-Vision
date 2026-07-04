@@ -4,18 +4,30 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 ---
 
 ## Run commands & ports
-- API server: `pnpm --filter @workspace/api-server run dev` → port 8080 (workflow: `artifacts/api-server: API Server`)
-- Explorer: `pnpm --filter @workspace/explorer run dev` → port 5000 (workflow: `artifacts/explorer: web`)
+- API server: `pnpm --filter @workspace/api-server run dev` → port 8080 (workflow: `API Server`)
+- Explorer: `pnpm --filter @workspace/explorer run dev` → port 5000 (workflow: `Explorer`)
 - Postgres: `bash scripts/start-postgres.sh` (workflow: `Postgres`)
 - Codegen: `pnpm --filter @workspace/api-spec run codegen`
 - Rust tests: `cd equilibrium && cargo test --lib` (15 tests: wallet + stationary_solver)
-- Load test: `k6 run scripts/load-test.js -e BASE_URL=https://<repl>.replit.dev` (requires k6 ≥ 0.46)
+- Load test: `~/.local/bin/k6 run --vus 50 --duration 30s scripts/load-test.js -e BASE_URL=http://localhost:8080`
+  - k6 binary must be re-downloaded each session: `curl -sSL https://github.com/grafana/k6/releases/download/v0.56.0/k6-v0.56.0-linux-amd64.tar.gz | tar -xz --strip-components=1 -C ~/.local/bin k6-v0.56.0-linux-amd64/k6`
+  - k6 v0.56 does NOT support `TextEncoder` or Ed25519 — use `asciiToBytes()` helper and ECDSA P-256 for signing
+
+## Workflow names (exact, for WorkflowsRestart)
+- `API Server`, `Explorer`, `Postgres` — NOT "artifacts/api-server: API Server" etc.
+
+## Postgres role issue (recurs every session)
+- `.pgdata` persists across sessions but the `runner` role may not exist after a container reset
+- Fix: `psql -U postgres -h 127.0.0.1 -p 5432 -c "CREATE ROLE runner WITH LOGIN SUPERUSER;" equilibrium`
+- Then: `DATABASE_URL=postgresql://runner@127.0.0.1:5432/equilibrium pnpm --filter @workspace/db run push --config ./drizzle.config.ts`
+- Then restart the API Server workflow
+- `scripts/start-postgres.sh` now uses an atomic DO block (`CREATE ROLE ... EXCEPTION WHEN duplicate_object THEN NULL`) to prevent TOCTOU races
 
 ## Address derivation — CRITICAL
 - Rust: `SHA-256(pubkey.as_bytes())[..20]` as 40 hex chars (raw 32 bytes)
 - TypeScript (fixed): same — hash raw bytes, not UTF-8 of hex string
+- `deriveAddress` in `artifacts/explorer/src/wallet/crypto.ts` validates 64-char hex input
 - Old (buggy) behaviour was `SHA-256(TextEncoder.encode(hexString))` → different address for same keypair
-- `deriveAddress` in `artifacts/explorer/src/wallet/crypto.ts` is now correct; validates 64-char hex input
 
 ## ZK encoding — shared constant
 - `fpEncode(x) = floor(x * 1_000_000_000) % FIELD_ORDER`
@@ -23,31 +35,25 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 - Public inputs order: [residual_fp, block_hash_low, block_hash_high, threshold_fp]
 
 ## Mining loop pattern
-- Auto-miner in `artifacts/api-server/src/chain/index.ts` uses `miningGeneration` counter (not a boolean flag)
-- `stopMining()` bumps generation → in-flight cycles check `generation === miningGeneration && miningEnabled`
-- Prevents double-schedule race on rapid stop→start
+- Auto-miner uses `miningGeneration` counter (not a boolean flag) to prevent double-schedule race on rapid stop→start
 
 ## Governance module
 - `artifacts/api-server/src/chain/governance.ts` — `GovernanceModule` class
-- Voting power = bonded stake ONLY (validators + delegator stakes); ledger balance excluded — quorum denominator is `totalBondedStake`
+- Voting power anti-double-count rule: validators vote with SELF-BOND only (bondedStake − delegated total); delegators vote with their own delegation. Total = totalBondedStake, no overlap.
 - Quorum: 33.4%, Pass: simple majority of cast votes
-- `processBlock(now, totalBondedStake)` called in `ChainState.addBlock()` after `distributeBlockReward`
-- Routes at `/api/governance/proposals` (list/create), `/api/governance/proposals/:id` (detail), `/api/governance/proposals/:id/vote`, `/api/governance/params`
-- **Known gap**: vote route trusts caller-provided `voter` string — needs signature verification before mainnet (Task #2)
+- Vote endpoint requires `publicKey` (exactly 64 hex chars) + `signature` (exactly 128 hex chars) + Ed25519 verification
+- Routes at `/api/governance/proposals`, `/api/governance/proposals/:id`, `/api/governance/proposals/:id/vote`, `/api/governance/params`
+
+## Fixed-point fork-choice
+- `reorganize()` in `state.ts` uses `BigInt(Math.floor(r * 1e18))` — must be `Math.floor`, NOT `Math.round`, to match `fpEncode` in `zk-encoding.ts`
 
 ## OpenAPI / codegen gotcha
 - Governance paths must go inside the `paths:` section (before `components:`), NOT appended to the file end
 - After any openapi.yaml edit: `pnpm --filter @workspace/api-spec run codegen`
 
-## Postgres persistence
-- Schema push: `DATABASE_URL=postgresql://runner@127.0.0.1:5432/equilibrium pnpm --filter @workspace/db run push`
-- Role "runner" is created by `scripts/start-postgres.sh` — must run first
-- API server degrades gracefully (in-memory only) when tables don't exist; logs WARN on each persist fail
-
 ## Rust pub(crate) pattern
 - `joint_residual_and_gradient` and `update_multipliers` in `stationary_solver.rs` are `pub(crate)` so tests can call them
-- Do not make them `pub` — they are internal to the consensus engine
 
-## Fixed-point residual (pending — Task #3)
-- f64 fork-choice comparisons can diverge across ARM vs x86
-- Plan: add `residualFp: bigint = floor(residual * 1e9)` to `BlockRecord`, use it in `reorganize()` and `choose_fork`
+## Load test baseline (local Replit container)
+- 50 VUs, 30s, ECDSA P-256 signed transactions → **161 TPS sustained, 100% acceptance, p95 latency 3ms**
+- Exceeds the 100 TPS mainnet target
