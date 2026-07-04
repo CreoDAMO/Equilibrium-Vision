@@ -32,7 +32,7 @@ A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile min
 - `artifacts/explorer/src/wallet/` — Browser wallet (context.tsx state manager, crypto.ts key ops)
 - `lib/api-spec/openapi.yaml` — Source-of-truth API contract
 - `lib/api-client-react/src/generated/` — Generated React Query hooks (do not edit manually)
-- `lib/coinomics/src/` — Mainnet coinomics: `reward.ts` (halving curve + PoS quality multiplier), `genesis.ts` (genesis.json generator/validator), `cli/generate-genesis.ts` (writes genesis.json to disk)
+- `lib/coinomics/src/` — Mainnet coinomics: `reward.ts` (halving curve + PoS quality multiplier), `genesis.ts` (genesis.json generator/validator), `staking.ts` (validator/delegator reward-splitting by bonded stake + commission), `slashing.ts` (double-sign/downtime/invalid-block penalty calculator), `cli/generate-genesis.ts` (writes genesis.json to disk)
 
 ## Architecture decisions
 

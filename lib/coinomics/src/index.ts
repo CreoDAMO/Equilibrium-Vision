@@ -28,7 +28,21 @@ export {
   type DelegatorPayout,
   type ValidatorPayout,
   totalBondedStake,
+  assertValidatorStake,
   allocateValidatorRewards,
   splitValidatorReward,
   distributeStakingRewards,
 } from "./staking.js";
+
+export {
+  type SlashingReason,
+  type SlashingParams,
+  type DelegatorSlash,
+  type SlashingResult,
+  type SlashingOutcome,
+  SLASHING_DOUBLE_SIGN_PCT,
+  SLASHING_DOWNTIME_PCT,
+  SLASHING_JAIL_INCIDENT_THRESHOLD,
+  slashingPercentageForReason,
+  applySlashing,
+} from "./slashing.js";

@@ -46,7 +46,7 @@ export function totalBondedStake(validator: ValidatorStake): number {
   return validator.selfStake + validator.delegators.reduce((sum, d) => sum + d.stake, 0);
 }
 
-function assertValidatorStake(validator: ValidatorStake): void {
+export function assertValidatorStake(validator: ValidatorStake): void {
   if (!validator.address.trim()) {
     throw new Error("assertValidatorStake: validator address must be non-empty");
   }
