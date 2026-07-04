@@ -27,12 +27,15 @@ import type {
   BlockStat,
   BroadcastResult,
   ChainStatus,
+  DelegatorsResponse,
   HealthStatus,
   ListBlocksParams,
   Mempool,
   Peer,
   SignedTxInput,
-  Transaction
+  Transaction,
+  ValidatorDetail,
+  ValidatorList
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -820,6 +823,237 @@ export function useGetMempool<TData = Awaited<ReturnType<typeof getMempool>>, TE
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetMempoolQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListValidatorsUrl = () => {
+
+
+
+
+  return `/api/validators`
+}
+
+/**
+ * @summary All validators with bonded stake and share of the network
+ */
+export const listValidators = async ( options?: RequestInit): Promise<ValidatorList> => {
+
+  return customFetch<ValidatorList>(getListValidatorsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListValidatorsQueryKey = () => {
+    return [
+    `/api/validators`
+    ] as const;
+    }
+
+
+export const getListValidatorsQueryOptions = <TData = Awaited<ReturnType<typeof listValidators>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listValidators>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListValidatorsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listValidators>>> = ({ signal }) => listValidators({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listValidators>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListValidatorsQueryResult = NonNullable<Awaited<ReturnType<typeof listValidators>>>
+export type ListValidatorsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary All validators with bonded stake and share of the network
+ */
+
+export function useListValidators<TData = Awaited<ReturnType<typeof listValidators>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listValidators>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListValidatorsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetValidatorUrl = (addr: string,) => {
+
+
+
+
+  return `/api/validators/${addr}`
+}
+
+/**
+ * @summary Validator detail, including slash history
+ */
+export const getValidator = async (addr: string, options?: RequestInit): Promise<ValidatorDetail> => {
+
+  return customFetch<ValidatorDetail>(getGetValidatorUrl(addr),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetValidatorQueryKey = (addr: string,) => {
+    return [
+    `/api/validators/${addr}`
+    ] as const;
+    }
+
+
+export const getGetValidatorQueryOptions = <TData = Awaited<ReturnType<typeof getValidator>>, TError = ErrorType<ApiError>>(addr: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getValidator>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidatorQueryKey(addr);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidator>>> = ({ signal }) => getValidator(addr, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: addr !== null && addr !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getValidator>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetValidatorQueryResult = NonNullable<Awaited<ReturnType<typeof getValidator>>>
+export type GetValidatorQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Validator detail, including slash history
+ */
+
+export function useGetValidator<TData = Awaited<ReturnType<typeof getValidator>>, TError = ErrorType<ApiError>>(
+ addr: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getValidator>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetValidatorQueryOptions(addr,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetValidatorDelegatorsUrl = (addr: string,) => {
+
+
+
+
+  return `/api/validators/${addr}/delegators`
+}
+
+/**
+ * @summary Live delegators of a validator with stake, rewards earned, and slash exposure
+ */
+export const getValidatorDelegators = async (addr: string, options?: RequestInit): Promise<DelegatorsResponse> => {
+
+  return customFetch<DelegatorsResponse>(getGetValidatorDelegatorsUrl(addr),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetValidatorDelegatorsQueryKey = (addr: string,) => {
+    return [
+    `/api/validators/${addr}/delegators`
+    ] as const;
+    }
+
+
+export const getGetValidatorDelegatorsQueryOptions = <TData = Awaited<ReturnType<typeof getValidatorDelegators>>, TError = ErrorType<ApiError>>(addr: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getValidatorDelegators>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidatorDelegatorsQueryKey(addr);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidatorDelegators>>> = ({ signal }) => getValidatorDelegators(addr, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: addr !== null && addr !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getValidatorDelegators>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetValidatorDelegatorsQueryResult = NonNullable<Awaited<ReturnType<typeof getValidatorDelegators>>>
+export type GetValidatorDelegatorsQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Live delegators of a validator with stake, rewards earned, and slash exposure
+ */
+
+export function useGetValidatorDelegators<TData = Awaited<ReturnType<typeof getValidatorDelegators>>, TError = ErrorType<ApiError>>(
+ addr: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getValidatorDelegators>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetValidatorDelegatorsQueryOptions(addr,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

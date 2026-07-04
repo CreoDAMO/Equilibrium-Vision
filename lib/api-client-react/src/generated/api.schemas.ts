@@ -119,6 +119,67 @@ export interface ApiError {
   error: string;
 }
 
+export interface Validator {
+  address: string;
+  moniker: string;
+  bondedStake: number;
+  accumulatedRewards: number;
+  slashed: boolean;
+  slashCount: number;
+  jailed: boolean;
+  uptime: number;
+  blocksProposed: number;
+  blocksVoted: number;
+  commission: number;
+  sharePercent: number;
+}
+
+export interface ValidatorList {
+  count: number;
+  totalBondedStake: number;
+  validators: Validator[];
+}
+
+export type SlashEventReason = typeof SlashEventReason[keyof typeof SlashEventReason];
+
+
+export const SlashEventReason = {
+  double_sign: 'double_sign',
+  downtime: 'downtime',
+  invalid_block: 'invalid_block',
+} as const;
+
+export interface SlashEvent {
+  validatorAddress: string;
+  reason: SlashEventReason;
+  slashAmount: number;
+  height: number;
+  timestamp: number;
+}
+
+export type ValidatorDetail = Validator & {
+  slashHistory: SlashEvent[];
+};
+
+export interface Delegator {
+  address: string;
+  stakedAmount: number;
+  sharePercent: number;
+  rewardsEarned: number;
+  slashExposureDoubleSign: number;
+  slashExposureDowntime: number;
+  startHeight: number;
+  startTimestamp: number;
+  unbonding: boolean;
+}
+
+export interface DelegatorsResponse {
+  validatorAddress: string;
+  count: number;
+  totalDelegated: number;
+  delegators: Delegator[];
+}
+
 export type ListBlocksParams = {
 page?: number;
 limit?: number;

@@ -227,3 +227,82 @@ export const GetMempoolResponse = zod.object({
 })
 
 
+/**
+ * @summary All validators with bonded stake and share of the network
+ */
+export const ListValidatorsResponse = zod.object({
+  "count": zod.number(),
+  "totalBondedStake": zod.number(),
+  "validators": zod.array(zod.object({
+  "address": zod.string(),
+  "moniker": zod.string(),
+  "bondedStake": zod.number(),
+  "accumulatedRewards": zod.number(),
+  "slashed": zod.boolean(),
+  "slashCount": zod.number(),
+  "jailed": zod.boolean(),
+  "uptime": zod.number(),
+  "blocksProposed": zod.number(),
+  "blocksVoted": zod.number(),
+  "commission": zod.number(),
+  "sharePercent": zod.number()
+}))
+})
+
+
+/**
+ * @summary Validator detail, including slash history
+ */
+export const GetValidatorParams = zod.object({
+  "addr": zod.coerce.string()
+})
+
+export const GetValidatorResponse = zod.object({
+  "address": zod.string(),
+  "moniker": zod.string(),
+  "bondedStake": zod.number(),
+  "accumulatedRewards": zod.number(),
+  "slashed": zod.boolean(),
+  "slashCount": zod.number(),
+  "jailed": zod.boolean(),
+  "uptime": zod.number(),
+  "blocksProposed": zod.number(),
+  "blocksVoted": zod.number(),
+  "commission": zod.number(),
+  "sharePercent": zod.number()
+}).and(zod.object({
+  "slashHistory": zod.array(zod.object({
+  "validatorAddress": zod.string(),
+  "reason": zod.enum(['double_sign', 'downtime', 'invalid_block']),
+  "slashAmount": zod.number(),
+  "height": zod.number(),
+  "timestamp": zod.number()
+}))
+}))
+
+
+/**
+ * @summary Live delegators of a validator with stake, rewards earned, and slash exposure
+ */
+export const GetValidatorDelegatorsParams = zod.object({
+  "addr": zod.coerce.string()
+})
+
+export const GetValidatorDelegatorsResponse = zod.object({
+  "validatorAddress": zod.string(),
+  "count": zod.number(),
+  "totalDelegated": zod.number(),
+  "delegators": zod.array(zod.object({
+  "address": zod.string(),
+  "stakedAmount": zod.number(),
+  "sharePercent": zod.number(),
+  "rewardsEarned": zod.number(),
+  "slashExposureDoubleSign": zod.number(),
+  "slashExposureDowntime": zod.number(),
+  "startHeight": zod.number(),
+  "startTimestamp": zod.number(),
+  "unbonding": zod.boolean()
+}))
+})
+
+

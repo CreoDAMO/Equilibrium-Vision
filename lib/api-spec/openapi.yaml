@@ -20,6 +20,8 @@ tags:
     description: Address balances and history
   - name: mempool
     description: Pending transaction pool
+  - name: validators
+    description: Validator staking, rewards, and slashing
 
 paths:
   /healthz:
@@ -214,6 +216,69 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Mempool"
+
+  /validators:
+    get:
+      operationId: listValidators
+      tags: [validators]
+      summary: All validators with bonded stake and share of the network
+      responses:
+        "200":
+          description: Validator list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidatorList"
+
+  /validators/{addr}:
+    get:
+      operationId: getValidator
+      tags: [validators]
+      summary: Validator detail, including slash history
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Validator detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidatorDetail"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /validators/{addr}/delegators:
+    get:
+      operationId: getValidatorDelegators
+      tags: [validators]
+      summary: Live delegators of a validator with stake, rewards earned, and slash exposure
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Delegator list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DelegatorsResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 
 components:
   schemas:
@@ -453,3 +518,131 @@ components:
       properties:
         error:
           type: string
+
+    Validator:
+      type: object
+      required:
+        - address
+        - moniker
+        - bondedStake
+        - accumulatedRewards
+        - slashed
+        - slashCount
+        - jailed
+        - uptime
+        - blocksProposed
+        - blocksVoted
+        - commission
+        - sharePercent
+      properties:
+        address:
+          type: string
+        moniker:
+          type: string
+        bondedStake:
+          type: number
+        accumulatedRewards:
+          type: number
+        slashed:
+          type: boolean
+        slashCount:
+          type: integer
+        jailed:
+          type: boolean
+        uptime:
+          type: number
+        blocksProposed:
+          type: integer
+        blocksVoted:
+          type: integer
+        commission:
+          type: number
+        sharePercent:
+          type: number
+
+    ValidatorList:
+      type: object
+      required: [count, totalBondedStake, validators]
+      properties:
+        count:
+          type: integer
+        totalBondedStake:
+          type: number
+        validators:
+          type: array
+          items:
+            $ref: "#/components/schemas/Validator"
+
+    SlashEvent:
+      type: object
+      required: [validatorAddress, reason, slashAmount, height, timestamp]
+      properties:
+        validatorAddress:
+          type: string
+        reason:
+          type: string
+          enum: [double_sign, downtime, invalid_block]
+        slashAmount:
+          type: number
+        height:
+          type: integer
+        timestamp:
+          type: integer
+
+    ValidatorDetail:
+      allOf:
+        - $ref: "#/components/schemas/Validator"
+        - type: object
+          required: [slashHistory]
+          properties:
+            slashHistory:
+              type: array
+              items:
+                $ref: "#/components/schemas/SlashEvent"
+
+    Delegator:
+      type: object
+      required:
+        - address
+        - stakedAmount
+        - sharePercent
+        - rewardsEarned
+        - slashExposureDoubleSign
+        - slashExposureDowntime
+        - startHeight
+        - startTimestamp
+        - unbonding
+      properties:
+        address:
+          type: string
+        stakedAmount:
+          type: number
+        sharePercent:
+          type: number
+        rewardsEarned:
+          type: number
+        slashExposureDoubleSign:
+          type: number
+        slashExposureDowntime:
+          type: number
+        startHeight:
+          type: integer
+        startTimestamp:
+          type: integer
+        unbonding:
+          type: boolean
+
+    DelegatorsResponse:
+      type: object
+      required: [validatorAddress, count, totalDelegated, delegators]
+      properties:
+        validatorAddress:
+          type: string
+        count:
+          type: integer
+        totalDelegated:
+          type: number
+        delegators:
+          type: array
+          items:
+            $ref: "#/components/schemas/Delegator"

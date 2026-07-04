@@ -10,6 +10,8 @@ import { generateZkProof } from "./zkproof.js";
 import {
   splitValidatorReward,
   applySlashing,
+  SLASHING_DOUBLE_SIGN_PCT,
+  SLASHING_DOWNTIME_PCT,
   type ValidatorStake as CoinomicsValidatorStake,
 } from "@workspace/coinomics";
 
@@ -492,8 +494,49 @@ export class ChainState {
 
     for (const d of payout.delegatorPayouts) {
       const amount = Math.floor(d.amount);
-      if (amount > 0) this.ledger.credit(d.address, amount);
+      if (amount > 0) {
+        this.ledger.credit(d.address, amount);
+        const stake = this.stakes.get(`${d.address}-${addr}`);
+        if (stake) stake.rewardsEarned += amount;
+      }
     }
+  }
+
+  /**
+   * Live delegator view for a validator: each active delegation's stake,
+   * share of the validator's delegated pool, cumulative rewards earned
+   * (auto-credited to the delegator's balance every block), and how much
+   * of their stake would be burned if the validator were slashed right now.
+   */
+  getDelegators(addr: string): Array<{
+    address: string;
+    stakedAmount: number;
+    sharePercent: number;
+    rewardsEarned: number;
+    slashExposureDoubleSign: number;
+    slashExposureDowntime: number;
+    startHeight: number;
+    startTimestamp: number;
+    unbonding: boolean;
+  }> {
+    const delegations = [...this.stakes.values()].filter(
+      (s) => s.validator === addr && !s.unbonding && s.amount > 0,
+    );
+    const totalDelegated = delegations.reduce((sum, s) => sum + s.amount, 0);
+
+    return delegations
+      .map((s) => ({
+        address: s.delegator,
+        stakedAmount: s.amount,
+        sharePercent: totalDelegated > 0 ? (s.amount / totalDelegated) * 100 : 0,
+        rewardsEarned: s.rewardsEarned,
+        slashExposureDoubleSign: s.amount * (SLASHING_DOUBLE_SIGN_PCT / 100),
+        slashExposureDowntime: s.amount * (SLASHING_DOWNTIME_PCT / 100),
+        startHeight: s.startHeight,
+        startTimestamp: s.startTimestamp,
+        unbonding: s.unbonding,
+      }))
+      .sort((a, b) => b.stakedAmount - a.stakedAmount);
   }
 
   distributeBlockReward(block: BlockRecord): void {
@@ -544,6 +587,7 @@ export class ChainState {
         startHeight: height,
         startTimestamp: Math.floor(Date.now() / 1000),
         unbonding: false,
+        rewardsEarned: 0,
       });
     }
 

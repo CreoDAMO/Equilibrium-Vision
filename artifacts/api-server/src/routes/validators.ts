@@ -55,4 +55,20 @@ router.get("/validators/:addr/slash-history", (req, res) => {
   res.json({ validatorAddress: addr, events });
 });
 
+router.get("/validators/:addr/delegators", (req, res) => {
+  const addr = req.params["addr"]!;
+  const v = chainState.validators.get(addr);
+  if (!v) {
+    res.status(404).json({ error: "Validator not found" });
+    return;
+  }
+  const delegators = chainState.getDelegators(addr);
+  res.json({
+    validatorAddress: addr,
+    count: delegators.length,
+    totalDelegated: delegators.reduce((s, d) => s + d.stakedAmount, 0),
+    delegators,
+  });
+});
+
 export default router;

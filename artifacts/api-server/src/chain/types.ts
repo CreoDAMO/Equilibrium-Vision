@@ -168,6 +168,8 @@ export interface StakeRecord {
   unbonding: boolean;
   unbondingHeight?: number;
   unbondingTimestamp?: number;
+  /** Cumulative rewards this delegation has earned and had auto-credited to its ledger balance. */
+  rewardsEarned: number;
 }
 
 export interface UnbondingEntry {
