@@ -5,8 +5,12 @@ import { logger } from "../lib/logger.js";
 import { broadcast } from "../lib/ws-server.js";
 import { loadBlocksFromDb, persistBlock, persistBlocks } from "./persistence.js";
 
-// Node's own mining address
-export const minerAddress = addressFromSeed("equilibrium-node-rpc-miner");
+// Node's own mining address. This intentionally matches the seeded
+// "equilibrium-miner-1" validator (see seedValidators() in state.ts) so that
+// live block production credits a registered validator and its rewards flow
+// through the coinomics staking split (validator commission + delegator
+// payouts) instead of bypassing it.
+export const minerAddress = addressFromSeed("equilibrium-miner-1");
 
 // chainState is assigned by initChain() before the server starts listening.
 // Exported as `let` so tests and routes import a single stable reference.

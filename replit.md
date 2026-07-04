@@ -41,6 +41,7 @@ A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile min
 - **Address derivation** — `SHA-256(publicKeyHex).slice(0, 40)`. This is consistent between the Rust wallet, the TypeScript node (`addressFromSeed`), and the browser wallet (`deriveAddress` in `crypto.ts`).
 - **Wouter base path** — the explorer is served at `/explorer/`; `App.tsx` passes `import.meta.env.BASE_URL` (stripped of trailing slash) as the `base` prop to Wouter's `<Router>` so all routes resolve correctly through the shared proxy.
 - **`@noble/ed25519` v3 API** — use `ed.utils.randomSecretKey()` (not `randomPrivateKey`), `ed.etc.hexToBytes()` (not `ed.utils.hexToBytes`), and pass `Uint8Array` (not hex strings) to `signAsync`. All key ops use the async API (`getPublicKeyAsync`, `signAsync`) which uses Web Crypto internally.
+- **Coinomics wired into live block production** — `artifacts/api-server/src/chain/state.ts` imports `@workspace/coinomics` directly; `distributeBlockReward()`/`payValidatorReward()` split every coinbase and participation reward via `splitValidatorReward()`, and `slashValidator()` delegates to `applySlashing()`, mutating both `ValidatorRecord.bondedStake` and the underlying `StakeRecord`s. The live auto-miner address is intentionally seeded as `"equilibrium-miner-1"` (matching the seeded `Miner-Alpha` validator) so its rewards flow through the commission/delegation split instead of bypassing it.
 
 ## Product
 

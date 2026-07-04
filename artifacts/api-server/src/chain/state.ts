@@ -7,6 +7,11 @@ import { merkleRoot, randomHex, addressFromSeed, hash256 } from "./crypto.js";
 import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
 import { generateZkProof } from "./zkproof.js";
+import {
+  splitValidatorReward,
+  applySlashing,
+  type ValidatorStake as CoinomicsValidatorStake,
+} from "@workspace/coinomics";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -395,37 +400,124 @@ export class ChainState {
 
   // ── Validator management ─────────────────────────────────────────────────────
 
+  // Builds the pure `ValidatorStake` shape consumed by @workspace/coinomics'
+  // staking/slashing calculators from this validator's live bonded stake and
+  // its active (non-unbonding) delegations. Whatever portion of bondedStake
+  // isn't accounted for by active delegations is treated as the validator's
+  // own self-bond (e.g. its genesis allocation).
+  private buildValidatorStakeView(addr: string): CoinomicsValidatorStake | null {
+    const v = this.validators.get(addr);
+    if (!v || v.bondedStake <= 0) return null;
+
+    const delegations = [...this.stakes.values()].filter(
+      (s) => s.validator === addr && !s.unbonding && s.amount > 0,
+    );
+    const delegatedTotal = delegations.reduce((sum, s) => sum + s.amount, 0);
+    const selfStake = Math.max(v.bondedStake - delegatedTotal, 1e-6);
+
+    return {
+      address: addr,
+      selfStake,
+      commissionPct: v.commission * 100,
+      delegators: delegations.map((s) => ({ address: s.delegator, stake: s.amount })),
+    };
+  }
+
   slashValidator(addr: string, reason: SlashEvent["reason"], height: number, timestamp: number): void {
     const v = this.validators.get(addr);
     if (!v || v.slashed) return;
 
-    const slashPercent = reason === "double_sign" ? 0.05 : 0.01;
-    const slashAmount = Math.floor(v.bondedStake * slashPercent);
-    v.bondedStake -= slashAmount;
+    const stakeView = this.buildValidatorStakeView(addr);
+    if (!stakeView) return;
+
+    const { result } = applySlashing(stakeView, {
+      reason,
+      ...(reason === "double_sign" ? {} : { incidentCountInWindow: v.slashCount + 1 }),
+    });
+
+    // Burn the validator's own portion, then each delegator's portion
+    // pro-rata — reducing both the validator's aggregate bondedStake and the
+    // underlying per-delegator StakeRecord so future reward splits and
+    // unstaking reflect the slash.
+    v.bondedStake = Math.max(0, v.bondedStake - result.validatorAmountBurned);
+    for (const slash of result.delegatorSlashes) {
+      const key = `${slash.address}-${addr}`;
+      const stake = this.stakes.get(key);
+      if (stake) {
+        stake.amount = Math.max(0, stake.amount - slash.amountBurned);
+        if (stake.amount === 0) this.stakes.delete(key);
+      }
+      v.bondedStake = Math.max(0, v.bondedStake - slash.amountBurned);
+    }
+
     v.slashCount += 1;
     if (reason === "double_sign") v.slashed = true;
-    if (v.slashCount >= 3) v.jailed = true;
+    if (result.jailed) v.jailed = true;
 
-    this.slashEvents.push({ validatorAddress: addr, reason, slashAmount, height, timestamp });
+    this.slashEvents.push({
+      validatorAddress: addr,
+      reason,
+      slashAmount: Math.floor(result.totalBurned),
+      height,
+      timestamp,
+    });
   }
 
   // ── Block reward distribution ─────────────────────────────────────────────────
 
+  /**
+   * Splits `reward` between a validator and its delegators using the
+   * validator's commission rate (via @workspace/coinomics), crediting each
+   * party's ledger balance and the validator's accumulatedRewards stat.
+   */
+  private payValidatorReward(addr: string, reward: number): void {
+    if (reward <= 0) return;
+    const v = this.validators.get(addr);
+    if (!v) return;
+
+    const stakeView = this.buildValidatorStakeView(addr);
+    if (!stakeView) {
+      // No bonded stake on record (shouldn't normally happen for an active
+      // validator) — fall back to crediting the validator directly.
+      this.ledger.credit(addr, reward);
+      v.accumulatedRewards += reward;
+      return;
+    }
+
+    const payout = splitValidatorReward(reward, stakeView);
+
+    const validatorAmount = Math.floor(payout.validatorAmount);
+    this.ledger.credit(addr, validatorAmount);
+    v.accumulatedRewards += validatorAmount;
+
+    for (const d of payout.delegatorPayouts) {
+      const amount = Math.floor(d.amount);
+      if (amount > 0) this.ledger.credit(d.address, amount);
+    }
+  }
+
   distributeBlockReward(block: BlockRecord): void {
     const minerVal = this.validators.get(block.miner);
-    if (!minerVal) return;
+
+    if (!minerVal) {
+      // Miner isn't a registered validator — credit the full reward
+      // directly; no commission/delegator split applies.
+      this.ledger.credit(block.miner, block.coinbaseReward);
+      return;
+    }
 
     minerVal.blocksProposed += 1;
-    minerVal.accumulatedRewards += block.coinbaseReward;
+    this.payValidatorReward(block.miner, block.coinbaseReward);
 
-    // Distribute a portion to other bonded validators as participation rewards
+    // Distribute a portion to other bonded validators (and their
+    // delegators) as participation rewards, proportional to bonded stake.
     const totalBonded = this.totalBondedStake;
     if (totalBonded === 0) return;
     const participationPool = Math.floor(block.coinbaseReward * 0.1);
     for (const v of this.validators.values()) {
       if (!v.slashed && !v.jailed && v.address !== block.miner) {
         const share = Math.floor(participationPool * (v.bondedStake / totalBonded));
-        v.accumulatedRewards += share;
+        this.payValidatorReward(v.address, share);
       }
     }
   }
@@ -942,7 +1034,9 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
     zkProof,
   };
 
-  state.ledger.credit(minerAddr, reward);
+  // Reward crediting happens inside addBlock() -> distributeBlockReward(),
+  // which splits the coinbase reward between the miner (if a registered
+  // validator) and its delegators per the validator's commission rate.
   state.addBlock(block);
   state.gossipBlock(blockHash);
   return block;

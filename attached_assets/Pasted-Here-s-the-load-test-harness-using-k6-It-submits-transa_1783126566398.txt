@@ -1,0 +1,142 @@
+Here's the load-test harness using k6. It submits transactions, polls the chain for confirmation, verifies UTXO state, and reports TPS, latency, and failure rate—all against the live testnet.
+
+```javascript
+// artifacts/tests/load/tps-baseline.js
+import http from 'k6/http';
+import { check, sleep, group } from 'k6';
+import { Rate, Trend } from 'k6/metrics';
+
+const successRate = new Rate('tx_success');
+const failureRate = new Rate('tx_failure');
+const confirmationTime = new Trend('tx_confirmation_ms', true);
+
+export const options = {
+  scenarios: {
+    constant_load: {
+      executor: 'constant-arrival-rate',
+      rate: 50,                    // 50 TPS target
+      timeUnit: '1s',
+      duration: '5m',
+      preAllocatedVUs: 20,
+      maxVUs: 50,
+    },
+  },
+  thresholds: {
+    'tx_success': ['rate>0.95'],
+    'tx_confirmation_ms': ['p(95)<30000'],
+  },
+};
+
+const API_BASE = __ENV.API_BASE || 'http://localhost:8080';
+const FAUCET_URL = `${API_BASE}/api/faucet`;
+
+// Generate a unique keypair per VU
+function generateKeypair() {
+  // Using @noble/ed25519 would require bundling, so we simulate with random hex
+  // In production, pre-generate a pool of funded keys
+  const privKey = Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  // Derive address: SHA-256(pubKey).slice(0,40) — but we need the API to do this
+  return { privKey, pubKey: '00'.repeat(32) };
+}
+
+function fundAddress(address) {
+  const res = http.post(FAUCET_URL, JSON.stringify({ address }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return res.status === 200;
+}
+
+function broadcastTransaction(fromPriv, toAddress, amount, nonce) {
+  const payload = {
+    from: fromPriv,
+    to: toAddress,
+    amount,
+    nonce,
+    fee: 100,
+  };
+  return http.post(`${API_BASE}/api/tx/broadcast`, JSON.stringify(payload), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function getTransaction(txHash) {
+  return http.get(`${API_BASE}/api/tx/${txHash}`);
+}
+
+function checkUtxo(address, expectedBalance) {
+  const res = http.get(`${API_BASE}/api/address/${address}`);
+  if (res.status !== 200) return false;
+  const body = JSON.parse(res.body);
+  return body.balance >= expectedBalance;
+}
+
+export default function () {
+  // Each VU gets its own keypair
+  const sender = generateKeypair();
+  const receiver = generateKeypair();
+
+  group('setup', () => {
+    const funded = fundAddress(sender.pubKey);
+    check(funded, { 'faucet funded': (f) => f === true });
+    sleep(1);
+  });
+
+  group('transaction flow', () => {
+    const startTime = Date.now();
+
+    // Submit transaction
+    const txRes = broadcastTransaction(sender.privKey, receiver.pubKey, 10, 0);
+    const txSuccess = check(txRes, {
+      'transaction broadcast': (r) => r.status === 200,
+    });
+
+    if (!txSuccess) {
+      failureRate.add(1);
+      return;
+    }
+
+    // Wait for confirmation
+    const txHash = JSON.parse(txRes.body).hash;
+    let confirmed = false;
+    let attempts = 0;
+    while (attempts < 30) {  // 30 seconds max
+      sleep(1);
+      const checkRes = getTransaction(txHash);
+      if (checkRes.status === 200) {
+        const tx = JSON.parse(checkRes.body);
+        if (tx.blockHeight) {
+          confirmed = true;
+          confirmationTime.add(Date.now() - startTime);
+          break;
+        }
+      }
+      attempts++;
+    }
+
+    check(confirmed, { 'transaction confirmed': (c) => c === true });
+
+    // Verify UTXO state
+    if (confirmed) {
+      const utxoOk = checkUtxo(receiver.pubKey, 10);
+      check(utxoOk, { 'UTXO balance updated': (ok) => ok === true });
+      if (utxoOk) {
+        successRate.add(1);
+      } else {
+        failureRate.add(1);
+      }
+    } else {
+      failureRate.add(1);
+    }
+  });
+
+  sleep(1);
+}
+```
+
+To run it:
+
+```bash
+k6 run artifacts/tests/load/tps-baseline.js --env API_BASE=https://testnet.equilibrium.network
+```
+
+This will hit the testnet with 50 TPS for 5 minutes, track confirmation latency, and fail if more than 5% of transactions don't confirm within 30 seconds. After we get the baseline numbers, we crank the rate to find the breaking point. Then we run the adversarial scripts—proof forgery, mempool flooding, double‑spends. Each test yields a hard number: the TPS ceiling, the recovery time, the attack surface.
