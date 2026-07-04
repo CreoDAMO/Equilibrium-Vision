@@ -8,8 +8,9 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import supertest from "supertest";
+import { generateKeyPairSync, sign as cryptoSign, createHash } from "node:crypto";
 import app from "../app.js";
-import { initChain, stopMining } from "../chain/index.js";
+import { initChain, stopMining, chainState } from "../chain/index.js";
 
 const api = supertest(app);
 
@@ -297,5 +298,115 @@ describe("GET /api/validators", () => {
       address:     expect.any(String),
       bondedStake: expect.any(Number),
     });
+  });
+});
+
+// ── Governance ────────────────────────────────────────────────────────────────
+
+/**
+ * Helpers: generate an Ed25519 keypair and derive the canonical Equilibrium
+ * address (SHA-256 of raw 32-byte public key, first 20 bytes as 40 hex chars).
+ * Node.js exports Ed25519 public keys as 44-byte SPKI DER; the raw key is the
+ * last 32 bytes (bytes 12–43).
+ */
+function makeKeypair(): { privKey: ReturnType<typeof generateKeyPairSync>["privateKey"]; pubHex: string; address: string } {
+  const { privateKey: privKey, publicKey } = generateKeyPairSync("ed25519");
+  const spki   = publicKey.export({ type: "spki", format: "der" }) as Buffer;
+  const rawPub = spki.slice(12); // 44 - 12 = 32 bytes
+  const pubHex = rawPub.toString("hex");
+  const address = createHash("sha256").update(rawPub).digest("hex").slice(0, 40);
+  return { privKey, pubHex, address };
+}
+
+function signVote(
+  privKey: ReturnType<typeof generateKeyPairSync>["privateKey"],
+  proposalId: string,
+  choice: string,
+): string {
+  const msg = Buffer.from(`vote:${proposalId}:${choice}`, "utf8");
+  return (cryptoSign(null, msg, privKey) as Buffer).toString("hex");
+}
+
+describe("POST /api/governance/proposals/:id/vote — signature verification", () => {
+  let proposalId: string;
+  let voter: ReturnType<typeof makeKeypair>;
+
+  beforeAll(async () => {
+    // Generate a fresh Ed25519 keypair and inject it as a bonded validator so
+    // it has voting power.  chainState is the live module-level binding updated
+    // by initChain(), so mutations here are visible to the route handlers.
+    // totalBondedStake is a getter that sums all validator bondedStake values,
+    // so just inserting the record is enough — no manual total update needed.
+    voter = makeKeypair();
+    chainState.validators.set(voter.address, {
+      address:            voter.address,
+      moniker:            "test-voter",
+      bondedStake:        1_000,
+      accumulatedRewards: 0,
+      slashed:            false,
+      slashCount:         0,
+      jailed:             false,
+      uptime:             1,
+      blocksProposed:     0,
+      blocksVoted:        0,
+      commission:         0.1,
+    });
+
+    // Create a proposal the voter can vote on.
+    const res = await api.post("/api/governance/proposals").send({
+      proposer:    voter.address,
+      type:        "text",
+      title:       "Test proposal for signature tests",
+      description: "Created by the governance integration test suite.",
+    });
+    expect(res.status).toBe(201);
+    proposalId = res.body.id as string;
+  });
+
+  it("accepts a valid Ed25519 signature and returns 200", async () => {
+    const sig = signVote(voter.privKey, proposalId, "yes");
+    const res = await api.post(`/api/governance/proposals/${proposalId}/vote`).send({
+      voter:     voter.address,
+      choice:    "yes",
+      publicKey: voter.pubHex,
+      signature: sig,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true });
+    expect(res.body.proposal).toMatchObject({ id: proposalId });
+  });
+
+  it("returns 401 when the signature is from a different key", async () => {
+    // Sign with a completely different private key — cryptographic forgery attempt.
+    const { privKey: wrongKey } = makeKeypair();
+    const badSig = signVote(wrongKey, proposalId, "no");
+    const res = await api.post(`/api/governance/proposals/${proposalId}/vote`).send({
+      voter:     voter.address,
+      choice:    "no",
+      publicKey: voter.pubHex,
+      signature: badSig,
+    });
+    expect(res.status).toBe(401);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 400 when publicKey does not correspond to voter address", async () => {
+    // Supply voter's address but a *different* keypair's public key — the
+    // derived address won't match, so it's a 400 (malformed request), not 401.
+    const other = makeKeypair();
+    const sig   = signVote(other.privKey, proposalId, "no");
+    const res   = await api.post(`/api/governance/proposals/${proposalId}/vote`).send({
+      voter:     voter.address,   // real voter address
+      choice:    "no",
+      publicKey: other.pubHex,    // belongs to a different keypair
+      signature: sig,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/publicKey does not correspond/i);
+  });
+
+  afterAll(() => {
+    // Clean up injected validator so it doesn't leak into other test suites.
+    chainState.validators.delete(voter.address);
   });
 });

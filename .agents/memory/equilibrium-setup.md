@@ -8,7 +8,8 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 - Explorer: `pnpm --filter @workspace/explorer run dev` → port 5000 (workflow: `Explorer`)
 - Postgres: `bash scripts/start-postgres.sh` (workflow: `Postgres`)
 - Codegen: `pnpm --filter @workspace/api-spec run codegen`
-- Rust tests: `cd equilibrium && cargo test --lib` (15 tests: wallet + stationary_solver)
+- Rust tests: `cd equilibrium && cargo test --lib` (27 tests: wallet + stationary_solver + consensus)
+- TS tests: `pnpm --filter @workspace/api-server run test` (65 tests incl. governance sig coverage)
 - Load test: `~/.local/bin/k6 run --vus 50 --duration 30s scripts/load-test.js -e BASE_URL=http://localhost:8080`
   - k6 binary must be re-downloaded each session: `curl -sSL https://github.com/grafana/k6/releases/download/v0.56.0/k6-v0.56.0-linux-amd64.tar.gz | tar -xz --strip-components=1 -C ~/.local/bin k6-v0.56.0-linux-amd64/k6`
   - k6 v0.56 does NOT support `TextEncoder` or Ed25519 — use `asciiToBytes()` helper and ECDSA P-256 for signing
