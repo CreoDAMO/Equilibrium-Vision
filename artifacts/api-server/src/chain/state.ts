@@ -335,9 +335,12 @@ export class ChainState {
     // Fixed-point comparison: scale residuals by 10^18 before summing so the
     // fork-choice is identical across all architectures regardless of their
     // IEEE-754 floating-point accumulation order.
-    const toFP = (r: number): bigint => BigInt(Math.floor(r * 1e18));
-    const currentResidual   = currentTail.reduce((s, b) => s + toFP(b.residual), 0n);
-    const candidateResidual = newBlocks.reduce((s, b) => s + toFP(b.residual), 0n);
+    // Prefer the stored fixed-point field (computed at mine-time) over a
+    // runtime float conversion so the comparison is always bit-identical.
+    const toFP = (b: BlockRecord): bigint =>
+      BigInt(b.residualFp ?? Math.floor(b.residual * 1e18));
+    const currentResidual   = currentTail.reduce((s, b) => s + toFP(b), 0n);
+    const candidateResidual = newBlocks.reduce((s, b) => s + toFP(b), 0n);
 
     if (candidateResidual >= currentResidual) {
       return { switched: false, reason: "candidate chain does not have lower cumulative residual" };
@@ -997,6 +1000,7 @@ export function buildGenesisChain(): ChainState {
       nonce: Math.floor(Math.random() * 1e15),
       difficulty: state.currentDifficulty,
       residual,
+      residualFp: Math.floor(residual * 1e18),
       recursionDepth: 2,
       coinbaseReward: reward,
       miner,
@@ -1081,6 +1085,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
     nonce: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER),
     difficulty: state.currentDifficulty,
     residual,
+    residualFp: Math.floor(residual * 1e18),
     recursionDepth: 2,
     coinbaseReward: reward,
     miner: minerAddr,

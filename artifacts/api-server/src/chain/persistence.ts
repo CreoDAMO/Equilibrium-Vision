@@ -113,6 +113,8 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       nonce:         b.nonce,
       difficulty:    b.difficulty,
       residual:      b.residual,
+      // Fall back to float conversion for rows written before residualFp was added.
+      residualFp:    b.residualFp ?? Math.floor(b.residual * 1e18),
       recursionDepth: 2,
       coinbaseReward: b.coinbaseReward,
       miner:         b.miner,
@@ -150,6 +152,7 @@ export async function persistBlock(block: BlockRecord): Promise<void> {
           nonce:          block.nonce,
           difficulty:     block.difficulty,
           residual:       block.residual,
+          residualFp:     block.residualFp ?? Math.floor(block.residual * 1e18),
           miner:          block.miner,
           txCount:        block.txCount,
           coinbaseReward: block.coinbaseReward,

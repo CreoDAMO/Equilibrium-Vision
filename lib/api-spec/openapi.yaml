@@ -387,6 +387,63 @@ paths:
               schema:
                 $ref: "#/components/schemas/ChainParameters"
 
+  /faucet:
+    post:
+      operationId: requestFaucet
+      tags: [faucet]
+      summary: Request testnet tokens (1-hour cooldown per address)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  type: string
+                  minLength: 40
+                  maxLength: 40
+                  description: 40-character hex Equilibrium address
+      responses:
+        "200":
+          description: Tokens dripped successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaucetDripResponse"
+        "400":
+          description: Invalid address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          description: Rate limited — cooldown still active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /faucet/status/{address}:
+    get:
+      operationId: getFaucetStatus
+      tags: [faucet]
+      summary: Check faucet cooldown status for an address
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Faucet status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaucetStatus"
+
 components:
   schemas:
     HealthStatus:

@@ -55,6 +55,10 @@ export interface BlockRecord {
   nonce: number;
   difficulty: number;
   residual: number;
+  /** Fixed-point integer: floor(residual × 1e18). Used for deterministic fork-choice
+   *  comparisons that are identical across ARM (mobile) and x86 (cloud) nodes.
+   *  Optional for backward compatibility; always set on newly mined blocks. */
+  residualFp?: number;
   recursionDepth: number;
   coinbaseReward: number;
   miner: string;
