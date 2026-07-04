@@ -8,6 +8,11 @@
 import type { VoteInputChoice } from './voteInputChoice';
 
 export interface VoteInput {
+  /** The voter's 40-char hex address (derived from publicKey) */
   voter: string;
   choice: VoteInputChoice;
+  /** Hex-encoded raw Ed25519 public key (32 bytes = 64 hex chars) */
+  publicKey: string;
+  /** Ed25519 signature over UTF-8("vote:{proposalId}:{choice}") — 64 bytes = 128 hex chars */
+  signature: string;
 }

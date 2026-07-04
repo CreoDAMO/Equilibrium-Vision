@@ -1,30 +1,41 @@
 /**
- * Equilibrium Load-Test Harness (k6)
+ * Equilibrium Load-Test Harness (k6 v0.54+)
  *
- * Submits real signed transactions and block headers using ephemeral
- * Ed25519 keypairs derived in-VU via the WebCrypto API (k6 ≥ 0.46).
+ * Measures sustained transaction throughput (TPS) and p95/p99 latency.
  *
- * Run:
- *   k6 run --vus 50 --duration 60s scripts/load-test.js \
+ * Crypto strategy:
+ *   - k6's WebCrypto (v0.56) supports ECDSA P-256 generateKey/sign but NOT Ed25519.
+ *   - Each VU generates a fresh P-256 keypair on first iteration.
+ *   - The address is SHA-256(raw pubkey)[0..20] hex — same derivation as Equilibrium.
+ *   - Transactions are signed with P-256 (server accepts any signature for testnet).
+ *   - A faucet call funds the VU address before sending.
+ *
+ * Run (local):
+ *   ~/.local/bin/k6 run --vus 50 --duration 30s scripts/load-test.js \
+ *       -e BASE_URL=http://localhost:8080
+ *
+ * Run (production):
+ *   ~/.local/bin/k6 run --vus 50 --duration 60s scripts/load-test.js \
  *       -e BASE_URL=https://<your-repl>.replit.dev
  *
  * Metrics reported:
- *   - http_req_duration (p95, p99)
+ *   - http_req_duration  (p95, p99)
  *   - tx_submit_ok_rate
- *   - tx_submit_fail_rate
+ *   - tx_latency_ms
  *   - blocks_submitted
  */
 
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Counter, Rate, Trend } from "k6/metrics";
+import { crypto } from "k6/experimental/webcrypto";
 
 // ── Custom metrics ────────────────────────────────────────────────────────────
-const txOk        = new Counter("tx_submit_ok");
-const txFail      = new Counter("tx_submit_fail");
-const txOkRate    = new Rate("tx_submit_ok_rate");
-const blockOk     = new Counter("blocks_submitted");
-const txLatency   = new Trend("tx_latency_ms", true);
+const txOk      = new Counter("tx_submit_ok");
+const txFail    = new Counter("tx_submit_fail");
+const txOkRate  = new Rate("tx_submit_ok_rate");
+const blockOk   = new Counter("blocks_submitted");
+const txLatency = new Trend("tx_latency_ms", true);
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";
@@ -33,18 +44,18 @@ const API      = `${BASE_URL}/api`;
 export const options = {
   scenarios: {
     tx_flood: {
-      executor: "constant-vus",
-      vus: 50,
-      duration: "60s",
-      tags: { scenario: "tx_flood" },
+      executor:  "constant-vus",
+      vus:       50,
+      duration:  "60s",
+      tags:      { scenario: "tx_flood" },
     },
     block_submit: {
-      executor: "constant-arrival-rate",
-      rate: 4,          // ~1 block / 15 s across 4 rps keeps it realistic
-      timeUnit: "1m",
-      duration: "60s",
-      preAllocatedVUs: 2,
-      tags: { scenario: "block_submit" },
+      executor:         "constant-arrival-rate",
+      rate:             4,
+      timeUnit:         "1m",
+      duration:         "60s",
+      preAllocatedVUs:  2,
+      tags:             { scenario: "block_submit" },
     },
   },
   thresholds: {
@@ -53,9 +64,21 @@ export const options = {
   },
 };
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── VU-local wallet state ─────────────────────────────────────────────────────
+let wallet       = null;   // { privKey, address, pubKeyHex }
+let faucetFunded = false;
+let vuNonce      = 0;
 
-/** Convert an ArrayBuffer to a lowercase hex string. */
+/**
+ * Derive a 40-char hex address from a raw P-256 public key (65 bytes uncompressed).
+ * Uses SHA-256(rawPubKey)[0..20] — matches Equilibrium's address derivation pattern.
+ */
+async function deriveAddress(rawPubKey) {
+  const hashBuf = await crypto.subtle.digest("SHA-256", rawPubKey);
+  const bytes   = new Uint8Array(hashBuf).slice(0, 20);
+  return [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 function bufToHex(buf) {
   return [...new Uint8Array(buf)]
     .map(b => b.toString(16).padStart(2, "0"))
@@ -63,54 +86,36 @@ function bufToHex(buf) {
 }
 
 /**
- * Derive an Equilibrium address from a raw Ed25519 public key.
- * Matches Rust: SHA-256(pubkey_bytes)[..20] as 40 hex chars.
+ * Initialize a P-256 wallet once per VU.
+ * k6 v0.56 supports ECDSA P-256 generateKey + sign/verify.
  */
-async function deriveAddress(pubKeyBuf) {
-  const hash = await crypto.subtle.digest("SHA-256", pubKeyBuf);
-  return bufToHex(hash).slice(0, 40);
-}
-
-/**
- * Generate an ephemeral Ed25519 keypair via WebCrypto and derive the address.
- * Returns { privKey, pubKeyHex, address }.
- */
-async function generateWallet() {
+async function initWallet() {
   const kp = await crypto.subtle.generateKey(
-    { name: "Ed25519" },
+    { name: "ECDSA", namedCurve: "P-256" },
     true,
     ["sign", "verify"],
   );
-  const pubKeyBuf = await crypto.subtle.exportKey("raw", kp.publicKey);
-  const pubKeyHex = bufToHex(pubKeyBuf);
-  const address   = await deriveAddress(pubKeyBuf);
-  return { privKey: kp.privateKey, pubKeyHex, address };
+
+  const rawPub    = await crypto.subtle.exportKey("raw", kp.publicKey);
+  const address   = await deriveAddress(rawPub);
+  const pubKeyHex = bufToHex(rawPub);
+
+  wallet = { privKey: kp.privateKey, address, pubKeyHex };
 }
 
 /**
- * Sign the canonical Equilibrium transaction message:
- * UTF-8( from + to + amount + fee + nonce )
- * Returns signature hex.
+ * Sign the canonical transaction message: UTF-8(from + to + amount + fee + nonce)
  */
-async function signTx(privKey, from, to, amount, fee, nonce) {
-  const msg = new TextEncoder().encode(`${from}${to}${amount}${fee}${nonce}`);
-  const sigBuf = await crypto.subtle.sign({ name: "Ed25519" }, privKey, msg);
+async function signTx(from, to, amount, fee, nonce) {
+  const msg    = new TextEncoder().encode(`${from}${to}${amount}${fee}${nonce}`);
+  const sigBuf = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    wallet.privKey,
+    msg,
+  );
   return bufToHex(sigBuf);
 }
 
-// ── VU state (generated once per VU) ─────────────────────────────────────────
-let vuWallet = null;
-let faucetFunded = false;
-
-async function ensureWallet() {
-  if (!vuWallet) {
-    vuWallet = await generateWallet();
-  }
-}
-
-/**
- * Fund the VU wallet from the faucet (best-effort; faucet has a cooldown).
- */
 function fundFromFaucet(address) {
   const res = http.post(
     `${API}/faucet`,
@@ -120,41 +125,41 @@ function fundFromFaucet(address) {
   return res.status === 200;
 }
 
-// ── Scenarios ─────────────────────────────────────────────────────────────────
-
+// ── Default scenario (tx_flood) ───────────────────────────────────────────────
 export default async function () {
-  await ensureWallet();
-  const { privKey, pubKeyHex, address } = vuWallet;
+  // Lazy-initialise wallet on first iteration.
+  if (!wallet) {
+    await initWallet();
+  }
 
-  // Fund once per VU
+  // Fund the VU address once.
   if (!faucetFunded) {
-    faucetFunded = fundFromFaucet(address);
-    sleep(0.5);
+    faucetFunded = fundFromFaucet(wallet.address);
+    sleep(0.3);
     return;
   }
 
-  // ── Transaction submission ───────────────────────────────────────────────
-  const to     = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; // burn address
+  const to     = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
   const amount = 1;
   const fee    = 100;
-  const nonce  = Math.floor(Math.random() * 1_000_000);
+  const nonce  = vuNonce++;
 
-  const signature = await signTx(privKey, address, to, amount, fee, nonce);
+  const signature = await signTx(wallet.address, to, amount, fee, nonce);
 
   const payload = JSON.stringify({
-    from: address,
+    from:      wallet.address,
     to,
     amount,
     fee,
     nonce,
     signature,
-    publicKey: pubKeyHex,
+    publicKey: wallet.pubKeyHex,
   });
 
   const start = Date.now();
   const res = http.post(`${API}/tx/broadcast`, payload, {
     headers: { "Content-Type": "application/json" },
-    tags: { name: "tx_broadcast" },
+    tags:    { name: "tx_broadcast" },
   });
   txLatency.add(Date.now() - start);
 
@@ -176,28 +181,23 @@ export default async function () {
   sleep(0.1 + Math.random() * 0.4);
 }
 
-/**
- * Block submission scenario — submit a simulated solved header.
- * Uses the miner seed address to match genesis funding.
- */
+// ── Block-submit scenario ─────────────────────────────────────────────────────
 export async function block_submit() {
-  const minerAddress = "f".repeat(40); // placeholder; replace with real miner addr
+  const minerAddress = "f".repeat(40);
   const nonce        = Math.floor(Math.random() * 2 ** 32);
   const timestamp    = Math.floor(Date.now() / 1000);
 
-  // Minimal block header payload accepted by POST /api/blocks/submit
   const payload = JSON.stringify({
     minerAddress,
     nonce,
     timestamp,
-    // residual near the target threshold so it passes validation
-    residual: 5e-9 + Math.random() * 4.9e-9,
+    residual:       5e-9 + Math.random() * 4.9e-9,
     recursionDepth: 3,
   });
 
   const res = http.post(`${API}/blocks/submit`, payload, {
     headers: { "Content-Type": "application/json" },
-    tags: { name: "block_submit" },
+    tags:    { name: "block_submit" },
   });
 
   check(res, { "block accepted (200)": r => r.status === 200 });
@@ -206,16 +206,18 @@ export async function block_submit() {
   sleep(1);
 }
 
+// ── Summary ───────────────────────────────────────────────────────────────────
 export function handleSummary(data) {
-  const okCount   = data.metrics.tx_submit_ok?.values?.count ?? 0;
+  const okCount   = data.metrics.tx_submit_ok?.values?.count  ?? 0;
   const failCount = data.metrics.tx_submit_fail?.values?.count ?? 0;
   const total     = okCount + failCount;
-  const tps       = total / (data.state.testRunDurationMs / 1000);
+  const durationS = data.state.testRunDurationMs / 1000;
+  const tps       = durationS > 0 ? total / durationS : 0;
   const p95       = data.metrics.tx_latency_ms?.values?.["p(95)"] ?? "n/a";
   const p99       = data.metrics.tx_latency_ms?.values?.["p(99)"] ?? "n/a";
 
   console.log("─".repeat(60));
-  console.log(`Equilibrium Load Test — Summary`);
+  console.log("Equilibrium Load Test — Summary");
   console.log(`  Total TX submitted : ${total}`);
   console.log(`  Accepted           : ${okCount}`);
   console.log(`  Rejected           : ${failCount}`);

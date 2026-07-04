@@ -332,8 +332,12 @@ export class ChainState {
     }
 
     const currentTail = this.blocks.slice(forkHeight + 1);
-    const currentResidual = currentTail.reduce((s, b) => s + b.residual, 0);
-    const candidateResidual = newBlocks.reduce((s, b) => s + b.residual, 0);
+    // Fixed-point comparison: scale residuals by 10^18 before summing so the
+    // fork-choice is identical across all architectures regardless of their
+    // IEEE-754 floating-point accumulation order.
+    const toFP = (r: number): bigint => BigInt(Math.round(r * 1e18));
+    const currentResidual   = currentTail.reduce((s, b) => s + toFP(b.residual), 0n);
+    const candidateResidual = newBlocks.reduce((s, b) => s + toFP(b.residual), 0n);
 
     if (candidateResidual >= currentResidual) {
       return { switched: false, reason: "candidate chain does not have lower cumulative residual" };

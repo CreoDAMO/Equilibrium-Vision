@@ -395,8 +395,10 @@ export const VoteOnProposalParams = zod.object({
 })
 
 export const VoteOnProposalBody = zod.object({
-  "voter": zod.string(),
-  "choice": zod.enum(['yes', 'no', 'abstain'])
+  "voter": zod.string().describe('The voter\'s 40-char hex address (derived from publicKey)'),
+  "choice": zod.enum(['yes', 'no', 'abstain']),
+  "publicKey": zod.string().describe('Hex-encoded raw Ed25519 public key (32 bytes = 64 hex chars)'),
+  "signature": zod.string().describe('Ed25519 signature over UTF-8(\"vote:{proposalId}:{choice}\") — 64 bytes = 128 hex chars')
 })
 
 export const VoteOnProposalResponse = zod.object({

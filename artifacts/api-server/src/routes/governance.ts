@@ -1,7 +1,50 @@
 import { Router } from "express";
+import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { chainState } from "../chain/index.js";
 
 const router = Router();
+
+/**
+ * Derive the canonical Equilibrium address from a raw Ed25519 public key.
+ * Algorithm: SHA-256(raw_pubkey_bytes)[0..20] as 40 lowercase hex chars.
+ * Must match the wallet (explorer/src/wallet/crypto.ts) and Rust address_from_pubkey.
+ */
+function addressFromPublicKey(publicKeyHex: string): string {
+  const bytes = Buffer.from(publicKeyHex, "hex");
+  return createHash("sha256").update(bytes).digest("hex").slice(0, 40);
+}
+
+/**
+ * Verify an Ed25519 vote signature using Node.js built-in crypto.
+ * Canonical message: UTF-8("vote:{proposalId}:{choice}")
+ *
+ * Ed25519 raw public keys (32 bytes) must be wrapped in a SubjectPublicKeyInfo
+ * DER envelope before Node.js can consume them as a KeyObject.
+ * DER prefix for Ed25519 SPKI: 302a300506032b6570032100
+ *
+ * Returns false on any parse or crypto error.
+ */
+function verifyVoteSignature(
+  publicKeyHex: string,
+  signatureHex: string,
+  proposalId: string,
+  choice: string,
+): boolean {
+  try {
+    const rawPubKey = Buffer.from(publicKeyHex, "hex");
+    const sig       = Buffer.from(signatureHex, "hex");
+    const msg       = Buffer.from(`vote:${proposalId}:${choice}`, "utf8");
+
+    // Wrap raw 32-byte Ed25519 key in SPKI DER envelope
+    const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
+    const spkiDer    = Buffer.concat([spkiPrefix, rawPubKey]);
+    const keyObject  = createPublicKey({ key: spkiDer, format: "der", type: "spki" });
+
+    return cryptoVerify(null, msg, keyObject, sig);
+  } catch {
+    return false;
+  }
+}
 
 // GET /governance/proposals — list all proposals with live vote tallies
 router.get("/governance/proposals", (_req, res) => {
@@ -69,9 +112,15 @@ router.get("/governance/proposals/:id", (req, res) => {
 
 // POST /governance/proposals/:id/vote — cast or change a vote
 router.post("/governance/proposals/:id/vote", (req, res) => {
-  const { voter, choice } = req.body as { voter?: string; choice?: string };
-  if (!voter || !choice) {
-    res.status(400).json({ error: "voter and choice are required" });
+  const { voter, choice, publicKey, signature } = req.body as {
+    voter?: string;
+    choice?: string;
+    publicKey?: string;
+    signature?: string;
+  };
+
+  if (!voter || !choice || !publicKey || !signature) {
+    res.status(400).json({ error: "voter, choice, publicKey, and signature are required" });
     return;
   }
   if (!["yes", "no", "abstain"].includes(choice)) {
@@ -79,11 +128,31 @@ router.post("/governance/proposals/:id/vote", (req, res) => {
     return;
   }
 
+  // ── Signature verification ─────────────────────────────────────────────────
+  // 1. Ensure the supplied public key actually maps to the claimed voter address.
+  let derivedAddr: string;
+  try {
+    derivedAddr = addressFromPublicKey(publicKey);
+  } catch {
+    res.status(400).json({ error: "publicKey is not valid hex" });
+    return;
+  }
+  if (derivedAddr !== voter) {
+    res.status(403).json({ error: "publicKey does not correspond to voter address" });
+    return;
+  }
+
+  // 2. Verify the signature over the canonical vote message.
+  const proposalId = req.params["id"]!;
+  if (!verifyVoteSignature(publicKey, signature, proposalId, choice)) {
+    res.status(403).json({ error: "Invalid vote signature — sign vote:{proposalId}:{choice} with your Ed25519 key" });
+    return;
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   // Voting power = bonded stake only (validators + their delegated stake).
   // Ledger account balance is excluded so quorum math (denominator =
   // totalBondedStake) remains coherent.
-  // NOTE: in production the voter field must be verified against a signed
-  // payload — for testnet, vote origin is trusted from the request body.
   const validatorRecord = chainState.validators.get(voter);
   let votingPower = validatorRecord?.bondedStake ?? 0;
 

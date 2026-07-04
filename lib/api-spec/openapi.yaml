@@ -838,13 +838,20 @@ components:
 
     VoteInput:
       type: object
-      required: [voter, choice]
+      required: [voter, choice, publicKey, signature]
       properties:
         voter:
           type: string
+          description: The voter's 40-char hex address (derived from publicKey)
         choice:
           type: string
           enum: [yes, no, abstain]
+        publicKey:
+          type: string
+          description: Hex-encoded raw Ed25519 public key (32 bytes = 64 hex chars)
+        signature:
+          type: string
+          description: Ed25519 signature over UTF-8("vote:{proposalId}:{choice}") — 64 bytes = 128 hex chars
 
     VoteResult:
       type: object
