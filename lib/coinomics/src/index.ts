@@ -21,3 +21,14 @@ export {
   generateGenesis,
   defaultMainnetGenesisConfig,
 } from "./genesis.js";
+
+export {
+  type Delegator,
+  type ValidatorStake,
+  type DelegatorPayout,
+  type ValidatorPayout,
+  totalBondedStake,
+  allocateValidatorRewards,
+  splitValidatorReward,
+  distributeStakingRewards,
+} from "./staking.js";
