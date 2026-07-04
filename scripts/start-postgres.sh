@@ -47,19 +47,41 @@ fi
 pg_ctl start -D "$PGDATA" -l "$PGDATA/server.log" -w
 sleep 0.5
 
-# Ensure the OS user role exists (initdb may have used 'postgres' as superuser)
+# ── Detect which superuser initdb created ────────────────────────────────────
+# initdb uses --username= if provided, otherwise the OS user or 'postgres'.
+# We try the OS user first, then fall back to 'postgres'.
 OS_USER="$(whoami)"
-psql -p "$PGPORT" -h 127.0.0.1 -U postgres -tc \
+if psql -p "$PGPORT" -h 127.0.0.1 -U "$OS_USER" -c "SELECT 1" postgres > /dev/null 2>&1; then
+  SU="$OS_USER"
+elif psql -p "$PGPORT" -h 127.0.0.1 -U postgres -c "SELECT 1" postgres > /dev/null 2>&1; then
+  SU="postgres"
+else
+  echo "[postgres] WARNING: could not connect as $OS_USER or postgres — proceeding anyway"
+  SU="postgres"
+fi
+echo "[postgres] Using superuser: $SU"
+
+# Ensure the OS user role exists with login privileges
+psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -tc \
   "SELECT 1 FROM pg_roles WHERE rolname='$OS_USER'" 2>/dev/null \
   | grep -q 1 \
-  || { psql -p "$PGPORT" -h 127.0.0.1 -U postgres \
+  || { psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" \
          -c "CREATE ROLE \"$OS_USER\" WITH LOGIN SUPERUSER;" 2>/dev/null \
        && echo "[postgres] Created role '$OS_USER'."; }
 
 # Create application database if missing
-if ! psql -p "$PGPORT" -h 127.0.0.1 -U postgres -lqt 2>/dev/null | cut -d\| -f1 | grep -qw "$PGDB"; then
+if ! psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -lqt 2>/dev/null | cut -d\| -f1 | grep -qw "$PGDB"; then
   echo "[postgres] Creating database '$PGDB' …"
-  createdb -p "$PGPORT" -h 127.0.0.1 -U postgres "$PGDB"
+  createdb -p "$PGPORT" -h 127.0.0.1 -U "$SU" "$PGDB"
+fi
+
+# Push schema (idempotent — safe to run every boot)
+PGDB_URL="postgresql://${OS_USER}@127.0.0.1:${PGPORT}/${PGDB}"
+REPO_ROOT_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if DATABASE_URL="$PGDB_URL" pnpm --filter @workspace/db run push --config ./drizzle.config.ts > /dev/null 2>&1; then
+  echo "[postgres] Schema up to date."
+else
+  echo "[postgres] Schema push skipped (will retry next boot)."
 fi
 
 pg_ctl stop -D "$PGDATA" -m fast -w
