@@ -8,8 +8,20 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 // ── Address derivation ─────────────────────────────────────────────────────────
 
 export async function deriveAddress(pubKeyHex: string): Promise<string> {
-  const data = new TextEncoder().encode(pubKeyHex);
-  const buf = await crypto.subtle.digest("SHA-256", data);
+  // Hash the raw 32-byte public key to match Rust's address_from_pubkey:
+  //   SHA-256(pubkey.as_bytes())[..20] rendered as 40 hex chars.
+  // Hashing the UTF-8 bytes of the hex *string* (the old behaviour) produces a
+  // different result for the same keypair, so we decode hex → bytes first.
+  if (pubKeyHex.length !== 64) {
+    throw new Error(`Invalid public key: expected 64 hex chars, got ${pubKeyHex.length}`);
+  }
+  const raw = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    const byte = parseInt(pubKeyHex.slice(i * 2, i * 2 + 2), 16);
+    if (isNaN(byte)) throw new Error(`Invalid hex character in public key at position ${i * 2}`);
+    raw[i] = byte;
+  }
+  const buf = await crypto.subtle.digest("SHA-256", raw);
   return Array.from(new Uint8Array(buf))
     .map(b => b.toString(16).padStart(2, "0"))
     .join("")

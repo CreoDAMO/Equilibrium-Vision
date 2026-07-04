@@ -288,3 +288,102 @@ impl fmt::Display for WalletError {
         }
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_wallet() -> Wallet {
+        // Deterministic key: all-zeros seed
+        Wallet::from_bytes(&[0u8; 32])
+    }
+
+    #[test]
+    fn address_derivation_is_sha256_of_raw_pubkey_bytes() {
+        let w = test_wallet();
+        // Manually compute SHA-256 of the raw 32-byte public key
+        let expected_hash = Sha256::digest(w.public_key_bytes());
+        let mut expected_addr = [0u8; 20];
+        expected_addr.copy_from_slice(&expected_hash[..20]);
+        assert_eq!(w.address, expected_addr);
+    }
+
+    #[test]
+    fn address_is_40_hex_chars() {
+        let w = test_wallet();
+        let hex = address_to_hex(&w.address);
+        assert_eq!(hex.len(), 40);
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn address_round_trips_through_hex() {
+        let w = test_wallet();
+        let hex = address_to_hex(&w.address);
+        let recovered = address_from_hex(&hex).expect("round-trip should succeed");
+        assert_eq!(w.address, recovered);
+    }
+
+    #[test]
+    fn different_keys_produce_different_addresses() {
+        let w1 = Wallet::from_bytes(&[0u8; 32]);
+        let w2 = Wallet::from_bytes(&[1u8; 32]);
+        assert_ne!(w1.address, w2.address);
+    }
+
+    #[test]
+    fn sign_and_verify_roundtrip() {
+        let sender = test_wallet();
+        let recipient = Wallet::from_bytes(&[2u8; 32]);
+        let tx = sender.sign_tx(recipient.address, 1000, 10, 0);
+        assert!(tx.verify().is_ok(), "freshly signed tx must verify");
+    }
+
+    #[test]
+    fn tampered_tx_fails_verification() {
+        let sender = test_wallet();
+        let recipient = Wallet::from_bytes(&[2u8; 32]);
+        let mut tx = sender.sign_tx(recipient.address, 1000, 10, 0);
+        tx.amount += 1; // tamper with amount
+        assert!(tx.verify().is_err(), "tampered tx must not verify");
+    }
+
+    #[test]
+    fn ledger_tracks_balance_and_nonce() {
+        let sender = test_wallet();
+        let recipient = Wallet::from_bytes(&[3u8; 32]);
+        let mut ledger = Ledger::new();
+        ledger.credit(&sender.address, 10_000);
+        assert_eq!(ledger.balance(&sender.address), 10_000);
+
+        let tx = sender.sign_tx(recipient.address, 500, 5, 0);
+        ledger.apply_tx(&tx).expect("valid tx should apply");
+        // sender: 10_000 - 500 - 5 = 9_495; nonce 1
+        assert_eq!(ledger.balance(&sender.address), 9_495);
+        assert_eq!(ledger.nonce(&sender.address), 1);
+        assert_eq!(ledger.balance(&recipient.address), 500);
+    }
+
+    #[test]
+    fn ledger_rejects_insufficient_funds() {
+        let sender = test_wallet();
+        let recipient = Wallet::from_bytes(&[4u8; 32]);
+        let mut ledger = Ledger::new();
+        ledger.credit(&sender.address, 100);
+        let tx = sender.sign_tx(recipient.address, 200, 5, 0);
+        assert!(ledger.apply_tx(&tx).is_err());
+    }
+
+    #[test]
+    fn ledger_rejects_bad_nonce() {
+        let sender = test_wallet();
+        let recipient = Wallet::from_bytes(&[5u8; 32]);
+        let mut ledger = Ledger::new();
+        ledger.credit(&sender.address, 10_000);
+        // Nonce 1 expected (0 was never used)
+        let tx = sender.sign_tx(recipient.address, 100, 5, 1);
+        assert!(ledger.apply_tx(&tx).is_err());
+    }
+}

@@ -306,3 +306,129 @@ export const GetValidatorDelegatorsResponse = zod.object({
 })
 
 
+/**
+ * @summary List all governance proposals with live vote tallies
+ */
+export const ListProposalsResponse = zod.object({
+  "count": zod.number(),
+  "proposals": zod.array(zod.object({
+  "id": zod.string(),
+  "type": zod.enum(['text', 'parameter_change']),
+  "title": zod.string(),
+  "proposer": zod.string(),
+  "submittedAt": zod.number(),
+  "votingEndsAt": zod.number(),
+  "votesYes": zod.number(),
+  "votesNo": zod.number(),
+  "votesAbstain": zod.number(),
+  "quorumReached": zod.boolean(),
+  "passThreshold": zod.boolean(),
+  "status": zod.enum(['active', 'passed', 'rejected', 'executed']),
+  "totalVotingPower": zod.number(),
+  "quorumPct": zod.number()
+}))
+})
+
+
+/**
+ * @summary Submit a new governance proposal
+ */
+export const CreateProposalBody = zod.object({
+  "proposer": zod.string(),
+  "type": zod.enum(['text', 'parameter_change']),
+  "title": zod.string(),
+  "description": zod.string(),
+  "parameterChange": zod.object({
+  "key": zod.string(),
+  "value": zod.number()
+}).optional()
+})
+
+export const CreateProposalResponse = zod.object({
+  "id": zod.string(),
+  "type": zod.enum(['text', 'parameter_change']),
+  "title": zod.string(),
+  "proposer": zod.string(),
+  "submittedAt": zod.number(),
+  "votingEndsAt": zod.number(),
+  "votesYes": zod.number(),
+  "votesNo": zod.number(),
+  "votesAbstain": zod.number(),
+  "quorumReached": zod.boolean(),
+  "passThreshold": zod.boolean(),
+  "status": zod.enum(['active', 'passed', 'rejected', 'executed']),
+  "totalVotingPower": zod.number(),
+  "quorumPct": zod.number()
+})
+
+
+/**
+ * @summary Proposal detail with full voter breakdown
+ */
+export const GetProposalParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const GetProposalResponse = zod.object({
+  "id": zod.string(),
+  "type": zod.enum(['text', 'parameter_change']),
+  "title": zod.string(),
+  "proposer": zod.string(),
+  "submittedAt": zod.number(),
+  "votingEndsAt": zod.number(),
+  "votesYes": zod.number(),
+  "votesNo": zod.number(),
+  "votesAbstain": zod.number(),
+  "quorumReached": zod.boolean(),
+  "passThreshold": zod.boolean(),
+  "status": zod.enum(['active', 'passed', 'rejected', 'executed']),
+  "totalVotingPower": zod.number(),
+  "quorumPct": zod.number()
+})
+
+
+/**
+ * @summary Cast or change a vote on a governance proposal
+ */
+export const VoteOnProposalParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const VoteOnProposalBody = zod.object({
+  "voter": zod.string(),
+  "choice": zod.enum(['yes', 'no', 'abstain'])
+})
+
+export const VoteOnProposalResponse = zod.object({
+  "success": zod.boolean(),
+  "proposal": zod.object({
+  "id": zod.string(),
+  "type": zod.enum(['text', 'parameter_change']),
+  "title": zod.string(),
+  "proposer": zod.string(),
+  "submittedAt": zod.number(),
+  "votingEndsAt": zod.number(),
+  "votesYes": zod.number(),
+  "votesNo": zod.number(),
+  "votesAbstain": zod.number(),
+  "quorumReached": zod.boolean(),
+  "passThreshold": zod.boolean(),
+  "status": zod.enum(['active', 'passed', 'rejected', 'executed']),
+  "totalVotingPower": zod.number(),
+  "quorumPct": zod.number()
+}).optional()
+})
+
+
+/**
+ * @summary Current live chain parameters (modifiable via governance)
+ */
+export const GetChainParametersResponse = zod.object({
+  "baseReward": zod.number(),
+  "miningThreshold": zod.number(),
+  "unbondingPeriod": zod.number(),
+  "maxMempoolSize": zod.number(),
+  "minValidatorStake": zod.number()
+})
+
+

@@ -14,7 +14,7 @@ impl StationarySolver {
     }
 
     /// Full joint residual and gradient, with all cross-terms explicit.
-    fn joint_residual_and_gradient(
+    pub(crate) fn joint_residual_and_gradient(
         header: &BlockHeader,
         txs: &[TxCandidate],
         state: &ChainState,
@@ -69,7 +69,7 @@ impl StationarySolver {
         (residual, gradient)
     }
 
-    fn update_multipliers(lambda: &mut [f64; 5], violations: &[f64; 5], step: f64) {
+    pub(crate) fn update_multipliers(lambda: &mut [f64; 5], violations: &[f64; 5], step: f64) {
         for i in 0..5 {
             lambda[i] = (lambda[i] + step * violations[i]).max(0.0);
         }
@@ -135,5 +135,91 @@ impl StationarySolver {
         }
 
         best_solution
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chain_state::{BlockHeader, ChainState};
+
+    fn default_state() -> ChainState {
+        ChainState {
+            cumulative_work: 1,
+            mempool_pressure: 0.0,
+            ..Default::default()
+        }
+    }
+
+    fn default_header() -> BlockHeader {
+        BlockHeader {
+            prev_hash: [0u8; 32],
+            merkle_root: [0u8; 32],
+            timestamp: 1_700_000_000,
+            nonce: 12345,
+            difficulty: 1_000_000,
+            recursion_depth: 1,
+            residual: 0.0,
+        }
+    }
+
+    #[test]
+    fn solver_returns_some_for_permissive_target() {
+        // With a very large target residual, the solver should find a solution quickly.
+        let solver = StationarySolver::new(100, 1e12, 0.01, 2);
+        let state = default_state();
+        let result = solver.optimize_full(default_header(), vec![], &state);
+        assert!(result.is_some(), "solver should find a solution for a permissive threshold");
+    }
+
+    #[test]
+    fn residual_is_non_negative() {
+        // The Lagrangian is a sum of squared violations — it must never be negative.
+        let state = default_state();
+        let header = default_header();
+        let lambda = [1.0; 5];
+        let (residual, _) = StationarySolver::joint_residual_and_gradient(&header, &[], &state, &lambda);
+        assert!(residual >= 0.0, "residual must be non-negative, got {residual}");
+    }
+
+    #[test]
+    fn zero_lambda_gives_zero_residual() {
+        let state = default_state();
+        let header = default_header();
+        let lambda = [0.0; 5];
+        let (residual, _) = StationarySolver::joint_residual_and_gradient(&header, &[], &state, &lambda);
+        assert_eq!(residual, 0.0, "all-zero lambda should give zero residual");
+    }
+
+    #[test]
+    fn update_multipliers_clamps_to_zero() {
+        let mut lambda = [0.5; 5];
+        // Very negative step drives all λᵢ towards negative; must clamp at 0
+        StationarySolver::update_multipliers(&mut lambda, &[1.0; 5], -10.0);
+        for l in lambda {
+            assert_eq!(l, 0.0, "multipliers must not go below 0.0");
+        }
+    }
+
+    #[test]
+    fn update_multipliers_increases_for_positive_violation() {
+        let mut lambda = [1.0; 5];
+        let before = lambda[0];
+        StationarySolver::update_multipliers(&mut lambda, &[1.0; 5], 0.1);
+        assert!(lambda[0] > before, "positive violation should increase λ");
+    }
+
+    #[test]
+    fn fixed_point_encoding_is_deterministic() {
+        // Verify that encoding 1e-8 as fixed-point (scale 1e9) gives the same
+        // integer on every call — a regression guard for floating-point ordering.
+        let residual = 1e-8_f64;
+        let scale = 1_000_000_000u64;
+        let fp1 = (residual * scale as f64).floor() as u64;
+        let fp2 = (residual * scale as f64).floor() as u64;
+        assert_eq!(fp1, fp2);
+        assert_eq!(fp1, 10); // floor(1e-8 * 1e9) = floor(10.0) = 10
     }
 }

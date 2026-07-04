@@ -26,16 +26,22 @@ import type {
   BlockPage,
   BlockStat,
   BroadcastResult,
+  ChainParameters,
   ChainStatus,
   DelegatorsResponse,
   HealthStatus,
   ListBlocksParams,
   Mempool,
+  NewProposalInput,
   Peer,
+  ProposalList,
+  ProposalSummary,
   SignedTxInput,
   Transaction,
   ValidatorDetail,
-  ValidatorList
+  ValidatorList,
+  VoteInput,
+  VoteResult
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -1054,6 +1060,378 @@ export function useGetValidatorDelegators<TData = Awaited<ReturnType<typeof getV
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetValidatorDelegatorsQueryOptions(addr,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListProposalsUrl = () => {
+
+
+
+
+  return `/api/governance/proposals`
+}
+
+/**
+ * @summary List all governance proposals with live vote tallies
+ */
+export const listProposals = async ( options?: RequestInit): Promise<ProposalList> => {
+
+  return customFetch<ProposalList>(getListProposalsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListProposalsQueryKey = () => {
+    return [
+    `/api/governance/proposals`
+    ] as const;
+    }
+
+
+export const getListProposalsQueryOptions = <TData = Awaited<ReturnType<typeof listProposals>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listProposals>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListProposalsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listProposals>>> = ({ signal }) => listProposals({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listProposals>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListProposalsQueryResult = NonNullable<Awaited<ReturnType<typeof listProposals>>>
+export type ListProposalsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all governance proposals with live vote tallies
+ */
+
+export function useListProposals<TData = Awaited<ReturnType<typeof listProposals>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listProposals>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListProposalsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateProposalUrl = () => {
+
+
+
+
+  return `/api/governance/proposals`
+}
+
+/**
+ * @summary Submit a new governance proposal
+ */
+export const createProposal = async (newProposalInput: NewProposalInput, options?: RequestInit): Promise<ProposalSummary> => {
+
+  return customFetch<ProposalSummary>(getCreateProposalUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(newProposalInput)
+  }
+);}
+
+
+
+
+export const getCreateProposalMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createProposal>>, TError,{data: BodyType<NewProposalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createProposal>>, TError,{data: BodyType<NewProposalInput>}, TContext> => {
+
+const mutationKey = ['createProposal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createProposal>>, {data: BodyType<NewProposalInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createProposal(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateProposalMutationResult = NonNullable<Awaited<ReturnType<typeof createProposal>>>
+    export type CreateProposalMutationBody = BodyType<NewProposalInput>
+    export type CreateProposalMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Submit a new governance proposal
+ */
+export const useCreateProposal = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createProposal>>, TError,{data: BodyType<NewProposalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createProposal>>,
+        TError,
+        {data: BodyType<NewProposalInput>},
+        TContext
+      > => {
+      return useMutation(getCreateProposalMutationOptions(options));
+    }
+
+export const getGetProposalUrl = (id: string,) => {
+
+
+
+
+  return `/api/governance/proposals/${id}`
+}
+
+/**
+ * @summary Proposal detail with full voter breakdown
+ */
+export const getProposal = async (id: string, options?: RequestInit): Promise<ProposalSummary> => {
+
+  return customFetch<ProposalSummary>(getGetProposalUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetProposalQueryKey = (id: string,) => {
+    return [
+    `/api/governance/proposals/${id}`
+    ] as const;
+    }
+
+
+export const getGetProposalQueryOptions = <TData = Awaited<ReturnType<typeof getProposal>>, TError = ErrorType<ApiError>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProposal>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProposalQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProposal>>> = ({ signal }) => getProposal(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProposal>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetProposalQueryResult = NonNullable<Awaited<ReturnType<typeof getProposal>>>
+export type GetProposalQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Proposal detail with full voter breakdown
+ */
+
+export function useGetProposal<TData = Awaited<ReturnType<typeof getProposal>>, TError = ErrorType<ApiError>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProposal>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetProposalQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getVoteOnProposalUrl = (id: string,) => {
+
+
+
+
+  return `/api/governance/proposals/${id}/vote`
+}
+
+/**
+ * @summary Cast or change a vote on a governance proposal
+ */
+export const voteOnProposal = async (id: string,
+    voteInput: VoteInput, options?: RequestInit): Promise<VoteResult> => {
+
+  return customFetch<VoteResult>(getVoteOnProposalUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(voteInput)
+  }
+);}
+
+
+
+
+export const getVoteOnProposalMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof voteOnProposal>>, TError,{id: string;data: BodyType<VoteInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof voteOnProposal>>, TError,{id: string;data: BodyType<VoteInput>}, TContext> => {
+
+const mutationKey = ['voteOnProposal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof voteOnProposal>>, {id: string;data: BodyType<VoteInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  voteOnProposal(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VoteOnProposalMutationResult = NonNullable<Awaited<ReturnType<typeof voteOnProposal>>>
+    export type VoteOnProposalMutationBody = BodyType<VoteInput>
+    export type VoteOnProposalMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Cast or change a vote on a governance proposal
+ */
+export const useVoteOnProposal = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof voteOnProposal>>, TError,{id: string;data: BodyType<VoteInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof voteOnProposal>>,
+        TError,
+        {id: string;data: BodyType<VoteInput>},
+        TContext
+      > => {
+      return useMutation(getVoteOnProposalMutationOptions(options));
+    }
+
+export const getGetChainParametersUrl = () => {
+
+
+
+
+  return `/api/governance/params`
+}
+
+/**
+ * @summary Current live chain parameters (modifiable via governance)
+ */
+export const getChainParameters = async ( options?: RequestInit): Promise<ChainParameters> => {
+
+  return customFetch<ChainParameters>(getGetChainParametersUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetChainParametersQueryKey = () => {
+    return [
+    `/api/governance/params`
+    ] as const;
+    }
+
+
+export const getGetChainParametersQueryOptions = <TData = Awaited<ReturnType<typeof getChainParameters>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getChainParameters>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetChainParametersQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getChainParameters>>> = ({ signal }) => getChainParameters({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getChainParameters>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetChainParametersQueryResult = NonNullable<Awaited<ReturnType<typeof getChainParameters>>>
+export type GetChainParametersQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Current live chain parameters (modifiable via governance)
+ */
+
+export function useGetChainParameters<TData = Awaited<ReturnType<typeof getChainParameters>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getChainParameters>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetChainParametersQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

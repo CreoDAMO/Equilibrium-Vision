@@ -13,6 +13,7 @@ import faucetRouter from "./faucet.js";
 import utxoRouter from "./utxo.js";
 import contractsRouter from "./contracts.js";
 import evmRouter from "./evm.js";
+import governanceRouter from "./governance.js";
 
 const router: IRouter = Router();
 
@@ -30,5 +31,6 @@ router.use(faucetRouter);
 router.use(utxoRouter);
 router.use(contractsRouter);
 router.use(evmRouter);
+router.use(governanceRouter);
 
 export default router;

@@ -4,6 +4,7 @@ import type {
   DexPool, LiquidityPosition, SwapEvent, StakeRecord, UnbondingEntry, GossipEvent,
 } from "./types.js";
 import { merkleRoot, randomHex, addressFromSeed, hash256 } from "./crypto.js";
+import { GovernanceModule } from "./governance.js";
 import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
 import { generateZkProof } from "./zkproof.js";
@@ -156,6 +157,12 @@ export class ChainState {
   // WASM smart contract VM
   wasmVM = new WasmVM();
 
+  // On-chain governance (proposals, voting, parameter changes)
+  governance = new GovernanceModule((params) => {
+    // Apply runtime parameter changes when a proposal executes
+    (this as unknown as Record<string, unknown>)["_govParams"] = params;
+  });
+
   get height(): number {
     return this.blocks.length - 1;
   }
@@ -258,6 +265,7 @@ export class ChainState {
     this.runFinalityRound(block);
     this.processUnbonding(block.height);
     this.distributeBlockReward(block);
+    this.governance.processBlock(block.timestamp, this.totalBondedStake);
   }
 
   // ── Chain reorganization ─────────────────────────────────────────────────────

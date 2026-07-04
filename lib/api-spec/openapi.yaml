@@ -22,6 +22,8 @@ tags:
     description: Pending transaction pool
   - name: validators
     description: Validator staking, rewards, and slashing
+  - name: governance
+    description: On-chain governance proposals, voting, and chain parameters
 
 paths:
   /healthz:
@@ -279,6 +281,111 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+
+  /governance/proposals:
+    get:
+      operationId: listProposals
+      tags: [governance]
+      summary: List all governance proposals with live vote tallies
+      responses:
+        "200":
+          description: Proposal list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalList"
+    post:
+      operationId: createProposal
+      tags: [governance]
+      summary: Submit a new governance proposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewProposalInput"
+      responses:
+        "201":
+          description: Proposal created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalSummary"
+        "400":
+          description: Invalid proposal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /governance/proposals/{id}:
+    get:
+      operationId: getProposal
+      tags: [governance]
+      summary: Proposal detail with full voter breakdown
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Proposal detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalSummary"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /governance/proposals/{id}/vote:
+    post:
+      operationId: voteOnProposal
+      tags: [governance]
+      summary: Cast or change a vote on a governance proposal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoteInput"
+      responses:
+        "200":
+          description: Vote recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoteResult"
+        "400":
+          description: Invalid vote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /governance/params:
+    get:
+      operationId: getChainParameters
+      tags: [governance]
+      summary: Current live chain parameters (modifiable via governance)
+      responses:
+        "200":
+          description: Chain parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChainParameters"
 
 components:
   schemas:
@@ -646,3 +753,124 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Delegator"
+
+    ProposalSummary:
+      type: object
+      required:
+        - id
+        - type
+        - title
+        - proposer
+        - submittedAt
+        - votingEndsAt
+        - votesYes
+        - votesNo
+        - votesAbstain
+        - quorumReached
+        - passThreshold
+        - status
+        - totalVotingPower
+        - quorumPct
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [text, parameter_change]
+        title:
+          type: string
+        proposer:
+          type: string
+        submittedAt:
+          type: integer
+        votingEndsAt:
+          type: integer
+        votesYes:
+          type: number
+        votesNo:
+          type: number
+        votesAbstain:
+          type: number
+        quorumReached:
+          type: boolean
+        passThreshold:
+          type: boolean
+        status:
+          type: string
+          enum: [active, passed, rejected, executed]
+        totalVotingPower:
+          type: number
+        quorumPct:
+          type: number
+
+    ProposalList:
+      type: object
+      required: [count, proposals]
+      properties:
+        count:
+          type: integer
+        proposals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProposalSummary"
+
+    NewProposalInput:
+      type: object
+      required: [proposer, type, title, description]
+      properties:
+        proposer:
+          type: string
+        type:
+          type: string
+          enum: [text, parameter_change]
+        title:
+          type: string
+        description:
+          type: string
+        parameterChange:
+          type: object
+          required: [key, value]
+          properties:
+            key:
+              type: string
+            value:
+              type: number
+
+    VoteInput:
+      type: object
+      required: [voter, choice]
+      properties:
+        voter:
+          type: string
+        choice:
+          type: string
+          enum: [yes, no, abstain]
+
+    VoteResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        proposal:
+          $ref: "#/components/schemas/ProposalSummary"
+
+    ChainParameters:
+      type: object
+      required:
+        - baseReward
+        - miningThreshold
+        - unbondingPeriod
+        - maxMempoolSize
+        - minValidatorStake
+      properties:
+        baseReward:
+          type: number
+        miningThreshold:
+          type: number
+        unbondingPeriod:
+          type: integer
+        maxMempoolSize:
+          type: integer
+        minValidatorStake:
+          type: number

@@ -180,6 +180,94 @@ export interface DelegatorsResponse {
   delegators: Delegator[];
 }
 
+export type ProposalSummaryType = typeof ProposalSummaryType[keyof typeof ProposalSummaryType];
+
+
+export const ProposalSummaryType = {
+  text: 'text',
+  parameter_change: 'parameter_change',
+} as const;
+
+export type ProposalSummaryStatus = typeof ProposalSummaryStatus[keyof typeof ProposalSummaryStatus];
+
+
+export const ProposalSummaryStatus = {
+  active: 'active',
+  passed: 'passed',
+  rejected: 'rejected',
+  executed: 'executed',
+} as const;
+
+export interface ProposalSummary {
+  id: string;
+  type: ProposalSummaryType;
+  title: string;
+  proposer: string;
+  submittedAt: number;
+  votingEndsAt: number;
+  votesYes: number;
+  votesNo: number;
+  votesAbstain: number;
+  quorumReached: boolean;
+  passThreshold: boolean;
+  status: ProposalSummaryStatus;
+  totalVotingPower: number;
+  quorumPct: number;
+}
+
+export interface ProposalList {
+  count: number;
+  proposals: ProposalSummary[];
+}
+
+export type NewProposalInputType = typeof NewProposalInputType[keyof typeof NewProposalInputType];
+
+
+export const NewProposalInputType = {
+  text: 'text',
+  parameter_change: 'parameter_change',
+} as const;
+
+export type NewProposalInputParameterChange = {
+  key: string;
+  value: number;
+};
+
+export interface NewProposalInput {
+  proposer: string;
+  type: NewProposalInputType;
+  title: string;
+  description: string;
+  parameterChange?: NewProposalInputParameterChange;
+}
+
+export type VoteInputChoice = typeof VoteInputChoice[keyof typeof VoteInputChoice];
+
+
+export const VoteInputChoice = {
+  yes: 'yes',
+  no: 'no',
+  abstain: 'abstain',
+} as const;
+
+export interface VoteInput {
+  voter: string;
+  choice: VoteInputChoice;
+}
+
+export interface VoteResult {
+  success: boolean;
+  proposal?: ProposalSummary;
+}
+
+export interface ChainParameters {
+  baseReward: number;
+  miningThreshold: number;
+  unbondingPeriod: number;
+  maxMempoolSize: number;
+  minValidatorStake: number;
+}
+
 export type ListBlocksParams = {
 page?: number;
 limit?: number;
