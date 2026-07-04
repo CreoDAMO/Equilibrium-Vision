@@ -1,0 +1,25 @@
+{
+  "name": "@workspace/coinomics",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Equilibrium mainnet coinomics: genesis.json generator, block reward halving curve, and PoS quality-multiplier reward calculation",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "generate-genesis": "tsx src/cli/generate-genesis.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.9"
+  },
+  "keywords": ["equilibrium", "blockchain", "coinomics", "genesis", "mainnet"],
+  "license": "MIT"
+}

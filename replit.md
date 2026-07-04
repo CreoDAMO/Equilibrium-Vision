@@ -11,6 +11,8 @@ A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile min
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - Rust testnet: `cd equilibrium && cargo run --bin testnet-node`
 - Rust wallet CLI: `cd equilibrium && cargo run --bin wallet`
+- `pnpm --filter @workspace/coinomics run test` — run the coinomics/genesis unit tests
+- `pnpm --filter @workspace/coinomics run generate-genesis [outputPath]` — write a mainnet `genesis.json` (default allocation split, placeholder addresses)
 
 ## Stack
 
@@ -30,6 +32,7 @@ A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile min
 - `artifacts/explorer/src/wallet/` — Browser wallet (context.tsx state manager, crypto.ts key ops)
 - `lib/api-spec/openapi.yaml` — Source-of-truth API contract
 - `lib/api-client-react/src/generated/` — Generated React Query hooks (do not edit manually)
+- `lib/coinomics/src/` — Mainnet coinomics: `reward.ts` (halving curve + PoS quality multiplier), `genesis.ts` (genesis.json generator/validator), `cli/generate-genesis.ts` (writes genesis.json to disk)
 
 ## Architecture decisions
 
