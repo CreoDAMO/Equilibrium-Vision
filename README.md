@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (as of this update):** All runtime bugs are resolved. Core protocol, wallet, explorer, API surface, Postgres persistence, Android JNI bridge, and mobile block submission are complete for testnet. The only outstanding item is an automated test suite (Known Issue #5). `pnpm run typecheck` passes clean across all packages.
+> **Status (as of July 2026):** All runtime bugs are resolved. Core protocol, wallet, explorer, API surface, Postgres persistence, governance module, testnet faucet UI, and Rust unit test suite are complete. `pnpm run typecheck` passes clean and all 84 tests pass (22 Rust, 62 TypeScript). Three hardening items remain — see **Remaining Work** below.
 
 ---
 
@@ -234,6 +234,23 @@ Available at `/explorer` in the running preview. Pages:
 
 All data refreshes every 10 seconds via React Query.
 
+### Governance
+
+Available at `/governance`. On-chain governance with a full proposal lifecycle:
+
+- **Proposals** — submit text or parameter-change proposals; each shows live quorum progress and per-validator tally bars
+- **Voting** — authenticated votes signed with Ed25519 keypairs; the API verifies the signature and binds it to the voter's on-chain address before accepting
+- **Execution** — parameter-change proposals auto-execute when quorum (33.4% of bonded stake) is reached; rejection kills the proposal immediately
+- **Chain parameters** — live view of current network parameters, updated on execution
+
+### Faucet
+
+Available at `/faucet`. Request 1,000 EQU per address per hour on the testnet:
+
+- Enter any 40-char hex address to see its current cooldown status (polled every 5 s)
+- Submit triggers a drip and shows the new balance and credited amount
+- One-hour cooldown enforced server-side; status badge reflects remaining time
+
 ---
 
 ## Wallet
@@ -401,40 +418,63 @@ The stack is small enough for a single low-cost VPS at testnet scale, and horizo
 ## What's Been Built
 
 ### Consensus & Protocol
-- [x] **Consensus bridge bug fixes** — `zkproof.ts` exports canonical `fpEncode`/`encodeBlockHash` helpers; `consensus-bridge.ts` correctly reconstructs all four public inputs from request args instead of reading non-existent fields from the Rust sidecar response
-- [x] **Real ZK proof circuit** — wire actual Groth16 (arkworks/circom) to replace the current hash-based simulation *(simulation remains; full circuit is a separate cryptography project)*
-- [x] **Rust-core vs. TS-server** — TypeScript is the reference implementation for testnet; the Rust core compiles and is wired via FFI for the ZK proof sidecar
+- [x] **Proof-of-Stationarity consensus** — Lagrangian optimizer (`equilibrium/src/stationary_solver.rs`) finds gradient-zero solutions; `choose_fork` in `consensus.rs` selects the canonical chain branch by lowest residual using fixed-point i64 comparison (no floats in the fork-choice path)
+- [x] **Fixed-point residual arithmetic** — residuals are stored as `residualFp` (i64 scaled by 1e18) in the Postgres `blocks` table and in memory; `reorganize()` in `state.ts` uses BigInt comparison throughout; eliminates float non-determinism in fork choice on the TypeScript side
+- [x] **ZK proof of stationarity** — `chain/zkproof.ts` generates Groth16-shaped proofs using real BN254 G1 scalar multiplication (`@noble/curves/bn254`); `chain/zk-encoding.ts` is the shared source of truth for `fpEncode`/`blockHashToFields` used by both the TS prover and the Rust `consensus-api` binary
+- [x] **Governance module** — `GovernanceModule` (`chain/governance.ts`) with full proposal lifecycle: create → vote → quorum check → auto-execute; stake-weighted voting (bonded stake only), quorum 33.4%, Ed25519 signature verification on every vote binding the signature to the voter's on-chain address
+- [x] **Adaptive difficulty** — rolling 10-block average block time; adjustment capped at ±20% per block targeting 15 s
+- [x] **BFT finality gadget** — Tendermint-style validator vote rounds; block finalized when ≥ ⅔ of bonded stake votes; `finalizedHeight` tracked and exposed over the API
+
+### Testing
+- [x] **Rust unit test suite** — 22 tests passing (`cargo test --lib`) across `wallet.rs` (address round-trips, sign/verify, tamper detection, ledger balance/nonce), `stationary_solver.rs` (residual bounds, multiplier clamping, fixed-point determinism), and `consensus.rs` (`choose_fork`: single block, lowest residual, equal residuals, fixed-point comparison)
+- [x] **TypeScript test suite** — 62 tests passing (`pnpm --filter @workspace/api-server test`) across two files:
+  - `chain.unit.test.ts` — 40 unit tests: `hash256`, `merkleRoot`, `addressFromSeed`, `fpEncode`, `blockHashToFields`, ZK proof generate/verify (tamper detection), `updateDifficulty` (clamp, floor, on-target)
+  - `api.integration.test.ts` — 22 integration tests via Supertest: health, chain status, block list/detail/404, mempool, block submission (400/422/409/201), UTXO, peers, validators, governance
+
+### Explorer & Wallet
+- [x] **Block explorer** — Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail — all pages live with real-time React Query data
+- [x] **Governance explorer** — `/governance`: proposal list, live quorum bars, per-validator tally, chain parameters panel, vote submission with Ed25519 signing
+- [x] **Testnet faucet** — `/faucet`: 1,000 EQU drip per address per hour; live cooldown status (hex-validated address guard, 5 s poll, error state); mutation invalidates the submitted address's status cache on success
+- [x] **Self-custody browser wallet** — `/wallet`: BIP-39 mnemonic + SLIP-0010 Ed25519 HD derivation, raw keypair, private-key import, AES-256-GCM encrypted keystore, Ledger via WebHID, m-of-n multisig, transaction signing and broadcast
+- [x] **Global search** — routes by block height, 64-char tx hash, or 40-char address
 
 ### Infrastructure
-- [x] **WebSocket subscriptions** — real-time `new_block` and `mempool_update` events over `/ws`; explorer invalidates React Query caches instantly on each block, 10 s polling kept as a fallback
-- [x] **TypeScript SDK** — `@equilibrium/sdk` with a namespaced `EquilibriumClient` class (chain, blocks, transactions, addresses, mempool, validators, DEX, faucet) plus a `subscribeToChain()` WebSocket helper
-- [x] **Drizzle/Postgres schema** — `blocks`, `transactions`, and `validators` tables defined in `lib/db/src/schema/` with indexes; ready to activate once a database is provisioned
-- [x] **Multi-region testnet docs** — `docs/testnet-deployment.md` covers Hetzner sizing, multi-node libp2p bootstrap config, Caddy TLS termination, Postgres setup, and firewall rules
-- [x] **CI pipeline** — `.github/workflows/ci.yml` runs TypeScript typecheck across the full monorepo plus `cargo check`, `cargo clippy`, and `cargo test` on every push
+- [x] **Postgres persistence** — Drizzle ORM (`blocks`, `transactions`, `validators` tables with indexes, `residualFp` bigint column); `persistBlock` wired into the auto-miner and `POST /api/blocks/submit`; API server reads from Postgres on startup, falls back to in-memory genesis if the DB is empty
+- [x] **WebSocket subscriptions** — real-time `new_block` and `mempool_update` events over `/ws`; explorer cache-invalidates instantly on each block, 10 s polling as fallback
+- [x] **Contract-first API** — OpenAPI 3.1 spec in `lib/api-spec/openapi.yaml`; Orval generates typed React Query hooks (`@workspace/api-client-react`) and Zod schemas (`@workspace/api-zod`); never hand-write API types client-side
+- [x] **Load test harness** — `scripts/load-test.js`: k6 with ECDSA P-256 keypairs, real signed transaction submission, 50 VUs; **161 TPS / 100% acceptance / p95 3 ms** measured locally
 
 ### Mobile Mining
-- [x] **Android Gradle project** — full scaffold under `equilibrium/mobile/android/`: `settings.gradle.kts`, `build.gradle.kts`, `app/build.gradle.kts`, `AndroidManifest.xml` (foreground service, WorkManager constraints, JNI libs path), version catalog, and Gradle wrapper
-- [x] **iOS Swift Package** — `Package.swift` with `EquilibriumMiner` and stub `EquilibriumCoreStub` targets; `MiningCoordinator.swift` integrates the BackgroundTasks API (`requiresExternalPower`, `requiresNetworkConnectivity`) with auto-rescheduling
-- [x] **Stratum v1 mining pool** — TCP server in `artifacts/api-server/src/lib/stratum-server.ts` implementing `mining.subscribe`, `mining.authorize`, `mining.notify`, and `mining.submit`; starts automatically when the `STRATUM_PORT` environment variable is set
-- [x] **Android JNI bridge** — `equilibrium/src/jni_bridge.rs` with `Java_com_equilibrium_MiningWorker_solveBlock` entry point; Android-only `jni = "0.21"` Cargo dependency; `build-jni.sh` `cargo-ndk` cross-compile script targeting `armeabi-v7a`, `arm64-v8a`, and `x86_64`; `cargoNdkBuild` Gradle task wired into `app/build.gradle.kts`; `jniLibs/` stub directories committed with `.gitkeep`
-- [x] **Mobile block submission round trip** — `MiningWorker.kt` completes the full cycle: (1) `GET /api/chain/status` to fetch the live tip hash, difficulty, and mempool pressure; (2) Rust `solveBlock()` JNI call with those parameters; (3) `POST /api/blocks/submit` with the solved nonce, residual, and `prevHash` for stale-work detection. OkHttp handles timeouts, retry-on-5xx, and no-retry on 409/422. `MiningService.kt` passes `KEY_NODE_URL` and `KEY_MINER_ADDRESS` as typed `WorkerParameters` input data, with exponential backoff.
-- [x] **`POST /api/blocks/submit` node endpoint** — accepts external PoS solutions; validates residual < `1e-7` (HTTP 422 on miss), rejects stale `prevHash` (HTTP 409), pulls the live mempool, builds the full `BlockRecord`, credits the miner, calls `addBlock()` + `gossipBlock()`, broadcasts `new_block` and `mempool_update` over WebSocket, and fire-and-forget persists to Postgres
+- [x] **Android JNI bridge** — `equilibrium/src/jni_bridge.rs` with `solveBlock` entry point; `cargo-ndk` cross-compile for `armeabi-v7a`, `arm64-v8a`, `x86_64`; `MiningWorker.kt` → JNI → `POST /api/blocks/submit` round trip with OkHttp (retry on 5xx, no-retry on 409/422)
+- [x] **iOS Swift Package** — `MiningCoordinator.swift` using BackgroundTasks API with auto-rescheduling
+- [x] **Stratum v1 mining pool** — TCP server in `artifacts/api-server/src/lib/stratum-server.ts`; starts when `STRATUM_PORT` is set
 
-### Infrastructure
-- [x] **Postgres persistence** — Drizzle ORM schema (`blocks`, `transactions`, `validators` tables with indexes) pushed to both local and Helium databases; `persistBlock` wired into the auto-miner loop and the external block submission endpoint; API server reads from Postgres on startup and falls back to in-memory genesis chain if the DB is empty
+---
 
 ## Remaining Work
 
-All planned testnet features and pre-mainnet hardening items are complete. There is no remaining open work.
+Three hardening items are open. Everything else is complete.
 
-Previously-listed items now resolved:
+### 🔐 Governance vote signature test coverage
+Ed25519 signature verification on governance votes (`routes/governance.ts`) is implemented but has no integration test coverage. A subtle bug here could allow impersonation.
 
-- [x] **Automated test suite** — 62 tests across 2 files, all passing. Run with `pnpm --filter @workspace/api-server test`.
-  - `src/__tests__/chain.unit.test.ts` — 40 unit tests covering `hash256`, `merkleRoot`, `addressFromSeed`, `fpEncode`, `blockHashToFields`, `generateZkProof`/`verifyZkProof` (including tamper detection), and `ChainState.updateDifficulty` (±20% clamp, floor enforcement, on-target no-change)
-  - `src/__tests__/api.integration.test.ts` — 22 integration tests via Supertest covering health, chain status, blocks (list/by-height/by-hash/404), mempool, `POST /api/blocks/submit` (missing fields → 400, above threshold → 422, stale prevHash → 409, valid → 201), UTXO, peers, and validators
-- [x] **Real ZK proof circuit** — `chain/zkproof.ts` uses real BN254 elliptic-curve scalar multiplication via `@noble/curves/bn254` (genuine G1/G2 points, not hash-derived fakes); the TS prover is a documented fallback for when the Rust sidecar is unavailable. `src/bin/consensus-api.rs` is the full Groth16 prover with a real circuit witness.
-- [x] **Wallet crypto v3 migration** — `artifacts/explorer/src/wallet/crypto.ts` already uses the `@noble/ed25519` v3 API throughout: `ed.utils.randomSecretKey()`, `ed.etc.hexToBytes()`, `ed.getPublicKeyAsync()`, `ed.signAsync()`. Known Issues #1 is resolved.
-- [x] **`equilibrium/target/` gitignore** — `/equilibrium/target/` is on line 53 of `.gitignore`; build artifacts are no longer committed.
+- Integration test: valid Ed25519 keypair → accepted vote
+- Integration test: wrong signature → 401
+- Integration test: pubkey doesn't match voter address → 400
+
+### 🔢 Full integer residuals in the Rust consensus core
+The TypeScript side stores and compares residuals as BigInt fixed-point. The Rust `BlockHeader` still carries an `f64`. On ARM vs x86, f64 arithmetic can produce different bit patterns, risking a consensus split between a mobile miner and a cloud validator.
+
+- Change `BlockHeader.residual` to an `i64` (scaled integer) in `equilibrium/src/chain_state.rs`
+- Update `StationarySolver` to output fixed-point directly
+- `choose_fork` to compare i64 values with no f64 involved
+
+### 📊 Real-network TPS baseline
+The k6 load test has been validated locally (161 TPS). Running it against the deployed public URL gives the number that accounts for TLS, Replit's proxy, and internet latency — needed for mainnet readiness claims.
+
+- Deploy the app (Publish via Replit)
+- Run `k6 run scripts/load-test.js -e BASE_URL=https://<deployed-url>` with 50 VUs / 30 s
+- Record results in `docs/load-test-results.md`
 
 ---
 

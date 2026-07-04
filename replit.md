@@ -28,7 +28,7 @@ A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile min
 - `equilibrium/` — Rust core library + testnet binary + wallet CLI
 - `artifacts/api-server/src/chain/` — TypeScript chain engine (state.ts, crypto.ts, index.ts auto-miner)
 - `artifacts/api-server/src/routes/` — Express route handlers
-- `artifacts/explorer/src/pages/` — Explorer pages (Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail, Governance)
+- `artifacts/explorer/src/pages/` — Explorer pages (Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail, Governance, Faucet)
 - `artifacts/explorer/src/wallet/` — Browser wallet (context.tsx state manager, crypto.ts key ops)
 - `lib/api-spec/openapi.yaml` — Source-of-truth API contract
 - `lib/api-client-react/src/generated/` — Generated React Query hooks (do not edit manually)
@@ -50,9 +50,10 @@ A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile min
 ## Product
 
 - **Block explorer** at `/`: real-time chain dashboard, block/tx/address drill-down, mempool monitor, peer network view, validator set + delegators, governance proposals
-- **Governance** at `/governance`: submit and vote on proposals (text or parameter-change), live quorum/tally bars, chain parameters panel, auto-executes on passage
+- **Governance** at `/governance`: submit and vote on proposals (text or parameter-change), live quorum/tally bars, chain parameters panel, auto-executes on passage; votes are Ed25519-signed and server-verified
+- **Faucet** at `/faucet`: drip 1,000 EQU to any address, 1 h cooldown per address, live cooldown status with 5 s polling
 - **Browser wallet** at `/wallet`: self-custody Ed25519 wallet, keypair generation, private key import, transaction signing and broadcast
-- **Rust core**: Proof-of-Stationarity consensus, Lagrangian optimizer miner, Ed25519 wallet, ZK proof stubs, libp2p P2P, mobile FFI exports
+- **Rust core**: Proof-of-Stationarity consensus, Lagrangian optimizer miner, Ed25519 wallet, ZK proof stubs, libp2p P2P, mobile FFI exports; 22 unit tests passing
 
 ## User preferences
 
@@ -66,7 +67,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 - API server has no DB dependency — do not add one without replacing the in-memory `ChainState` class entirely.
 - After editing `lib/api-spec/openapi.yaml`, always run codegen before touching client code: `pnpm --filter @workspace/api-spec run codegen`.
 - Governance paths in openapi.yaml must go inside the `paths:` section (before `components:`), not appended to the end of the file.
-- Rust unit tests: `cd equilibrium && cargo test --lib` (15 tests: wallet + stationary_solver). Tests use `pub(crate)` visibility for `joint_residual_and_gradient` and `update_multipliers`.
+- Rust unit tests: `cd equilibrium && cargo test --lib` (22 tests: wallet + stationary_solver + consensus). Tests use `pub(crate)` visibility for `joint_residual_and_gradient` and `update_multipliers`.
 - Load test: `k6 run scripts/load-test.js -e BASE_URL=https://<your-repl>.replit.dev` (requires k6 ≥ 0.46 for WebCrypto Ed25519).
 
 ## Pointers
