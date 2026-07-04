@@ -14,7 +14,7 @@
 #![cfg(target_os = "android")]
 
 use jni::{
-    objects::{JByteArray, JDoubleArray, JLongArray, JObject},
+    objects::{JByteArray, JLongArray, JObject},
     sys::{jboolean, jdouble, jint, jlong, JNI_FALSE, JNI_TRUE},
     JNIEnv,
 };
@@ -38,7 +38,7 @@ use crate::{
 ///     cumWork:         Long,
 ///     maxAttempts:     Long,
 ///     outNonce:        LongArray,   // out: [nonce]
-///     outResidual:     DoubleArray  // out: [residual]
+///     outResidual:     LongArray    // out: [residual], fixed-point scaled by 10^18
 /// ): Boolean
 /// ```
 ///
@@ -61,7 +61,7 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
     cum_work:           jlong,
     max_attempts:       jlong,
     out_nonce:          JLongArray,
-    out_residual:       JDoubleArray,
+    out_residual:       JLongArray,
 ) -> jboolean {
     // ── 1. Copy byte arrays from the JVM heap ─────────────────────────────────
     let prev_bytes = match env.convert_byte_array(&prev_hash) {
@@ -94,7 +94,7 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
         nonce:          0,
         difficulty:     difficulty as u64,
         recursion_depth: recursion_depth as u32,
-        residual:       0.0,
+        residual:       0,
     };
 
     let state = ChainState {
@@ -119,8 +119,9 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
             if env.set_long_array_region(&out_nonce, 0, &[solution.nonce as i64]).is_err() {
                 return JNI_FALSE;
             }
-            // Write residual back into JVM DoubleArray[0]
-            if env.set_double_array_region(&out_residual, 0, &[solution.residual]).is_err() {
+            // Write residual back into JVM LongArray[0] — fixed-point (scaled by 10^18),
+            // never a float, so ARM (mobile) and x86 (cloud) agree bit-for-bit.
+            if env.set_long_array_region(&out_residual, 0, &[solution.residual]).is_err() {
                 return JNI_FALSE;
             }
             JNI_TRUE

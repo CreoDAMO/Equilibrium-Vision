@@ -19,7 +19,7 @@ pub unsafe extern "C" fn solve_block(
     cum_work: u64,
     max_attempts: u64,
     out_nonce: *mut u64,
-    out_residual: *mut f64,
+    out_residual: *mut i64,
 ) -> bool {
     let prev = slice::from_raw_parts(prev_hash, 32);
     let merkle = slice::from_raw_parts(merkle_root, 32);
@@ -31,7 +31,7 @@ pub unsafe extern "C" fn solve_block(
         nonce: 0,
         difficulty,
         recursion_depth,
-        residual: 0.0,
+        residual: 0,
     };
 
     let state = ChainState {

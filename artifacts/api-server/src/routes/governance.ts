@@ -143,16 +143,20 @@ router.post("/governance/proposals/:id/vote", (req, res) => {
 
   // ── Signature verification ─────────────────────────────────────────────────
   // 1. Ensure the supplied public key actually maps to the claimed voter address.
+  //    This is a client input-consistency error (the request itself is malformed
+  //    — the voter/publicKey pairing is wrong), so it's a 400, not an auth failure.
   const derivedAddr = addressFromPublicKey(publicKey);
   if (derivedAddr !== voter) {
-    res.status(403).json({ error: "publicKey does not correspond to voter address" });
+    res.status(400).json({ error: "publicKey does not correspond to voter address" });
     return;
   }
 
   // 2. Verify the signature over the canonical vote message.
+  //    This is an authentication failure — the caller failed to prove ownership
+  //    of the voter's private key — so it's a 401, matching standard auth semantics.
   const proposalId = req.params["id"]!;
   if (!verifyVoteSignature(publicKey, signature, proposalId, choice)) {
-    res.status(403).json({ error: "Invalid vote signature — sign vote:{proposalId}:{choice} with your Ed25519 key" });
+    res.status(401).json({ error: "Invalid vote signature — sign vote:{proposalId}:{choice} with your Ed25519 key" });
     return;
   }
   // ──────────────────────────────────────────────────────────────────────────

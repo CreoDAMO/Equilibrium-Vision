@@ -2,7 +2,7 @@ use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use crate::chain_state::{BlockHeader, TxCandidate, ChainState};
+use crate::chain_state::{BlockHeader, TxCandidate, ChainState, residual_to_fixed};
 
 // ── Groth16 on BN254 (ark-groth16 + ark-bn254) ───────────────────────────────
 //
@@ -247,10 +247,11 @@ impl StationarityProof {
         _state: &ChainState,
         target_residual: f64,
     ) -> Self {
-        // Fixed-point encode residual and threshold
-        let residual_fp_val  = (header.residual * 1e18) as u64;
-        let threshold_fp_val = (target_residual * 1e18) as u64;
-        let satisfies = header.residual < target_residual;
+        // `header.residual` is already fixed-point (i64, scaled by RESIDUAL_SCALE) —
+        // only the externally-supplied float threshold needs converting, once, here.
+        let residual_fp_val  = header.residual.max(0) as u64;
+        let threshold_fp_val = residual_to_fixed(target_residual).max(0) as u64;
+        let satisfies = header.residual < residual_to_fixed(target_residual);
 
         // Block hash binding (lo/hi from prev_hash)
         let hash_lo = u64::from_be_bytes(header.prev_hash[..8].try_into().unwrap_or([0u8; 8]));
@@ -315,9 +316,9 @@ impl StationarityProof {
             Err(_) => return false,
         };
 
-        // 3. Reconstruct public inputs
-        let residual_fp_val  = (header.residual * 1e18) as u64;
-        let threshold_fp_val = (target_residual * 1e18) as u64;
+        // 3. Reconstruct public inputs — `header.residual` is already fixed-point.
+        let residual_fp_val  = header.residual.max(0) as u64;
+        let threshold_fp_val = residual_to_fixed(target_residual).max(0) as u64;
         let hash_lo = u64::from_be_bytes(header.prev_hash[..8].try_into().unwrap_or([0u8; 8]));
         let hash_hi = u64::from_be_bytes(header.prev_hash[8..16].try_into().unwrap_or([0u8; 8]));
 

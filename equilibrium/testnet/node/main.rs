@@ -27,13 +27,13 @@ async fn main() {
         nonce:           0,
         difficulty:      1_000_000,
         recursion_depth: 2,
-        residual:        0.0,
+        residual:        0,
     };
     let state = ChainState::default();
 
     println!("Mining block...");
     if let Some((solution, _txs)) = solver.optimize_full(header, vec![], &state) {
-        println!("Block found  : nonce={}, residual={:.2e}", solution.nonce, solution.residual);
+        println!("Block found  : nonce={}, residual={}", solution.nonce, solution.residual);
 
         // ── Coinbase reward to miner ───────────────────────────────────────────
         let reward = compute_coinbase_reward(50_000_000, solution.residual);

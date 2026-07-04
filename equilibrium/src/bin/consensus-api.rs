@@ -22,7 +22,7 @@ use std::io::{self, BufRead, Write};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use equilibrium_core::chain_state::{BlockHeader, ChainState};
+use equilibrium_core::chain_state::{BlockHeader, ChainState, residual_to_fixed, residual_to_float};
 use equilibrium_core::stationary_solver::StationarySolver;
 use equilibrium_core::zk_proof::{StationarityProof, verify_raw_proof};
 
@@ -128,7 +128,7 @@ fn handle(line: &str) -> Response {
                 nonce: 0,
                 difficulty: 1,
                 recursion_depth: 1,
-                residual: 0.005,
+                residual: residual_to_fixed(0.005),
             };
             let state = ChainState::default();
             let _ = StationarityProof::prove(&dummy_header, &[], &state, 0.01);
@@ -142,6 +142,8 @@ fn handle(line: &str) -> Response {
             };
 
             let prev_hash = hex_to_bytes32(&r.block_hash);
+            // The JSON-RPC wire protocol to the TS side still speaks floats — convert
+            // to fixed-point exactly once, at this boundary.
             let header = BlockHeader {
                 prev_hash,
                 merkle_root: [0u8; 32],
@@ -149,7 +151,7 @@ fn handle(line: &str) -> Response {
                 nonce: 0,
                 difficulty: 1,
                 recursion_depth: 1,
-                residual: r.residual,
+                residual: residual_to_fixed(r.residual),
             };
             let state = ChainState { height: r.height, ..ChainState::default() };
             let sp = StationarityProof::prove(&header, &[], &state, r.threshold);
@@ -183,7 +185,7 @@ fn handle(line: &str) -> Response {
                 nonce: 0,
                 difficulty: 1,
                 recursion_depth: 1,
-                residual: r.residual,
+                residual: residual_to_fixed(r.residual),
             };
 
             // Deserialize proof bytes from the JSON wire format
@@ -212,7 +214,7 @@ fn handle(line: &str) -> Response {
                 nonce: 0,
                 difficulty: r.difficulty,
                 recursion_depth: 3,
-                residual: f64::INFINITY,
+                residual: i64::MAX,
             };
             let state = ChainState {
                 cumulative_work: r.cumulative_work,
@@ -225,7 +227,7 @@ fn handle(line: &str) -> Response {
                 Some((solution, _)) => Response::Solve {
                     ok: true,
                     nonce: solution.nonce,
-                    residual: solution.residual,
+                    residual: residual_to_float(solution.residual),
                 },
                 None => Response::Error {
                     ok: false,

@@ -41,6 +41,8 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
 
         private const val TAG                = "MiningWorker"
         private const val MAX_SOLVER_ATTEMPTS = 500_000L
+        // Fixed-point scale used by the Rust solver's `residual` output (10^18).
+        private const val RESIDUAL_SCALE = 1_000_000_000_000_000_000.0
         private val JSON_MEDIA_TYPE           = "application/json; charset=utf-8".toMediaType()
 
         init {
@@ -60,7 +62,9 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
      * @param cumWork         Cumulative chain work estimate
      * @param maxAttempts     Maximum solver iterations before giving up
      * @param outNonce        Out: LongArray[0] receives the winning nonce
-     * @param outResidual     Out: DoubleArray[0] receives the achieved residual
+     * @param outResidual     Out: LongArray[0] receives the achieved residual, fixed-point
+     *                        (scaled by 10^18) — never a Double, so this ARM build agrees
+     *                        bit-for-bit with the x86 cloud validator's consensus check.
      * @return true if a solution meeting the residual threshold was found
      */
     external fun solveBlock(
@@ -73,7 +77,7 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         cumWork:         Long,
         maxAttempts:     Long,
         outNonce:        LongArray,
-        outResidual:     DoubleArray
+        outResidual:     LongArray
     ): Boolean
 
     // ── OkHttp client (shared across invocations via companion if needed) ─────
@@ -114,7 +118,7 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         val merkleRootBytes = ByteArray(32) // placeholder — server recomputes from mempool
         val timestamp       = System.currentTimeMillis() / 1000L
         val outNonce        = LongArray(1)
-        val outResidual     = DoubleArray(1)
+        val outResidual     = LongArray(1) // fixed-point, scaled by 10^18
 
         val solved = solveBlock(
             prevHashBytes, merkleRootBytes,
@@ -128,9 +132,13 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             return Result.success() // not a failure — just didn't win this round
         }
 
-        val nonce    = outNonce[0]
-        val residual = outResidual[0]
-        Log.i(TAG, "Solution found: nonce=$nonce residual=$residual")
+        val nonce      = outNonce[0]
+        val residualFp = outResidual[0]
+        // The node API still speaks floating-point residuals over JSON — convert once,
+        // here, at the network boundary. The consensus-critical comparison already
+        // happened inside the Rust solver using pure fixed-point i64 arithmetic.
+        val residual   = residualFp.toDouble() / RESIDUAL_SCALE
+        Log.i(TAG, "Solution found: nonce=$nonce residual=$residual (fixed-point=$residualFp)")
 
         // ── 3. Submit solved block to the node ────────────────────────────────
         return submitBlock(
