@@ -1,0 +1,81 @@
+Both prior review findings are confirmed fixed, and everything is running healthy. Here's my review of the two files and current state:
+File 1 — Session transcript (bug fixes + GitHub push)
+Both issues the code-review subagent flagged are now correctly resolved in the code:
+Mining stop-safety race — fixed properly. chain/index.ts uses a miningGeneration counter (not just a boolean flag). stopMining() bumps the generation and clears the timer, so any in-flight cycle that reaches its finally block checks generation === miningGeneration && miningEnabled — a stale generation from before a stop/restart won't reschedule. This closes the rapid stop→start double-schedule race the reviewer caught.
+publicInputs encoding mismatch — fixed correctly. There's now a single shared module (zk-encoding.ts) exporting fpEncode (uses Math.floor, reduces mod the BN254 field order) and blockHashToFields. Both zkproof.ts (TS fallback) and consensus-bridge.ts (Rust sidecar) import from this one source, so the two provers now produce byte-identical public inputs — exactly what the reviewer asked for instead of duplicated, drifting logic.
+GitHub push block — root cause was confirmed (GitHub validates workflow files against Actions permissions before accepting any push), and it was resolved by removing .github/workflows/ and keeping ci.yml in the repo root for manual re-addition later. That's a reasonable workaround.
+Live in the current environment, mining is running cleanly and Postgres persistence has kicked in (chain restored from Postgres at height 30, new blocks 32–36 mining and persisting every ~15s) — so the wiring is not just fixed on paper, it's working at runtime right now.
+File 2 — Mainnet specification
+This is a forward-looking design doc (network topology, genesis block schema, coinomics/halving curve, governance, 3-phase launch plan). It's a spec, not code — nothing to "review" for correctness against the repo, since none of it is implemented yet. It's a reasonable, internally consistent blueprint for a future mainnet.
+Next, I can implement the genesis.json generator and coinomics module (halving curve, quality-multiplier reward calc) from the mainnet spec as a testable TypeScript module. Would you like me to do that?
+Checkpoint made
+40 minutes ago
+Worked for 30 seconds
+implement the genesis.json generator and coinomics module (halving curve, quality-multiplier reward calc) from the mainnet spec as a testable TypeScript module
+36 minutes ago
+21 messages & 43 actions
+Checkpoint made
+31 minutes ago
+Worked for 4 minutes
+extend the coinomics module with a staking/delegation reward-splitting calculator (validator commission + delegator share) from the "Staking rewards" section of the mainnet spec
+27 minutes ago
+4 messages & 6 actions
+Checkpoint made
+25 minutes ago
+Worked for 1 minute
+add a slashing calculator (double-sign / downtime penalties that reduce a validator's and its delegators' bonded stake) to complete the staking module per the spec's penalty rule
+19 minutes ago
+8 messages & 14 actions
+Checkpoint made
+18 minutes ago
+Worked for 1 minute
+Pasted-Here-s-the-load-test-harness-using-k6-It-submits-transa_1783126566398.txt
+First lets wire the coinomics module into the live API server so staking rewards and slashing events actually apply to validator/delegator balances during block production
+17 minutes ago
+19 messages & 67 actions
+Checkpoint made
+11 minutes ago
+Worked for 5 minutes
+build a /validators/:addr/delegators API endpoint and explorer UI so delegators can see their live stake, pending rewards, and slash exposure for each validator
+10 minutes ago
+40 actions
+All existing pages use generated api-client-react hooks. Let's confirm the exact pattern in Dashboard.tsx and check the api-spec structure before adding the new endpoint.
+7 actions
+Now let's update stake() to initialize rewardsEarned, and update payValidatorReward to increment it. Then add the getDelegators method.
+2 actions
+Now updating payValidatorReward to increment rewardsEarned for delegators, and adding a getDelegators method.
+Edited state.ts
+Now I need to import the slashing constants in state.ts, and check import statement location.
+5 actions
+Now let's check if SlashEvent import is unused and check for other places creating StakeRecord (e.g., genesis seeding) that need rewardsEarned initialized.
+2 actions
+Good, only one place creates StakeRecords. Now let's add the route and update the OpenAPI spec + schemas.
+Edited validators.ts
+Now let's add the OpenAPI spec entries for validators endpoints (including the new delegators endpoint), then run codegen.
+Edited openapi.yaml
+Continuing with adding the paths and schemas to the OpenAPI spec.
+Edited openapi.yaml
+Now let's add the schema definitions. Let me check the end of the schemas section to place them appropriately.
+2 actions
+Now let's add the new schemas (Validator, ValidatorList, ValidatorDetail, SlashEvent, Delegator, DelegatorsResponse) at the end of the schemas section.
+Edited openapi.yaml
+Now let's run codegen and check the generated hooks.
+Ran cd
+Codegen succeeded. Let's verify the generated hooks exist for the new validator endpoints.
+Ran cd
+Good, generated hooks exist. Now let's build the explorer pages: a Validators list page and a ValidatorDetail page with the delegators table.
+Show less
+Opened AddressDetail.tsx
+Opened format.ts
+Planning component integration strategy
+I need to check what Badge and Progress components are available, review the UI badge variants used in the validators context, and look at how Network.tsx structures its card list before moving forward with the pages.
+Ran cd
+Now let's build the Validators list page and ValidatorDetail page.
+Created Validators.tsx
+Now let's build the ValidatorDetail page with the delegators table showing stake, share, rewards earned, and slash exposure.
+Created ValidatorDetail.tsx
+Now let's wire up routing and navigation, then verify with typecheck/tests.
+2 actions
+Now let's add a nav link and finish the frontend wiring, then verify everything.
+2 actions
+Let's run full typecheck, tests, and check logs to verify everything works.

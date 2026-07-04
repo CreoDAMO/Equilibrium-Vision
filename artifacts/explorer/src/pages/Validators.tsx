@@ -1,6 +1,6 @@
 import React from "react";
 import { Link } from "wouter";
-import { useListValidators } from "@workspace/api-client-react";
+import { useListValidators, getListValidatorsQueryKey } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +10,7 @@ import { formatAmount, truncateHash } from "@/lib/format";
 
 export default function Validators() {
   const { data, isLoading, error } = useListValidators({
-    query: { refetchInterval: 10000 },
+    query: { queryKey: getListValidatorsQueryKey(), refetchInterval: 10000 },
   });
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading validators...</div>;

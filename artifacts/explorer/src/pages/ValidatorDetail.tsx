@@ -1,6 +1,6 @@
 import React from "react";
 import { useRoute, Link } from "wouter";
-import { useGetValidator, useGetValidatorDelegators } from "@workspace/api-client-react";
+import { useGetValidator, useGetValidatorDelegators, getGetValidatorQueryKey, getGetValidatorDelegatorsQueryKey } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -13,10 +13,10 @@ export default function ValidatorDetail() {
   const addr = params?.addr || "";
 
   const { data: validator, isLoading, error } = useGetValidator(addr, {
-    query: { refetchInterval: 10000 },
+    query: { queryKey: getGetValidatorQueryKey(addr), refetchInterval: 10000 },
   });
   const { data: delegatorsData, isLoading: delegatorsLoading } = useGetValidatorDelegators(addr, {
-    query: { refetchInterval: 10000 },
+    query: { queryKey: getGetValidatorDelegatorsQueryKey(addr), refetchInterval: 10000 },
   });
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading validator...</div>;
