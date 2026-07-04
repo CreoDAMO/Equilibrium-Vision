@@ -121,7 +121,7 @@ impl StationarySolver {
                     header.residual = residual;
                     return Some((header, txs));
                 }
-                if best_residual.is_none_or(|best| residual < best) {
+                if best_residual.map_or(true, |best| residual < best) {
                     best_residual = Some(residual);
                     let mut candidate = header.clone();
                     candidate.residual = residual;
