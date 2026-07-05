@@ -4,49 +4,49 @@
   "initial_supply": "100000000",
   "allocations": [
     {
-      "address": "5fbdb392adae068b9ad7822ff92a03fe9b2d89fc",
+      "address": "ea693e1d5d891d90d91c56fc2446c8d330a8997a",
       "amount": "40000000",
       "vesting": "none",
       "category": "community_airdrop_mining"
     },
     {
-      "address": "a533f86155e56db66274ee6c8f09ae436c9a3a0e",
+      "address": "e89ffa36b8d3d18c24f9c0aaad3328a886554d5a",
       "amount": "20000000",
       "vesting": "locked-in-pools",
       "category": "liquidity_pools"
     },
     {
-      "address": "f6ab3cce4a893c389e7ac5bc8b409780c3d3e6d4",
+      "address": "9ee64f3daeb6bb22ef2913967f9d8a8a8290d5f0",
       "amount": "15000000",
       "vesting": "2-4-year time-lock",
       "category": "ecosystem_dev_fund"
     },
     {
-      "address": "60cb69632fa47100ef8506109783762dda14ff3b",
+      "address": "d1c2c0a431299a97779cdc23837ed9ce5408aaaa",
       "amount": "5000000",
       "vesting": "none",
       "category": "founder_upfront"
     },
     {
-      "address": "9b2b3b45c4aa944626fb58d0ae2de2000f99e1ec",
+      "address": "db4d0a79beb2001f61c671532c254ef746ab0cda",
       "amount": "5000000",
       "vesting": "4-year linear, 1-year cliff",
       "category": "founder_vested"
     },
     {
-      "address": "9435ba5a850358a75c0cee7f6efa14fe501c4de9",
+      "address": "bb18cca322f539b9750701a07e2d871fdd744566",
       "amount": "5000000",
       "vesting": "3-year linear, 1-year cliff",
       "category": "team"
     },
     {
-      "address": "9269dfc0813a44ad9f49b7f0ac49e3eec700073b",
+      "address": "ab92b2d4e3591203220d707a8248a144758c2888",
       "amount": "5000000",
       "vesting": "2-3-year linear",
       "category": "advisors_early_contributors"
     },
     {
-      "address": "56bea229faa92f38f50f4972a7229a69e8119937",
+      "address": "e99c2a23bbd0dbc1edbd1bc200fb287bb4453426",
       "amount": "5000000",
       "vesting": "locked-for-validators",
       "category": "staking_bootstrap"
@@ -54,22 +54,22 @@
   ],
   "initial_validators": [
     {
-      "address": "84b04b6992e4fcd50a241c9a10b1e5db1f593b03",
+      "address": "6ea341f4f8d62cd427434c89d35d3fc6340a8bb1",
       "stake": "1500000",
       "name": "Equilibrium Foundation"
     },
     {
-      "address": "a7c0e0ccf82fb4578c5be2779a441737789dc9c9",
+      "address": "736d0217b01cdaec6288ced8ddb8be7435f711e0",
       "stake": "1500000",
       "name": "Equilibrium Labs"
     },
     {
-      "address": "3f3a9a0a3a854516f112fda18277102b42fd4892",
+      "address": "cec6a4f606263f462db50d853f599b758cede73b",
       "stake": "1000000",
       "name": "Community Validator Alpha"
     },
     {
-      "address": "3371dd3f9ad14e14c3649de8b5aa13b438043b08",
+      "address": "347eae6992d4a575868c6137c707c87cb6e1a833",
       "stake": "1000000",
       "name": "Community Validator Beta"
     }
