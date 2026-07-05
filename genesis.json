@@ -44,12 +44,6 @@
       "amount": "5000000",
       "vesting": "2-3-year linear",
       "category": "advisors_early_contributors"
-    },
-    {
-      "address": "e99c2a23bbd0dbc1edbd1bc200fb287bb4453426",
-      "amount": "5000000",
-      "vesting": "locked-for-validators",
-      "category": "staking_bootstrap"
     }
   ],
   "initial_validators": [

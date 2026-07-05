@@ -62,8 +62,16 @@ function validateGenesisDoc(doc: GenesisDocument): void {
     if (!a.address?.trim()) throw new Error(`genesis.json: allocation missing address`);
     return s + amt;
   }, 0);
-  if (Math.abs(allocSum - supply) > 1e-6)
-    throw new Error(`genesis.json: allocations sum (${allocSum}) ≠ initial_supply (${supply})`);
+  // Validator bondedStake at genesis is implicit — it is not a ledger allocation
+  // but it counts toward total supply.  Allow: allocations + validatorStake === initial_supply.
+  const validatorStakeSum = Array.isArray(doc.initial_validators)
+    ? doc.initial_validators.reduce((s, v) => s + Number(v.stake), 0)
+    : 0;
+  const accountedFor = allocSum + validatorStakeSum;
+  if (Math.abs(accountedFor - supply) > 1e-6)
+    throw new Error(
+      `genesis.json: allocations (${allocSum}) + validator stake (${validatorStakeSum}) = ${accountedFor} ≠ initial_supply (${supply})`,
+    );
   if (!Array.isArray(doc.initial_validators) || doc.initial_validators.length === 0)
     throw new Error("genesis.json: initial_validators must be non-empty");
   for (const v of doc.initial_validators) {
