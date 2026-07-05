@@ -1,59 +1,93 @@
 # Equilibrium
 
-A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile mining, ZK proofs, libp2p P2P networking, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
+A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile mining, ZK proofs, libp2p P2P networking, and a full TypeScript node stack with a real-time block explorer, self-custody browser wallet, and WASM smart contracts.
+
+> **Status (July 2026):** Mainnet-readiness hardening complete in Replit. **151 tests pass** (28 Rust, 123 TypeScript). All known bugs resolved. Remaining work is infra/ops (multi-region nodes, HA Postgres, monitoring, remote load test, security audit) — external to Replit.
 
 ## Run & Operate
 
 - `pnpm --filter @workspace/api-server run dev` — run the API node (port 8080, auto-mines every 15 s)
-- `pnpm --filter @workspace/explorer run dev` — run the block explorer + wallet (port 20087)
+- `pnpm --filter @workspace/explorer run dev` — run the block explorer + wallet (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
+- `pnpm --filter @workspace/api-server run test` — run 123 TypeScript tests
+- `cd equilibrium && cargo test --lib` — run 28 Rust tests
 - Rust testnet: `cd equilibrium && cargo run --bin testnet-node`
 - Rust wallet CLI: `cd equilibrium && cargo run --bin wallet`
-- `pnpm --filter @workspace/coinomics run test` — run the coinomics/genesis unit tests
-- `pnpm --filter @workspace/coinomics run generate-genesis [outputPath]` — write a mainnet `genesis.json` (default allocation split, placeholder addresses)
+- `pnpm --filter @workspace/coinomics run generate-genesis [outputPath]` — write a fresh `genesis.json`
+
+### After a container reset (recurring gotcha)
+
+The Postgres workflow (`scripts/start-postgres.sh`) is fully idempotent — it creates the runner role, pushes the schema as superuser, and grants table access on every boot. If the Postgres workflow started cleanly, the API Server workflow just works. If not, run:
+
+```bash
+bash scripts/start-postgres.sh
+# then restart the API Server workflow
+```
 
 ## Stack
 
-- Monorepo: pnpm workspaces, Node.js 24, TypeScript 5.9
+- Monorepo: pnpm workspaces, Node.js 20, TypeScript 5.9
 - Rust core: `ed25519-dalek`, `libp2p` (full), `ark-snark`, `sha2`, `serde`
-- API node: Express 5, in-memory chain state (no DB required for testnet)
+- API node: Express 5, in-memory chain state + Postgres persistence (Drizzle ORM)
 - Explorer/Wallet: React 18, Vite 7, Tailwind CSS v4, React Query, Wouter, Recharts
-- Wallet crypto: `@noble/ed25519`, Web Crypto API
+- Wallet crypto: `@noble/ed25519` v3, `@scure/bip39`, `@scure/bip32`, Web Crypto API
 - API contract: OpenAPI 3.1 → Orval codegen → `@workspace/api-client-react` + `@workspace/api-zod`
+- WASM VM: Node built-in `WebAssembly` — deploy, call, storage get/set, gas accounting
 
 ## Where things live
 
 - `equilibrium/` — Rust core library + testnet binary + wallet CLI
-- `artifacts/api-server/src/chain/` — TypeScript chain engine (state.ts, crypto.ts, index.ts auto-miner)
-- `artifacts/api-server/src/routes/` — Express route handlers
-- `artifacts/explorer/src/pages/` — Explorer pages (Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail, Governance, Faucet)
+- `genesis.json` — finalised mainnet genesis: 7 allocations, 95M EQU + 4 validators × 5M bonded = 100M total supply
+- `scripts/start-postgres.sh` — idempotent DB bootstrap (role + schema + grants); runs on every Postgres workflow start
+- `scripts/src/generate-genesis.ts` — generates real Ed25519 keypairs → writes `genesis.json` + `validator-keys.json`
+- `artifacts/api-server/src/chain/` — TypeScript chain engine: `state.ts`, `crypto.ts`, `index.ts` (auto-miner + `initChain`), `governance.ts`, `wasm.ts` (WASM VM), `persistence.ts`, `zkproof.ts`, `zk-encoding.ts`
+- `artifacts/api-server/src/routes/` — Express route handlers (blocks, tx, validators, staking, dex, governance, contracts, evm, faucet, metrics)
+- `artifacts/api-server/src/__tests__/` — test suite: `chain.unit.test.ts` (40), `api.integration.test.ts` (25), `contracts.integration.test.ts` (58)
+- `artifacts/explorer/src/pages/` — Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail, Governance, Faucet, **Contracts**, ContractDetail
 - `artifacts/explorer/src/wallet/` — Browser wallet (context.tsx state manager, crypto.ts key ops)
 - `lib/api-spec/openapi.yaml` — Source-of-truth API contract
 - `lib/api-client-react/src/generated/` — Generated React Query hooks (do not edit manually)
-- `lib/coinomics/src/` — Mainnet coinomics: `reward.ts` (halving curve + PoS quality multiplier), `genesis.ts` (genesis.json generator/validator), `staking.ts` (validator/delegator reward-splitting by bonded stake + commission), `slashing.ts` (double-sign/downtime/invalid-block penalty calculator), `cli/generate-genesis.ts` (writes genesis.json to disk)
-- `artifacts/api-server/src/chain/governance.ts` — On-chain governance: `GovernanceModule` class with proposal lifecycle (create → vote → resolve), stake-weighted voting (bonded stake only), quorum 33.4%, automatic parameter-change execution
-- `scripts/load-test.js` — k6 load test harness using WebCrypto Ed25519 keypairs for real signed transaction submission
-- `docs/zk-circuit.md` — Groth16 circuit specification (public inputs, private witnesses, constraints, encoding rules)
-- `docs/incentive-model.md` — Miner incentive model analysis (quality multiplier proof of incentive-compatibility, gaming strategy mitigations)
+- `lib/coinomics/src/` — Mainnet coinomics: `reward.ts`, `genesis.ts`, `staking.ts`, `slashing.ts`
+- `scripts/load-test.js` — k6 load test (50 VUs, real Ed25519 signed txs); 161 TPS locally
+- `docs/zk-circuit.md` — Groth16 circuit specification
+- `docs/incentive-model.md` — Miner incentive model analysis
 
 ## Architecture decisions
 
-- **In-memory chain state** — the TypeScript node uses a pure in-memory `ChainState` class (no DB). This is intentional for testnet: zero-config, fast restart, seeded with 25 genesis blocks + 6 mempool txs at startup.
+- **Postgres-backed persistence** — `blocks`, `transactions`, `validators`, `contracts` tables via Drizzle ORM. `initChain()` loads from Postgres on startup (falls back to genesis if empty). `scripts/start-postgres.sh` is idempotent and handles cold starts safely.
 - **Contract-first API** — OpenAPI spec lives in `lib/api-spec/openapi.yaml`; client hooks and Zod schemas are generated by Orval. Never hand-write API types in the client.
-- **Address derivation** — `SHA-256(raw_pubkey_bytes)[..20]` rendered as 40 hex chars. This matches Rust's `address_from_pubkey`. The explorer wallet hashes **raw bytes** (not the UTF-8 hex string) — a critical distinction; using the wrong encoding produces different addresses for the same keypair.
-- **Wouter base path** — the explorer is served at `/explorer/`; `App.tsx` passes `import.meta.env.BASE_URL` (stripped of trailing slash) as the `base` prop to Wouter's `<Router>` so all routes resolve correctly through the shared proxy.
-- **`@noble/ed25519` v3 API** — use `ed.utils.randomSecretKey()` (not `randomPrivateKey`), `ed.etc.hexToBytes()` (not `ed.utils.hexToBytes`), and pass `Uint8Array` (not hex strings) to `signAsync`. All key ops use the async API (`getPublicKeyAsync`, `signAsync`) which uses Web Crypto internally.
-- **Coinomics wired into live block production** — `artifacts/api-server/src/chain/state.ts` imports `@workspace/coinomics` directly; `distributeBlockReward()`/`payValidatorReward()` split every coinbase and participation reward via `splitValidatorReward()`, and `slashValidator()` delegates to `applySlashing()`, mutating both `ValidatorRecord.bondedStake` and the underlying `StakeRecord`s. The live auto-miner address is intentionally seeded as `"equilibrium-miner-1"` (matching the seeded `Miner-Alpha` validator) so its rewards flow through the commission/delegation split instead of bypassing it.
+- **Address derivation** — `SHA-256(raw_pubkey_bytes)[..20]` rendered as 40 hex chars. Matches Rust's `address_from_pubkey`. The explorer wallet hashes **raw bytes** (not the UTF-8 hex string) — critical distinction; wrong encoding produces different addresses for the same keypair.
+- **`@noble/ed25519` v3 API** — use `ed.utils.randomSecretKey()` (not `randomPrivateKey`), `ed.etc.hexToBytes()` (not `ed.utils.hexToBytes`), and pass `Uint8Array` (not hex strings) to `signAsync`. All key ops use the async API (`getPublicKeyAsync`, `signAsync`).
+- **Coinomics wired into live block production** — `state.ts` imports `@workspace/coinomics` directly; `distributeBlockReward()`/`payValidatorReward()` split every coinbase and participation reward via `splitValidatorReward()`, and `slashValidator()` delegates to `applySlashing()`.
+- **WASM VM validation** — `WasmVM.deploy()` calls `WebAssembly.compile()` (not `validate()`) to reject invalid bytecode — `compile()` throws, `validate()` only returns a boolean.
+- **Fixed-point residuals** — residuals are stored as `residualFp` (i64 scaled 1e18); `reorganize()` in `state.ts` uses BigInt comparison throughout; eliminates float non-determinism in fork choice. Rust `BlockHeader` uses `i64` for the same reason.
 
 ## Product
 
 - **Block explorer** at `/`: real-time chain dashboard, block/tx/address drill-down, mempool monitor, peer network view, validator set + delegators, governance proposals
-- **Governance** at `/governance`: submit and vote on proposals (text or parameter-change), live quorum/tally bars, chain parameters panel, auto-executes on passage; votes are Ed25519-signed and server-verified
+- **Governance** at `/governance`: submit and vote on proposals (text or parameter-change), live quorum/tally bars, chain parameters panel, auto-executes on passage; votes are Ed25519-signed and server-verified (401 on bad sig, 400 on address mismatch)
 - **Faucet** at `/faucet`: drip 1,000 EQU to any address, 1 h cooldown per address, live cooldown status with 5 s polling
-- **Browser wallet** at `/wallet`: self-custody Ed25519 wallet, keypair generation, private key import, transaction signing and broadcast
-- **Rust core**: Proof-of-Stationarity consensus, Lagrangian optimizer miner, Ed25519 wallet, ZK proof stubs, libp2p P2P, mobile FFI exports; 22 unit tests passing
+- **Browser wallet** at `/wallet`: self-custody Ed25519 wallet, BIP-39 mnemonic, raw keypair, private key import, AES-256-GCM keystore, Ledger via WebHID, m-of-n multisig, transaction signing and broadcast
+- **Smart contracts** at `/contracts`: WAT editor with in-browser `wabt` compile, ABI JSON editor, deploy; deployed contract list → detail pages with ABI-driven call panels, storage key/value viewer, bytecode hash
+- **Rust core**: Proof-of-Stationarity consensus, Lagrangian optimizer miner, Ed25519 wallet, ZK proof (Groth16/BN254), libp2p P2P, mobile FFI exports; 28 unit tests passing
+
+## Mainnet readiness checklist
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | Genesis block finalised (real keypairs, 100M supply) | ✅ Done |
+| 2 | Fixed-point residuals in Rust (i64, no f64) | ✅ Done |
+| 3 | Governance vote signature tests | ✅ Done |
+| 4 | Postgres persistence (schema, grants, idempotent startup) | ✅ Done |
+| 5 | CI/CD pipeline (typecheck + TS tests + Rust tests) | ✅ Done |
+| 6 | Smart contract DB persistence | ✅ Done |
+| 7 | WAT→WASM deploy UI in Explorer | ✅ Done |
+| 8 | Smart contract test suite (58 tests) | ✅ Done |
+| 9 | Remote load test (k6 against public URL) | ⏳ Next |
+| 10 | Multi-region nodes, HA Postgres, monitoring | ⏳ External |
+| 11 | Operator docs, security audit, mobile release | ⏳ External |
 
 ## User preferences
 
@@ -64,13 +98,15 @@ _Populate as you build — explicit user instructions worth remembering across s
 - Do not run `pnpm dev` at workspace root — run per-package with `--filter` or use the workflow buttons.
 - `@noble/ed25519` v2 freezes `ed.etc` — never assign `sha512Sync`; use async functions only.
 - The Rust crate includes `libp2p` with `features = ["full"]` which downloads 470+ crates on first build — expect `cargo build` to take several minutes on a cold cache.
-- API server has no DB dependency — do not add one without replacing the in-memory `ChainState` class entirely.
 - After editing `lib/api-spec/openapi.yaml`, always run codegen before touching client code: `pnpm --filter @workspace/api-spec run codegen`.
 - Governance paths in openapi.yaml must go inside the `paths:` section (before `components:`), not appended to the end of the file.
-- Rust unit tests: `cd equilibrium && cargo test --lib` (22 tests: wallet + stationary_solver + consensus). Tests use `pub(crate)` visibility for `joint_residual_and_gradient` and `update_multipliers`.
-- Load test: `k6 run scripts/load-test.js -e BASE_URL=https://<your-repl>.replit.dev` (requires k6 ≥ 0.46 for WebCrypto Ed25519).
+- Rust unit tests: `cd equilibrium && cargo test --lib` (28 tests: wallet + stationary_solver + consensus).
+- Load test: `k6 run scripts/load-test.js -e BASE_URL=https://<your-repl>.replit.dev` — k6 binary must be re-downloaded after each container reset (not in PATH by default).
+- `WebAssembly.compile()` throws on invalid WASM; `WebAssembly.validate()` only returns a boolean and never throws — always use `compile()` for fail-fast rejection.
+- Every container reset loses `node_modules`. Run `pnpm install` if needed, then restart all three workflows (Postgres → API Server → Explorer) in that order.
 
 ## Pointers
 
-- See `README.md` for the full project overview, API reference, and future features roadmap
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See `README.md` for the full project overview, API reference, architecture, and remaining work
+- See `docs/zk-circuit.md` for the Groth16 circuit spec and `fpEncode`/`blockHashToFields` encoding rules
+- See `docs/incentive-model.md` for the miner incentive analysis

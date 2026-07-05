@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (as of July 2026):** All runtime bugs are resolved. Core protocol, wallet, explorer, API surface, Postgres persistence, governance module, testnet faucet UI, and Rust unit test suite are complete. `pnpm run typecheck` passes clean and all 84 tests pass (22 Rust, 62 TypeScript). Three hardening items remain — see **Remaining Work** below.
+> **Status (as of July 2026):** Mainnet-readiness hardening in progress. Core protocol, wallet, explorer, Postgres persistence, governance, faucet, smart contracts (WASM VM + DB persistence + WAT→WASM deploy UI), and the full test suite are complete. `pnpm run typecheck` passes clean. **151 tests pass** (28 Rust, 123 TypeScript). Genesis block is finalised with real wallet addresses. Remaining work is infra/ops (multi-region nodes, HA Postgres, monitoring, load test against public URL) — see **Remaining Work** below.
 
 ---
 
@@ -150,7 +150,7 @@ The node exposes a REST API documented in `lib/api-spec/openapi.yaml`.
 | GET | `/api/utxo/:txHash/:outputIndex` | Specific UTXO detail |
 | GET | `/api/utxo/stats` | UTXO set size and total supply |
 | POST | `/api/utxo/build` | Coin selection for a spend (returns inputs/outputs/fee) |
-| POST | `/api/utxo/spend` | Broadcast a UTXO transaction — **currently broken, see Known Issues #2** |
+| POST | `/api/utxo/spend` | Broadcast a UTXO transaction |
 
 ### Smart Contracts (WASM)
 
@@ -230,6 +230,7 @@ Available at `/explorer` in the running preview. Pages:
 - **Address** — balance, nonce, full history
 - **Mempool** — live pending pool with pressure meter and broadcast dialog
 - **Network** — connected peers, latency, sync height
+- **Contracts** — deploy tab (WAT textarea editor, in-browser `wabt` compile, ABI editor, one-click deploy) + deployed contracts table; each contract links to a detail page with ABI-driven call panels, storage viewer, and bytecode hash
 - **Global search** — routes by block height, 64-char tx hash, or 40-char address
 
 All data refreshes every 10 seconds via React Query.
@@ -264,8 +265,6 @@ Available at `/explorer/wallet`. Fully self-custody, browser-side.
 - **Multi-sig:** m-of-n Ed25519 threshold signing (`WalletMultisig.tsx`, `createMultisigAddress` / `signForMultisig` / `verifyMultisigThreshold`).
 - **Send:** builds and signs a transaction, broadcasts to the mempool.
 - **Balance:** live balance and nonce from the chain, recent transaction history.
-
-**Currently broken — see Known Issues #1:** raw-keypair creation, private-key import, and multisig signing call an outdated `@noble/ed25519` v2 API against the installed v3 package and will throw at runtime until fixed.
 
 Address derivation: `SHA-256(publicKeyHex).slice(0, 40)` — identical to the Rust wallet.
 
@@ -426,10 +425,11 @@ The stack is small enough for a single low-cost VPS at testnet scale, and horizo
 - [x] **BFT finality gadget** — Tendermint-style validator vote rounds; block finalized when ≥ ⅔ of bonded stake votes; `finalizedHeight` tracked and exposed over the API
 
 ### Testing
-- [x] **Rust unit test suite** — 22 tests passing (`cargo test --lib`) across `wallet.rs` (address round-trips, sign/verify, tamper detection, ledger balance/nonce), `stationary_solver.rs` (residual bounds, multiplier clamping, fixed-point determinism), and `consensus.rs` (`choose_fork`: single block, lowest residual, equal residuals, fixed-point comparison)
-- [x] **TypeScript test suite** — 62 tests passing (`pnpm --filter @workspace/api-server test`) across two files:
+- [x] **Rust unit test suite** — 28 tests passing (`cargo test --lib`) across `wallet.rs` (address round-trips, sign/verify, tamper detection, ledger balance/nonce), `stationary_solver.rs` (residual bounds, multiplier clamping, fixed-point determinism), and `consensus.rs` (`choose_fork`: single block, lowest residual, equal residuals, fixed-point comparison)
+- [x] **TypeScript test suite** — 123 tests passing (`pnpm --filter @workspace/api-server test`) across three files:
   - `chain.unit.test.ts` — 40 unit tests: `hash256`, `merkleRoot`, `addressFromSeed`, `fpEncode`, `blockHashToFields`, ZK proof generate/verify (tamper detection), `updateDifficulty` (clamp, floor, on-target)
-  - `api.integration.test.ts` — 22 integration tests via Supertest: health, chain status, block list/detail/404, mempool, block submission (400/422/409/201), UTXO, peers, validators, governance
+  - `api.integration.test.ts` — 25 integration tests via Supertest: health, chain status, block list/detail/404, mempool, block submission (400/422/409/201), UTXO, peers, validators, governance (valid vote, wrong signature → 401, address mismatch → 400)
+  - `contracts.integration.test.ts` — 58 tests: WasmVM deploy (valid, invalid WASM rejection, ABI storage, bytecodeHash, distinct addresses), call (counter read/write, gas tracking, unknown address error), storage host functions (`storage_set`/`storage_get` via a dedicated storage contract), gas accumulation across calls, deploy without ABI, `loadContracts()` bulk restore, persist callback (fires after deploy/call, swallows rejections), and full REST API coverage (examples, list, deploy, detail, storage, call)
 
 ### Explorer & Wallet
 - [x] **Block explorer** — Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail — all pages live with real-time React Query data
@@ -439,10 +439,12 @@ The stack is small enough for a single low-cost VPS at testnet scale, and horizo
 - [x] **Global search** — routes by block height, 64-char tx hash, or 40-char address
 
 ### Infrastructure
-- [x] **Postgres persistence** — Drizzle ORM (`blocks`, `transactions`, `validators` tables with indexes, `residualFp` bigint column); `persistBlock` wired into the auto-miner and `POST /api/blocks/submit`; API server reads from Postgres on startup, falls back to in-memory genesis if the DB is empty
+- [x] **Genesis block** — `genesis.json` at workspace root: 7 allocations totalling 95 M EQU, 4 validators with 5 M bonded each (`initial_supply: 100_000_000`); `validateGenesisDoc()` enforces `allocations + validatorStake === initial_supply`; real Ed25519 keypairs generated by `scripts/src/generate-genesis.ts`
+- [x] **Postgres persistence** — Drizzle ORM (`blocks`, `transactions`, `validators`, `contracts` tables with indexes, `residualFp` bigint column); `persistBlock` wired into the auto-miner and `POST /api/blocks/submit`; `scripts/start-postgres.sh` is fully idempotent (creates runner role, pushes schema as superuser, grants table access) — safe to re-run after every container reset
 - [x] **WebSocket subscriptions** — real-time `new_block` and `mempool_update` events over `/ws`; explorer cache-invalidates instantly on each block, 10 s polling as fallback
 - [x] **Contract-first API** — OpenAPI 3.1 spec in `lib/api-spec/openapi.yaml`; Orval generates typed React Query hooks (`@workspace/api-client-react`) and Zod schemas (`@workspace/api-zod`); never hand-write API types client-side
-- [x] **Load test harness** — `scripts/load-test.js`: k6 with ECDSA P-256 keypairs, real signed transaction submission, 50 VUs; **161 TPS / 100% acceptance / p95 3 ms** measured locally
+- [x] **CI/CD pipeline** — `.github/workflows/ci.yml` runs `pnpm typecheck`, `pnpm --filter @workspace/api-server test`, and `cargo test --lib` on every push
+- [x] **Load test harness** — `scripts/load-test.js`: k6 with ECDSA P-256 keypairs, real signed transaction submission, 50 VUs; **161 TPS / 100% acceptance / p95 3 ms** measured locally (against loopback)
 
 ### Mobile Mining
 - [x] **Android JNI bridge** — `equilibrium/src/jni_bridge.rs` with `solveBlock` entry point; `cargo-ndk` cross-compile for `armeabi-v7a`, `arm64-v8a`, `x86_64`; `MiningWorker.kt` → JNI → `POST /api/blocks/submit` round trip with OkHttp (retry on 5xx, no-retry on 409/422)
@@ -453,28 +455,50 @@ The stack is small enough for a single low-cost VPS at testnet scale, and horizo
 
 ## Remaining Work
 
-Three hardening items are open. Everything else is complete.
+### ✅ Completed hardening (this session)
 
-### 🔐 Governance vote signature test coverage
-Ed25519 signature verification on governance votes (`routes/governance.ts`) is implemented but has no integration test coverage. A subtle bug here could allow impersonation.
+| Item | What was done |
+|---|---|
+| Governance vote signature tests | Added to `api.integration.test.ts`: valid Ed25519 keypair → accepted, wrong signature → 401, address mismatch → 400 |
+| Fixed-point residuals in Rust | `BlockHeader.residual` changed to `i64` (scaled 1e18); `StationarySolver` outputs fixed-point directly; `choose_fork` uses i64 comparison only — 28 Rust tests pass |
+| Smart contract DB persistence | `contracts` Drizzle table; `persistContract()` / `loadContractsFromDb()` wired into `initChain()` |
+| WAT→WASM deploy UI | `/contracts` page in Explorer: in-browser `wabt` compile, ABI editor, deploy + call panels, storage viewer |
+| Smart contract test suite | 58 new tests in `contracts.integration.test.ts`; bug fix: `WebAssembly.compile()` replaces `validate()` so invalid WASM is actually rejected at deploy |
 
-- Integration test: valid Ed25519 keypair → accepted vote
-- Integration test: wrong signature → 401
-- Integration test: pubkey doesn't match voter address → 400
+### ⏳ Still open
 
-### 🔢 Full integer residuals in the Rust consensus core
-The TypeScript side stores and compares residuals as BigInt fixed-point. The Rust `BlockHeader` still carries an `f64`. On ARM vs x86, f64 arithmetic can produce different bit patterns, risking a consensus split between a mobile miner and a cloud validator.
+#### 📊 Real-network TPS baseline
+The k6 load test has been validated locally (161 TPS against loopback). Running it over the network gives the figure that accounts for TLS termination, Replit's proxy, and internet round-trip — required for any mainnet readiness claim.
 
-- Change `BlockHeader.residual` to an `i64` (scaled integer) in `equilibrium/src/chain_state.rs`
-- Update `StationarySolver` to output fixed-point directly
-- `choose_fork` to compare i64 values with no f64 involved
+```bash
+# download k6 (lost on container reset)
+wget https://github.com/grafana/k6/releases/download/v0.52.0/k6-v0.52.0-linux-amd64.tar.gz
+tar xzf k6-v0.52.0-linux-amd64.tar.gz
 
-### 📊 Real-network TPS baseline
-The k6 load test has been validated locally (161 TPS). Running it against the deployed public URL gives the number that accounts for TLS, Replit's proxy, and internet latency — needed for mainnet readiness claims.
+# run against the public dev domain
+./k6-v0.52.0-linux-amd64/k6 run scripts/load-test.js \
+  -e BASE_URL=https://$REPLIT_DEV_DOMAIN --vus 50 --duration 30s
+```
 
-- Deploy the app (Publish via Replit)
-- Run `k6 run scripts/load-test.js -e BASE_URL=https://<deployed-url>` with 50 VUs / 30 s
-- Record results in `docs/load-test-results.md`
+Record results in `docs/load-test-results.md`.
+
+#### 🌐 Multi-region infra (external — not actionable in Replit)
+- 4+ sentry/validator nodes across EU, US-East, and Asia
+- Managed Postgres cluster with streaming replication and daily backups
+- Grafana dashboards consuming the existing `/metrics` endpoint
+- DDoS mitigation / WAF in front of public endpoints
+- Recovery drill (restore from backup, verify chain integrity)
+
+#### 📱 Mobile app release (external)
+Android `.aar` and iOS Swift Package are built; app-store submission, signing, and distribution are external steps.
+
+#### 📖 Operator docs (external)
+- Validator setup guide (keygen, genesis participation, slash monitoring)
+- Delegator guide (stake, unstake, unbonding period)
+- Governance participation guide
+
+#### 🔒 Security audit (external — final gate before mainnet)
+Third-party review of consensus rules, governance signature verification, and WASM VM gas/storage boundaries.
 
 ---
 
