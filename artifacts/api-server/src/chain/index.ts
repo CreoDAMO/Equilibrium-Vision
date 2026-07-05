@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlock } from "./state.js";
+import { persistContract, loadContractsFromDb } from "./persistence.js";
 import type { ChainState } from "./state.js";
 import type { GenesisDocument } from "@workspace/coinomics";
 import { addressFromSeed } from "./crypto.js";
@@ -129,6 +130,18 @@ export async function initChain(): Promise<void> {
     } catch (err) {
       logger.warn({ err }, "Genesis persistence failed — continuing in-memory");
     }
+  }
+
+  // ── Smart contract boot ────────────────────────────────────────────────────
+  // Wire the persist callback first so any contract deployed during replay
+  // (future feature) is captured.
+  chainState.wasmVM.setPersistCallback(persistContract);
+
+  // Load previously deployed contracts from DB.
+  const savedContracts = await loadContractsFromDb();
+  if (savedContracts.length > 0) {
+    chainState.wasmVM.loadContracts(savedContracts);
+    logger.info({ count: savedContracts.length }, "Contracts loaded from DB");
   }
 }
 

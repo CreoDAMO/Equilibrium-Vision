@@ -42,8 +42,31 @@ export interface CallResult {
 export class WasmVM {
   private contracts = new Map<string, ContractRecord>();
   private blockHeight = 0;
+  private persistFn?: (contract: ContractRecord) => Promise<void>;
 
   setBlockHeight(h: number) { this.blockHeight = h; }
+
+  /**
+   * Register a persistence callback.  Called after every deploy and after
+   * every successful call that mutates storage or counters.
+   * Fire-and-forget — errors are swallowed so the mining loop never stalls.
+   */
+  setPersistCallback(fn: (contract: ContractRecord) => Promise<void>): void {
+    this.persistFn = fn;
+  }
+
+  /** Bulk-load contracts from DB on startup — skips validation for speed. */
+  loadContracts(records: ContractRecord[]): void {
+    for (const r of records) this.contracts.set(r.address, r);
+  }
+
+  private firePersist(contract: ContractRecord): void {
+    if (this.persistFn) {
+      this.persistFn(contract).catch((err) =>
+        console.warn("[WasmVM] contract persist failed:", err),
+      );
+    }
+  }
 
   async deploy(
     deployer: string,
@@ -77,6 +100,7 @@ export class WasmVM {
       abi,
     };
     this.contracts.set(address, contract);
+    this.firePersist(contract);
     return { address };
   }
 
@@ -174,6 +198,7 @@ export class WasmVM {
 
       contract.callCount++;
       contract.totalGasUsed += gasUsed;
+      this.firePersist(contract);
 
       return { success: true, returnValue, gasUsed, logs };
     } catch (e) {

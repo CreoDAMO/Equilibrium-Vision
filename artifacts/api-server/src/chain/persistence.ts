@@ -1,8 +1,9 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { asc, eq } from "drizzle-orm";
-import { blocksTable, transactionsTable } from "@workspace/db/schema";
+import { blocksTable, transactionsTable, contractsTable } from "@workspace/db/schema";
 import type { BlockRecord, TxRecord } from "./types.js";
+import type { ContractRecord } from "./wasm.js";
 import { logger } from "../lib/logger.js";
 
 // ── Self-contained persistence layer ─────────────────────────────────────────
@@ -16,7 +17,11 @@ import { logger } from "../lib/logger.js";
 
 const { Pool } = pg;
 
-type Db = ReturnType<typeof drizzle<{ blocksTable: typeof blocksTable; transactionsTable: typeof transactionsTable }>>;
+type Db = ReturnType<typeof drizzle<{
+  blocksTable: typeof blocksTable;
+  transactionsTable: typeof transactionsTable;
+  contractsTable: typeof contractsTable;
+}>>;
 
 let _db: Db | null = null;
 let _initDone = false;
@@ -34,7 +39,7 @@ function getDb(): Db | null {
 
   try {
     const pool = new Pool({ connectionString: url });
-    _db = drizzle(pool, { schema: { blocksTable, transactionsTable } }) as unknown as Db;
+    _db = drizzle(pool, { schema: { blocksTable, transactionsTable, contractsTable } }) as unknown as Db;
     logger.info({ url: url.replace(/:[^@]*@/, ":***@") }, "Postgres persistence enabled");
     return _db;
   } catch (err) {
@@ -200,4 +205,67 @@ export async function persistBlocks(blocks: BlockRecord[]): Promise<void> {
 /** True when a Postgres connection is available. */
 export function isDbAvailable(): boolean {
   return getDb() !== null;
+}
+
+// ── Smart contract persistence ────────────────────────────────────────────────
+
+/**
+ * Upsert a contract record (deploy or post-call storage update).
+ * Uses ON CONFLICT DO UPDATE so both new deploys and storage mutations
+ * are handled with a single call.  Fire-and-forget safe — never throws.
+ */
+export async function persistContract(contract: ContractRecord): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+  try {
+    await db
+      .insert(contractsTable)
+      .values({
+        address:      contract.address,
+        deployer:     contract.deployer,
+        bytecode:     contract.bytecode,
+        bytecodeHash: contract.bytecodeHash,
+        storage:      contract.storage,
+        deployedAt:   contract.deployedAt,
+        callCount:    contract.callCount,
+        totalGasUsed: contract.totalGasUsed,
+        abi:          contract.abi ?? null,
+      })
+      .onConflictDoUpdate({
+        target: contractsTable.address,
+        set: {
+          storage:      contract.storage,
+          callCount:    contract.callCount,
+          totalGasUsed: contract.totalGasUsed,
+        },
+      });
+  } catch (err) {
+    logger.warn({ err, address: contract.address }, "Failed to persist contract");
+  }
+}
+
+/**
+ * Load all deployed contracts from DB on startup.
+ * Returns an empty array if Postgres is unavailable.
+ */
+export async function loadContractsFromDb(): Promise<ContractRecord[]> {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    const rows = await db.select().from(contractsTable);
+    return rows.map((r) => ({
+      address:      r.address,
+      deployer:     r.deployer,
+      bytecode:     r.bytecode,
+      bytecodeHash: r.bytecodeHash,
+      storage:      (r.storage as Record<string, string>) ?? {},
+      deployedAt:   r.deployedAt,
+      callCount:    r.callCount,
+      totalGasUsed: r.totalGasUsed,
+      abi:          r.abi ?? undefined,
+    }));
+  } catch (err) {
+    logger.warn({ err }, "Failed to load contracts from DB — starting with empty contract set");
+    return [];
+  }
 }
