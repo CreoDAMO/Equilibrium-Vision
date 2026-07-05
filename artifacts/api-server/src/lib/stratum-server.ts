@@ -1,4 +1,5 @@
 import net from "node:net";
+import { randomBytes } from "node:crypto";
 import { logger } from "./logger.js";
 import type { ChainState } from "../chain/state.js";
 
@@ -73,8 +74,8 @@ export class StratumServer {
   // ── Connection lifecycle ──────────────────────────────────────────────────
 
   private onConnection(socket: net.Socket): void {
-    const sessionId  = Math.random().toString(16).slice(2, 10);
-    const extraNonce = Math.random().toString(16).slice(2, 10).padStart(8, "0");
+    const sessionId  = randomBytes(4).toString("hex");
+    const extraNonce = randomBytes(4).toString("hex");
     const session: MinerSession = { socket, sessionId, worker: null, authorized: false, extraNonce };
     this.sessions.set(sessionId, session);
     logger.debug({ sessionId, remote: socket.remoteAddress }, "Stratum client connected");
