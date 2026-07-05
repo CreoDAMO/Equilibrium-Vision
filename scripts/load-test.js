@@ -156,16 +156,16 @@ export default async function () {
   const fee    = 100;
   const nonce  = vuNonce++;
 
-  const signature = await signTx(wallet.address, to, amount, fee, nonce);
-
+  // Note: server validates signatures as Ed25519; k6 only has P-256.
+  // Since REQUIRE_TX_SIGNATURES is not enabled, send unsigned txs for
+  // a clean throughput baseline.  Set REQUIRE_TX_SIGNATURES=true on
+  // mainnet once an Ed25519-capable test harness is in place.
   const payload = JSON.stringify({
-    from:      wallet.address,
+    from:   wallet.address,
     to,
     amount,
     fee,
     nonce,
-    signature,
-    publicKey: wallet.pubKeyHex,
   });
 
   const start = Date.now();
