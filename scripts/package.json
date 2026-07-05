@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
+    "generate-genesis": "tsx ./src/generate-genesis.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@workspace/coinomics": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

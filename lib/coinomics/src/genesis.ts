@@ -223,31 +223,104 @@ export function generateGenesis(config: GenesisConfig): GenesisDocument {
 }
 
 /**
- * A ready-to-use mainnet genesis config using the exact allocation split from
- * the spec's example (`20/15/25/30/10` million EQU, summing to the 100M
- * genesis supply). Placeholder `eq1...` addresses must be replaced with real
- * addresses before this is ever used to launch a real network — this export
- * exists for tests, previews, and as a documented starting point.
+ * Approved mainnet genesis allocation (100 M EQU total):
+ *
+ * | Category                      | EQU        | Vesting                   |
+ * |-------------------------------|------------|---------------------------|
+ * | Community / Airdrop / Mining  | 40,000,000 | None — fair launch        |
+ * | Liquidity Pools / DEX Seeding | 20,000,000 | Locked in pools           |
+ * | Ecosystem / Dev Fund          | 15,000,000 | Time-locked 2–4 years     |
+ * | Founder (upfront)             |  5,000,000 | None                      |
+ * | Founder (vested)              |  5,000,000 | 4-year linear, 1-year cliff|
+ * | Team                          |  5,000,000 | 3-year linear, 1-year cliff|
+ * | Advisors / Early Contributors |  5,000,000 | 2–3-year linear           |
+ * | Staking / Validator Bootstrap |  5,000,000 | Locked for validator use  |
+ * |                               | 100,000,000|                           |
+ *
+ * Placeholder addresses must be replaced with real addresses before mainnet
+ * launch — use `scripts/src/generate-genesis.ts` to produce the final file.
  */
-export function defaultMainnetGenesisConfig(timestamp: string): GenesisConfig {
+export function defaultMainnetGenesisConfig(
+  timestamp: string,
+  addresses?: {
+    community?: string;
+    liquidity?: string;
+    ecosystem?: string;
+    founderFast?: string;
+    founderVest?: string;
+    team?: string;
+    advisors?: string;
+    staking?: string;
+    validators?: Array<{ address: string; name: string; stake: number }>;
+  },
+): GenesisConfig {
+  const a = addresses ?? {};
   return {
     chainId: "equilibrium-1",
     timestamp,
     initialSupply: MAINNET_GENESIS_SUPPLY,
     maxSupply: MAINNET_MAX_SUPPLY,
     allocations: [
-      { address: "eq1coreCONTRIBUTORSPLACEHOLDER00000000", amount: 20_000_000, vesting: "4-year linear", category: "core_contributors" },
-      { address: "eq1earlyBACKERSPLACEHOLDER0000000000000", amount: 15_000_000, vesting: "3-year linear", category: "early_backers" },
-      { address: "eq1communityTREASURYPLACEHOLDER000000000", amount: 25_000_000, vesting: "none", category: "community_treasury" },
-      { address: "eq1miningRESERVEPLACEHOLDER0000000000000", amount: 30_000_000, vesting: "10-year linear", category: "mining_reserve" },
-      { address: "eq1ecosystemFUNDPLACEHOLDER00000000000000", amount: 10_000_000, vesting: "none", category: "ecosystem_fund" },
+      {
+        address: a.community ?? "0000000000000000000000000000000000000001",
+        amount: 40_000_000,
+        vesting: "none",
+        category: "community_airdrop_mining",
+      },
+      {
+        address: a.liquidity ?? "0000000000000000000000000000000000000002",
+        amount: 20_000_000,
+        vesting: "locked-in-pools",
+        category: "liquidity_pools",
+      },
+      {
+        address: a.ecosystem ?? "0000000000000000000000000000000000000003",
+        amount: 15_000_000,
+        vesting: "2-4-year time-lock",
+        category: "ecosystem_dev_fund",
+      },
+      {
+        address: a.founderFast ?? "0000000000000000000000000000000000000004",
+        amount: 5_000_000,
+        vesting: "none",
+        category: "founder_upfront",
+      },
+      {
+        address: a.founderVest ?? "0000000000000000000000000000000000000005",
+        amount: 5_000_000,
+        vesting: "4-year linear, 1-year cliff",
+        category: "founder_vested",
+      },
+      {
+        address: a.team ?? "0000000000000000000000000000000000000006",
+        amount: 5_000_000,
+        vesting: "3-year linear, 1-year cliff",
+        category: "team",
+      },
+      {
+        address: a.advisors ?? "0000000000000000000000000000000000000007",
+        amount: 5_000_000,
+        vesting: "2-3-year linear",
+        category: "advisors_early_contributors",
+      },
+      {
+        address: a.staking ?? "0000000000000000000000000000000000000008",
+        amount: 5_000_000,
+        vesting: "locked-for-validators",
+        category: "staking_bootstrap",
+      },
     ],
-    initialValidators: [
-      { address: "eq1foundationVALIDATORPLACEHOLDER00000000", stake: 500_000, name: "Equilibrium Foundation" },
+    initialValidators: a.validators ?? [
+      { address: "0000000000000000000000000000000000000009", stake: 500_000, name: "Equilibrium Foundation" },
+      { address: "000000000000000000000000000000000000000a", stake: 500_000, name: "Equilibrium Labs" },
+      { address: "000000000000000000000000000000000000000b", stake: 250_000, name: "Community Validator Alpha" },
+      { address: "000000000000000000000000000000000000000c", stake: 250_000, name: "Community Validator Beta" },
     ],
     dexPools: [
-      { pair: "EQU-WBTC", reserveA: 5_000_000, reserveB: 50 },
-      { pair: "EQU-USDC", reserveA: 5_000_000, reserveB: 5_000_000 },
+      // EQU-WBTC: 10 M EQU @ ~100:1 ratio (from liquidity allocation)
+      { pair: "EQU-WBTC", reserveA: 10_000_000, reserveB: 100 },
+      // EQU-USDC: 10 M EQU @ 1:1 ratio (from liquidity allocation)
+      { pair: "EQU-USDC", reserveA: 10_000_000, reserveB: 10_000_000 },
     ],
     parameters: MAINNET_GENESIS_PARAMETERS,
   };

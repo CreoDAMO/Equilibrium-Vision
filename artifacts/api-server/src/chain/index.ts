@@ -1,5 +1,8 @@
-import { buildGenesisChain, buildChainFromBlocks, mineNextBlock } from "./state.js";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlock } from "./state.js";
 import type { ChainState } from "./state.js";
+import type { GenesisDocument } from "@workspace/coinomics";
 import { addressFromSeed } from "./crypto.js";
 import { logger } from "../lib/logger.js";
 import { broadcast } from "../lib/ws-server.js";
@@ -22,19 +25,96 @@ export let chainState: ChainState;
  * Load chain from Postgres (if available) or build the 25-block genesis chain.
  * Must be awaited before the HTTP server starts.
  */
+/**
+ * Candidate paths for genesis.json (checked in order):
+ *  1. GENESIS_PATH env var — explicit override, useful for deployment.
+ *  2. Two levels up from process.cwd() — covers the case where pnpm runs
+ *     in artifacts/api-server/ and genesis.json is at the workspace root.
+ *  3. process.cwd() itself — covers the case where the server is run from
+ *     the workspace root directly.
+ */
+function findGenesisPath(): string | null {
+  const candidates = [
+    process.env["GENESIS_PATH"],
+    resolve(process.cwd(), "..", "..", "genesis.json"),
+    resolve(process.cwd(), "genesis.json"),
+  ].filter(Boolean) as string[];
+
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+/** Basic runtime validation of a raw genesis doc (throws on violation). */
+function validateGenesisDoc(doc: GenesisDocument): void {
+  if (!doc.chain_id?.trim()) throw new Error("genesis.json: missing chain_id");
+  if (!doc.timestamp || Number.isNaN(Date.parse(doc.timestamp)))
+    throw new Error(`genesis.json: invalid timestamp: ${doc.timestamp}`);
+  const supply = Number(doc.initial_supply);
+  if (!Number.isFinite(supply) || supply <= 0)
+    throw new Error(`genesis.json: invalid initial_supply: ${doc.initial_supply}`);
+  if (!Array.isArray(doc.allocations) || doc.allocations.length === 0)
+    throw new Error("genesis.json: allocations must be a non-empty array");
+  const allocSum = doc.allocations.reduce((s, a) => {
+    const amt = Number(a.amount);
+    if (!Number.isFinite(amt) || amt <= 0) throw new Error(`genesis.json: invalid allocation amount "${a.amount}"`);
+    if (!a.address?.trim()) throw new Error(`genesis.json: allocation missing address`);
+    return s + amt;
+  }, 0);
+  if (Math.abs(allocSum - supply) > 1e-6)
+    throw new Error(`genesis.json: allocations sum (${allocSum}) ≠ initial_supply (${supply})`);
+  if (!Array.isArray(doc.initial_validators) || doc.initial_validators.length === 0)
+    throw new Error("genesis.json: initial_validators must be non-empty");
+  for (const v of doc.initial_validators) {
+    if (!v.address?.trim()) throw new Error(`genesis.json: validator missing address`);
+    const stake = Number(v.stake);
+    if (!Number.isFinite(stake) || stake <= 0)
+      throw new Error(`genesis.json: validator "${v.name}" has invalid stake "${v.stake}"`);
+  }
+}
+
+/** Load and validate genesis.json, returning null if absent or invalid. */
+function loadGenesisDoc(): GenesisDocument | null {
+  const genesisPath = findGenesisPath();
+  if (!genesisPath) return null;
+  try {
+    const raw = readFileSync(genesisPath, "utf-8");
+    const doc = JSON.parse(raw) as GenesisDocument;
+    validateGenesisDoc(doc);
+    logger.info({ path: genesisPath, chainId: doc.chain_id }, "Loaded genesis.json");
+    return doc;
+  } catch (err) {
+    logger.warn({ err }, "Failed to load genesis.json — falling back to dev genesis");
+    return null;
+  }
+}
+
 export async function initChain(): Promise<void> {
   const dbBlocks = await loadBlocksFromDb();
 
   if (dbBlocks) {
     logger.info({ blockCount: dbBlocks.length }, "Restoring chain from Postgres");
-    chainState = buildChainFromBlocks(dbBlocks);
+    // Use doc-aware restoration if genesis.json is present so validator/pool
+    // state matches the original genesis document rather than dev seed data.
+    const genesisDocForRestore = loadGenesisDoc();
+    if (genesisDocForRestore) {
+      chainState = buildDocChainFromBlocks(genesisDocForRestore, dbBlocks);
+      logger.info({ height: chainState.height, chainId: genesisDocForRestore.chain_id }, "Chain restored from doc genesis");
+    } else {
+      chainState = buildChainFromBlocks(dbBlocks);
+    }
     logger.info({ height: chainState.height }, "Chain restored");
   } else {
-    logger.info("Building genesis chain (in-memory or first boot)");
-    chainState = buildGenesisChain();
-    // Await genesis persist so the DB is fully consistent before mining starts.
-    // If this fails (no DB configured) it is silently swallowed — the server
-    // continues in pure in-memory mode.
+    const genesisDoc = loadGenesisDoc();
+    if (genesisDoc) {
+      logger.info({ chainId: genesisDoc.chain_id }, "Building genesis chain from genesis.json");
+      chainState = buildGenesisChainFromDoc(genesisDoc);
+    } else {
+      logger.info("Building dev genesis chain (no genesis.json found)");
+      chainState = buildGenesisChain();
+    }
+    // Persist genesis blocks so subsequent restarts load from DB.
     try {
       await persistBlocks(chainState.blocks);
       logger.info({ blockCount: chainState.blocks.length }, "Genesis blocks persisted");

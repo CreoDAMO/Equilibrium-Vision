@@ -84,14 +84,28 @@ if ! psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -lqt 2>/dev/null | cut -d\| -f1 | g
   createdb -p "$PGPORT" -h 127.0.0.1 -U "$SU" "$PGDB"
 fi
 
-# Push schema (idempotent — safe to run every boot)
-PGDB_URL="postgresql://${OS_USER}@127.0.0.1:${PGPORT}/${PGDB}"
+# Push schema using the superuser so it always succeeds even if runner role
+# was just created moments ago.  Fall back to OS_USER if SU fails.
+PGDB_URL_SU="postgresql://${SU}@127.0.0.1:${PGPORT}/${PGDB}"
+PGDB_URL_OS="postgresql://${OS_USER}@127.0.0.1:${PGPORT}/${PGDB}"
 REPO_ROOT_ABS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if DATABASE_URL="$PGDB_URL" pnpm --filter @workspace/db run push --config ./drizzle.config.ts > /dev/null 2>&1; then
-  echo "[postgres] Schema up to date."
+if DATABASE_URL="$PGDB_URL_SU" pnpm --filter @workspace/db run push --config ./drizzle.config.ts 2>&1 | grep -E "Changes applied|No changes"; then
+  echo "[postgres] Schema up to date (via $SU)."
+elif DATABASE_URL="$PGDB_URL_OS" pnpm --filter @workspace/db run push --config ./drizzle.config.ts > /dev/null 2>&1; then
+  echo "[postgres] Schema up to date (via $OS_USER)."
 else
   echo "[postgres] Schema push skipped (will retry next boot)."
 fi
+
+# Grant runner full access to all tables/sequences (schema may have been pushed
+# as the superuser, leaving runner without table-level permissions).
+psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -d "$PGDB" -c \
+  "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO runner;
+   GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO runner;
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO runner;
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO runner;" \
+  > /dev/null 2>&1 \
+  && echo "[postgres] Granted table/sequence access to runner."
 
 pg_ctl stop -D "$PGDATA" -m fast -w
 echo "[postgres] Starting in foreground on port $PGPORT …"

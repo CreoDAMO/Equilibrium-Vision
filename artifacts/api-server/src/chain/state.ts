@@ -885,6 +885,73 @@ function seedDexPools(state: ChainState): void {
 }
 
 /**
+ * Replay a persisted block list, seeding validators and DEX pools from a
+ * `GenesisDocument` rather than hardcoded dev data. Use this when the node
+ * was originally started with a genesis.json so that restarts reconstruct
+ * consistent state (same validators, pools, allocations) from the document.
+ */
+export function buildDocChainFromBlocks(doc: GenesisDocument, blocks: BlockRecord[]): ChainState {
+  const state = new ChainState();
+
+  // Seed validators from doc
+  for (const v of doc.initial_validators) {
+    state.validators.set(v.address, {
+      address: v.address,
+      moniker: v.name,
+      bondedStake: Number(v.stake),
+      accumulatedRewards: 0,
+      slashed: false,
+      slashCount: 0,
+      jailed: false,
+      uptime: 1.0,
+      blocksProposed: 0,
+      blocksVoted: 0,
+      commission: 0.05,
+    });
+  }
+
+  // Seed DEX pools from doc
+  const now = Math.floor(Date.now() / 1000);
+  for (const pool of doc.dex_pools) {
+    const rA = Number(pool.reserve_a);
+    const rB = Number(pool.reserve_b);
+    state.dexPools.set(pool.pair, {
+      id: pool.pair,
+      tokenA: pool.pair.split("-")[0]!,
+      tokenB: pool.pair.split("-")[1]!,
+      reserveA: rA,
+      reserveB: rB,
+      totalLiquidity: Math.floor(Math.sqrt(rA * rB)),
+      fee: 0.003,
+      volumeA: 0,
+      volumeB: 0,
+      txCount: 0,
+      createdAt: now,
+    });
+  }
+
+  // Credit allocations so balances match first-boot state
+  for (const alloc of doc.allocations) {
+    state.ledger.credit(alloc.address, Number(alloc.amount));
+  }
+
+  state.peers = [
+    { peerId: randomHex(20), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: randomHex(20), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: randomHex(20), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
+    { peerId: randomHex(20), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
+  ];
+
+  for (const block of blocks) {
+    state.addBlock(block);
+    for (const peer of state.peers) {
+      if (peer.connected) peer.height = block.height;
+    }
+  }
+  return state;
+}
+
+/**
  * Replay a persisted block list into a freshly-seeded ChainState.
  * Call this on startup when blocks are loaded from Postgres; it seeds the
  * same validators, DEX pools, and peers as buildGenesisChain so the running
@@ -907,6 +974,97 @@ export function buildChainFromBlocks(blocks: BlockRecord[]): ChainState {
       if (peer.connected) peer.height = block.height;
     }
   }
+  return state;
+}
+
+// ── Genesis from GenesisDocument ─────────────────────────────────────────────
+
+import type { GenesisDocument } from "@workspace/coinomics";
+
+/**
+ * Build a fresh ChainState from a `GenesisDocument` loaded from genesis.json.
+ *
+ * This is the production genesis path used on first boot when a genesis.json
+ * file is present. It creates a single block-0 (the actual genesis block) that
+ * credits all allocations, registers validators, and seeds DEX pools exactly
+ * as specified in the document — no hardcoded dev data.
+ */
+export function buildGenesisChainFromDoc(doc: GenesisDocument): ChainState {
+  const state = new ChainState();
+
+  // ── Validators ─────────────────────────────────────────────────────────────
+  for (const v of doc.initial_validators) {
+    state.validators.set(v.address, {
+      address: v.address,
+      moniker: v.name,
+      bondedStake: Number(v.stake),
+      accumulatedRewards: 0,
+      slashed: false,
+      slashCount: 0,
+      jailed: false,
+      uptime: 1.0,
+      blocksProposed: 0,
+      blocksVoted: 0,
+      commission: 0.05,
+    });
+  }
+
+  // ── DEX Pools ──────────────────────────────────────────────────────────────
+  const now = Math.floor(Date.now() / 1000);
+  for (const pool of doc.dex_pools) {
+    const rA = Number(pool.reserve_a);
+    const rB = Number(pool.reserve_b);
+    state.dexPools.set(pool.pair, {
+      id: pool.pair,
+      tokenA: pool.pair.split("-")[0]!,
+      tokenB: pool.pair.split("-")[1]!,
+      reserveA: rA,
+      reserveB: rB,
+      totalLiquidity: Math.floor(Math.sqrt(rA * rB)),
+      fee: 0.003,
+      volumeA: 0,
+      volumeB: 0,
+      txCount: 0,
+      createdAt: now,
+    });
+  }
+
+  // ── Allocation credits ─────────────────────────────────────────────────────
+  for (const alloc of doc.allocations) {
+    state.ledger.credit(alloc.address, Number(alloc.amount));
+  }
+
+  // ── Genesis block (height 0) ───────────────────────────────────────────────
+  const genesisHash = hash256(`genesis-${doc.chain_id}-${doc.timestamp}`);
+  const genesisBlock: import("./types.js").BlockRecord = {
+    hash: genesisHash,
+    height: 0,
+    prevHash: "0".repeat(64),
+    merkleRoot: merkleRoot(["0".repeat(64)]),
+    timestamp: Math.floor(new Date(doc.timestamp).getTime() / 1000),
+    nonce: 0,
+    difficulty: doc.parameters.initial_difficulty,
+    residual: 0,
+    residualFp: 0,
+    recursionDepth: 0,
+    coinbaseReward: 0,
+    miner: "0".repeat(40),
+    txCount: 0,
+    transactions: [],
+    finalized: true,
+  };
+
+  state.blocks.push(genesisBlock);
+  state.finalizedHeight = 0;
+
+  // Default peers (same as dev genesis)
+  state.peers = [
+    { peerId: randomHex(20), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: randomHex(20), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: randomHex(20), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
+    { peerId: randomHex(20), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
+  ];
+
   return state;
 }
 

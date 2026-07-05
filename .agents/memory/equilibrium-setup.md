@@ -17,12 +17,15 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 ## Workflow names (exact, for WorkflowsRestart)
 - `API Server`, `Explorer`, `Postgres` — NOT "artifacts/api-server: API Server" etc.
 
-## Postgres role issue (recurs every session)
+## Postgres role/permission issue (recurs every session)
 - `.pgdata` persists across sessions but the `runner` role may not exist after a container reset
-- Fix: `psql -U postgres -h 127.0.0.1 -p 5432 -c "CREATE ROLE runner WITH LOGIN SUPERUSER;" equilibrium`
-- Then: `DATABASE_URL=postgresql://runner@127.0.0.1:5432/equilibrium pnpm --filter @workspace/db run push --config ./drizzle.config.ts`
-- Then restart the API Server workflow
-- `scripts/start-postgres.sh` now uses an atomic DO block (`CREATE ROLE ... EXCEPTION WHEN duplicate_object THEN NULL`) to prevent TOCTOU races
+- Even when role exists, tables may be missing or `runner` may lack table permissions if schema was pushed as `postgres` superuser
+- Manual fix sequence:
+  1. `psql -U postgres -h 127.0.0.1 -d equilibrium -c "DO \$\$ BEGIN CREATE ROLE runner WITH LOGIN SUPERUSER; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"`
+  2. `DATABASE_URL="postgresql://postgres@127.0.0.1:5432/equilibrium" pnpm --filter @workspace/db run push`
+  3. `psql -U postgres -h 127.0.0.1 -d equilibrium -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO runner; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO runner;"`
+  4. Restart API Server workflow
+- `scripts/start-postgres.sh` now: (a) creates runner role via DO block, (b) pushes schema as superuser (SU), (c) grants ALL TABLE/SEQUENCE privileges to runner — all idempotent, all on every boot
 
 ## Address derivation — CRITICAL
 - Rust: `SHA-256(pubkey.as_bytes())[..20]` as 40 hex chars (raw 32 bytes)

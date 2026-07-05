@@ -1,0 +1,100 @@
+{
+  "chain_id": "equilibrium-1",
+  "timestamp": "2026-07-05T00:43:39.439Z",
+  "initial_supply": "100000000",
+  "allocations": [
+    {
+      "address": "5fbdb392adae068b9ad7822ff92a03fe9b2d89fc",
+      "amount": "40000000",
+      "vesting": "none",
+      "category": "community_airdrop_mining"
+    },
+    {
+      "address": "a533f86155e56db66274ee6c8f09ae436c9a3a0e",
+      "amount": "20000000",
+      "vesting": "locked-in-pools",
+      "category": "liquidity_pools"
+    },
+    {
+      "address": "f6ab3cce4a893c389e7ac5bc8b409780c3d3e6d4",
+      "amount": "15000000",
+      "vesting": "2-4-year time-lock",
+      "category": "ecosystem_dev_fund"
+    },
+    {
+      "address": "60cb69632fa47100ef8506109783762dda14ff3b",
+      "amount": "5000000",
+      "vesting": "none",
+      "category": "founder_upfront"
+    },
+    {
+      "address": "9b2b3b45c4aa944626fb58d0ae2de2000f99e1ec",
+      "amount": "5000000",
+      "vesting": "4-year linear, 1-year cliff",
+      "category": "founder_vested"
+    },
+    {
+      "address": "9435ba5a850358a75c0cee7f6efa14fe501c4de9",
+      "amount": "5000000",
+      "vesting": "3-year linear, 1-year cliff",
+      "category": "team"
+    },
+    {
+      "address": "9269dfc0813a44ad9f49b7f0ac49e3eec700073b",
+      "amount": "5000000",
+      "vesting": "2-3-year linear",
+      "category": "advisors_early_contributors"
+    },
+    {
+      "address": "56bea229faa92f38f50f4972a7229a69e8119937",
+      "amount": "5000000",
+      "vesting": "locked-for-validators",
+      "category": "staking_bootstrap"
+    }
+  ],
+  "initial_validators": [
+    {
+      "address": "e571ed8575a6d6c85c603334a07e3c304997e15d",
+      "stake": "1500000",
+      "name": "Equilibrium Foundation"
+    },
+    {
+      "address": "092498d4b2b0c31d5df17b41804600e22324cf16",
+      "stake": "1500000",
+      "name": "Equilibrium Labs"
+    },
+    {
+      "address": "2b08ffb34419b716d062e8ebfcdb423e8a677e94",
+      "stake": "1000000",
+      "name": "Community Validator Alpha"
+    },
+    {
+      "address": "bd6cd1fd3379e1ade837704af8d3f83a0bdae464",
+      "stake": "1000000",
+      "name": "Community Validator Beta"
+    }
+  ],
+  "dex_pools": [
+    {
+      "pair": "EQU-WBTC",
+      "reserve_a": "10000000",
+      "reserve_b": "100"
+    },
+    {
+      "pair": "EQU-USDC",
+      "reserve_a": "10000000",
+      "reserve_b": "10000000"
+    }
+  ],
+  "parameters": {
+    "target_block_time_ms": 15000,
+    "residual_threshold": 1e-7,
+    "initial_difficulty": 1000000,
+    "slashing_double_sign_pct": 5,
+    "slashing_downtime_pct": 1,
+    "unbonding_period_blocks": 10,
+    "max_validators": 100,
+    "governance_quorum_pct": 33.4,
+    "governance_voting_period_blocks": 10080
+  }
+}

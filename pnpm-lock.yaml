@@ -702,6 +702,10 @@ importers:
         version: 5.9.3
 
   scripts:
+    dependencies:
+      '@workspace/coinomics':
+        specifier: workspace:*
+        version: link:../lib/coinomics
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
