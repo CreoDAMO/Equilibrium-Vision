@@ -117,6 +117,21 @@ export class WasmVM {
       return { success: false, returnValue: null, gasUsed: 0, logs: [], error: "Contract not found" };
     }
 
+    if (!Array.isArray(args)) {
+      return { success: false, returnValue: null, gasUsed: 0, logs: [], error: "Invalid args: expected array" };
+    }
+    const MAX_CALL_ARGS = 1024;
+    const argCount = args.length;
+    if (argCount > MAX_CALL_ARGS) {
+      return {
+        success: false,
+        returnValue: null,
+        gasUsed: 0,
+        logs: [],
+        error: `Too many args: max ${MAX_CALL_ARGS}`,
+      };
+    }
+
     const logs: string[] = [];
     const storage = contract.storage;
     let gasUsed = 0;
@@ -203,12 +218,12 @@ export class WasmVM {
       // Prepare args buffer (write to WASM memory if contract exports alloc)
       const alloc = instance.exports.alloc as ((size: number) => number) | undefined;
       let argsPtr = 0;
-      let argsLen = args.length * 4;
+      let argsLen = argCount * 4;
 
-      if (alloc && args.length > 0) {
+      if (alloc && argCount > 0) {
         argsPtr = alloc(argsLen);
         const view = new DataView(memory.buffer);
-        for (let i = 0; i < args.length; i++) {
+        for (let i = 0; i < argCount; i++) {
           view.setInt32(argsPtr + i * 4, args[i]!, true);
         }
       }
