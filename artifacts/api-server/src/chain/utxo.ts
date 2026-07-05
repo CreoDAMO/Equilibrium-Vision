@@ -4,8 +4,8 @@
 // Transactions reference previous UTXOs as inputs and create new UTXOs as outputs.
 // This enables parallel validation: inputs from different tx can be validated concurrently.
 
-import { ed25519 } from "@noble/curves/ed25519.js";
 import { createHash } from "crypto";
+import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 
 function hexToBytes(hex: string): Uint8Array {
   return new Uint8Array(Buffer.from(hex, "hex"));
@@ -156,22 +156,24 @@ export class UTXOSet {
         return `Input ${input.txHash}:${input.outputIndex} publicKey does not match UTXO owner`;
       }
 
-      let sigValid = false;
-      try {
-        const message = utxoSigningMessage(input, tx.outputs, tx.fee);
-        sigValid = ed25519.verify(
-          hexToBytes(input.signature),
-          message,
-          hexToBytes(input.publicKey),
-        );
-      } catch {
-        sigValid = false;
-      }
-      if (!sigValid) {
+      inputTotal += utxo.amount;
+    }
+
+    // Verify all input signatures together via batch verification — one
+    // combined multi-scalar-mult check instead of N full verifications.
+    // On failure we fall back to per-signature verification to report which
+    // specific input is bad.
+    const sigItems = tx.inputs.map((input) => ({
+      sig: hexToBytes(input.signature!),
+      message: utxoSigningMessage(input, tx.outputs, tx.fee),
+      publicKey: hexToBytes(input.publicKey!),
+    }));
+    const results = verifyEd25519BatchDetailed(sigItems);
+    for (let i = 0; i < tx.inputs.length; i++) {
+      if (!results[i]) {
+        const input = tx.inputs[i]!;
         return `Input ${input.txHash}:${input.outputIndex} has an invalid signature`;
       }
-
-      inputTotal += utxo.amount;
     }
 
     const outputTotal = tx.outputs.reduce((s, o) => s + o.amount, 0);

@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "rust-stable", "swift-5.8"]
+modules = ["nodejs-20", "rust-stable", "swift-5.8", "python-3.11"]
 
 [deployment]
 router = "application"
@@ -73,3 +73,8 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+REQUIRE_TX_SIGNATURES = "true"

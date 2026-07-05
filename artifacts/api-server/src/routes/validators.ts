@@ -1,5 +1,12 @@
 import { Router } from "express";
 import { chainState } from "../chain/index.js";
+import {
+  getMultisigAddress,
+  getMultisigInfo,
+  proposeAdminAction,
+  approveAdminAction,
+  isAdminActionApproved,
+} from "../chain/multisig.js";
 
 const router = Router();
 
@@ -33,22 +40,42 @@ router.get("/validators/:addr", (req, res) => {
   });
 });
 
-router.post("/validators/:addr/slash", (req, res) => {
-  const adminKey = process.env["ADMIN_KEY"];
-  if (adminKey) {
-    const provided = req.headers["x-admin-key"];
-    if (provided !== adminKey) {
-      res.status(403).json({ error: "Forbidden: valid X-Admin-Key header required" });
-      return;
-    }
-  }
-
+router.post("/validators/:addr/slash", async (req, res) => {
   const addr = req.params["addr"]!;
-  const { reason } = req.body as { reason?: "double_sign" | "downtime" | "invalid_block" };
+  const { reason, proposalId } = req.body as {
+    reason?: "double_sign" | "downtime" | "invalid_block";
+    proposalId?: number;
+  };
   if (!reason) {
     res.status(400).json({ error: "reason is required" });
     return;
   }
+
+  // Admin multisig, when configured, is the sole authorization path — an
+  // on-chain threshold of owner signatures replaces the single ADMIN_KEY
+  // secret. Falls back to ADMIN_KEY only when no multisig is configured
+  // (dev/test convenience).
+  if (getMultisigAddress()) {
+    if (proposalId === undefined || !Number.isInteger(proposalId)) {
+      res.status(400).json({ error: "proposalId is required when admin multisig is configured" });
+      return;
+    }
+    const approved = await isAdminActionApproved(chainState.wasmVM, proposalId);
+    if (!approved) {
+      res.status(403).json({ error: "Forbidden: proposal has not met the multisig approval threshold" });
+      return;
+    }
+  } else {
+    const adminKey = process.env["ADMIN_KEY"];
+    if (adminKey) {
+      const provided = req.headers["x-admin-key"];
+      if (provided !== adminKey) {
+        res.status(403).json({ error: "Forbidden: valid X-Admin-Key header required" });
+        return;
+      }
+    }
+  }
+
   const v = chainState.validators.get(addr);
   if (!v) {
     res.status(404).json({ error: "Validator not found" });
@@ -56,6 +83,64 @@ router.post("/validators/:addr/slash", (req, res) => {
   }
   chainState.slashValidator(addr, reason, chainState.height, Math.floor(Date.now() / 1000));
   res.json({ success: true, validator: chainState.validators.get(addr) });
+});
+
+// ── Admin multisig ──────────────────────────────────────────────────────────
+// On-chain threshold-signed approval gate for privileged admin actions
+// (e.g. the slash route above). See chain/multisig.ts and contracts/multisig.wat.
+
+router.get("/admin/multisig", (_req, res) => {
+  res.json(getMultisigInfo(chainState.wasmVM));
+});
+
+router.post("/admin/multisig/propose", async (_req, res) => {
+  if (!getMultisigAddress()) {
+    res.status(400).json({ error: "Admin multisig is not configured" });
+    return;
+  }
+  const result = await proposeAdminAction(chainState.wasmVM);
+  if (!result.success) {
+    res.status(500).json({ error: result.error });
+    return;
+  }
+  res.json({ proposalId: result.proposalId });
+});
+
+router.post("/admin/multisig/:proposalId/approve", async (req, res) => {
+  if (!getMultisigAddress()) {
+    res.status(400).json({ error: "Admin multisig is not configured" });
+    return;
+  }
+  const proposalId = Number(req.params["proposalId"]);
+  const { ownerIndex, pubkey, signature } = req.body as {
+    ownerIndex?: number;
+    pubkey?: string;
+    signature?: string;
+  };
+  if (!Number.isInteger(proposalId) || ownerIndex === undefined || !pubkey || !signature) {
+    res.status(400).json({ error: "ownerIndex, pubkey (64 hex chars), and signature (128 hex chars) are required" });
+    return;
+  }
+  const result = await approveAdminAction(chainState.wasmVM, proposalId, ownerIndex, pubkey, signature);
+  if (!result.success) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ approved: result.approved, thresholdMet: result.thresholdMet });
+});
+
+router.get("/admin/multisig/:proposalId", async (req, res) => {
+  if (!getMultisigAddress()) {
+    res.status(400).json({ error: "Admin multisig is not configured" });
+    return;
+  }
+  const proposalId = Number(req.params["proposalId"]);
+  if (!Number.isInteger(proposalId)) {
+    res.status(400).json({ error: "Invalid proposalId" });
+    return;
+  }
+  const approved = await isAdminActionApproved(chainState.wasmVM, proposalId);
+  res.json({ proposalId, approved });
 });
 
 router.get("/validators/:addr/slash-history", (req, res) => {

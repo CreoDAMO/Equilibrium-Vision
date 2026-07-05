@@ -8,6 +8,7 @@ import { addressFromSeed } from "./crypto.js";
 import { logger } from "../lib/logger.js";
 import { broadcast } from "../lib/ws-server.js";
 import { loadBlocksFromDb, persistBlock, persistBlocks } from "./persistence.js";
+import { deployAdminMultisigIfConfigured } from "./multisig.js";
 
 // Node's own mining address. This intentionally matches the seeded
 // "equilibrium-miner-1" validator (see seedValidators() in state.ts) so that
@@ -142,6 +143,16 @@ export async function initChain(): Promise<void> {
   if (savedContracts.length > 0) {
     chainState.wasmVM.loadContracts(savedContracts);
     logger.info({ count: savedContracts.length }, "Contracts loaded from DB");
+  }
+
+  // Admin multisig — replaces the single ADMIN_KEY secret for privileged
+  // actions (validator slashing) with an on-chain, threshold-signed gate.
+  // No-op unless ADMIN_MULTISIG_OWNERS (fresh deploy) or ADMIN_MULTISIG_ADDRESS
+  // (existing contract) is configured.
+  try {
+    await deployAdminMultisigIfConfigured(chainState.wasmVM, minerAddress);
+  } catch (err) {
+    logger.warn({ err }, "Admin multisig deployment check failed — continuing without it");
   }
 }
 

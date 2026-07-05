@@ -9,6 +9,7 @@ import { GovernanceModule } from "./governance.js";
 import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
 import { generateZkProof } from "./zkproof.js";
+import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import {
   splitValidatorReward,
   applySlashing,
@@ -1258,7 +1259,30 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   const height = state.height + 1;
   const now = Math.floor(Date.now() / 1000);
 
-  const selected = state.mempool.all().slice(0, 50);
+  const candidates = state.mempool.all().slice(0, 50);
+
+  // Re-verify signatures at block-assembly time using batch verification —
+  // one combined check instead of N full verifications. Any tx that fails
+  // (bad signature, mempool tampering, stale/invalid data) is dropped from
+  // this block and stays in the mempool as pending rather than being mined.
+  const signed = candidates.filter((t) => t.signature && t.publicKey);
+  let invalidHashes = new Set<string>();
+  if (signed.length > 0) {
+    const sigItems = signed.map((t) => ({
+      sig: new Uint8Array(Buffer.from(t.signature!, "hex")),
+      message: new TextEncoder().encode(`${t.from}${t.to}${t.amount}${t.fee}${t.nonce}`),
+      publicKey: new Uint8Array(Buffer.from(t.publicKey!, "hex")),
+    }));
+    const results = verifyEd25519BatchDetailed(sigItems);
+    invalidHashes = new Set(
+      signed.filter((_, i) => !results[i]).map((t) => t.hash)
+    );
+    if (invalidHashes.size > 0) {
+      logger.warn(`mineNextBlock: dropping ${invalidHashes.size} tx(s) with invalid signatures from block ${height}`);
+      state.mempool.remove([...invalidHashes]);
+    }
+  }
+  const selected = candidates.filter((t) => !invalidHashes.has(t.hash));
   const txHashes = selected.map((t) => t.hash);
   const mr = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
 

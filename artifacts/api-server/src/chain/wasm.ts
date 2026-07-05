@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { ed25519 } from "@noble/curves/ed25519.js";
 
 // ── WASM Smart Contract Execution Environment ──────────────────────────────────
 //
@@ -148,6 +149,38 @@ export class WasmVM {
         },
         abort: (msg: number, file: number, line: number, col: number): never => {
           throw new Error(`WASM abort at ${line}:${col}`);
+        },
+        // Derives the canonical wallet address (sha256(raw pubkey bytes)[..40])
+        // from the given pubkey, checks it matches the claimed owner address,
+        // then verifies the Ed25519 signature over the given message. Used by
+        // the on-chain multisig contract to gate approvals to real key holders
+        // without ever persisting public keys in contract storage.
+        verify_owner_sig: (
+          msgPtr: number, msgLen: number,
+          sigPtr: number, sigLen: number,
+          pubkeyPtr: number, pubkeyLen: number,
+          addrPtr: number, addrLen: number,
+        ): number => {
+          gasUsed += 3000;
+          try {
+            const msg = new Uint8Array(memory.buffer, msgPtr, msgLen).slice();
+            const sig = new Uint8Array(memory.buffer, sigPtr, sigLen).slice();
+            const pubkey = new Uint8Array(memory.buffer, pubkeyPtr, pubkeyLen).slice();
+            const addr = readString(memory, addrPtr, addrLen);
+            const derived = createHash("sha256").update(pubkey).digest("hex").slice(0, 40);
+            if (derived !== addr) return 0;
+            return ed25519.verify(sig, msg, pubkey) ? 1 : 0;
+          } catch {
+            return 0;
+          }
+        },
+        // Writes this contract's own address into WASM memory at outPtr and
+        // returns its length. Lets contracts bind signed messages to their
+        // own address, preventing cross-contract signature replay.
+        self_address: (outPtr: number): number => {
+          gasUsed += 50;
+          writeString(memory, outPtr, address);
+          return address.length;
         },
       },
     };

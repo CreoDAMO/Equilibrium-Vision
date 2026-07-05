@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile mining, ZK proofs, libp2p P2P networking, and a full TypeScript node stack with a real-time block explorer, self-custody browser wallet, and WASM smart contracts.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete in Replit. **151 tests pass** (28 Rust, 123 TypeScript). Security audit fixes applied. Remote load test passed: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted** (50 VUs × 60 s, real HTTPS via Replit proxy). Remaining work is infra/ops (multi-region nodes, HA Postgres, monitoring, security audit) — external to Replit.
+> **Status (July 2026):** Mainnet-readiness hardening complete in Replit. **170 tests pass** (28 Rust, 142 TypeScript). Security audit fixes applied: `REQUIRE_TX_SIGNATURES=true` enforced, Ed25519 batch verification wired into UTXO validation and block assembly, and the single `ADMIN_KEY` secret for validator slashing replaced with a native on-chain WASM M-of-N multisig contract. Remote load test passed: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted** (50 VUs × 60 s, real HTTPS via Replit proxy). Remaining work is infra/ops (multi-region nodes, HA Postgres, monitoring, security audit) — external to Replit.
 
 ## Run & Operate
 
@@ -86,8 +86,11 @@ bash scripts/start-postgres.sh
 | 7 | WAT→WASM deploy UI in Explorer | ✅ Done |
 | 8 | Smart contract test suite (58 tests) | ✅ Done |
 | 9 | Remote load test (k6 against public URL) | ✅ Done — 149 TPS, p95 70 ms, 9,009/9,009 accepted |
-| 10 | Multi-region nodes, HA Postgres, monitoring | ⏳ External |
-| 11 | Operator docs, security audit, mobile release | ⏳ External |
+| 10 | Enforced tx signature requirement (`REQUIRE_TX_SIGNATURES=true`) | ✅ Done |
+| 11 | Ed25519 batch verification (UTXO validation + block assembly) | ✅ Done |
+| 12 | Native WASM multisig replacing single `ADMIN_KEY` for validator slashing | ✅ Done |
+| 13 | Multi-region nodes, HA Postgres, monitoring | ⏳ External |
+| 14 | Operator docs, security audit, mobile release | ⏳ External |
 
 ## User preferences
 
@@ -104,6 +107,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 - Load test: `k6 run scripts/load-test.js -e BASE_URL=https://<your-repl>.replit.dev` — k6 binary must be re-downloaded after each container reset (not in PATH by default).
 - `WebAssembly.compile()` throws on invalid WASM; `WebAssembly.validate()` only returns a boolean and never throws — always use `compile()` for fail-fast rejection.
 - Every container reset loses `node_modules`. Run `pnpm install` if needed, then restart all three workflows (Postgres → API Server → Explorer) in that order.
+- Admin multisig (`chain/multisig.ts`, `chain/contracts/multisig.wat`) is opt-in: set `ADMIN_MULTISIG_OWNERS` (comma-separated 40-hex addresses) + `ADMIN_MULTISIG_THRESHOLD` to deploy fresh on next boot; then set `ADMIN_MULTISIG_ADDRESS` to the logged address to keep it stable across restarts. Without these, `/validators/:addr/slash` falls back to the legacy `ADMIN_KEY` header check.
+- WAT `(data ...)` string literals only occupy their exact byte length — never assume a padded/round size when using that length elsewhere (e.g. `memory.copy`); an off-by-one silently corrupts downstream buffers with no error, just failed signature checks.
 
 ## Pointers
 

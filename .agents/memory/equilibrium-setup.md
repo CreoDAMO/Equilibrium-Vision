@@ -62,6 +62,14 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 - 50 VUs, 30s, ECDSA P-256 signed transactions → **161 TPS sustained, 100% acceptance, p95 latency 3ms**
 - Exceeds the 100 TPS mainnet target
 
+## WAT contract authoring gotcha (cost me a full debug cycle)
+- `(data (i32.const N) "some literal")` only occupies as many bytes as the actual string content — do NOT assume a round/padded length; count bytes exactly (e.g. with `printf '...' | wc -c`) before hardcoding a length constant used in `memory.copy`/offset math elsewhere in the module. An off-by-one here silently splices a stray `\0` into a downstream buffer (e.g. a signed message), and Ed25519 verification then fails with no other symptom — the bug looks like a signature/crypto bug, not a memory-layout bug.
+- General debug approach that found it: capture raw bytes crossing a host-import boundary (hex-dump message/sig/pubkey exactly as read from WASM memory) and diff against the "expected" bytes computed independently in JS — text-only `console.log` comparisons can visually look identical while hiding a length/byte mismatch.
+
+## WASM VM instantiation model
+- `WasmVM.call()` in `chain/wasm.ts` instantiates a **fresh WebAssembly instance/memory on every call** — only `contract.storage` (plain JS object) persists across calls. Contracts must be written store-not-compute: any WAT function relying on WASM globals/memory persisting between calls will silently reset each call.
+- Multisig-style contracts needing "this contract's own address" or other host-verified identity should get it via a host import (e.g. `self_address`) rather than trying to cache it in WASM memory/globals.
+
 ## Smart Contracts — UI (Contracts page)
 - Route: `/contracts` (deploy + list tabs) and `/contracts/:address` (detail + call + storage)
 - Files: `artifacts/explorer/src/pages/Contracts.tsx`, `artifacts/explorer/src/pages/ContractDetail.tsx`
