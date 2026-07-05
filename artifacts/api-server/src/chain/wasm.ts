@@ -80,10 +80,11 @@ export class WasmVM {
       .digest("hex")
       .slice(0, 40);
 
-    // Validate WASM binary
+    // Validate WASM binary — WebAssembly.compile() throws a CompileError for
+    // invalid modules, whereas WebAssembly.validate() only returns a boolean.
     try {
       const bytes = hexToBytes(bytecodeHex);
-      await WebAssembly.validate(bytes as Uint8Array<ArrayBuffer>); // throws if invalid
+      await WebAssembly.compile(bytes as Uint8Array<ArrayBuffer>);
     } catch (e) {
       return { address: "", error: `Invalid WASM bytecode: ${(e as Error).message}` };
     }
