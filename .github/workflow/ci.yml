@@ -5,9 +5,6 @@ on:
     branches: ["main", "master"]
   pull_request:
 
-permissions:
-  contents: read
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -63,6 +60,52 @@ jobs:
 
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
+
+  # ── TypeScript tests (Vitest) ───────────────────────────────────────────────
+  ts-test:
+    name: TypeScript tests (Vitest)
+    runs-on: ubuntu-latest
+    needs: typecheck
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_PASSWORD: ""
+          POSTGRES_DB: equilibrium
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build lib declarations
+        run: pnpm run typecheck:libs
+
+      - name: Push DB schema
+        run: DATABASE_URL="postgresql://runner@localhost:5432/equilibrium" pnpm --filter @workspace/db run push --config ./drizzle.config.ts
+
+      - name: Run Vitest tests
+        run: pnpm --filter @workspace/api-server run test
+        env:
+          DATABASE_URL: postgresql://runner@localhost:5432/equilibrium
 
   # ── Rust unit tests ─────────────────────────────────────────────────────────
   rust-test:
