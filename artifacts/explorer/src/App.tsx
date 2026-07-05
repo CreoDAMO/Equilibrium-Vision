@@ -23,6 +23,8 @@ import WalletCreate from "@/pages/wallet/WalletCreate";
 import WalletImport from "@/pages/wallet/WalletImport";
 import WalletSend from "@/pages/wallet/WalletSend";
 import WalletMultisig from "@/pages/wallet/WalletMultisig";
+import ContractsPage from "@/pages/Contracts";
+import ContractDetail from "@/pages/ContractDetail";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -61,6 +63,8 @@ function AppRouter() {
           <Route path="/wallet/import" component={WalletImport} />
           <Route path="/wallet/send" component={WalletSend} />
           <Route path="/wallet/multisig" component={WalletMultisig} />
+          <Route path="/contracts" component={ContractsPage} />
+          <Route path="/contracts/:address" component={ContractDetail} />
           <Route component={NotFound} />
         </Switch>
       </Layout>

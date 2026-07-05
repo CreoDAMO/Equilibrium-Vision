@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Activity, Box, ListTree, Users, Layers, Zap, Wallet, Shield, Vote, Droplets } from "lucide-react";
+import { Search, Activity, Box, ListTree, Users, Layers, Zap, Wallet, Shield, Vote, Droplets, Code2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -35,6 +35,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/governance", label: "Governance", icon: <Vote className="w-4 h-4 mr-2" /> },
     { href: "/faucet", label: "Faucet", icon: <Droplets className="w-4 h-4 mr-2" /> },
     { href: "/wallet", label: "Wallet", icon: <Wallet className="w-4 h-4 mr-2" /> },
+    { href: "/contracts", label: "Contracts", icon: <Code2 className="w-4 h-4 mr-2" /> },
   ];
 
   return (

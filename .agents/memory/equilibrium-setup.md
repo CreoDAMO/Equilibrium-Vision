@@ -61,3 +61,10 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 ## Load test baseline (local Replit container)
 - 50 VUs, 30s, ECDSA P-256 signed transactions → **161 TPS sustained, 100% acceptance, p95 latency 3ms**
 - Exceeds the 100 TPS mainnet target
+
+## Smart Contracts — UI (Contracts page)
+- Route: `/contracts` (deploy + list tabs) and `/contracts/:address` (detail + call + storage)
+- Files: `artifacts/explorer/src/pages/Contracts.tsx`, `artifacts/explorer/src/pages/ContractDetail.tsx`
+- wabt uses `export =` (CJS) — dynamic import pattern: `const mod = await import("wabt") as any; const loader = mod.default ?? mod; wabtInstance = await loader();`
+- wabt installed in `@workspace/explorer` — lazy-loaded on first compile click (avoids bundle bloat)
+- Contracts nav link added to Layout.tsx; routes added to App.tsx

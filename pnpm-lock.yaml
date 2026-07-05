@@ -260,6 +260,9 @@ importers:
       '@scure/bip39':
         specifier: ^2.2.0
         version: 2.2.0
+      wabt:
+        specifier: ^1.0.39
+        version: 1.0.39
     devDependencies:
       '@hookform/resolvers':
         specifier: ^3.10.0
@@ -3430,6 +3433,10 @@ packages:
       jsdom:
         optional: true
 
+  wabt@1.0.39:
+    resolution: {integrity: sha512-ba+dRL/75VQQY7RkU/CgriGbkoWAfS8TDyUlJfJhJ8KhtXgMl5dhNvoPNUcQ9IWRhW8u41glMSuZeTvsYq2rRg==}
+    hasBin: true
+
   which@2.0.2:
     resolution: {integrity: sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==}
     engines: {node: '>= 8'}
@@ -6235,6 +6242,8 @@ snapshots:
       - terser
       - tsx
       - yaml
+
+  wabt@1.0.39: {}
 
   which@2.0.2:
     dependencies:
