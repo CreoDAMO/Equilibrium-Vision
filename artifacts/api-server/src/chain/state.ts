@@ -159,10 +159,24 @@ export class ChainState {
   wasmVM = new WasmVM();
 
   // On-chain governance (proposals, voting, parameter changes)
-  governance = new GovernanceModule((params) => {
-    // Apply runtime parameter changes when a proposal executes
-    (this as unknown as Record<string, unknown>)["_govParams"] = params;
-  });
+  governance = new GovernanceModule(
+    (params) => {
+      // Apply runtime parameter changes when a proposal executes
+      (this as unknown as Record<string, unknown>)["_govParams"] = params;
+    },
+    (proposal) => {
+      // Admin-action log — every governance execution is recorded for monitoring
+      logger.info(
+        { proposalId: proposal.id, type: proposal.type, parameterChange: proposal.parameterChange },
+        "ADMIN_ACTION: governance proposal executed",
+      );
+    },
+  );
+
+  // Slash rate-limiting: tracks timestamps of slashes per validator in the last 24 h
+  private _slashWindows = new Map<string, number[]>();
+  private static readonly MAX_SLASHES_PER_DAY = 5;
+  private static readonly SLASH_WINDOW_S = 86_400;
 
   get height(): number {
     return this.blocks.length - 1;
@@ -453,6 +467,22 @@ export class ChainState {
     const v = this.validators.get(addr);
     if (!v || v.slashed) return;
 
+    // Slash rate-limit: prevent more than MAX_SLASHES_PER_DAY per validator per 24 h.
+    // Mirrors Resolv/Drift mitigation: even with a compromised ADMIN_KEY, an attacker
+    // cannot drain all bonded stake in a single burst.
+    const window = this._slashWindows.get(addr) ?? [];
+    const cutoff = timestamp - ChainState.SLASH_WINDOW_S;
+    const recent = window.filter(t => t > cutoff);
+    if (recent.length >= ChainState.MAX_SLASHES_PER_DAY) {
+      logger.warn(
+        { validator: addr, recentSlashes: recent.length, reason },
+        "ADMIN_ACTION: slash rate-limit exceeded — slash rejected",
+      );
+      return;
+    }
+    recent.push(timestamp);
+    this._slashWindows.set(addr, recent);
+
     const stakeView = this.buildValidatorStakeView(addr);
     if (!stakeView) return;
 
@@ -487,6 +517,11 @@ export class ChainState {
       height,
       timestamp,
     });
+
+    logger.warn(
+      { validator: addr, reason, slashAmount: Math.floor(result.totalBurned), height },
+      "ADMIN_ACTION: validator slashed",
+    );
   }
 
   // ── Block reward distribution ─────────────────────────────────────────────────

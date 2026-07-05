@@ -1,0 +1,126 @@
+Updated Mainnet Readiness & Security Hardening — Corrected and Expanded
+
+
+Based on verified primary sources (TRM Labs H1 2026 report, Drift Protocol post‑mortem, Resolv post‑mortem, and multiple cross‑verified sources).
+
+
+---
+
+
+Corrections & Additions
+
+
+Error Correction
+KelpDAO listed as $292K Should be $292M – three orders of magnitude off. Confirmed by TRM Labs and five other sources.
+Missing Drift Protocol $285‑286M, April 1, 2026 – the largest DeFi hack of 2026, DPRK‑attributed. Attackers spent six months socially engineering Security Council members into pre‑signing hidden authorizations via Solana's durable‑nonce feature, then used admin access to whitelist a fabricated collateral token and drain five vaults in 12 minutes. Structurally identical to our threat surface: a single privileged credential (their Security Council keys, our ADMIN_KEY) with unchecked authority.
+Missing Resolv ~$23‑25M, March 22, 2026 – a single non‑multisig private key (stored in AWS KMS) authorized minting with zero on‑chain sanity check on collateral ratio. Maps directly to: (a) ADMIN_KEY as a single secret with no multisig equivalent, and (b) governance auto‑execution with no upper bound on parameter changes.
+
+
+---
+
+
+Updated Threat Table
+
+
+Attack Type Example (2025‑2026) Our Status Gap
+Access Control Failures Cork Protocol ($12M), Hinkal ($820K) ✅ Fixed – All admin/validator endpoints require signatures or ADMIN_KEY. Need to set ADMIN_KEY in production.
+Arithmetic / Fixed‑Point Errors Cetus Protocol ($223M) ✅ Safe – Fixed‑point residuals are i64 scaled by 10¹⁸; UTXO uses safe math. None.
+Privileged Credential Compromise Drift Protocol ($286M), Resolv ($25M) ⚠️ Critical gap – ADMIN_KEY is a single secret; no multisig, no rate‑limits, no hard‑coded maximum on governance changes. Add multisig wrapper for admin operations; add caps on parameter‑change magnitude; require timelocks.
+Private Key / Cloud Compromise Bybit ($1.4B), KelpDAO ($292M) ⚠️ Operational risk – No keys in cloud, but no documented key management policy. Document HSM/air‑gap requirements and rotation policy.
+Phishing / Social Engineering Drift Protocol, Bybit ⚠️ Human risk – Technical controls insufficient; training and multi‑sig required. Mandate security training; add time‑delays and multi‑sig for critical ops.
+
+
+---
+
+
+Actionable Hardening Items (from the two missing incidents)
+
+
+Item Why How
+Multisig for ADMIN_KEY operations Drift/Resolv show a single key is catastrophic. Replace ADMIN_KEY env var with a multisig wallet (e.g., 3‑of‑5) for all privileged admin actions (slashing, parameter changes, emergency stops).
+Hard‑coded caps on governance parameter changes Resolv had no sanity check on collateral ratio; we must ensure no single proposal can change a parameter beyond a safe range. Add min/max bounds in the governance module for each parameter (e.g., slashing pct, difficulty, quorum). Any proposal outside the bounds is rejected.
+Timelocks on governance execution Drift used pre‑signed transactions to bypass review; timelocks give users time to react. Add a mandatory timelock (e.g., 24‑48 hours) between proposal passage and execution.
+Rate‑limits on slashing / minting Resolv allowed unlimited mints; Drift allowed unlimited vault drains. Add rate‑limits (e.g., max slash per day, max mint per hour) on sensitive operations.
+Logging and monitoring for admin actions Both hacks were invisible until it was too late. All admin actions must emit events that are monitored in real‑time with alerts.
+
+
+---
+
+
+Updated Critical Gaps
+
+
+# Gap Urgency
+1 Enforce tx signatures on mainnet (requireSignatures parameter) 🔴 Critical
+2 Replace ADMIN_KEY with multisig for all privileged ops 🔴 Critical
+3 Add hard caps on governance parameter changes 🔴 Critical
+4 Add timelocks to governance execution 🟠 High
+5 Set up real‑time monitoring for admin/slash/governance events 🟠 High
+6 Remote load test (directional on Replit, final on Hetzner) 🔴 Critical
+7 Provision multi‑region nodes 🟠 High
+
+
+---
+
+
+Immediate Next Steps (Updated)
+
+
+Order Task Effort
+1 Replace ADMIN_KEY with a multisig wrapper (3‑of‑5) for admin ops 2‑3h
+2 Add hard‑coded caps to governance parameter changes in governance.ts 1h
+3 Add mandatory timelock to governance execution 1h
+4 Add rate‑limits and event logging for admin actions 2h
+5 Run k6 load test against Replit dev domain 15 min
+6 Set ADMIN_KEY (temporarily) if multisig not ready, but document the gap 1 min
+7 Provision multi‑region nodes 4‑6h
+
+
+---
+
+
+Full Corrected Threat Table (Relevant to Us)
+
+
+Attack Year Amount Method Our Gap
+Drift Protocol 2026 $286M Social engineering + single‑key admin whitelist ADMIN_KEY single point of failure
+Resolv 2026 $25M Single AWS KMS key, no mint caps Admin actions have no bounds
+Cork Protocol 2025 $12M Access control missing Fixed (signature auth)
+Cetus Protocol 2025 $223M Fixed‑point overflow Safe (i64 + scale)
+KelpDAO 2025 $292M Off‑chain relay compromise N/A (no bridge)
+Bybit 2025 $1.4B Social engineering / cold wallet N/A (exchange‑specific)
+
+
+---
+
+
+Verified Test Status (Commit b087d89)
+
+
+· TypeScript tests: 123/123 passing.
+· Rust tests: 28 passing.
+· Typecheck: clean.
+· CI: now runs on push (.github/workflows/ci.yml – renamed from .github/workflow/, first real run passed).
+
+
+---
+
+
+Summary of Actionable Hardening
+
+
+Action Status
+Multisig for ADMIN_KEY ⏳ To do
+Hard caps on governance changes ⏳ To do
+Timelocks on governance execution ⏳ To do
+Rate limits on admin ops ⏳ To do
+Real‑time monitoring ⏳ To do
+Remote load test ⏳ To do
+Multi‑region nodes ⏳ To do
+Security audit 🔴 Final gate
+
+
+---
+
+
+The document is now corrected (KelpDAO $292M, added Drift and Resolv) and includes concrete actions to prevent those exact attack patterns. The largest remaining vulnerability is the single ADMIN_KEY – we should replace it with a multisig before public mainnet.

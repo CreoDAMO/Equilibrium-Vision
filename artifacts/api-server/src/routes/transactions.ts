@@ -54,6 +54,12 @@ router.post("/tx/broadcast", async (req, res) => {
     return;
   }
 
+  const requireSig = process.env["REQUIRE_TX_SIGNATURES"] === "true";
+  if (requireSig && (!body.signature || !body.publicKey)) {
+    res.status(401).json({ error: "Signed transactions required: provide signature and publicKey" });
+    return;
+  }
+
   if (body.signature || body.publicKey) {
     if (!body.signature || !body.publicKey) {
       res.status(400).json({ error: "Both signature and publicKey must be provided together" });
