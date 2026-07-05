@@ -19,6 +19,8 @@ export interface TxRecord {
   blockHeight: number | null;
   timestamp: number;
   status: "pending" | "confirmed" | "failed";
+  signature?: string;
+  publicKey?: string;
 }
 
 // ── ZK Proof (Groth16 / BN254) ────────────────────────────────────────────────

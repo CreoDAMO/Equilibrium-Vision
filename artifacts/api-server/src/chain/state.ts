@@ -4,6 +4,7 @@ import type {
   DexPool, LiquidityPosition, SwapEvent, StakeRecord, UnbondingEntry, GossipEvent,
 } from "./types.js";
 import { merkleRoot, randomHex, addressFromSeed, hash256 } from "./crypto.js";
+import { logger } from "../lib/logger.js";
 import { GovernanceModule } from "./governance.js";
 import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
@@ -230,6 +231,14 @@ export class ChainState {
       for (const addr of [tx.from, tx.to]) {
         if (!this.addressTxs.has(addr)) this.addressTxs.set(addr, new Set());
         this.addressTxs.get(addr)!.add(tx.hash);
+      }
+
+      // Apply account-model debit/credit so ledger balances stay consistent
+      const applyErr = this.ledger.applyTx(tx);
+      if (applyErr) {
+        // Log but don't abort — the tx is already in a confirmed block
+        // (can happen during chain replay if genesis credits weren't applied yet)
+        logger.warn({ txHash: tx.hash, err: applyErr }, "ledger.applyTx warning during block confirmation");
       }
 
       // Create UTXOs for confirmed transfers (recipient output + change output)

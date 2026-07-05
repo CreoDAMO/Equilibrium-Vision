@@ -327,6 +327,16 @@ function signVote(
   return (cryptoSign(null, msg, privKey) as Buffer).toString("hex");
 }
 
+function signProposal(
+  privKey: KeyObject,
+  type: string,
+  title: string,
+  description: string,
+): string {
+  const msg = Buffer.from(`proposal:${type}:${title}:${description}`, "utf8");
+  return (cryptoSign(null, msg, privKey) as Buffer).toString("hex");
+}
+
 describe("POST /api/governance/proposals/:id/vote — signature verification", () => {
   let proposalId: string;
   let voter: ReturnType<typeof makeKeypair>;
@@ -352,12 +362,18 @@ describe("POST /api/governance/proposals/:id/vote — signature verification", (
       commission:         0.1,
     });
 
-    // Create a proposal the voter can vote on.
+    // Create a proposal the voter can vote on (requires signature since governance fix).
+    const propType  = "text";
+    const propTitle = "Test proposal for signature tests";
+    const propDesc  = "Created by the governance integration test suite.";
+    const propSig   = signProposal(voter.privKey, propType, propTitle, propDesc);
     const res = await api.post("/api/governance/proposals").send({
       proposer:    voter.address,
-      type:        "text",
-      title:       "Test proposal for signature tests",
-      description: "Created by the governance integration test suite.",
+      type:        propType,
+      title:       propTitle,
+      description: propDesc,
+      publicKey:   voter.pubHex,
+      signature:   propSig,
     });
     expect(res.status).toBe(201);
     proposalId = res.body.id as string;

@@ -73,6 +73,8 @@ router.post("/utxo/build", (req, res) => {
   });
 });
 
+const HEX_ADDR = /^[0-9a-f]{40}$/;
+
 // POST /api/utxo/spend — broadcast a UTXO transaction
 // Body: { inputs: [{txHash, outputIndex, signature, publicKey}], outputs: [{address, amount}], fee }
 // Each input must carry its own `signature` (hex) and `publicKey` (hex) —
@@ -83,6 +85,17 @@ router.post("/utxo/spend", (req, res) => {
   const cs = chainState;
   if (!inputs?.length || !outputs?.length) {
     return res.status(400).json({ error: "inputs and outputs are required" });
+  }
+  if (Number(fee) < 0) {
+    return res.status(400).json({ error: "fee must be non-negative" });
+  }
+  for (const output of outputs) {
+    if (!output?.address || !HEX_ADDR.test(output.address)) {
+      return res.status(400).json({ error: `Invalid output address: ${output?.address}` });
+    }
+    if (output.amount == null || Number(output.amount) <= 0) {
+      return res.status(400).json({ error: `Output amount must be positive` });
+    }
   }
   for (const input of inputs) {
     if (!input?.signature || !input?.publicKey) {

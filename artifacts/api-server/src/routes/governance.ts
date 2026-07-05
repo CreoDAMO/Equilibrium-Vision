@@ -15,14 +15,31 @@ function addressFromPublicKey(publicKeyHex: string): string {
 }
 
 /**
- * Verify an Ed25519 vote signature using Node.js built-in crypto.
- * Canonical message: UTF-8("vote:{proposalId}:{choice}")
- *
+ * Verify an Ed25519 signature using Node.js built-in crypto.
  * Ed25519 raw public keys (32 bytes) must be wrapped in a SubjectPublicKeyInfo
  * DER envelope before Node.js can consume them as a KeyObject.
  * DER prefix for Ed25519 SPKI: 302a300506032b6570032100
  *
  * Returns false on any parse or crypto error.
+ */
+function verifyEd25519(publicKeyHex: string, signatureHex: string, message: Buffer): boolean {
+  try {
+    const rawPubKey = Buffer.from(publicKeyHex, "hex");
+    const sig       = Buffer.from(signatureHex, "hex");
+
+    const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
+    const spkiDer    = Buffer.concat([spkiPrefix, rawPubKey]);
+    const keyObject  = createPublicKey({ key: spkiDer, format: "der", type: "spki" });
+
+    return cryptoVerify(null, message, keyObject, sig);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify an Ed25519 vote signature.
+ * Canonical message: UTF-8("vote:{proposalId}:{choice}")
  */
 function verifyVoteSignature(
   publicKeyHex: string,
@@ -30,20 +47,29 @@ function verifyVoteSignature(
   proposalId: string,
   choice: string,
 ): boolean {
-  try {
-    const rawPubKey = Buffer.from(publicKeyHex, "hex");
-    const sig       = Buffer.from(signatureHex, "hex");
-    const msg       = Buffer.from(`vote:${proposalId}:${choice}`, "utf8");
+  return verifyEd25519(
+    publicKeyHex,
+    signatureHex,
+    Buffer.from(`vote:${proposalId}:${choice}`, "utf8"),
+  );
+}
 
-    // Wrap raw 32-byte Ed25519 key in SPKI DER envelope
-    const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
-    const spkiDer    = Buffer.concat([spkiPrefix, rawPubKey]);
-    const keyObject  = createPublicKey({ key: spkiDer, format: "der", type: "spki" });
-
-    return cryptoVerify(null, msg, keyObject, sig);
-  } catch {
-    return false;
-  }
+/**
+ * Verify an Ed25519 proposal signature.
+ * Canonical message: UTF-8("proposal:{type}:{title}:{description}")
+ */
+function verifyProposalSignature(
+  publicKeyHex: string,
+  signatureHex: string,
+  type: string,
+  title: string,
+  description: string,
+): boolean {
+  return verifyEd25519(
+    publicKeyHex,
+    signatureHex,
+    Buffer.from(`proposal:${type}:${title}:${description}`, "utf8"),
+  );
 }
 
 // GET /governance/proposals — list all proposals with live vote tallies
@@ -52,22 +78,48 @@ router.get("/governance/proposals", (_req, res) => {
   res.json({ count: summaries.length, proposals: summaries });
 });
 
+const HEX_ADDR_RE = /^[0-9a-f]{40}$/;
+
 // POST /governance/proposals — submit a new proposal
+// Requires signature + publicKey fields so the proposer proves ownership of the address.
+// Canonical message: UTF-8("proposal:{type}:{title}:{description}")
 router.post("/governance/proposals", (req, res) => {
-  const { proposer, type, title, description, parameterChange } = req.body as {
+  const { proposer, type, title, description, parameterChange, signature, publicKey } = req.body as {
     proposer?: string;
     type?: string;
     title?: string;
     description?: string;
     parameterChange?: { key: string; value: number };
+    signature?: string;
+    publicKey?: string;
   };
 
   if (!proposer || !type || !title || !description) {
     res.status(400).json({ error: "proposer, type, title, and description are required" });
     return;
   }
+  if (!HEX_ADDR_RE.test(proposer)) {
+    res.status(400).json({ error: "Invalid proposer address: must be 40 lowercase hex chars" });
+    return;
+  }
   if (type !== "text" && type !== "parameter_change") {
     res.status(400).json({ error: "type must be 'text' or 'parameter_change'" });
+    return;
+  }
+
+  if (!signature || !publicKey) {
+    res.status(400).json({ error: "signature and publicKey are required to prove proposer identity" });
+    return;
+  }
+
+  const derivedAddress = addressFromPublicKey(publicKey);
+  if (derivedAddress !== proposer) {
+    res.status(401).json({ error: "publicKey does not match proposer address" });
+    return;
+  }
+
+  if (!verifyProposalSignature(publicKey, signature, type, title, description)) {
+    res.status(401).json({ error: "Invalid proposal signature" });
     return;
   }
 

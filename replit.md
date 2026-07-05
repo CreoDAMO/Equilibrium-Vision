@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile mining, ZK proofs, libp2p P2P networking, and a full TypeScript node stack with a real-time block explorer, self-custody browser wallet, and WASM smart contracts.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete in Replit. **151 tests pass** (28 Rust, 123 TypeScript). All known bugs resolved. Remaining work is infra/ops (multi-region nodes, HA Postgres, monitoring, remote load test, security audit) — external to Replit.
+> **Status (July 2026):** Mainnet-readiness hardening complete in Replit. **151 tests pass** (28 Rust, 123 TypeScript). Security audit fixes applied (tx sig verification, ledger wiring, slash auth, negative-fee guard, hex validation, faucet DB persistence, governance proposal sig, CI TS tests). Remaining work is infra/ops (multi-region nodes, HA Postgres, monitoring, remote load test, security audit) — external to Replit.
 
 ## Run & Operate
 

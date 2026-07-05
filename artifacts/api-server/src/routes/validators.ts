@@ -34,6 +34,15 @@ router.get("/validators/:addr", (req, res) => {
 });
 
 router.post("/validators/:addr/slash", (req, res) => {
+  const adminKey = process.env["ADMIN_KEY"];
+  if (adminKey) {
+    const provided = req.headers["x-admin-key"];
+    if (provided !== adminKey) {
+      res.status(403).json({ error: "Forbidden: valid X-Admin-Key header required" });
+      return;
+    }
+  }
+
   const addr = req.params["addr"]!;
   const { reason } = req.body as { reason?: "double_sign" | "downtime" | "invalid_block" };
   if (!reason) {
