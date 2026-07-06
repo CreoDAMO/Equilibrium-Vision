@@ -87,7 +87,7 @@ jobs:
       - name: Decode release keystore
         working-directory: equilibrium/mobile/android
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > app/release-keystore.p12
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | tr -d '[:space:]' | base64 -d > app/release-keystore.p12
 
       # ── Gradle build ─────────────────────────────────────────────────────
       - name: Set up Gradle
