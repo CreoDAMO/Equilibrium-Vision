@@ -24,6 +24,8 @@ tags:
     description: Validator staking, rewards, and slashing
   - name: governance
     description: On-chain governance proposals, voting, and chain parameters
+  - name: admin
+    description: On-chain M-of-N multisig gate for privileged admin actions (e.g. validator slashing)
 
 paths:
   /healthz:
@@ -277,6 +279,143 @@ paths:
                 $ref: "#/components/schemas/DelegatorsResponse"
         "404":
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /validators/{addr}/slash:
+    post:
+      operationId: slashValidator
+      tags: [validators]
+      summary: Slash a validator. Requires multisig proposal approval when admin multisig is configured, otherwise falls back to the ADMIN_KEY header.
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SlashInput"
+      responses:
+        "200":
+          description: Validator slashed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SlashResult"
+        "400":
+          description: Missing reason or proposalId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Forbidden — multisig threshold not met or invalid ADMIN_KEY
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Validator not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /admin/multisig:
+    get:
+      operationId: getAdminMultisigInfo
+      tags: [admin]
+      summary: Current admin multisig configuration and live on-chain status
+      responses:
+        "200":
+          description: Multisig info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MultisigInfo"
+
+  /admin/multisig/propose:
+    post:
+      operationId: proposeAdminAction
+      tags: [admin]
+      summary: Create a new admin action proposal (e.g. a pending validator slash) for owners to approve
+      responses:
+        "200":
+          description: Proposal created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposeResult"
+        "400":
+          description: Admin multisig is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Failed to create proposal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /admin/multisig/{proposalId}/approve:
+    post:
+      operationId: approveAdminAction
+      tags: [admin]
+      summary: Submit one owner's Ed25519-signed approval for a proposal
+      parameters:
+        - name: proposalId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveInput"
+      responses:
+        "200":
+          description: Approval recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApproveResult"
+        "400":
+          description: Invalid input or admin multisig not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /admin/multisig/{proposalId}:
+    get:
+      operationId: getAdminMultisigProposalStatus
+      tags: [admin]
+      summary: Check whether a proposal has met the multisig approval threshold
+      parameters:
+        - name: proposalId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Proposal status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalStatus"
+        "400":
+          description: Invalid proposalId or admin multisig not configured
           content:
             application/json:
               schema:
@@ -863,6 +1002,79 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProposalSummary"
+
+    SlashInput:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum: [double_sign, downtime, invalid_block]
+        proposalId:
+          type: integer
+          description: Required when the admin multisig is configured — must reference an approved proposal
+
+    SlashResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        validator:
+          $ref: "#/components/schemas/Validator"
+
+    MultisigInfo:
+      type: object
+      required: [configured]
+      properties:
+        configured:
+          type: boolean
+        address:
+          type: string
+        ownerCount:
+          type: integer
+        threshold:
+          type: integer
+        finalized:
+          type: boolean
+
+    ProposeResult:
+      type: object
+      required: [proposalId]
+      properties:
+        proposalId:
+          type: integer
+
+    ApproveInput:
+      type: object
+      required: [ownerIndex, pubkey, signature]
+      properties:
+        ownerIndex:
+          type: integer
+        pubkey:
+          type: string
+          description: Hex-encoded raw Ed25519 public key (32 bytes = 64 hex chars)
+        signature:
+          type: string
+          description: Ed25519 signature over UTF-8("equilibrium-multisig-approve:{multisigAddress}:{proposalId}") — 64 bytes = 128 hex chars
+
+    ApproveResult:
+      type: object
+      required: [approved, thresholdMet]
+      properties:
+        approved:
+          type: boolean
+        thresholdMet:
+          type: boolean
+
+    ProposalStatus:
+      type: object
+      required: [proposalId, approved]
+      properties:
+        proposalId:
+          type: integer
+        approved:
+          type: boolean
 
     NewProposalInput:
       type: object

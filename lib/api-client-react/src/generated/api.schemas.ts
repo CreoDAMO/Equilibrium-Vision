@@ -220,6 +220,56 @@ export interface ProposalList {
   proposals: ProposalSummary[];
 }
 
+export type SlashInputReason = typeof SlashInputReason[keyof typeof SlashInputReason];
+
+
+export const SlashInputReason = {
+  double_sign: 'double_sign',
+  downtime: 'downtime',
+  invalid_block: 'invalid_block',
+} as const;
+
+export interface SlashInput {
+  reason: SlashInputReason;
+  /** Required when the admin multisig is configured — must reference an approved proposal */
+  proposalId?: number;
+}
+
+export interface SlashResult {
+  success: boolean;
+  validator?: Validator;
+}
+
+export interface MultisigInfo {
+  configured: boolean;
+  address?: string;
+  ownerCount?: number;
+  threshold?: number;
+  finalized?: boolean;
+}
+
+export interface ProposeResult {
+  proposalId: number;
+}
+
+export interface ApproveInput {
+  ownerIndex: number;
+  /** Hex-encoded raw Ed25519 public key (32 bytes = 64 hex chars) */
+  pubkey: string;
+  /** Ed25519 signature over UTF-8("equilibrium-multisig-approve:{multisigAddress}:{proposalId}") — 64 bytes = 128 hex chars */
+  signature: string;
+}
+
+export interface ApproveResult {
+  approved: boolean;
+  thresholdMet: boolean;
+}
+
+export interface ProposalStatus {
+  proposalId: number;
+  approved: boolean;
+}
+
 export type NewProposalInputType = typeof NewProposalInputType[keyof typeof NewProposalInputType];
 
 

@@ -1,4 +1,13 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useGetAdminMultisigInfo,
+  useProposeAdminAction,
+  useApproveAdminAction,
+  useSlashValidator,
+  getAdminMultisigProposalStatus,
+  getGetAdminMultisigInfoQueryKey,
+} from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,14 +23,6 @@ import {
 } from "lucide-react";
 import { CopyButton } from "@/components/CopyButton";
 import { signRawMessage } from "@/wallet/crypto";
-
-interface MultisigInfo {
-  configured: boolean;
-  address?: string;
-  ownerCount?: number;
-  threshold?: number;
-  finalized?: boolean;
-}
 
 type SlashReason = "double_sign" | "downtime" | "invalid_block";
 
@@ -57,38 +58,22 @@ const REASON_LABELS: Record<SlashReason, string> = {
 };
 
 export default function AdminMultisig() {
-  const [info, setInfo] = useState<MultisigInfo | null>(null);
-  const [infoLoading, setInfoLoading] = useState(true);
-  const [infoError, setInfoError] = useState("");
+  const queryClient = useQueryClient();
+  const { data: info, isLoading: infoLoading, error: infoQueryError, refetch: fetchInfo } = useGetAdminMultisigInfo();
+  const infoError = infoQueryError ? ((infoQueryError as any)?.error ?? "Failed to load multisig configuration") : "";
+
+  const proposeMutation = useProposeAdminAction();
+  const approveMutation = useApproveAdminAction();
+  const slashMutation = useSlashValidator();
 
   const [proposals, setProposals] = useState<PendingProposal[]>(loadProposals());
 
   const [validatorAddress, setValidatorAddress] = useState("");
   const [reason, setReason] = useState<SlashReason>("downtime");
-  const [proposing, setProposing] = useState(false);
   const [proposeError, setProposeError] = useState("");
 
   const [approveState, setApproveState] = useState<Record<number, { ownerIndex: string; privKey: string; error: string; busy: boolean }>>({});
   const [executeState, setExecuteState] = useState<Record<number, { busy: boolean; error: string; done?: boolean }>>({});
-
-  const fetchInfo = useCallback(async () => {
-    setInfoLoading(true);
-    setInfoError("");
-    try {
-      const res = await fetch("/api/admin/multisig");
-      if (!res.ok) throw new Error(`Request failed (${res.status})`);
-      const data = await res.json();
-      setInfo(data);
-    } catch (e: any) {
-      setInfoError(e.message ?? "Failed to load multisig configuration");
-    } finally {
-      setInfoLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchInfo();
-  }, [fetchInfo]);
 
   const persist = (next: PendingProposal[]) => {
     setProposals(next);
@@ -102,11 +87,8 @@ export default function AdminMultisig() {
       setProposeError("Validator address must be 40 hex characters.");
       return;
     }
-    setProposing(true);
     try {
-      const res = await fetch("/api/admin/multisig/propose", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to create proposal");
+      const data = await proposeMutation.mutateAsync();
       const proposal: PendingProposal = {
         proposalId: data.proposalId,
         validatorAddress: addr,
@@ -116,9 +98,7 @@ export default function AdminMultisig() {
       persist([proposal, ...proposals]);
       setValidatorAddress("");
     } catch (e: any) {
-      setProposeError(e.message ?? "Failed to create proposal");
-    } finally {
-      setProposing(false);
+      setProposeError(e?.error ?? e?.message ?? "Failed to create proposal");
     }
   };
 
@@ -145,29 +125,23 @@ export default function AdminMultisig() {
     try {
       const message = `equilibrium-multisig-approve:${info?.address}:${p.proposalId}`;
       const { signature, publicKey } = await signRawMessage(privKey, message);
-      const res = await fetch(`/api/admin/multisig/${p.proposalId}/approve`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ownerIndex, pubkey: publicKey, signature }),
+      const data = await approveMutation.mutateAsync({
+        proposalId: p.proposalId,
+        data: { ownerIndex, pubkey: publicKey, signature },
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Approval failed");
       persist(proposals.map(pr => pr.proposalId === p.proposalId
         ? { ...pr, approvedByMe: true, approved: data.approved && data.thresholdMet ? true : pr.approved }
         : pr));
       setApproveState(prev => ({ ...prev, [p.proposalId]: { ownerIndex: "", privKey: "", error: "", busy: false } }));
     } catch (e: any) {
-      setApproveState(prev => ({ ...prev, [p.proposalId]: { ...state, busy: false, error: e.message ?? "Approval failed" } }));
+      setApproveState(prev => ({ ...prev, [p.proposalId]: { ...state, busy: false, error: e?.error ?? e?.message ?? "Approval failed" } }));
     }
   };
 
   const handleCheckStatus = async (p: PendingProposal) => {
     try {
-      const res = await fetch(`/api/admin/multisig/${p.proposalId}`);
-      const data = await res.json();
-      if (res.ok) {
-        persist(proposals.map(pr => pr.proposalId === p.proposalId ? { ...pr, approved: data.approved } : pr));
-      }
+      const data = await getAdminMultisigProposalStatus(p.proposalId);
+      persist(proposals.map(pr => pr.proposalId === p.proposalId ? { ...pr, approved: data.approved } : pr));
     } catch {
       // ignore — transient network error, user can retry
     }
@@ -176,18 +150,20 @@ export default function AdminMultisig() {
   const handleExecute = async (p: PendingProposal) => {
     setExecuteState(prev => ({ ...prev, [p.proposalId]: { busy: true, error: "" } }));
     try {
-      const res = await fetch(`/api/validators/${p.validatorAddress}/slash`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ reason: p.reason, proposalId: p.proposalId }),
+      await slashMutation.mutateAsync({
+        addr: p.validatorAddress,
+        data: { reason: p.reason, proposalId: p.proposalId },
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Execution failed");
       setExecuteState(prev => ({ ...prev, [p.proposalId]: { busy: false, error: "", done: true } }));
       persist(proposals.map(pr => pr.proposalId === p.proposalId ? { ...pr, executed: true } : pr));
     } catch (e: any) {
-      setExecuteState(prev => ({ ...prev, [p.proposalId]: { busy: false, error: e.message ?? "Execution failed" } }));
+      setExecuteState(prev => ({ ...prev, [p.proposalId]: { busy: false, error: e?.error ?? e?.message ?? "Execution failed" } }));
     }
+  };
+
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: getGetAdminMultisigInfoQueryKey() });
+    fetchInfo();
   };
 
   return (
@@ -211,7 +187,7 @@ export default function AdminMultisig() {
             </CardTitle>
             <CardDescription>Live contract state read from the WASM VM.</CardDescription>
           </div>
-          <Button variant="outline" size="sm" onClick={fetchInfo} disabled={infoLoading}>
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={infoLoading}>
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${infoLoading ? "animate-spin" : ""}`} /> Refresh
           </Button>
         </CardHeader>
@@ -307,8 +283,8 @@ export default function AdminMultisig() {
           )}
         </CardContent>
         <CardFooter>
-          <Button onClick={handlePropose} disabled={proposing || !info?.configured}>
-            {proposing ? "Creating…" : "Create Proposal"}
+          <Button onClick={handlePropose} disabled={proposeMutation.isPending || !info?.configured}>
+            {proposeMutation.isPending ? "Creating…" : "Create Proposal"}
           </Button>
         </CardFooter>
       </Card>

@@ -307,6 +307,89 @@ export const GetValidatorDelegatorsResponse = zod.object({
 
 
 /**
+ * @summary Slash a validator. Requires multisig proposal approval when admin multisig is configured, otherwise falls back to the ADMIN_KEY header.
+ */
+export const SlashValidatorParams = zod.object({
+  "addr": zod.coerce.string()
+})
+
+export const SlashValidatorBody = zod.object({
+  "reason": zod.enum(['double_sign', 'downtime', 'invalid_block']),
+  "proposalId": zod.number().optional().describe('Required when the admin multisig is configured — must reference an approved proposal')
+})
+
+export const SlashValidatorResponse = zod.object({
+  "success": zod.boolean(),
+  "validator": zod.object({
+  "address": zod.string(),
+  "moniker": zod.string(),
+  "bondedStake": zod.number(),
+  "accumulatedRewards": zod.number(),
+  "slashed": zod.boolean(),
+  "slashCount": zod.number(),
+  "jailed": zod.boolean(),
+  "uptime": zod.number(),
+  "blocksProposed": zod.number(),
+  "blocksVoted": zod.number(),
+  "commission": zod.number(),
+  "sharePercent": zod.number()
+}).optional()
+})
+
+
+/**
+ * @summary Current admin multisig configuration and live on-chain status
+ */
+export const GetAdminMultisigInfoResponse = zod.object({
+  "configured": zod.boolean(),
+  "address": zod.string().optional(),
+  "ownerCount": zod.number().optional(),
+  "threshold": zod.number().optional(),
+  "finalized": zod.boolean().optional()
+})
+
+
+/**
+ * @summary Create a new admin action proposal (e.g. a pending validator slash) for owners to approve
+ */
+export const ProposeAdminActionResponse = zod.object({
+  "proposalId": zod.number()
+})
+
+
+/**
+ * @summary Submit one owner's Ed25519-signed approval for a proposal
+ */
+export const ApproveAdminActionParams = zod.object({
+  "proposalId": zod.coerce.number()
+})
+
+export const ApproveAdminActionBody = zod.object({
+  "ownerIndex": zod.number(),
+  "pubkey": zod.string().describe('Hex-encoded raw Ed25519 public key (32 bytes = 64 hex chars)'),
+  "signature": zod.string().describe('Ed25519 signature over UTF-8(\"equilibrium-multisig-approve:{multisigAddress}:{proposalId}\") — 64 bytes = 128 hex chars')
+})
+
+export const ApproveAdminActionResponse = zod.object({
+  "approved": zod.boolean(),
+  "thresholdMet": zod.boolean()
+})
+
+
+/**
+ * @summary Check whether a proposal has met the multisig approval threshold
+ */
+export const GetAdminMultisigProposalStatusParams = zod.object({
+  "proposalId": zod.coerce.number()
+})
+
+export const GetAdminMultisigProposalStatusResponse = zod.object({
+  "proposalId": zod.number(),
+  "approved": zod.boolean()
+})
+
+
+/**
  * @summary List all governance proposals with live vote tallies
  */
 export const ListProposalsResponse = zod.object({

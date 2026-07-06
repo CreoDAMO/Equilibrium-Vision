@@ -22,6 +22,8 @@ import type {
 import type {
   AddressInfo,
   ApiError,
+  ApproveInput,
+  ApproveResult,
   Block,
   BlockPage,
   BlockStat,
@@ -35,11 +37,16 @@ import type {
   HealthStatus,
   ListBlocksParams,
   Mempool,
+  MultisigInfo,
   NewProposalInput,
   Peer,
   ProposalList,
+  ProposalStatus,
   ProposalSummary,
+  ProposeResult,
   SignedTxInput,
+  SlashInput,
+  SlashResult,
   Transaction,
   ValidatorDetail,
   ValidatorList,
@@ -1063,6 +1070,372 @@ export function useGetValidatorDelegators<TData = Awaited<ReturnType<typeof getV
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetValidatorDelegatorsQueryOptions(addr,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSlashValidatorUrl = (addr: string,) => {
+
+
+
+
+  return `/api/validators/${addr}/slash`
+}
+
+/**
+ * @summary Slash a validator. Requires multisig proposal approval when admin multisig is configured, otherwise falls back to the ADMIN_KEY header.
+ */
+export const slashValidator = async (addr: string,
+    slashInput: SlashInput, options?: RequestInit): Promise<SlashResult> => {
+
+  return customFetch<SlashResult>(getSlashValidatorUrl(addr),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(slashInput)
+  }
+);}
+
+
+
+
+export const getSlashValidatorMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof slashValidator>>, TError,{addr: string;data: BodyType<SlashInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof slashValidator>>, TError,{addr: string;data: BodyType<SlashInput>}, TContext> => {
+
+const mutationKey = ['slashValidator'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof slashValidator>>, {addr: string;data: BodyType<SlashInput>}> = (props) => {
+          const {addr,data} = props ?? {};
+
+          return  slashValidator(addr,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SlashValidatorMutationResult = NonNullable<Awaited<ReturnType<typeof slashValidator>>>
+    export type SlashValidatorMutationBody = BodyType<SlashInput>
+    export type SlashValidatorMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Slash a validator. Requires multisig proposal approval when admin multisig is configured, otherwise falls back to the ADMIN_KEY header.
+ */
+export const useSlashValidator = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof slashValidator>>, TError,{addr: string;data: BodyType<SlashInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof slashValidator>>,
+        TError,
+        {addr: string;data: BodyType<SlashInput>},
+        TContext
+      > => {
+      return useMutation(getSlashValidatorMutationOptions(options));
+    }
+
+export const getGetAdminMultisigInfoUrl = () => {
+
+
+
+
+  return `/api/admin/multisig`
+}
+
+/**
+ * @summary Current admin multisig configuration and live on-chain status
+ */
+export const getAdminMultisigInfo = async ( options?: RequestInit): Promise<MultisigInfo> => {
+
+  return customFetch<MultisigInfo>(getGetAdminMultisigInfoUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminMultisigInfoQueryKey = () => {
+    return [
+    `/api/admin/multisig`
+    ] as const;
+    }
+
+
+export const getGetAdminMultisigInfoQueryOptions = <TData = Awaited<ReturnType<typeof getAdminMultisigInfo>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminMultisigInfo>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminMultisigInfoQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminMultisigInfo>>> = ({ signal }) => getAdminMultisigInfo({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminMultisigInfo>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminMultisigInfoQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminMultisigInfo>>>
+export type GetAdminMultisigInfoQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Current admin multisig configuration and live on-chain status
+ */
+
+export function useGetAdminMultisigInfo<TData = Awaited<ReturnType<typeof getAdminMultisigInfo>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminMultisigInfo>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminMultisigInfoQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getProposeAdminActionUrl = () => {
+
+
+
+
+  return `/api/admin/multisig/propose`
+}
+
+/**
+ * @summary Create a new admin action proposal (e.g. a pending validator slash) for owners to approve
+ */
+export const proposeAdminAction = async ( options?: RequestInit): Promise<ProposeResult> => {
+
+  return customFetch<ProposeResult>(getProposeAdminActionUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getProposeAdminActionMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof proposeAdminAction>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof proposeAdminAction>>, TError,void, TContext> => {
+
+const mutationKey = ['proposeAdminAction'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof proposeAdminAction>>, void> = () => {
+
+
+          return  proposeAdminAction(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ProposeAdminActionMutationResult = NonNullable<Awaited<ReturnType<typeof proposeAdminAction>>>
+
+    export type ProposeAdminActionMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Create a new admin action proposal (e.g. a pending validator slash) for owners to approve
+ */
+export const useProposeAdminAction = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof proposeAdminAction>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof proposeAdminAction>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getProposeAdminActionMutationOptions(options));
+    }
+
+export const getApproveAdminActionUrl = (proposalId: number,) => {
+
+
+
+
+  return `/api/admin/multisig/${proposalId}/approve`
+}
+
+/**
+ * @summary Submit one owner's Ed25519-signed approval for a proposal
+ */
+export const approveAdminAction = async (proposalId: number,
+    approveInput: ApproveInput, options?: RequestInit): Promise<ApproveResult> => {
+
+  return customFetch<ApproveResult>(getApproveAdminActionUrl(proposalId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(approveInput)
+  }
+);}
+
+
+
+
+export const getApproveAdminActionMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveAdminAction>>, TError,{proposalId: number;data: BodyType<ApproveInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof approveAdminAction>>, TError,{proposalId: number;data: BodyType<ApproveInput>}, TContext> => {
+
+const mutationKey = ['approveAdminAction'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveAdminAction>>, {proposalId: number;data: BodyType<ApproveInput>}> = (props) => {
+          const {proposalId,data} = props ?? {};
+
+          return  approveAdminAction(proposalId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApproveAdminActionMutationResult = NonNullable<Awaited<ReturnType<typeof approveAdminAction>>>
+    export type ApproveAdminActionMutationBody = BodyType<ApproveInput>
+    export type ApproveAdminActionMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Submit one owner's Ed25519-signed approval for a proposal
+ */
+export const useApproveAdminAction = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveAdminAction>>, TError,{proposalId: number;data: BodyType<ApproveInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof approveAdminAction>>,
+        TError,
+        {proposalId: number;data: BodyType<ApproveInput>},
+        TContext
+      > => {
+      return useMutation(getApproveAdminActionMutationOptions(options));
+    }
+
+export const getGetAdminMultisigProposalStatusUrl = (proposalId: number,) => {
+
+
+
+
+  return `/api/admin/multisig/${proposalId}`
+}
+
+/**
+ * @summary Check whether a proposal has met the multisig approval threshold
+ */
+export const getAdminMultisigProposalStatus = async (proposalId: number, options?: RequestInit): Promise<ProposalStatus> => {
+
+  return customFetch<ProposalStatus>(getGetAdminMultisigProposalStatusUrl(proposalId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminMultisigProposalStatusQueryKey = (proposalId: number,) => {
+    return [
+    `/api/admin/multisig/${proposalId}`
+    ] as const;
+    }
+
+
+export const getGetAdminMultisigProposalStatusQueryOptions = <TData = Awaited<ReturnType<typeof getAdminMultisigProposalStatus>>, TError = ErrorType<ApiError>>(proposalId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminMultisigProposalStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminMultisigProposalStatusQueryKey(proposalId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminMultisigProposalStatus>>> = ({ signal }) => getAdminMultisigProposalStatus(proposalId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: proposalId !== null && proposalId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminMultisigProposalStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminMultisigProposalStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminMultisigProposalStatus>>>
+export type GetAdminMultisigProposalStatusQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Check whether a proposal has met the multisig approval threshold
+ */
+
+export function useGetAdminMultisigProposalStatus<TData = Awaited<ReturnType<typeof getAdminMultisigProposalStatus>>, TError = ErrorType<ApiError>>(
+ proposalId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminMultisigProposalStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminMultisigProposalStatusQueryOptions(proposalId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
