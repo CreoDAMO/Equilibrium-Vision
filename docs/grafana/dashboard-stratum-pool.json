@@ -1,0 +1,106 @@
+{
+  "title": "Equilibrium — Stratum Mining Pool",
+  "uid": "equilibrium-stratum-pool",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["equilibrium", "stratum", "mining"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Stratum Enabled",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "equilibrium_stratum_enabled", "legendFormat": "enabled" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "disabled" }, "1": { "text": "enabled" } } }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Active Connections",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "equilibrium_stratum_active_connections", "legendFormat": "connections" }]
+    },
+    {
+      "id": 3,
+      "title": "Active Miner Sessions",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "equilibrium_stratum_active_sessions", "legendFormat": "sessions" }]
+    },
+    {
+      "id": 4,
+      "title": "Total Rejections (rate + dup + cap)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "equilibrium_stratum_rate_limit_rejections_total + equilibrium_stratum_duplicate_share_rejections_total + equilibrium_stratum_connection_cap_rejections_total",
+          "legendFormat": "rejections"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 200 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Connections by Remote IP",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{ "expr": "equilibrium_stratum_connections_by_ip", "legendFormat": "{{remote_ip}}" }]
+    },
+    {
+      "id": 6,
+      "title": "Rate-Limit Rejections by IP",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [{ "expr": "rate(equilibrium_stratum_rate_limit_rejections_by_ip[5m])", "legendFormat": "{{remote_ip}}" }]
+    },
+    {
+      "id": 7,
+      "title": "Duplicate Share Rejections by IP",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [{ "expr": "rate(equilibrium_stratum_duplicate_share_rejections_by_ip[5m])", "legendFormat": "{{remote_ip}}" }]
+    },
+    {
+      "id": 8,
+      "title": "Connection-Cap Rejections by IP",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [{ "expr": "rate(equilibrium_stratum_connection_cap_rejections_by_ip[5m])", "legendFormat": "{{remote_ip}}" }]
+    },
+    {
+      "id": 9,
+      "title": "Total Rejection Counters Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "targets": [
+        { "expr": "equilibrium_stratum_rate_limit_rejections_total", "legendFormat": "rate limit" },
+        { "expr": "equilibrium_stratum_duplicate_share_rejections_total", "legendFormat": "duplicate share" },
+        { "expr": "equilibrium_stratum_connection_cap_rejections_total", "legendFormat": "connection cap" }
+      ]
+    }
+  ]
+}

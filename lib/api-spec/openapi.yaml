@@ -313,6 +313,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
 
+  /validators/{addr}/fees:
+    get:
+      operationId: getValidatorFees
+      tags: [validators]
+      summary: Fee earnings history for a validator, aggregated across every block it has mined (separate from block rewards)
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Fee earnings history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidatorFees"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /validators/{addr}/slash:
     post:
       operationId: slashValidator
@@ -1267,6 +1292,56 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Delegator"
+
+    ValidatorFees:
+      type: object
+      required:
+        - validatorAddress
+        - blocksMined
+        - totalCoinbaseRewards
+        - totalAccountFees
+        - totalUtxoFees
+        - totalFees
+        - totalEarnings
+        - avgFeePerBlock
+        - history
+      properties:
+        validatorAddress:
+          type: string
+        blocksMined:
+          type: integer
+        totalCoinbaseRewards:
+          type: number
+        totalAccountFees:
+          type: number
+        totalUtxoFees:
+          type: number
+        totalFees:
+          type: number
+        totalEarnings:
+          type: number
+        avgFeePerBlock:
+          type: number
+        history:
+          type: array
+          items:
+            type: object
+            required: [height, hash, timestamp, coinbaseReward, accountFees, utxoFees, totalFees]
+            properties:
+              height:
+                type: integer
+              hash:
+                type: string
+              timestamp:
+                type: integer
+              coinbaseReward:
+                type: number
+              accountFees:
+                type: number
+              utxoFees:
+                type: number
+              totalFees:
+                type: number
 
     ProposalSummary:
       type: object

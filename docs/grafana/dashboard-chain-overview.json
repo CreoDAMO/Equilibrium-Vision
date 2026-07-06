@@ -1,0 +1,134 @@
+{
+  "title": "Equilibrium — Chain Overview",
+  "uid": "equilibrium-chain-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["equilibrium", "blockchain"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Chain Height",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "equilibrium_chain_height", "legendFormat": "height" }],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "title": "Finality Lag (blocks)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "equilibrium_chain_finality_lag", "legendFormat": "lag" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 3 },
+              { "color": "red", "value": 8 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "TPS (recent blocks)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "equilibrium_chain_tps", "legendFormat": "tps" }],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2 }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "title": "Mempool Pressure",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "equilibrium_mempool_pressure", "legendFormat": "pressure" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.6 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Chain Height Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "expr": "equilibrium_chain_height", "legendFormat": "height" },
+        { "expr": "equilibrium_chain_finalized_height", "legendFormat": "finalized" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Average Block Time (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "equilibrium_chain_avg_block_time_seconds", "legendFormat": "avg block time" },
+        { "expr": "equilibrium_chain_target_block_time_seconds", "legendFormat": "target (15s)" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Mempool Size",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "targets": [{ "expr": "equilibrium_mempool_size", "legendFormat": "pending txs" }]
+    },
+    {
+      "id": 8,
+      "title": "Connected Peers",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "targets": [
+        { "expr": "equilibrium_peers_connected", "legendFormat": "connected" },
+        { "expr": "equilibrium_peers_total", "legendFormat": "known" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Total Confirmed Transactions",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "targets": [{ "expr": "rate(equilibrium_chain_total_tx_count[5m])", "legendFormat": "tx/s" }]
+    },
+    {
+      "id": 10,
+      "title": "PoS Difficulty & Last Residual",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        { "expr": "equilibrium_chain_difficulty", "legendFormat": "difficulty" },
+        { "expr": "equilibrium_chain_last_residual", "legendFormat": "last residual" }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "UTXO Pending Fees (awaiting sweep)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [{ "expr": "equilibrium_utxo_pending_fees", "legendFormat": "pending fees (EQU)" }]
+    }
+  ]
+}

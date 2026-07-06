@@ -208,6 +208,28 @@ export interface DelegatorsResponse {
   delegators: Delegator[];
 }
 
+export type ValidatorFeesHistoryItem = {
+  height: number;
+  hash: string;
+  timestamp: number;
+  coinbaseReward: number;
+  accountFees: number;
+  utxoFees: number;
+  totalFees: number;
+};
+
+export interface ValidatorFees {
+  validatorAddress: string;
+  blocksMined: number;
+  totalCoinbaseRewards: number;
+  totalAccountFees: number;
+  totalUtxoFees: number;
+  totalFees: number;
+  totalEarnings: number;
+  avgFeePerBlock: number;
+  history: ValidatorFeesHistoryItem[];
+}
+
 export type ProposalSummaryType = typeof ProposalSummaryType[keyof typeof ProposalSummaryType];
 
 

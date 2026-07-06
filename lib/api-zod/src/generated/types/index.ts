@@ -71,6 +71,8 @@ export * from './unstakeInput';
 export * from './unstakeResult';
 export * from './validator';
 export * from './validatorDetail';
+export * from './validatorFees';
+export * from './validatorFeesHistoryItem';
 export * from './validatorList';
 export * from './voteInput';
 export * from './voteInputChoice';

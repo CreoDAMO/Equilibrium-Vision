@@ -337,6 +337,34 @@ export const GetValidatorDelegatorsResponse = zod.object({
 
 
 /**
+ * @summary Fee earnings history for a validator, aggregated across every block it has mined (separate from block rewards)
+ */
+export const GetValidatorFeesParams = zod.object({
+  "addr": zod.coerce.string()
+})
+
+export const GetValidatorFeesResponse = zod.object({
+  "validatorAddress": zod.string(),
+  "blocksMined": zod.number(),
+  "totalCoinbaseRewards": zod.number(),
+  "totalAccountFees": zod.number(),
+  "totalUtxoFees": zod.number(),
+  "totalFees": zod.number(),
+  "totalEarnings": zod.number(),
+  "avgFeePerBlock": zod.number(),
+  "history": zod.array(zod.object({
+  "height": zod.number(),
+  "hash": zod.string(),
+  "timestamp": zod.number(),
+  "coinbaseReward": zod.number(),
+  "accountFees": zod.number(),
+  "utxoFees": zod.number(),
+  "totalFees": zod.number()
+}))
+})
+
+
+/**
  * @summary Slash a validator. Requires multisig proposal approval when admin multisig is configured, otherwise falls back to the ADMIN_KEY header.
  */
 export const SlashValidatorParams = zod.object({

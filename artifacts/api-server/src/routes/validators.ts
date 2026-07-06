@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { chainState } from "../chain/index.js";
+import { hash256 } from "../chain/crypto.js";
 import {
   getMultisigAddress,
   getMultisigInfo,
@@ -149,6 +150,66 @@ router.get("/validators/:addr/slash-history", (req, res) => {
   const addr = req.params["addr"]!;
   const events = chainState.slashEvents.filter(e => e.validatorAddress === addr);
   res.json({ validatorAddress: addr, events });
+});
+
+// ── Fee earnings history ────────────────────────────────────────────────────
+//
+// GET /api/validators/:addr/fees
+//
+// Aggregates the per-block fee breakdown (see GET /api/blocks/:id/fees) across
+// every block this validator has mined, so the Explorer can show total fee
+// income separate from block rewards, plus a per-block time series for a
+// chart. Fee income = account-model tx fees + swept UTXO-model tx fees.
+router.get("/validators/:addr/fees", (req, res) => {
+  const addr = req.params["addr"]!;
+  const v = chainState.validators.get(addr);
+  if (!v) {
+    res.status(404).json({ error: "Validator not found" });
+    return;
+  }
+
+  const minedBlocks = chainState.blocks.filter(b => b.miner === addr);
+
+  let totalCoinbaseRewards = 0;
+  let totalAccountFees = 0;
+  let totalUtxoFees = 0;
+
+  const history = minedBlocks.map(block => {
+    const accountFeeTxs = block.transactions.filter(tx => tx.fee > 0);
+    const accountFeesTotal = accountFeeTxs.reduce((sum, tx) => sum + tx.fee, 0);
+
+    const utxoFeeTxHash = hash256(`utxo-fees-${block.height}-${block.hash}`);
+    const utxoFeeUtxo = chainState.utxoSet.get(utxoFeeTxHash, 0);
+    const utxoFeesTotal = utxoFeeUtxo?.amount ?? 0;
+
+    totalCoinbaseRewards += block.coinbaseReward;
+    totalAccountFees += accountFeesTotal;
+    totalUtxoFees += utxoFeesTotal;
+
+    return {
+      height: block.height,
+      hash: block.hash,
+      timestamp: block.timestamp,
+      coinbaseReward: block.coinbaseReward,
+      accountFees: accountFeesTotal,
+      utxoFees: utxoFeesTotal,
+      totalFees: accountFeesTotal + utxoFeesTotal,
+    };
+  }).sort((a, b) => a.height - b.height);
+
+  const totalFees = totalAccountFees + totalUtxoFees;
+
+  res.json({
+    validatorAddress: addr,
+    blocksMined: minedBlocks.length,
+    totalCoinbaseRewards,
+    totalAccountFees,
+    totalUtxoFees,
+    totalFees,
+    totalEarnings: totalCoinbaseRewards + totalFees,
+    avgFeePerBlock: minedBlocks.length > 0 ? totalFees / minedBlocks.length : 0,
+    history,
+  });
 });
 
 router.get("/validators/:addr/delegators", (req, res) => {

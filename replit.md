@@ -92,6 +92,9 @@ bash scripts/start-postgres.sh
 | 12 | Native WASM multisig replacing single `ADMIN_KEY` for validator slashing | ✅ Done |
 | 13 | Multi-region nodes, HA Postgres, monitoring | ⏳ External |
 | 14 | Operator docs, security audit, mobile release | ⏳ External |
+| 15 | Validator "Fee Earnings" tab (explorer, separate from block rewards) | ✅ Done |
+| 16 | DB index on `contracts.deployer` | ✅ Done |
+| 17 | Grafana dashboards (chain, validators/staking, Stratum pool) | ✅ Done — see `docs/grafana/` |
 
 ## User preferences
 
@@ -116,3 +119,4 @@ _Populate as you build — explicit user instructions worth remembering across s
 - See `README.md` for the full project overview, API reference, architecture, and remaining work
 - See `docs/zk-circuit.md` for the Groth16 circuit spec and `fpEncode`/`blockHashToFields` encoding rules
 - See `docs/incentive-model.md` for the miner incentive analysis
+- See `docs/grafana/README.md` for Prometheus + Grafana dashboard setup (chain overview, validators/staking, Stratum pool)

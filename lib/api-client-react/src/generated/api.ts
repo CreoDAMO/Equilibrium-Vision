@@ -67,6 +67,7 @@ import type {
   UnstakeInput,
   UnstakeResult,
   ValidatorDetail,
+  ValidatorFees,
   ValidatorList,
   VoteInput,
   VoteResult
@@ -1165,6 +1166,83 @@ export function useGetValidatorDelegators<TData = Awaited<ReturnType<typeof getV
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetValidatorDelegatorsQueryOptions(addr,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetValidatorFeesUrl = (addr: string,) => {
+
+
+
+
+  return `/api/validators/${addr}/fees`
+}
+
+/**
+ * @summary Fee earnings history for a validator, aggregated across every block it has mined (separate from block rewards)
+ */
+export const getValidatorFees = async (addr: string, options?: RequestInit): Promise<ValidatorFees> => {
+
+  return customFetch<ValidatorFees>(getGetValidatorFeesUrl(addr),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetValidatorFeesQueryKey = (addr: string,) => {
+    return [
+    `/api/validators/${addr}/fees`
+    ] as const;
+    }
+
+
+export const getGetValidatorFeesQueryOptions = <TData = Awaited<ReturnType<typeof getValidatorFees>>, TError = ErrorType<ApiError>>(addr: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getValidatorFees>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidatorFeesQueryKey(addr);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidatorFees>>> = ({ signal }) => getValidatorFees(addr, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: addr !== null && addr !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getValidatorFees>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetValidatorFeesQueryResult = NonNullable<Awaited<ReturnType<typeof getValidatorFees>>>
+export type GetValidatorFeesQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Fee earnings history for a validator, aggregated across every block it has mined (separate from block rewards)
+ */
+
+export function useGetValidatorFees<TData = Awaited<ReturnType<typeof getValidatorFees>>, TError = ErrorType<ApiError>>(
+ addr: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getValidatorFees>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetValidatorFeesQueryOptions(addr,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

@@ -1,0 +1,116 @@
+{
+  "title": "Equilibrium — Validators & Staking",
+  "uid": "equilibrium-validators-staking",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["equilibrium", "validators", "staking"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Active Validators",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "equilibrium_validators_active", "legendFormat": "active" }]
+    },
+    {
+      "id": 2,
+      "title": "Jailed Validators",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "equilibrium_validators_jailed", "legendFormat": "jailed" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Slashed Validators",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "equilibrium_validators_slashed", "legendFormat": "slashed" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Total Bonded Stake (EQU)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "equilibrium_staking_total_bonded", "legendFormat": "bonded" }]
+    },
+    {
+      "id": 5,
+      "title": "Bonded Stake by Validator",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{ "expr": "equilibrium_validator_bonded_stake", "legendFormat": "{{moniker}}" }]
+    },
+    {
+      "id": 6,
+      "title": "Validator Uptime",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [{ "expr": "equilibrium_validator_uptime", "legendFormat": "{{moniker}}" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "title": "Blocks Proposed by Validator",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [{ "expr": "equilibrium_validator_blocks_proposed", "legendFormat": "{{moniker}}" }]
+    },
+    {
+      "id": 8,
+      "title": "Accumulated Rewards by Validator (EQU)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [{ "expr": "equilibrium_validator_accumulated_rewards", "legendFormat": "{{moniker}}" }]
+    },
+    {
+      "id": 9,
+      "title": "Slash Events by Validator",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [{ "expr": "equilibrium_validator_slash_count", "legendFormat": "{{moniker}}" }]
+    },
+    {
+      "id": 10,
+      "title": "Unbonding Queue Size",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [{ "expr": "equilibrium_staking_unbonding_queue_size", "legendFormat": "queued" }]
+    },
+    {
+      "id": 11,
+      "title": "Total Slash Events (network)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 28 },
+      "targets": [{ "expr": "equilibrium_slash_events_total", "legendFormat": "total slashes" }]
+    }
+  ]
+}
