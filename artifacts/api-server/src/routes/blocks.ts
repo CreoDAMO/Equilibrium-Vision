@@ -6,8 +6,25 @@ import { persistBlock } from "../chain/persistence.js";
 import { broadcast } from "../lib/ws-server.js";
 import { logger } from "../lib/logger.js";
 import type { TxRecord } from "../chain/types.js";
+import { RateLimiter, ReplaySet } from "../lib/submission-guard.js";
 
 const router = Router();
+
+// ── Submission guards (module-scoped, shared across all requests) ─────────────
+
+/** 10 block submissions per IP per 60 s — generous for real PoS solve times. */
+const submitRateLimit = new RateLimiter(10, 60_000).startPruning();
+
+/**
+ * Replay set keyed by "<prevHash>:<nonce>".
+ * Prevents the same (prevHash, nonce) tuple from being accepted twice,
+ * even if the chain tip has not yet advanced.
+ * Capacity 1 024 covers ~10 minutes of 1 block/s mining with safety margin.
+ */
+const submitReplay = new ReplaySet(1024);
+
+/** Maximum ±seconds the submitted timestamp may differ from server wall-clock. */
+const TIMESTAMP_DRIFT_LIMIT = 300; // 5 minutes
 
 // ── Block list ────────────────────────────────────────────────────────────────
 
@@ -60,11 +77,30 @@ const RESIDUAL_THRESHOLD = 1e-7;
 const BASE_REWARD        = 50_000_000;
 
 router.post("/blocks/submit", (req, res) => {
+  // ── Rate limiting — per source IP ───────────────────────────────────────────
+  // Always use the TCP socket address.  We deliberately ignore X-Forwarded-For
+  // because (a) the server is not behind a vetted trusted proxy and (b) XFF
+  // headers are trivially forged by any client, making them useless for spam
+  // protection.  The real connection IP is the only unforgeable source identity.
+  const ip = req.socket.remoteAddress ?? "unknown";
+  if (!submitRateLimit.tryConsume(ip)) {
+    const retryAfter = submitRateLimit.retryAfterSecs(ip);
+    res.status(429)
+      .set("Retry-After", String(retryAfter))
+      .json({ error: "Too many block submissions — slow down", retryAfter });
+    return;
+  }
+
   const { miner, nonce, residual, prevHash, timestamp } = req.body as Record<string, unknown>;
 
   // ── Validate required fields ────────────────────────────────────────────────
   if (typeof miner !== "string" || miner.length === 0) {
     res.status(400).json({ error: "Missing required field: miner" });
+    return;
+  }
+  // Miner must be a valid 40-character lowercase hex address.
+  if (!/^[0-9a-f]{40}$/i.test(miner)) {
+    res.status(400).json({ error: "miner must be a 40-character hex address" });
     return;
   }
   if (typeof nonce !== "number" || !Number.isFinite(nonce)) {
@@ -101,6 +137,34 @@ router.post("/blocks/submit", (req, res) => {
       currentTip:     prev.hash,
       currentHeight:  chainState.height,
     });
+    return;
+  }
+
+  // ── Timestamp drift guard ───────────────────────────────────────────────────
+  // Reject blocks whose claimed timestamp is more than TIMESTAMP_DRIFT_LIMIT
+  // seconds away from server time.  This prevents far-future or far-past
+  // timestamps being used to manipulate the chain's time series.
+  const serverNow = Math.floor(Date.now() / 1000);
+  if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
+    const drift = Math.abs(Math.floor(timestamp) - serverNow);
+    if (drift > TIMESTAMP_DRIFT_LIMIT) {
+      res.status(400).json({
+        error:        "Submitted timestamp deviates too far from server time",
+        submitted:    Math.floor(timestamp),
+        serverTime:   serverNow,
+        maxDriftSecs: TIMESTAMP_DRIFT_LIMIT,
+      });
+      return;
+    }
+  }
+
+  // ── Replay detection — reject duplicate (prevHash, nonce) pairs ─────────────
+  // A valid PoS solution is unique to a given chain tip; the same (tip, nonce)
+  // cannot produce two distinct valid blocks, so a duplicate is always spam.
+  const replayKey = `${prev.hash}:${nonce}`;
+  if (!submitReplay.tryAdd(replayKey)) {
+    logger.warn({ ip, miner, nonce, prevHash: prev.hash }, "Block submission replay rejected");
+    res.status(409).json({ error: "Duplicate submission — this (prevHash, nonce) pair has already been processed" });
     return;
   }
 
