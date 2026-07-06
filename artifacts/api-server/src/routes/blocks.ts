@@ -52,6 +52,54 @@ router.get("/blocks/:hashOrHeight", (req, res) => {
   res.json(block);
 });
 
+// ── Fee breakdown ────────────────────────────────────────────────────────────
+//
+// GET /api/blocks/:hashOrHeight/fees
+//
+// Breaks down everything paid to this block's miner: the coinbase reward,
+// account-model tx fees (credited directly in ChainState.addBlock), and
+// swept UTXO-model tx fees (accrued in pendingUtxoFees, paid out as a UTXO
+// output — see ChainState.addBlock / rollbackToHeight). Lets miners and
+// validators audit exactly where their per-block earnings came from.
+router.get("/blocks/:hashOrHeight/fees", (req, res) => {
+  const { hashOrHeight } = req.params;
+  const block =
+    chainState.getBlockByHash(hashOrHeight) ??
+    (/^\d+$/.test(hashOrHeight)
+      ? chainState.getBlockByHeight(Number(hashOrHeight))
+      : undefined);
+
+  if (!block) {
+    res.status(404).json({ error: "Block not found" });
+    return;
+  }
+
+  const accountFeeTxs = block.transactions.filter(tx => tx.fee > 0);
+  const accountFeesTotal = accountFeeTxs.reduce((sum, tx) => sum + tx.fee, 0);
+
+  const utxoFeeTxHash = hash256(`utxo-fees-${block.height}-${block.hash}`);
+  const utxoFeeUtxo = chainState.utxoSet.get(utxoFeeTxHash, 0);
+  const utxoFeesTotal = utxoFeeUtxo?.amount ?? 0;
+
+  res.json({
+    height: block.height,
+    hash: block.hash,
+    miner: block.miner,
+    coinbaseReward: block.coinbaseReward,
+    accountFees: {
+      total: accountFeesTotal,
+      txCount: accountFeeTxs.length,
+      transactions: accountFeeTxs.map(tx => ({ hash: tx.hash, from: tx.from, fee: tx.fee })),
+    },
+    utxoFees: {
+      total: utxoFeesTotal,
+      swept: utxoFeesTotal > 0,
+    },
+    totalFees: accountFeesTotal + utxoFeesTotal,
+    totalMinerEarnings: block.coinbaseReward + accountFeesTotal + utxoFeesTotal,
+  });
+});
+
 // ── External block submission (mobile miners / third-party nodes) ─────────────
 //
 // POST /api/blocks/submit

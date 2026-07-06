@@ -1,6 +1,6 @@
 import React from "react";
 import { useRoute, Link } from "wouter";
-import { useGetBlock } from "@workspace/api-client-react";
+import { useGetBlock, useGetBlockFees } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ export default function BlockDetail() {
   const id = params?.hashOrHeight || "";
   
   const { data: block, isLoading, error } = useGetBlock(id);
+  const { data: fees } = useGetBlockFees(id);
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading block details...</div>;
   if (error || !block) return <div className="p-8 text-center text-destructive">Block not found.</div>;
@@ -99,6 +100,77 @@ export default function BlockDetail() {
           </CardContent>
         </Card>
       </div>
+
+      {fees && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Miner Fee Breakdown</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="flex flex-col gap-1 p-3 rounded-md border">
+                <span className="text-xs text-muted-foreground">Coinbase Reward</span>
+                <span className="font-medium">{formatAmount(fees.coinbaseReward)} EQU</span>
+              </div>
+              <div className="flex flex-col gap-1 p-3 rounded-md border">
+                <span className="text-xs text-muted-foreground">Account-model Fees</span>
+                <span className="font-medium">{formatAmount(fees.accountFees.total)} EQU</span>
+              </div>
+              <div className="flex flex-col gap-1 p-3 rounded-md border">
+                <span className="text-xs text-muted-foreground">UTXO-model Fees</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{formatAmount(fees.utxoFees.total)} EQU</span>
+                  {fees.utxoFees.swept && (
+                    <Badge variant="outline" className="bg-green-100 text-green-800 text-xs">swept</Badge>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1 p-3 rounded-md border bg-muted/40">
+                <span className="text-xs text-muted-foreground">Total Miner Earnings</span>
+                <span className="font-semibold">{formatAmount(fees.totalMinerEarnings)} EQU</span>
+              </div>
+            </div>
+
+            {fees.accountFees.transactions.length > 0 && (
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">
+                  Account-model fee-paying transactions ({fees.accountFees.txCount})
+                </p>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Tx Hash</TableHead>
+                      <TableHead>From</TableHead>
+                      <TableHead className="text-right">Fee</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {fees.accountFees.transactions.map((tx) => (
+                      <TableRow key={tx.hash}>
+                        <TableCell>
+                          <Link href={`/tx/${tx.hash}`} className="text-primary hover:underline font-mono text-sm">
+                            {truncateHash(tx.hash)}
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <Link href={`/address/${tx.from}`} className="text-primary hover:underline font-mono text-sm">
+                            {truncateHash(tx.from)}
+                          </Link>
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">{formatAmount(tx.fee)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+
+            {fees.utxoFees.total === 0 && fees.accountFees.total === 0 && (
+              <p className="text-sm text-muted-foreground">No transaction fees were collected in this block.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

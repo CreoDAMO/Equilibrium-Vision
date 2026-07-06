@@ -27,6 +27,7 @@ import type {
   ApproveInput,
   ApproveResult,
   Block,
+  BlockFees,
   BlockPage,
   BlockStat,
   BroadcastResult,
@@ -555,6 +556,83 @@ export function useGetBlock<TData = Awaited<ReturnType<typeof getBlock>>, TError
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetBlockQueryOptions(hashOrHeight,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetBlockFeesUrl = (hashOrHeight: string,) => {
+
+
+
+
+  return `/api/blocks/${hashOrHeight}/fees`
+}
+
+/**
+ * @summary Fee breakdown for a block — account-model fees vs. swept UTXO fees
+ */
+export const getBlockFees = async (hashOrHeight: string, options?: RequestInit): Promise<BlockFees> => {
+
+  return customFetch<BlockFees>(getGetBlockFeesUrl(hashOrHeight),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBlockFeesQueryKey = (hashOrHeight: string,) => {
+    return [
+    `/api/blocks/${hashOrHeight}/fees`
+    ] as const;
+    }
+
+
+export const getGetBlockFeesQueryOptions = <TData = Awaited<ReturnType<typeof getBlockFees>>, TError = ErrorType<ApiError>>(hashOrHeight: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBlockFees>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBlockFeesQueryKey(hashOrHeight);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBlockFees>>> = ({ signal }) => getBlockFees(hashOrHeight, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: hashOrHeight !== null && hashOrHeight !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBlockFees>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBlockFeesQueryResult = NonNullable<Awaited<ReturnType<typeof getBlockFees>>>
+export type GetBlockFeesQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Fee breakdown for a block — account-model fees vs. swept UTXO fees
+ */
+
+export function useGetBlockFees<TData = Awaited<ReturnType<typeof getBlockFees>>, TError = ErrorType<ApiError>>(
+ hashOrHeight: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBlockFees>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBlockFeesQueryOptions(hashOrHeight,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

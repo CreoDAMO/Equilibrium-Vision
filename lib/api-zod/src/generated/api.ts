@@ -140,6 +140,36 @@ export const GetBlockResponse = zod.object({
 
 
 /**
+ * @summary Fee breakdown for a block — account-model fees vs. swept UTXO fees
+ */
+export const GetBlockFeesParams = zod.object({
+  "hashOrHeight": zod.coerce.string()
+})
+
+export const GetBlockFeesResponse = zod.object({
+  "height": zod.number(),
+  "hash": zod.string(),
+  "miner": zod.string(),
+  "coinbaseReward": zod.number(),
+  "accountFees": zod.object({
+  "total": zod.number(),
+  "txCount": zod.number(),
+  "transactions": zod.array(zod.object({
+  "hash": zod.string(),
+  "from": zod.string(),
+  "fee": zod.number()
+}))
+}),
+  "utxoFees": zod.object({
+  "total": zod.number(),
+  "swept": zod.boolean()
+}),
+  "totalFees": zod.number(),
+  "totalMinerEarnings": zod.number()
+})
+
+
+/**
  * @summary Transaction detail by hash
  */
 export const GetTransactionParams = zod.object({

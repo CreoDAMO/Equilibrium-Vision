@@ -79,6 +79,34 @@ export interface Block {
   transactions: Transaction[];
 }
 
+export type BlockFeesAccountFeesTransactionsItem = {
+  hash: string;
+  from: string;
+  fee: number;
+};
+
+export type BlockFeesAccountFees = {
+  total: number;
+  txCount: number;
+  transactions: BlockFeesAccountFeesTransactionsItem[];
+};
+
+export type BlockFeesUtxoFees = {
+  total: number;
+  swept: boolean;
+};
+
+export interface BlockFees {
+  height: number;
+  hash: string;
+  miner: string;
+  coinbaseReward: number;
+  accountFees: BlockFeesAccountFees;
+  utxoFees: BlockFeesUtxoFees;
+  totalFees: number;
+  totalMinerEarnings: number;
+}
+
 export interface BlockPage {
   blocks: Block[];
   total: number;

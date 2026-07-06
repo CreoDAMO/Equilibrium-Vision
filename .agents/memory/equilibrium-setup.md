@@ -73,6 +73,7 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 ## Two parallel balance systems — fee/reward crediting
 - Chain has both an account-model `Ledger` (used for account tx fees/rewards) and a `UTXOSet` (used for coinbase rewards + UTXO addresses) — any new fee/reward logic must be added to BOTH paths or it silently only works for one tx type.
 - UTXO-model transactions settle instantly at submission time, outside block assembly — so anything that should happen "per block" (like fee crediting) must be accrued in a counter on submit and swept into a block on `addBlock()`, mirroring the existing coinbase-UTXO pattern. Don't assume all value-transfer logic funnels through block assembly just because the account model does.
+- Per-block fee auditing (`GET /api/blocks/:hashOrHeight/fees`, Explorer's "Miner Fee Breakdown" panel on BlockDetail) reads account fees from `block.transactions` and the swept UTXO fee via the deterministic `hash256('utxo-fees-${height}-${hash}')` UTXO lookup — reuse that same derivation anywhere else you need to find a block's swept fee UTXO.
 
 ## Smart Contracts — UI (Contracts page)
 - Route: `/contracts` (deploy + list tabs) and `/contracts/:address` (detail + call + storage)

@@ -137,6 +137,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
 
+  /blocks/{hashOrHeight}/fees:
+    get:
+      operationId: getBlockFees
+      tags: [blocks]
+      summary: Fee breakdown for a block — account-model fees vs. swept UTXO fees
+      parameters:
+        - name: hashOrHeight
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Block fee breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockFees"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /tx/{hash}:
     get:
       operationId: getTransaction
@@ -945,6 +970,59 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Transaction"
+
+    BlockFees:
+      type: object
+      required:
+        - height
+        - hash
+        - miner
+        - coinbaseReward
+        - accountFees
+        - utxoFees
+        - totalFees
+        - totalMinerEarnings
+      properties:
+        height:
+          type: integer
+        hash:
+          type: string
+        miner:
+          type: string
+        coinbaseReward:
+          type: integer
+        accountFees:
+          type: object
+          required: [total, txCount, transactions]
+          properties:
+            total:
+              type: integer
+            txCount:
+              type: integer
+            transactions:
+              type: array
+              items:
+                type: object
+                required: [hash, from, fee]
+                properties:
+                  hash:
+                    type: string
+                  from:
+                    type: string
+                  fee:
+                    type: integer
+        utxoFees:
+          type: object
+          required: [total, swept]
+          properties:
+            total:
+              type: integer
+            swept:
+              type: boolean
+        totalFees:
+          type: integer
+        totalMinerEarnings:
+          type: integer
 
     BlockPage:
       type: object
