@@ -66,7 +66,9 @@ router.post("/validators/:addr/slash", async (req, res) => {
       return;
     }
   } else {
-    const adminKey = process.env["ADMIN_KEY"];
+    // Accept either ADMIN_KEY (legacy name) or ADMIN_API_KEY (current Replit
+    // secret name) so deployments aren't coupled to one specific secret name.
+    const adminKey = process.env["ADMIN_KEY"] || process.env["ADMIN_API_KEY"];
     if (adminKey) {
       const provided = req.headers["x-admin-key"];
       if (provided !== adminKey) {
