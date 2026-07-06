@@ -38,6 +38,10 @@ jobs:
   build-apk:
     name: Build signed release APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      packages: read
     defaults:
       run:
         working-directory: equilibrium
