@@ -36,9 +36,9 @@ set -euo pipefail
 PROFILE="${1:-release}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# The Rust crate lives three directories above this script:
+# The Rust crate lives two directories above this script:
 #   equilibrium/mobile/android/build-jni.sh  →  equilibrium/
-RUST_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+RUST_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUT_DIR="${SCRIPT_DIR}/app/src/main/jniLibs"
 
 echo "╔══════════════════════════════════════════════════════════════╗"

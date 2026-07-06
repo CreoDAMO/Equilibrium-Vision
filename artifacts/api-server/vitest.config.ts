@@ -14,6 +14,9 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     pool: "forks",
     poolOptions: { forks: { singleFork: true } },
+    env: {
+      DATABASE_URL: "postgresql://runner@127.0.0.1:5432/equilibrium",
+    },
     coverage: {
       provider: "v8",
       include: ["src/chain/**"],
