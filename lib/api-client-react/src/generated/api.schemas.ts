@@ -554,6 +554,24 @@ export interface SwapQuote {
   rate: number;
 }
 
+export interface AppRelease {
+  platform: string;
+  versionCode: number;
+  versionName: string;
+  downloadUrl: string;
+  releaseNotes?: string | null;
+  /** Unix seconds */
+  publishedAt: number;
+}
+
+export interface PublishAppReleaseRequest {
+  platform: string;
+  versionCode: number;
+  versionName: string;
+  downloadUrl: string;
+  releaseNotes?: string | null;
+}
+
 export type ListBlocksParams = {
 page?: number;
 limit?: number;
@@ -567,5 +585,9 @@ export type GetDexQuoteParams = {
 poolId: string;
 tokenIn: string;
 amountIn: string;
+};
+
+export type GetMobileVersionParams = {
+platform: string;
 };
 

@@ -76,6 +76,13 @@ android {
     // JNI libraries built by cargo-ndk go here:
     //   cargo ndk -t armeabi-v7a -t arm64-v8a -t x86_64 -o app/src/main/jniLibs build --release
     sourceSets["main"].jniLibs.srcDirs("src/main/jniLibs")
+
+    // Exposes BuildConfig.VERSION_CODE / VERSION_NAME, used by the in-app
+    // "check for updates" screen to compare against the latest published
+    // build from /api/mobile/version.
+    buildFeatures {
+        buildConfig = true
+    }
 }
 
 dependencies {

@@ -426,3 +426,84 @@ describe("POST /api/governance/proposals/:id/vote — signature verification", (
     chainState.validators.delete(voter.address);
   });
 });
+
+// ── Mobile app update check ─────────────────────────────────────────────────
+
+describe("GET/POST /api/mobile/version", () => {
+  it("GET returns 400 without a platform query parameter", async () => {
+    const res = await api.get("/api/mobile/version");
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("GET returns 404 for a platform with no published release", async () => {
+    const res = await api.get("/api/mobile/version?platform=nonexistent-platform");
+    expect(res.status).toBe(404);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("POST rejects a request missing required fields", async () => {
+    const res = await api.post("/api/mobile/version").send({ platform: "android" });
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("POST publishes a release and GET returns it back", async () => {
+    const platform = "android-test";
+    const postRes = await api.post("/api/mobile/version").send({
+      platform,
+      versionCode: 7,
+      versionName: "1.2.3",
+      downloadUrl: "https://example.com/app-release.apk",
+      releaseNotes: "Test release",
+    });
+    expect(postRes.status).toBe(200);
+    expect(postRes.body).toMatchObject({
+      success: true,
+      platform,
+      versionCode: 7,
+      versionName: "1.2.3",
+    });
+
+    const getRes = await api.get(`/api/mobile/version?platform=${platform}`);
+    expect(getRes.status).toBe(200);
+    expect(getRes.body).toMatchObject({
+      platform,
+      versionCode: 7,
+      versionName: "1.2.3",
+      downloadUrl: "https://example.com/app-release.apk",
+      releaseNotes: "Test release",
+    });
+  });
+
+  it("POST enforces X-Admin-Key when ADMIN_KEY/ADMIN_API_KEY is configured", async () => {
+    const original = process.env["ADMIN_KEY"];
+    process.env["ADMIN_KEY"] = "test-admin-secret";
+    try {
+      const noKeyRes = await api.post("/api/mobile/version").send({
+        platform: "android-test-auth",
+        versionCode: 1,
+        versionName: "0.0.1",
+        downloadUrl: "https://example.com/app-release.apk",
+      });
+      expect(noKeyRes.status).toBe(403);
+
+      const withKeyRes = await api
+        .post("/api/mobile/version")
+        .set("X-Admin-Key", "test-admin-secret")
+        .send({
+          platform: "android-test-auth",
+          versionCode: 1,
+          versionName: "0.0.1",
+          downloadUrl: "https://example.com/app-release.apk",
+        });
+      expect(withKeyRes.status).toBe(200);
+    } finally {
+      if (original === undefined) {
+        delete process.env["ADMIN_KEY"];
+      } else {
+        process.env["ADMIN_KEY"] = original;
+      }
+    }
+  });
+});

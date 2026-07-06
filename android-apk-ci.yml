@@ -116,8 +116,37 @@ jobs:
           retention-days: 90
 
       - name: Attach APK to GitHub Release
+        id: gh_release
         if: startsWith(github.ref, 'refs/tags/mobile-v')
         uses: softprops/action-gh-release@v2
         with:
           files: equilibrium/mobile/android/app/build/outputs/apk/release/app-release.apk
           generate_release_notes: true
+
+      # ── Notify the in-app "check for updates" screen ────────────────────
+      #
+      # Publishes this build's version metadata to the node API so sideloaded
+      # installs (no Play Store auto-update) can detect the new release.
+      # Requires two extra repo secrets (see docs/mobile-apk-release.md):
+      #   API_BASE_URL  — public URL of the running node API, e.g.
+      #                   https://your-repl.replit.dev or your deployed domain
+      #   ADMIN_API_KEY — same value as the API server's ADMIN_KEY/ADMIN_API_KEY secret
+      - name: Publish version to update-check endpoint
+        if: startsWith(github.ref, 'refs/tags/mobile-v') && steps.gh_release.outcome == 'success'
+        working-directory: equilibrium/mobile/android
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+        run: |
+          if [ -z "$API_BASE_URL" ]; then
+            echo "API_BASE_URL secret not set — skipping update-check publish."
+            exit 0
+          fi
+          VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts)
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          TAG="${GITHUB_REF#refs/tags/}"
+          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/app-release.apk"
+          curl -sf -X POST "${API_BASE_URL%/}/api/mobile/version" \
+            -H "Content-Type: application/json" \
+            -H "X-Admin-Key: ${ADMIN_API_KEY}" \
+            -d "{\"platform\":\"android\",\"versionCode\":${VERSION_CODE},\"versionName\":\"${VERSION_NAME}\",\"downloadUrl\":\"${DOWNLOAD_URL}\",\"releaseNotes\":\"Release ${TAG}\"}"

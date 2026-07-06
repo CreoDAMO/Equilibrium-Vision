@@ -873,6 +873,67 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
 
+  /mobile/version:
+    get:
+      operationId: getMobileVersion
+      tags: [mobile]
+      summary: Latest published build metadata for a platform (polled by the app's "check for updates" screen)
+      parameters:
+        - name: platform
+          in: query
+          required: true
+          schema:
+            type: string
+            example: android
+      responses:
+        "200":
+          description: Latest release metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppRelease"
+        "400":
+          description: Missing platform query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: No published release for this platform
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    post:
+      operationId: publishMobileVersion
+      tags: [mobile]
+      summary: Publish (upsert) the latest build metadata for a platform. Admin-key protected; called by CI after a signed release build.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishAppReleaseRequest"
+      responses:
+        "200":
+          description: Published release metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppRelease"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Missing or invalid X-Admin-Key header
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
 components:
   schemas:
     HealthStatus:
@@ -1890,3 +1951,42 @@ components:
           type: string
         rate:
           type: number
+
+    AppRelease:
+      type: object
+      required: [platform, versionCode, versionName, downloadUrl, publishedAt]
+      properties:
+        platform:
+          type: string
+          example: android
+        versionCode:
+          type: integer
+        versionName:
+          type: string
+          example: "0.1.0"
+        downloadUrl:
+          type: string
+        releaseNotes:
+          type: string
+          nullable: true
+        publishedAt:
+          type: integer
+          description: Unix seconds
+
+    PublishAppReleaseRequest:
+      type: object
+      required: [platform, versionCode, versionName, downloadUrl]
+      properties:
+        platform:
+          type: string
+          example: android
+        versionCode:
+          type: integer
+        versionName:
+          type: string
+          example: "0.1.0"
+        downloadUrl:
+          type: string
+        releaseNotes:
+          type: string
+          nullable: true

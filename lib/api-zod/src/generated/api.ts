@@ -841,3 +841,41 @@ export const GetDexQuoteResponse = zod.object({
 })
 
 
+/**
+ * @summary Latest published build metadata for a platform (polled by the app's "check for updates" screen)
+ */
+export const GetMobileVersionQueryParams = zod.object({
+  "platform": zod.coerce.string()
+})
+
+export const GetMobileVersionResponse = zod.object({
+  "platform": zod.string(),
+  "versionCode": zod.number(),
+  "versionName": zod.string(),
+  "downloadUrl": zod.string(),
+  "releaseNotes": zod.string().nullish(),
+  "publishedAt": zod.number().describe('Unix seconds')
+})
+
+
+/**
+ * @summary Publish (upsert) the latest build metadata for a platform. Admin-key protected; called by CI after a signed release build.
+ */
+export const PublishMobileVersionBody = zod.object({
+  "platform": zod.string(),
+  "versionCode": zod.number(),
+  "versionName": zod.string(),
+  "downloadUrl": zod.string(),
+  "releaseNotes": zod.string().nullish()
+})
+
+export const PublishMobileVersionResponse = zod.object({
+  "platform": zod.string(),
+  "versionCode": zod.number(),
+  "versionName": zod.string(),
+  "downloadUrl": zod.string(),
+  "releaseNotes": zod.string().nullish(),
+  "publishedAt": zod.number().describe('Unix seconds')
+})
+
+

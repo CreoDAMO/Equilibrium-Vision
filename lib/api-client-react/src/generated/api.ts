@@ -24,6 +24,7 @@ import type {
   AddLiquidityResult,
   AddressInfo,
   ApiError,
+  AppRelease,
   ApproveInput,
   ApproveResult,
   Block,
@@ -40,6 +41,7 @@ import type {
   FaucetRequest,
   FaucetStatus,
   GetDexQuoteParams,
+  GetMobileVersionParams,
   HealthStatus,
   ListBlocksParams,
   ListDexSwapsParams,
@@ -52,6 +54,7 @@ import type {
   ProposalSummary,
   ProposeResult,
   ProviderPositions,
+  PublishAppReleaseRequest,
   SignedTxInput,
   SlashInput,
   SlashResult,
@@ -2972,4 +2975,158 @@ export function useGetDexQuote<TData = Awaited<ReturnType<typeof getDexQuote>>, 
 
 
 
+
+export const getGetMobileVersionUrl = (params: GetMobileVersionParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/mobile/version?${stringifiedParams}` : `/api/mobile/version`
+}
+
+/**
+ * @summary Latest published build metadata for a platform (polled by the app's "check for updates" screen)
+ */
+export const getMobileVersion = async (params: GetMobileVersionParams, options?: RequestInit): Promise<AppRelease> => {
+
+  return customFetch<AppRelease>(getGetMobileVersionUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMobileVersionQueryKey = (params?: GetMobileVersionParams,) => {
+    return [
+    `/api/mobile/version`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetMobileVersionQueryOptions = <TData = Awaited<ReturnType<typeof getMobileVersion>>, TError = ErrorType<ApiError>>(params: GetMobileVersionParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMobileVersion>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMobileVersionQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMobileVersion>>> = ({ signal }) => getMobileVersion(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMobileVersion>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMobileVersionQueryResult = NonNullable<Awaited<ReturnType<typeof getMobileVersion>>>
+export type GetMobileVersionQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Latest published build metadata for a platform (polled by the app's "check for updates" screen)
+ */
+
+export function useGetMobileVersion<TData = Awaited<ReturnType<typeof getMobileVersion>>, TError = ErrorType<ApiError>>(
+ params: GetMobileVersionParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMobileVersion>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMobileVersionQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getPublishMobileVersionUrl = () => {
+
+
+
+
+  return `/api/mobile/version`
+}
+
+/**
+ * @summary Publish (upsert) the latest build metadata for a platform. Admin-key protected; called by CI after a signed release build.
+ */
+export const publishMobileVersion = async (publishAppReleaseRequest: PublishAppReleaseRequest, options?: RequestInit): Promise<AppRelease> => {
+
+  return customFetch<AppRelease>(getPublishMobileVersionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(publishAppReleaseRequest)
+  }
+);}
+
+
+
+
+export const getPublishMobileVersionMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishMobileVersion>>, TError,{data: BodyType<PublishAppReleaseRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof publishMobileVersion>>, TError,{data: BodyType<PublishAppReleaseRequest>}, TContext> => {
+
+const mutationKey = ['publishMobileVersion'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof publishMobileVersion>>, {data: BodyType<PublishAppReleaseRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  publishMobileVersion(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PublishMobileVersionMutationResult = NonNullable<Awaited<ReturnType<typeof publishMobileVersion>>>
+    export type PublishMobileVersionMutationBody = BodyType<PublishAppReleaseRequest>
+    export type PublishMobileVersionMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Publish (upsert) the latest build metadata for a platform. Admin-key protected; called by CI after a signed release build.
+ */
+export const usePublishMobileVersion = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishMobileVersion>>, TError,{data: BodyType<PublishAppReleaseRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof publishMobileVersion>>,
+        TError,
+        {data: BodyType<PublishAppReleaseRequest>},
+        TContext
+      > => {
+      return useMutation(getPublishMobileVersionMutationOptions(options));
+    }
 

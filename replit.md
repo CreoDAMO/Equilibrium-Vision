@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile mining, ZK proofs, libp2p P2P networking, and a full TypeScript node stack with a real-time block explorer, self-custody browser wallet, and WASM smart contracts.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete in Replit. **170 tests pass** (28 Rust, 142 TypeScript). Security audit fixes applied: `REQUIRE_TX_SIGNATURES=true` enforced, Ed25519 batch verification wired into UTXO validation and block assembly, and the single `ADMIN_KEY` secret for validator slashing replaced with a native on-chain WASM M-of-N multisig contract. Remote load test passed: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted** (50 VUs × 60 s, real HTTPS via Replit proxy). Remaining work is infra/ops (multi-region nodes, HA Postgres, monitoring, security audit) — external to Replit.
+> **Status (July 2026):** Mainnet-readiness hardening complete in Replit. **178 tests pass** (28 Rust, 150 TypeScript). Security audit fixes applied: `REQUIRE_TX_SIGNATURES=true` enforced, Ed25519 batch verification wired into UTXO validation and block assembly, and the single `ADMIN_KEY` secret for validator slashing replaced with a native on-chain WASM M-of-N multisig contract. Remote load test passed: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted** (50 VUs × 60 s, real HTTPS via Replit proxy). Android sideload distribution set up (signed APK via GitHub Actions CI + in-app update check, no Play Store). Remaining work is infra/ops (multi-region nodes, HA Postgres, monitoring, security audit) — external to Replit.
 
 ## Run & Operate
 
@@ -43,7 +43,7 @@ bash scripts/start-postgres.sh
 - `scripts/start-postgres.sh` — idempotent DB bootstrap (role + schema + grants); runs on every Postgres workflow start
 - `scripts/src/generate-genesis.ts` — generates real Ed25519 keypairs → writes `genesis.json` + `validator-keys.json`
 - `artifacts/api-server/src/chain/` — TypeScript chain engine: `state.ts`, `crypto.ts`, `index.ts` (auto-miner + `initChain`), `governance.ts`, `wasm.ts` (WASM VM), `persistence.ts`, `zkproof.ts`, `zk-encoding.ts`
-- `artifacts/api-server/src/routes/` — Express route handlers (blocks, tx, validators, staking, dex, governance, contracts, evm, faucet, metrics)
+- `artifacts/api-server/src/routes/` — Express route handlers (blocks, tx, validators, staking, dex, governance, contracts, evm, faucet, metrics, mobile)
 - `artifacts/api-server/src/__tests__/` — test suite: `chain.unit.test.ts` (40), `api.integration.test.ts` (25), `contracts.integration.test.ts` (58)
 - `artifacts/explorer/src/pages/` — Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail, Governance, Faucet, **Contracts**, ContractDetail
 - `artifacts/explorer/src/wallet/` — Browser wallet (context.tsx state manager, crypto.ts key ops)
@@ -95,6 +95,7 @@ bash scripts/start-postgres.sh
 | 15 | Validator "Fee Earnings" tab (explorer, separate from block rewards) | ✅ Done |
 | 16 | DB index on `contracts.deployer` | ✅ Done |
 | 17 | Grafana dashboards (chain, validators/staking, Stratum pool) | ✅ Done — see `docs/grafana/` |
+| 18 | Android sideload APK: signed CI build + in-app update check | ✅ Done — see `docs/mobile-apk-release.md` |
 
 ## User preferences
 
