@@ -50,6 +50,15 @@ interface MinerSession {
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
+// Module-level handle to the running Stratum server, if enabled (STRATUM_PORT
+// set). Set by index.ts on startup so routes/stratum-metrics.ts can expose a
+// live snapshot without threading the instance through app.ts.
+let runningInstance: StratumServer | null = null;
+
+export function getRunningStratumServer(): StratumServer | null {
+  return runningInstance;
+}
+
 export class StratumServer {
   private server: net.Server;
   private sessions = new Map<string, MinerSession>();
@@ -91,6 +100,11 @@ export class StratumServer {
   private static readonly MAX_CONNECTIONS_PER_IP = 8;
   private connectionsByIp = new Map<string, number>();
 
+  // ── Abuse-pattern counters (surfaced via GET /metrics/stratum) ─────────────
+  private rateLimitRejectionsByIp      = new Map<string, number>();
+  private duplicateShareRejectionsByIp = new Map<string, number>();
+  private connectionCapRejectionsByIp  = new Map<string, number>();
+
   /**
    * Maximum seconds the miner-submitted ntime may deviate from server time.
    * 7 200 s (2 hours) matches the standard Bitcoin/Stratum ntime tolerance.
@@ -114,6 +128,7 @@ export class StratumServer {
     this.server.on("error", (err) => {
       logger.error({ err }, "Stratum server error");
     });
+    runningInstance = this;
   }
 
   /** Send new work to all connected, authorized miners. */
@@ -134,6 +149,7 @@ export class StratumServer {
     // open sockets, to prevent a single host exhausting session/memory resources.
     const currentCount = this.connectionsByIp.get(remoteIp) ?? 0;
     if (currentCount >= StratumServer.MAX_CONNECTIONS_PER_IP) {
+      this.connectionCapRejectionsByIp.set(remoteIp, (this.connectionCapRejectionsByIp.get(remoteIp) ?? 0) + 1);
       logger.warn({ remoteIp, currentCount }, "Stratum connection rejected: per-IP connection cap exceeded");
       socket.destroy();
       return;
@@ -264,6 +280,7 @@ export class StratumServer {
     // and can be rotated on every submission to dodge a per-address limit.
     if (!this.submitRateLimit.tryConsume(session.remoteIp)) {
       const retryAfter = this.submitRateLimit.retryAfterSecs(session.remoteIp);
+      this.rateLimitRejectionsByIp.set(session.remoteIp, (this.rateLimitRejectionsByIp.get(session.remoteIp) ?? 0) + 1);
       logger.warn({ worker: session.worker, remoteIp: session.remoteIp, retryAfter }, "Stratum share rate-limited");
       this.respond(session.socket, req.id, false, [20, `Share rate limit exceeded — retry in ${retryAfter}s`, null]);
       return;
@@ -316,6 +333,7 @@ export class StratumServer {
     // Prevents double-submission on reconnect or intentional replay attacks.
     const shareKey = `${jobId}:${nonceHex ?? ""}:${extraNonce2 ?? ""}:${ntimeHex ?? ""}`;
     if (!this.recentShares.tryAdd(shareKey)) {
+      this.duplicateShareRejectionsByIp.set(session.remoteIp, (this.duplicateShareRejectionsByIp.get(session.remoteIp) ?? 0) + 1);
       logger.warn({ worker: session.worker, minerAddr, job: jobId, shareKey }, "Stratum share rejected: duplicate");
       this.respond(session.socket, req.id, false, [22, "Duplicate share", null]);
       return;
@@ -415,6 +433,40 @@ export class StratumServer {
         Math.floor(Date.now() / 1000).toString(16),  // ntime
         true,                                        // clean_jobs
       ],
+    };
+  }
+
+  // ── Metrics ───────────────────────────────────────────────────────────────
+
+  /**
+   * Snapshot of live abuse-pattern counters for GET /metrics/stratum.
+   * Per-IP maps are converted to plain objects so callers don't need to know
+   * about internal Map usage.
+   */
+  getMetrics(): {
+    activeConnections: number;
+    activeSessions: number;
+    connectionsByIp: Record<string, number>;
+    rateLimitRejectionsTotal: number;
+    rateLimitRejectionsByIp: Record<string, number>;
+    duplicateShareRejectionsTotal: number;
+    duplicateShareRejectionsByIp: Record<string, number>;
+    connectionCapRejectionsTotal: number;
+    connectionCapRejectionsByIp: Record<string, number>;
+  } {
+    const sumValues = (m: Map<string, number>): number => [...m.values()].reduce((a, b) => a + b, 0);
+    const toObject  = (m: Map<string, number>): Record<string, number> => Object.fromEntries(m);
+
+    return {
+      activeConnections: sumValues(this.connectionsByIp),
+      activeSessions: this.sessions.size,
+      connectionsByIp: toObject(this.connectionsByIp),
+      rateLimitRejectionsTotal: sumValues(this.rateLimitRejectionsByIp),
+      rateLimitRejectionsByIp: toObject(this.rateLimitRejectionsByIp),
+      duplicateShareRejectionsTotal: sumValues(this.duplicateShareRejectionsByIp),
+      duplicateShareRejectionsByIp: toObject(this.duplicateShareRejectionsByIp),
+      connectionCapRejectionsTotal: sumValues(this.connectionCapRejectionsByIp),
+      connectionCapRejectionsByIp: toObject(this.connectionCapRejectionsByIp),
     };
   }
 
