@@ -15,7 +15,9 @@
 #      trusted contributors.
 #
 # Required GitHub Secrets (Settings → Secrets and variables → Actions):
-#   ANDROID_KEYSTORE_BASE64    — base64-encoded .p12 keystore
+#   ANDROID_KEYSTORE_BASE64    — base64-encoded .p12 keystore, encoded with
+#                                 `base64 -w0` (no line wrapping) to avoid
+#                                 corruption when pasted into the Secrets UI
 #                                 (see scripts/generate-android-keystore.sh)
 #   ANDROID_KEYSTORE_PASSWORD  — keystore password
 #   ANDROID_KEY_ALIAS          — key alias inside the keystore
@@ -38,6 +40,10 @@ jobs:
   build-apk:
     name: Build signed release APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      packages: read
     defaults:
       run:
         working-directory: equilibrium
@@ -83,11 +89,27 @@ jobs:
         working-directory: equilibrium/mobile/android
         run: ./build-jni.sh release
 
+      # ── TEMPORARY DEBUG — remove once the keystore secret is confirmed clean ──
+      # Prints length and first/last characters only — never the full secret.
+      # A valid base64-encoded .p12 should be a few KB, only A-Za-z0-9+/= chars.
+      - name: Debug keystore secret shape
+        working-directory: equilibrium/mobile/android
+        run: |
+          echo "Length: ${#SECRET}"
+          echo "First 20 chars: ${SECRET:0:20}"
+          echo "Last 20 chars: ${SECRET: -20}"
+        env:
+          SECRET: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
       # ── Decode signing keystore from secrets ────────────────────────────
+      # `-i`/`--ignore-garbage` discards any non-base64-alphabet byte during
+      # decode (a stray BOM, quote, or copy/paste artifact), not just
+      # whitespace — a plain `tr -d '[:space:]'` pre-strip isn't enough if
+      # the secret picked up any other stray character along the way.
       - name: Decode release keystore
         working-directory: equilibrium/mobile/android
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | tr -d '[:space:]' | base64 -d > app/release-keystore.p12
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d -i > app/release-keystore.p12
 
       # ── Gradle build ─────────────────────────────────────────────────────
       - name: Set up Gradle
