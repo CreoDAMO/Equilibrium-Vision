@@ -45,6 +45,7 @@ interface MinerSession {
   worker:     string | null;
   authorized: boolean;
   extraNonce: string;
+  remoteIp:   string;
 }
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -62,19 +63,33 @@ export class StratumServer {
   // ── Submission guards ─────────────────────────────────────────────────────
 
   /**
-   * Per-worker-address rate limit: 6 shares per 10 seconds.
-   * Keyed by miner address so reconnecting with a new TCP session doesn't
-   * reset the counter.  Background pruning runs every 10 s.
+   * Per-connection rate limit: 6 shares per 10 seconds.
+   * Keyed by the TCP socket's remote address — NOT the self-reported miner
+   * address/worker name, which is attacker-controlled and can be rotated on
+   * every submission to bypass a per-address limit. The remote IP is the
+   * only unforgeable identity available for a raw TCP protocol like Stratum.
+   * Background pruning runs every 10 s.
    */
   private submitRateLimit = new RateLimiter(6, 10_000).startPruning();
 
   /**
-   * Duplicate-share detection keyed by "<jobId>:<nonce>:<extraNonce2>".
+   * Duplicate-share detection keyed by "<jobId>:<nonce>:<extraNonce2>:<ntime>".
+   * Including ntime prevents an attacker from replaying the same
+   * (jobId, nonce, extraNonce2) triple with a different claimed timestamp to
+   * slip past the dedupe check while still passing the drift guard.
    * Prevents the same solution being credited twice (e.g. double-send on
    * reconnect or intentional replay).  Capacity 1 024 is well above any
    * realistic share burst across all connected miners.
    */
   private recentShares = new ReplaySet(1024);
+
+  /**
+   * Maximum concurrent TCP connections accepted from a single remote address.
+   * Prevents a single host from exhausting session/memory resources by
+   * opening many parallel Stratum connections.
+   */
+  private static readonly MAX_CONNECTIONS_PER_IP = 8;
+  private connectionsByIp = new Map<string, number>();
 
   /**
    * Maximum seconds the miner-submitted ntime may deviate from server time.
@@ -112,14 +127,33 @@ export class StratumServer {
   // ── Connection lifecycle ──────────────────────────────────────────────────
 
   private onConnection(socket: net.Socket): void {
+    const remoteIp = socket.remoteAddress ?? "unknown";
+
+    // ── Per-IP connection cap ────────────────────────────────────────────────
+    // Reject new connections once an address already holds MAX_CONNECTIONS_PER_IP
+    // open sockets, to prevent a single host exhausting session/memory resources.
+    const currentCount = this.connectionsByIp.get(remoteIp) ?? 0;
+    if (currentCount >= StratumServer.MAX_CONNECTIONS_PER_IP) {
+      logger.warn({ remoteIp, currentCount }, "Stratum connection rejected: per-IP connection cap exceeded");
+      socket.destroy();
+      return;
+    }
+    this.connectionsByIp.set(remoteIp, currentCount + 1);
+
     const sessionId  = randomBytes(4).toString("hex");
     const extraNonce = randomBytes(4).toString("hex");
-    const session: MinerSession = { socket, sessionId, worker: null, authorized: false, extraNonce };
+    const session: MinerSession = { socket, sessionId, worker: null, authorized: false, extraNonce, remoteIp };
     this.sessions.set(sessionId, session);
-    logger.debug({ sessionId, remote: socket.remoteAddress }, "Stratum client connected");
+    logger.debug({ sessionId, remote: remoteIp }, "Stratum client connected");
 
     let buffer = "";
     socket.setEncoding("utf8");
+
+    const releaseConnectionSlot = (): void => {
+      const count = this.connectionsByIp.get(remoteIp) ?? 0;
+      if (count <= 1) this.connectionsByIp.delete(remoteIp);
+      else this.connectionsByIp.set(remoteIp, count - 1);
+    };
 
     socket.on("data", (chunk: string) => {
       buffer += chunk;
@@ -132,12 +166,14 @@ export class StratumServer {
 
     socket.on("close", () => {
       this.sessions.delete(sessionId);
+      releaseConnectionSlot();
       logger.debug({ sessionId }, "Stratum client disconnected");
     });
 
     socket.on("error", (err) => {
       logger.warn({ sessionId, err: err.message }, "Stratum client error");
       this.sessions.delete(sessionId);
+      releaseConnectionSlot();
     });
   }
 
@@ -221,7 +257,18 @@ export class StratumServer {
       return;
     }
 
-    // ── Parse and validate submitted fields ─────────────────────────────────
+    // ── Per-connection rate limit ────────────────────────────────────────────
+    // 6 shares per 10 seconds per remote IP. Checked before parsing/validating
+    // the rest of the payload, and keyed by the TCP remote address rather than
+    // the self-reported miner address — a worker name is attacker-controlled
+    // and can be rotated on every submission to dodge a per-address limit.
+    if (!this.submitRateLimit.tryConsume(session.remoteIp)) {
+      const retryAfter = this.submitRateLimit.retryAfterSecs(session.remoteIp);
+      logger.warn({ worker: session.worker, remoteIp: session.remoteIp, retryAfter }, "Stratum share rate-limited");
+      this.respond(session.socket, req.id, false, [20, `Share rate limit exceeded — retry in ${retryAfter}s`, null]);
+      return;
+    }
+
     const residual = Number(residualStr);
     if (!Number.isFinite(residual) || residual <= 0) {
       logger.warn({ worker: session.worker, job: jobId }, "Stratum submit: missing or invalid residual");
@@ -246,7 +293,7 @@ export class StratumServer {
       const drift = Math.abs(parsedNtime - serverNow);
       if (drift > StratumServer.NTIME_DRIFT_LIMIT) {
         logger.warn({ worker: session.worker, job: jobId, parsedNtime, serverNow, drift }, "Stratum share rejected: ntime out of range");
-        this.respond(session.socket, req.id, false, [23, `ntime deviates ${drift}s from server time (max ${StratumServer.NTIME_DRIFT_LIMIT}s)`, null]);
+        this.respond(session.socket, req.id, false, [20, `ntime deviates ${drift}s from server time (max ${StratumServer.NTIME_DRIFT_LIMIT}s)`, null]);
         return;
       }
     }
@@ -262,21 +309,12 @@ export class StratumServer {
       return;
     }
 
-    // ── Per-worker rate limit ────────────────────────────────────────────────
-    // 6 shares per 10 seconds per miner address.  Keyed by address so that
-    // reconnecting with a new TCP session does not reset the counter.
-    if (!this.submitRateLimit.tryConsume(minerAddr)) {
-      const retryAfter = this.submitRateLimit.retryAfterSecs(minerAddr);
-      logger.warn({ worker: session.worker, minerAddr, retryAfter }, "Stratum share rate-limited");
-      this.respond(session.socket, req.id, false, [23, `Share rate limit exceeded — retry in ${retryAfter}s`, null]);
-      return;
-    }
-
     // ── Duplicate share detection ────────────────────────────────────────────
-    // Keyed by (jobId, nonce, extraNonce2) — the minimal tuple that uniquely
-    // identifies a specific solution attempt.  Prevents double-submission on
-    // reconnect or intentional replay attacks.
-    const shareKey = `${jobId}:${nonceHex ?? ""}:${extraNonce2 ?? ""}`;
+    // Keyed by (jobId, nonce, extraNonce2, ntime) — including ntime prevents
+    // an attacker from replaying the same (jobId, nonce, extraNonce2) triple
+    // with a different claimed timestamp to slip past this dedupe check.
+    // Prevents double-submission on reconnect or intentional replay attacks.
+    const shareKey = `${jobId}:${nonceHex ?? ""}:${extraNonce2 ?? ""}:${ntimeHex ?? ""}`;
     if (!this.recentShares.tryAdd(shareKey)) {
       logger.warn({ worker: session.worker, minerAddr, job: jobId, shareKey }, "Stratum share rejected: duplicate");
       this.respond(session.socket, req.id, false, [22, "Duplicate share", null]);
