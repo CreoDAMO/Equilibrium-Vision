@@ -32,6 +32,7 @@ router.get("/metrics", (_req, res) => {
 
   lines.push(gauge("equilibrium_mempool_size", "Number of pending transactions in mempool", s.mempool.size));
   lines.push(gauge("equilibrium_mempool_pressure", "Mempool pressure ratio (0=empty, 1=full)", s.mempool.pressure));
+  lines.push(gauge("equilibrium_utxo_pending_fees", "UTXO-model fees accrued since the last block, awaiting sweep to the next miner", s.pendingUtxoFees));
 
   lines.push(gauge("equilibrium_peers_total", "Total known peers", s.peers.length));
   lines.push(gauge("equilibrium_peers_connected", "Number of connected peers", s.peers.filter(p => p.connected).length));

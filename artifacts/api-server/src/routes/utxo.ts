@@ -128,6 +128,14 @@ router.post("/utxo/spend", (req, res) => {
 
   cs.utxoSet.applyTransaction(tx);
 
+  // Accrue the fee for the next mined block's miner to collect — UTXO
+  // transactions settle immediately (no block assembly step here), so the
+  // fee is held in a pending pool and swept into a UTXO output for the
+  // miner as soon as the next block is added (see ChainState.addBlock).
+  if (tx.fee > 0) {
+    cs.pendingUtxoFees += tx.fee;
+  }
+
   return res.json({ success: true, txHash, message: "UTXO transaction applied" });
 });
 

@@ -297,3 +297,50 @@ describe("ChainState.updateDifficulty", () => {
     expect(state.currentDifficulty).toBe(1_000_000);
   });
 });
+
+// ── ChainState — UTXO fee collection ─────────────────────────────────────────
+//
+// UTXO transactions settle instantly (outside block assembly), so their fees
+// accrue in `pendingUtxoFees` and must be swept to the miner of the next
+// mined block instead of silently disappearing (burned).
+
+describe("ChainState UTXO fee sweep", () => {
+  const minerA = "a".repeat(40);
+  const minerB = "b".repeat(40);
+
+  it("credits accrued UTXO fees to the next block's miner as a UTXO output", () => {
+    const state = new ChainState();
+    state.pendingUtxoFees = 1_500;
+
+    const block = { ...fakeBlock(0, 1_700_000_000), miner: minerA };
+    state.addBlock(block);
+
+    expect(state.pendingUtxoFees).toBe(0);
+    expect(state.utxoSet.balance(minerA)).toBeGreaterThanOrEqual(1_500);
+  });
+
+  it("does not create a fee UTXO when no fees have accrued (only the coinbase reward is paid)", () => {
+    const state = new ChainState();
+
+    const block = { ...fakeBlock(0, 1_700_000_000), miner: minerA };
+    state.addBlock(block);
+
+    // Balance should equal exactly the coinbase reward — no extra fee UTXO.
+    expect(state.utxoSet.balance(minerA)).toBe(block.coinbaseReward);
+  });
+
+  it("restores the fee pool on rollback so it can be re-swept on the winning fork", () => {
+    const state = new ChainState();
+    state.pendingUtxoFees = 750;
+
+    const block = { ...fakeBlock(0, 1_700_000_000), miner: minerB };
+    state.addBlock(block);
+    expect(state.pendingUtxoFees).toBe(0);
+    expect(state.utxoSet.balance(minerB)).toBeGreaterThanOrEqual(750);
+
+    state.rollbackToHeight(-1);
+
+    expect(state.pendingUtxoFees).toBe(750);
+    expect(state.utxoSet.balance(minerB)).toBe(0);
+  });
+});

@@ -63,6 +63,7 @@ bash scripts/start-postgres.sh
 - **Coinomics wired into live block production** — `state.ts` imports `@workspace/coinomics` directly; `distributeBlockReward()`/`payValidatorReward()` split every coinbase and participation reward via `splitValidatorReward()`, and `slashValidator()` delegates to `applySlashing()`.
 - **WASM VM validation** — `WasmVM.deploy()` calls `WebAssembly.compile()` (not `validate()`) to reject invalid bytecode — `compile()` throws, `validate()` only returns a boolean.
 - **Fixed-point residuals** — residuals are stored as `residualFp` (i64 scaled 1e18); `reorganize()` in `state.ts` uses BigInt comparison throughout; eliminates float non-determinism in fork choice. Rust `BlockHeader` uses `i64` for the same reason.
+- **Fee collection, both balance models** — account-model (`Ledger`) tx fees are credited to `block.miner` directly in `addBlock()`. UTXO-model tx fees (`/utxo/spend`, settles instantly outside block assembly) accrue in `ChainState.pendingUtxoFees` and are swept into a UTXO output for `block.miner` on the next `addBlock()` call; `rollbackToHeight()` undoes the swept fee UTXO and restores the pending pool on reorg. No fees are burned in either model.
 
 ## Product
 

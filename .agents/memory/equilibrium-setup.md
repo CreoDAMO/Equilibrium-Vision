@@ -70,6 +70,10 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 - `WasmVM.call()` in `chain/wasm.ts` instantiates a **fresh WebAssembly instance/memory on every call** — only `contract.storage` (plain JS object) persists across calls. Contracts must be written store-not-compute: any WAT function relying on WASM globals/memory persisting between calls will silently reset each call.
 - Multisig-style contracts needing "this contract's own address" or other host-verified identity should get it via a host import (e.g. `self_address`) rather than trying to cache it in WASM memory/globals.
 
+## Two parallel balance systems — fee/reward crediting
+- Chain has both an account-model `Ledger` (used for account tx fees/rewards) and a `UTXOSet` (used for coinbase rewards + UTXO addresses) — any new fee/reward logic must be added to BOTH paths or it silently only works for one tx type.
+- UTXO-model transactions settle instantly at submission time, outside block assembly — so anything that should happen "per block" (like fee crediting) must be accrued in a counter on submit and swept into a block on `addBlock()`, mirroring the existing coinbase-UTXO pattern. Don't assume all value-transfer logic funnels through block assembly just because the account model does.
+
 ## Smart Contracts — UI (Contracts page)
 - Route: `/contracts` (deploy + list tabs) and `/contracts/:address` (detail + call + storage)
 - Files: `artifacts/explorer/src/pages/Contracts.tsx`, `artifacts/explorer/src/pages/ContractDetail.tsx`

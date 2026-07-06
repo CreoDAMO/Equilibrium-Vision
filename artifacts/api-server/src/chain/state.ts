@@ -156,6 +156,14 @@ export class ChainState {
   // UTXO set (parallel-validation coin model)
   utxoSet = new UTXOSet();
 
+  // UTXO transactions settle instantly on /utxo/spend (outside block assembly),
+  // so their fees can't be credited to a miner at spend-time — there is no
+  // "current block" yet. Instead we accrue fees here and sweep the pool into
+  // the next mined block's miner, matching standard L1 economics where fees
+  // from pending transactions are collected by whoever produces the block
+  // that settles them.
+  pendingUtxoFees = 0;
+
   // WASM smart contract VM
   wasmVM = new WasmVM();
 
@@ -274,6 +282,23 @@ export class ChainState {
       }
     }
 
+    // Sweep any UTXO-model fees accrued since the last block (see
+    // pendingUtxoFees) into a UTXO output paid to this block's miner —
+    // the UTXO-model equivalent of the account-model fee credit above.
+    if (this.pendingUtxoFees > 0) {
+      const feeTxHash = hash256(`utxo-fees-${block.height}-${block.hash}`);
+      this.utxoSet.add({
+        txHash: feeTxHash,
+        outputIndex: 0,
+        address: block.miner,
+        amount: this.pendingUtxoFees,
+        coinbase: false,
+        blockHeight: block.height,
+        spent: false,
+      });
+      this.pendingUtxoFees = 0;
+    }
+
     const prevBlock = this.blocks[this.blocks.length - 2];
     const blockTime = prevBlock ? block.timestamp - prevBlock.timestamp : TARGET_BLOCK_TIME;
 
@@ -318,6 +343,16 @@ export class ChainState {
       // Undo coinbase UTXO for this block's reward.
       const coinbaseTxHash = hash256(`coinbase-${block.height}-${block.hash}`);
       this.utxoSet.removeCoinbase(coinbaseTxHash);
+
+      // Undo any swept UTXO fees paid to this block's miner, restoring the
+      // amount to the pending pool so it is re-swept into whichever block
+      // ends up settling at this height on the winning fork.
+      const feeTxHash = hash256(`utxo-fees-${block.height}-${block.hash}`);
+      const feeUtxo = this.utxoSet.get(feeTxHash, 0);
+      if (feeUtxo) {
+        this.pendingUtxoFees += feeUtxo.amount;
+        this.utxoSet.remove(feeTxHash, 0);
+      }
 
       for (const tx of block.transactions) {
         // Undo the recipient-output UTXO created for this transfer.
