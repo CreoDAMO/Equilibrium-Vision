@@ -147,7 +147,10 @@ router.post("/blocks/submit", (req, res) => {
   };
 
   // ── Apply to chain state ────────────────────────────────────────────────────
-  chainState.ledger.credit(miner, reward);
+  // Note: do NOT call chainState.ledger.credit() here — addBlock() calls
+  // distributeBlockReward() which already credits the miner (and splits among
+  // delegators if they are a registered validator).  A pre-credit here would
+  // double the miner's balance on every externally-submitted block.
   chainState.addBlock(block);
   chainState.gossipBlock(blockHash);
 

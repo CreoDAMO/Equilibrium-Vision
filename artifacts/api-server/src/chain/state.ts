@@ -267,7 +267,10 @@ export class ChainState {
         spent: false,
       });
       if (tx.fee > 0) {
-        // Fee is burned (no UTXO created); change goes to miner implicitly via coinbase
+        // Credit transaction fee directly to the block miner.
+        // Fees are a direct payment and are not subject to the validator/delegator
+        // staking split — the full fee goes to whoever produced this block.
+        this.ledger.credit(block.miner, tx.fee);
       }
     }
 

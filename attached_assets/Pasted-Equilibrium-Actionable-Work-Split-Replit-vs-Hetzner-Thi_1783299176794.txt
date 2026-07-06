@@ -1,0 +1,192 @@
+Equilibrium — Actionable Work Split (Replit vs Hetzner)
+
+This separates what can be done within the Replit environment (code, config, UI, docs) from what requires provisioned Hetzner infrastructure (nodes, HA, backups, DDoS).
+
+---
+
+✅ Can Be Done on Replit (Code / Config / UI / Docs)
+
+Priority Item Status Notes
+🟢 Admin UI for multisig ⏳ Pending Explorer pages: propose, approve, view proposals
+🟠 Grafana dashboards ⏳ Pending Wire /metrics endpoint to a Grafana instance (can run on Replit or a small box)
+🟡 OpenAPI spec for contract routes ⏳ Pending Add 6 contract endpoints to openapi.yaml – unblocks client generation
+🟡 Stratum proof validation ⏳ Pending // TODO: validate the submitted proof – implement residual check
+🟡 Fee collection → miner ⏳ Pending Credit fees to miner address instead of burning them
+🟡 DB index on contracts.deployer ⏳ Pending Add Drizzle index – small schema change
+🟢 Staking/delegation UI ⏳ Pending Explorer pages for bonding EQU to validators
+🟢 DEX swap UI ⏳ Pending Explorer pages for swap, pools, liquidity
+🟢 Operator‑facing docs ⏳ Pending Validator setup, delegation, governance guides
+🟢 Mobile app store release ⏳ Pending Build signed APK and iOS app; release to stores (can be prepped in Replit, but store submission needs external accounts)
+
+---
+
+🖥️ Needs Hetzner (Infrastructure / Ops)
+
+Priority Item Status Notes
+🟠 Multi‑region sentry/validator nodes ⏳ Pending Provision 4+ nodes across EU, US, Asia per docs/testnet-deployment.md
+🟠 Postgres HA (replication + backups) ⏳ Pending Managed or self‑hosted cluster with automated backups
+🟠 DDoS mitigation / rate limiting ⏳ Pending Cloudflare or Hetzner DDoS protection; API rate limits (can be coded in Replit, but needs infra config)
+🔴 Final Security audit ⏳ Pending External firm – final gate
+
+---
+
+Split Summary
+
+Environment Items Effort (est.)
+Replit (code/config/UI) 10 items ~12–16 hours
+Hetzner (infra/ops) 4 items ~6–10 hours
+External 1 item (audit) —
+
+---
+
+Recommended Order
+
+1. Finish Replit code items (admin UI for multisig, OpenAPI spec, Stratum proof validation, fee collection, DB index).
+2. Deploy Hetzner infra (multi‑region nodes, Postgres HA, DDoS).
+3. Stand up Grafana (can be on a small Hetzner box or Replit).
+4. Schedule external audit (final gate).
+
+---
+
+Which Replit item do you want me to build first?
+I recommend starting with admin UI for multisig – it's the highest‑impact user‑facing feature and unblocks multisig testing without raw API calls.
+
+This document recommends starting with the admin UI for multisig. Given the scope (a full multi-page UI), let me use Canvas to design this properly before wiring it into the app.
+Building the multisig admin UI directly. Let me first understand the existing multisig backend and how the Explorer/API are structured.
+18 actions
+Good, I have the info I need. Now let's find how _baseUrl is set (likely uses import.meta.env.VITE_API_URL or same-origin) so I know I can just use plain relative fetch("/api/...") directly, which is simplest and consistent.
+Ran rg
+No baseURL override found, meaning API calls resolve against same-origin (proxied through Vite dev server to the API). Plain relative fetch("/api/...") will work fine. Now let's build the admin multisig page.
+Ran grep
+Good — /api is proxied. Now building the admin multisig page.
+Edited crypto.ts
+Now let's build the Admin Multisig page.
+Created AdminMultisig.tsx
+Now let's wire up the route and nav link.
+2 actions
+Now let's add the nav link and verify the app builds cleanly.
+2 actions
+Let's check for typecheck errors and verify the app renders correctly.
+Ran cd
+Most errors are pre-existing (stale build cache, unrelated implicit-any). Only my file has real issues — a duplicate-key spread bug. Let me fix it.
+2 actions
+Let me re-run the typecheck to confirm my fix worked and no other errors remain in my new file.
+Ran cd
+No output because grep found nothing (exit 1 = no matches), meaning no errors in my files. Good. Let's check the workflow logs to confirm the app is running fine live.
+Checked system logs
+Everything is running cleanly. Let me take a screenshot to confirm the new Admin page renders correctly.
+Took a screenshot
+The Admin Multisig page is live and working correctly — it correctly detects that no multisig is configured yet and shows the setup instructions, with the propose/approve/execute flow ready to use once one is deployed. Let's set up a demo multisig so the full flow is testable, then verify end-to-end.
+6 actions
+I'll skip modifying the workflow config with test keys — I don't want to leave demo private keys or contrived config baked into the app. Instead, I'll test the API endpoints directly to confirm the propose/approve/execute flow works correctly, without persisting it.
+4 actions
+Let me verify the frontend payloads match the backend route contracts exactly, since I can't safely bake demo keys into the permanent workflow config.
+3 actions
+The frontend payloads all match the backend contract exactly:
+Propose → POST /api/admin/multisig/propose with no body ✓ matches route (ignores body).
+Approve → POST /api/admin/multisig/:proposalId/approve with {ownerIndex, pubkey, signature} ✓ matches expected fields exactly.
+Check status → GET /api/admin/multisig/:proposalId ✓.
+Execute slash → POST /api/validators/:addr/slash with {reason, proposalId} ✓ matches exactly, including the 403 path when threshold isn't met.
+Everything checks out — no live demo multisig is needed to confirm correctness, and I intentionally avoided baking test private keys into the permanent workflow config since that would be an insecure, contrived hack for a UI that's meant to gate real production slashing.
+The Admin Multisig page is complete:
+New page at /admin/multisig, linked in the nav bar as "Admin" with a shield-check icon.
+Configuration panel — reads live multisig state from the WASM contract; shows a clear setup message when unconfigured.
+Propose — create a validator-slash proposal (address + reason).
+Approve — each owner enters their index + private key; the key never leaves the browser, it's used locally to sign the approval message, and only the signature + public key are sent to the server.
+Check status / Execute — poll approval status and execute the slash once the on-chain threshold is met (correctly surfaces the 403 if not).
+Fixed a state-merge bug I introduced, verified via typecheck (no errors in any file I touched) and a live screenshot of the running page.
+Next, I can add these multisig admin routes (/admin/multisig, /propose, /:proposalId/approve, /:proposalId) to the OpenAPI spec and regenerate the typed API client, so this page (and future ones) can use generated hooks instead of raw fetch calls. Would you like me to do that?
+Checkpoint made
+9 minutes ago
+Worked for 4 minutes
+yes but lets see what next on the list that needs to be done
+6 minutes ago
+I'll add the multisig admin routes to the OpenAPI spec and regenerate the typed client, then wire the AdminMultisig page to use generated hooks instead of raw fetch.
+Show less
+Opened openapi.yaml
+Reviewing OpenAPI spec structure
+I need to review the rest of the OpenAPI spec to find the validators and faucet tags, check where the components section ends, and see how the paths are structured for contracts. Then I'll need to add the admin multisig paths and their corresponding schemas.
+Opened openapi.yaml
+Now I have the full spec structure. Let me add the admin/multisig paths and schemas, then run codegen.
+Edited openapi.yaml
+Now let me add the /validators/{addr}/slash path (it also needs to be documented since it's now gated) and the admin/multisig paths + schemas.
+Edited openapi.yaml
+Now let me add the schemas for these new endpoints.
+Edited openapi.yaml
+Now let's run codegen to regenerate the client hooks and Zod schemas.
+Ran cd
+Let me retry the codegen command, this time checking for exit codes properly.
+Ran cd
+Codegen succeeded. Now let's wire the generated hooks into the AdminMultisig page, replacing raw fetch calls.
+Show less
+Ran cd
+Ran rg
+Planning file content output mode
+I tried using grep with line numbers enabled but the files_with_matches output mode only shows file paths, so I need to switch to content mode to see the actual lines.
+Ran rg
+Now let me look at how similar patterns (e.g. Governance's vote hooks) are used in an existing page, so I match conventions exactly.
+Ran rg
+Now I'll rewrite AdminMultisig.tsx to use the generated hooks instead of raw fetch.
+Ran rg
+Now let me rewrite AdminMultisig.tsx to use generated hooks.
+Ran rg
+Now I have the hook signatures. Let me rewrite AdminMultisig.tsx to use them.
+Edited AdminMultisig.tsx
+Let me typecheck and verify the app renders correctly with the new generated hooks.
+Ran cd
+No errors in AdminMultisig — good, the grep found nothing meaning it's clean. Let me confirm overall typecheck status and check the browser logs for issues.
+Ran cd
+Typecheck passed cleanly (0 errors, previously-truncated pre-existing errors are gone now that the api-client-react package rebuilt during codegen). Let's check logs and take a screenshot to confirm the UI works end-to-end with the generated hooks.
+3 actions
+The files exist now — that was just a transient error during the mid-codegen rebuild race. Let's restart the Explorer workflow to clear Vite's stale module graph, then verify.
+Restarted Explorer
+Let's verify the app is fully clean after the restart.
+Checked system logs
+Both workflows are clean now. Let me take a screenshot to confirm the Admin Multisig page renders correctly with the generated hooks.
+Took a screenshot
+The Admin Multisig page is rendering correctly and now runs entirely on the generated, type-safe API client instead of raw fetch calls. Both workflows are clean with no console errors.
+Summary of what was done for this round:
+Added admin tag, /validators/{addr}/slash, and the three /admin/multisig* paths + all their request/response schemas to lib/api-spec/openapi.yaml.
+Ran Orval codegen to regenerate @workspace/api-client-react hooks and Zod schemas.
+Rewrote AdminMultisig.tsx to use useGetAdminMultisigInfo, useProposeAdminAction, useApproveAdminAction, and useSlashValidator (React Query mutations/queries) instead of raw fetch, with proper cache invalidation on refresh.
+Verified: full explorer typecheck passes with zero errors, both workflows restarted cleanly, and the page renders correctly in the browser.
+Now, checking back on the mainnet-readiness doc's "Immediate Next Steps" — priority #1 (multisig admin UI) is done, and priority #2 (OpenAPI spec + codegen) is now also done as part of this. Here's what's next on the list, in priority order:
+Show less
+Found mainnet readiness document
+Planning Replit code fixes
+I've identified the three remaining Replit code items to tackle: stratum proof validation, fee collection to miner, and the database index on contracts.deployer. These are straightforward fixes that should be completed before moving on to infrastructure work. Let me locate the relevant code sections and start implementing these changes.
+Here's the priority order from the doc. I already completed #1 (admin UI) and #2 (OpenAPI spec). The next group — "finish Replit code items" — has three quick fixes:
+Stratum proof validation — a // TODO: validate the submitted proof stub needs a real residual check
+Fee collection → miner — transaction fees are currently burned instead of credited to the miner
+DB index on contracts.deployer — small Drizzle schema addition
+Let me find these in the code and knock them out.
+Located Stratum TODO, fee handling, Drizzle schema
+Now let's implement all three fixes. Let's look at the exact files to edit.
+Show less
+Opened stratum-server.ts
+Analyzing proof validation logic
+Now I need to look at how proof validation works in the existing codebase—specifically checking the residual verification logic in state.ts for the addBlock method and the mining logic in chain/index.ts to understand how the auto-miner validates proofs, then apply that same approach to Stratum validation.
+Ran rg
+Analyzing block assembly validation
+I need to examine the mineBlockOnce function to see how it assembles and validates blocks and calculates the residual, so I can replicate that same validation logic in Stratum's onSubmit handler.
+Opened state.ts
+Tracing client proof submission
+I'm grasping how the reward model works with Stratum validation—the share submission needs to check a proof (extraNonce2, ntime, nonce) against a residual threshold, then construct a block through chainState if it passes. Since this mining system uses residual quality validation rather than traditional hash-based proof-of-work, I need to trace how the client actually submits this proof through the mobile mining interface or FFI layer.
+Ran rg
+Found the real proof-validation model used by the manual mining endpoint. Let me read that full route to mirror its exact logic in Stratum's onSubmit.
+Show less
+Opened blocks.ts
+Deciding how to encode residual
+I'm looking at how to adapt the /blocks/submit logic for Stratum's onSubmit handler, mapping the submit parameters to the standard worker, jobId, extraNonce2, ntime, and nonce fields. The challenge is that Stratum's protocol has fixed parameter positions and doesn't explicitly include a residual field, so I need to decide whether to encode the residual within the nonce value or add it as an additional parameter in this custom implementation.
+Ran rg
+Analyzing testnet deployment documentation
+I should look at the testnet deployment documentation to understand how the mobile miner formats its stratum submissions.
+Ran rg
+No stratum submit format is documented elsewhere, so I have full latitude to define the protocol extension. I'll add residual as an extra param in mining.submit and mirror the exact validation/block-assembly logic from /blocks/submit.
+Show less
+Opened index.ts
+Planning core feature implementation
+Now I'm ready to implement the three fixes: validating Stratum proofs against a threshold, crediting fees to miners in the state layer, and adding a database index on the contracts.deployer field. For Stratum, I'll extend the submission handler to accept residual as a parameter, validate it, assemble the block, credit the miner, add it to chain state, gossip the update, persist it, and broadcast through the WebSocket server. Then I'll update the fee crediting logic around line 269 in state.ts to ensure miners receive their fee rewards.
+Opened state.ts
+Crediting mining fees to miner
+Now I need to update the addBlock function to credit mining fees to the block's miner through the ledger, and potentially create a corresponding UTXO entry for that fee amount.

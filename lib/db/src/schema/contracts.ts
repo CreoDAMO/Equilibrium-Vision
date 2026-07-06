@@ -1,4 +1,4 @@
-import { pgTable, text, integer, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, jsonb, index } from "drizzle-orm/pg-core";
 
 export const contractsTable = pgTable("contracts", {
   address:      text("address").primaryKey(),
@@ -25,6 +25,9 @@ export const contractsTable = pgTable("contracts", {
                     }>;
                   } | null>()
                   .default(null),
-});
+}, (table) => [
+  // Speeds up filtering/listing contracts by deployer address
+  index("contracts_deployer_idx").on(table.deployer),
+]);
 
 export type ContractRow = typeof contractsTable.$inferSelect;
