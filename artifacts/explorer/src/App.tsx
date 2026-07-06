@@ -25,6 +25,7 @@ import WalletSend from "@/pages/wallet/WalletSend";
 import WalletMultisig from "@/pages/wallet/WalletMultisig";
 import ContractsPage from "@/pages/Contracts";
 import ContractDetail from "@/pages/ContractDetail";
+import AdminMultisig from "@/pages/AdminMultisig";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -65,6 +66,7 @@ function AppRouter() {
           <Route path="/wallet/multisig" component={WalletMultisig} />
           <Route path="/contracts" component={ContractsPage} />
           <Route path="/contracts/:address" component={ContractDetail} />
+          <Route path="/admin/multisig" component={AdminMultisig} />
           <Route component={NotFound} />
         </Switch>
       </Layout>

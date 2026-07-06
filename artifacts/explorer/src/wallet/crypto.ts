@@ -279,6 +279,18 @@ export async function verifyMultisigThreshold(
   return valid >= config.threshold;
 }
 
+// ── Generic message signing (e.g. admin multisig approvals) ──────────────────
+
+export async function signRawMessage(
+  privHex: string,
+  message: string,
+): Promise<{ signature: string; publicKey: string }> {
+  const privBytes = ed.etc.hexToBytes(privHex);
+  const sig = await ed.signAsync(new TextEncoder().encode(message), privBytes);
+  const pubKey = ed.etc.bytesToHex(await ed.getPublicKeyAsync(privBytes));
+  return { signature: ed.etc.bytesToHex(sig), publicKey: pubKey };
+}
+
 // ── TX signing ────────────────────────────────────────────────────────────────
 
 export async function signTx(
