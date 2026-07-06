@@ -43,8 +43,17 @@ router.post("/dex/swap", (req, res) => {
     res.status(400).json({ error: "Invalid trader address" });
     return;
   }
-  if (amountIn <= 0) {
-    res.status(400).json({ error: "amountIn must be positive" });
+  if (!Number.isFinite(amountIn) || amountIn <= 0) {
+    res.status(400).json({ error: "amountIn must be a positive finite number" });
+    return;
+  }
+  const swapPool = chainState.dexPools.get(poolId);
+  if (!swapPool) {
+    res.status(404).json({ error: "Pool not found" });
+    return;
+  }
+  if (tokenIn !== swapPool.tokenA && tokenIn !== swapPool.tokenB) {
+    res.status(400).json({ error: `tokenIn must be ${swapPool.tokenA} or ${swapPool.tokenB}` });
     return;
   }
 
@@ -72,7 +81,14 @@ router.post("/dex/liquidity/add", (req, res) => {
     res.status(400).json({ error: "Invalid provider address" });
     return;
   }
-
+  if (!Number.isFinite(amountA) || amountA <= 0) {
+    res.status(400).json({ error: "amountA must be a positive finite number" });
+    return;
+  }
+  if (!Number.isFinite(amountB) || amountB <= 0) {
+    res.status(400).json({ error: "amountB must be a positive finite number" });
+    return;
+  }
   const result = chainState.addLiquidity(poolId, provider, amountA, amountB);
   if (typeof result === "string") {
     res.status(400).json({ error: result });

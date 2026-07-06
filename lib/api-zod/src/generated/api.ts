@@ -554,3 +554,232 @@ export const GetFaucetStatusResponse = zod.object({
 })
 
 
+/**
+ * @summary Get all staking positions and unbonding entries for a delegator address
+ */
+export const GetStakePositionsParams = zod.object({
+  "address": zod.coerce.string()
+})
+
+export const GetStakePositionsResponse = zod.object({
+  "delegator": zod.string(),
+  "totalStaked": zod.number(),
+  "totalUnbonding": zod.number(),
+  "positions": zod.array(zod.object({
+  "delegator": zod.string(),
+  "validator": zod.string(),
+  "amount": zod.number(),
+  "startHeight": zod.number(),
+  "startTimestamp": zod.number(),
+  "rewardsEarned": zod.number(),
+  "unbonding": zod.boolean()
+})),
+  "unbonding": zod.array(zod.object({
+  "delegator": zod.string(),
+  "validator": zod.string(),
+  "amount": zod.number(),
+  "completionHeight": zod.number()
+}))
+})
+
+
+/**
+ * @summary Bond EQU to a validator
+ */
+export const StakeBody = zod.object({
+  "delegator": zod.string(),
+  "validator": zod.string(),
+  "amount": zod.number()
+})
+
+export const StakeResponse = zod.object({
+  "success": zod.boolean(),
+  "delegator": zod.string(),
+  "validator": zod.string(),
+  "amount": zod.number(),
+  "effectiveHeight": zod.number()
+})
+
+
+/**
+ * @summary Begin unbonding EQU from a validator
+ */
+export const UnstakeBody = zod.object({
+  "delegator": zod.string(),
+  "validator": zod.string(),
+  "amount": zod.number()
+})
+
+export const UnstakeResponse = zod.object({
+  "success": zod.boolean(),
+  "delegator": zod.string(),
+  "validator": zod.string(),
+  "amount": zod.number(),
+  "unbondingPeriod": zod.number(),
+  "completionHeight": zod.number()
+})
+
+
+/**
+ * @summary Network-wide staking summary statistics
+ */
+export const GetStakingSummaryResponse = zod.object({
+  "totalBondedStake": zod.number(),
+  "totalDelegated": zod.number(),
+  "totalUnbonding": zod.number(),
+  "validatorCount": zod.number(),
+  "unbondingPeriodBlocks": zod.number(),
+  "activeStakers": zod.number()
+})
+
+
+/**
+ * @summary List all liquidity pools with live price and TVL
+ */
+export const ListDexPoolsResponse = zod.object({
+  "count": zod.number(),
+  "pools": zod.array(zod.object({
+  "id": zod.string(),
+  "tokenA": zod.string(),
+  "tokenB": zod.string(),
+  "reserveA": zod.number(),
+  "reserveB": zod.number(),
+  "totalLiquidity": zod.number(),
+  "fee": zod.number(),
+  "price": zod.number(),
+  "tvl": zod.number()
+}))
+})
+
+
+/**
+ * @summary Get a single pool with its liquidity positions
+ */
+export const GetDexPoolParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const GetDexPoolResponse = zod.object({
+  "id": zod.string(),
+  "tokenA": zod.string(),
+  "tokenB": zod.string(),
+  "reserveA": zod.number(),
+  "reserveB": zod.number(),
+  "totalLiquidity": zod.number(),
+  "fee": zod.number(),
+  "price": zod.number(),
+  "tvl": zod.number()
+}).and(zod.object({
+  "positions": zod.array(zod.object({
+  "poolId": zod.string(),
+  "provider": zod.string(),
+  "liquidity": zod.number(),
+  "sharePercent": zod.number()
+}))
+}))
+
+
+/**
+ * @summary Execute a token swap against a pool
+ */
+export const DexSwapBody = zod.object({
+  "poolId": zod.string(),
+  "trader": zod.string(),
+  "tokenIn": zod.string(),
+  "amountIn": zod.number()
+})
+
+export const DexSwapResponse = zod.object({
+  "success": zod.boolean(),
+  "poolId": zod.string(),
+  "trader": zod.string(),
+  "tokenIn": zod.string(),
+  "amountIn": zod.number(),
+  "amountOut": zod.number(),
+  "fee": zod.number()
+})
+
+
+/**
+ * @summary Provide liquidity to a pool
+ */
+export const AddLiquidityBody = zod.object({
+  "poolId": zod.string(),
+  "provider": zod.string(),
+  "amountA": zod.number(),
+  "amountB": zod.number()
+})
+
+export const AddLiquidityResponse = zod.object({
+  "success": zod.boolean(),
+  "poolId": zod.string(),
+  "provider": zod.string(),
+  "amountA": zod.number(),
+  "amountB": zod.number(),
+  "liquidity": zod.number()
+})
+
+
+/**
+ * @summary Recent swap history (latest first)
+ */
+export const listDexSwapsQueryLimitDefault = 50;
+
+export const ListDexSwapsQueryParams = zod.object({
+  "limit": zod.coerce.number().default(listDexSwapsQueryLimitDefault)
+})
+
+export const ListDexSwapsResponse = zod.object({
+  "count": zod.number(),
+  "swaps": zod.array(zod.object({
+  "poolId": zod.string(),
+  "trader": zod.string(),
+  "tokenIn": zod.string(),
+  "tokenOut": zod.string(),
+  "amountIn": zod.number(),
+  "amountOut": zod.number(),
+  "fee": zod.number(),
+  "timestamp": zod.number()
+}))
+})
+
+
+/**
+ * @summary Get all liquidity positions for a provider address
+ */
+export const GetDexPositionsParams = zod.object({
+  "provider": zod.coerce.string()
+})
+
+export const GetDexPositionsResponse = zod.object({
+  "provider": zod.string(),
+  "positions": zod.array(zod.object({
+  "poolId": zod.string(),
+  "provider": zod.string(),
+  "liquidity": zod.number(),
+  "sharePercent": zod.number()
+}))
+})
+
+
+/**
+ * @summary Get a swap quote without executing the trade
+ */
+export const GetDexQuoteQueryParams = zod.object({
+  "poolId": zod.coerce.string(),
+  "tokenIn": zod.coerce.string(),
+  "amountIn": zod.coerce.string()
+})
+
+export const GetDexQuoteResponse = zod.object({
+  "poolId": zod.string(),
+  "tokenIn": zod.string(),
+  "tokenOut": zod.string(),
+  "amountIn": zod.number(),
+  "amountOut": zod.number(),
+  "fee": zod.number(),
+  "priceImpact": zod.string(),
+  "rate": zod.number()
+})
+
+

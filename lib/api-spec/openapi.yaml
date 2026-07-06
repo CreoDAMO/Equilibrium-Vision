@@ -22,6 +22,10 @@ tags:
     description: Pending transaction pool
   - name: validators
     description: Validator staking, rewards, and slashing
+  - name: staking
+    description: Delegator staking positions and bond/unbond actions
+  - name: dex
+    description: Native AMM DEX — pools, swaps, and liquidity management
   - name: governance
     description: On-chain governance proposals, voting, and chain parameters
   - name: admin
@@ -575,6 +579,249 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FaucetStatus"
+
+  /stake/{address}:
+    get:
+      operationId: getStakePositions
+      tags: [staking]
+      summary: Get all staking positions and unbonding entries for a delegator address
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stake positions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StakePositions"
+
+  /stake:
+    post:
+      operationId: stake
+      tags: [staking]
+      summary: Bond EQU to a validator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StakeInput"
+      responses:
+        "200":
+          description: Stake recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StakeResult"
+        "400":
+          description: Invalid input or insufficient funds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /unstake:
+    post:
+      operationId: unstake
+      tags: [staking]
+      summary: Begin unbonding EQU from a validator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnstakeInput"
+      responses:
+        "200":
+          description: Unbonding initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnstakeResult"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /staking/summary:
+    get:
+      operationId: getStakingSummary
+      tags: [staking]
+      summary: Network-wide staking summary statistics
+      responses:
+        "200":
+          description: Staking summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StakingSummary"
+
+  /dex/pools:
+    get:
+      operationId: listDexPools
+      tags: [dex]
+      summary: List all liquidity pools with live price and TVL
+      responses:
+        "200":
+          description: Pool list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DexPoolList"
+
+  /dex/pools/{id}:
+    get:
+      operationId: getDexPool
+      tags: [dex]
+      summary: Get a single pool with its liquidity positions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Pool detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DexPoolDetail"
+        "404":
+          description: Pool not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /dex/swap:
+    post:
+      operationId: dexSwap
+      tags: [dex]
+      summary: Execute a token swap against a pool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwapInput"
+      responses:
+        "200":
+          description: Swap executed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwapResult"
+        "400":
+          description: Invalid input or swap error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /dex/liquidity/add:
+    post:
+      operationId: addLiquidity
+      tags: [dex]
+      summary: Provide liquidity to a pool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddLiquidityInput"
+      responses:
+        "200":
+          description: Liquidity added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddLiquidityResult"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /dex/swaps:
+    get:
+      operationId: listDexSwaps
+      tags: [dex]
+      summary: Recent swap history (latest first)
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Swap history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwapHistory"
+
+  /dex/positions/{provider}:
+    get:
+      operationId: getDexPositions
+      tags: [dex]
+      summary: Get all liquidity positions for a provider address
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Provider positions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderPositions"
+
+  /dex/quote:
+    get:
+      operationId: getDexQuote
+      tags: [dex]
+      summary: Get a swap quote without executing the trade
+      parameters:
+        - name: poolId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: tokenIn
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: amountIn
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Swap quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwapQuote"
+        "404":
+          description: Pool not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 
 components:
   schemas:
@@ -1183,4 +1430,310 @@ components:
         canDrip:
           type: boolean
         dripAmount:
+          type: number
+
+    StakeRecord:
+      type: object
+      required: [delegator, validator, amount, startHeight, startTimestamp, rewardsEarned, unbonding]
+      properties:
+        delegator:
+          type: string
+        validator:
+          type: string
+        amount:
+          type: number
+        startHeight:
+          type: integer
+        startTimestamp:
+          type: integer
+        rewardsEarned:
+          type: number
+        unbonding:
+          type: boolean
+
+    UnbondingEntry:
+      type: object
+      required: [delegator, validator, amount, completionHeight]
+      properties:
+        delegator:
+          type: string
+        validator:
+          type: string
+        amount:
+          type: number
+        completionHeight:
+          type: integer
+
+    StakePositions:
+      type: object
+      required: [delegator, totalStaked, totalUnbonding, positions, unbonding]
+      properties:
+        delegator:
+          type: string
+        totalStaked:
+          type: number
+        totalUnbonding:
+          type: number
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/StakeRecord"
+        unbonding:
+          type: array
+          items:
+            $ref: "#/components/schemas/UnbondingEntry"
+
+    StakeInput:
+      type: object
+      required: [delegator, validator, amount]
+      properties:
+        delegator:
+          type: string
+        validator:
+          type: string
+        amount:
+          type: number
+
+    StakeResult:
+      type: object
+      required: [success, delegator, validator, amount, effectiveHeight]
+      properties:
+        success:
+          type: boolean
+        delegator:
+          type: string
+        validator:
+          type: string
+        amount:
+          type: number
+        effectiveHeight:
+          type: integer
+
+    UnstakeInput:
+      type: object
+      required: [delegator, validator, amount]
+      properties:
+        delegator:
+          type: string
+        validator:
+          type: string
+        amount:
+          type: number
+
+    UnstakeResult:
+      type: object
+      required: [success, delegator, validator, amount, unbondingPeriod, completionHeight]
+      properties:
+        success:
+          type: boolean
+        delegator:
+          type: string
+        validator:
+          type: string
+        amount:
+          type: number
+        unbondingPeriod:
+          type: integer
+        completionHeight:
+          type: integer
+
+    StakingSummary:
+      type: object
+      required: [totalBondedStake, totalDelegated, totalUnbonding, validatorCount, unbondingPeriodBlocks, activeStakers]
+      properties:
+        totalBondedStake:
+          type: number
+        totalDelegated:
+          type: number
+        totalUnbonding:
+          type: number
+        validatorCount:
+          type: integer
+        unbondingPeriodBlocks:
+          type: integer
+        activeStakers:
+          type: integer
+
+    DexPool:
+      type: object
+      required: [id, tokenA, tokenB, reserveA, reserveB, totalLiquidity, fee, price, tvl]
+      properties:
+        id:
+          type: string
+        tokenA:
+          type: string
+        tokenB:
+          type: string
+        reserveA:
+          type: number
+        reserveB:
+          type: number
+        totalLiquidity:
+          type: number
+        fee:
+          type: number
+        price:
+          type: number
+        tvl:
+          type: number
+
+    LiquidityPosition:
+      type: object
+      required: [poolId, provider, liquidity, sharePercent]
+      properties:
+        poolId:
+          type: string
+        provider:
+          type: string
+        liquidity:
+          type: number
+        sharePercent:
+          type: number
+
+    DexPoolList:
+      type: object
+      required: [count, pools]
+      properties:
+        count:
+          type: integer
+        pools:
+          type: array
+          items:
+            $ref: "#/components/schemas/DexPool"
+
+    DexPoolDetail:
+      allOf:
+        - $ref: "#/components/schemas/DexPool"
+        - type: object
+          required: [positions]
+          properties:
+            positions:
+              type: array
+              items:
+                $ref: "#/components/schemas/LiquidityPosition"
+
+    SwapInput:
+      type: object
+      required: [poolId, trader, tokenIn, amountIn]
+      properties:
+        poolId:
+          type: string
+        trader:
+          type: string
+        tokenIn:
+          type: string
+        amountIn:
+          type: number
+
+    SwapResult:
+      type: object
+      required: [success, poolId, trader, tokenIn, amountIn, amountOut, fee]
+      properties:
+        success:
+          type: boolean
+        poolId:
+          type: string
+        trader:
+          type: string
+        tokenIn:
+          type: string
+        amountIn:
+          type: number
+        amountOut:
+          type: number
+        fee:
+          type: number
+
+    AddLiquidityInput:
+      type: object
+      required: [poolId, provider, amountA, amountB]
+      properties:
+        poolId:
+          type: string
+        provider:
+          type: string
+        amountA:
+          type: number
+        amountB:
+          type: number
+
+    AddLiquidityResult:
+      type: object
+      required: [success, poolId, provider, amountA, amountB, liquidity]
+      properties:
+        success:
+          type: boolean
+        poolId:
+          type: string
+        provider:
+          type: string
+        amountA:
+          type: number
+        amountB:
+          type: number
+        liquidity:
+          type: number
+
+    SwapEvent:
+      type: object
+      required: [poolId, trader, tokenIn, tokenOut, amountIn, amountOut, fee, timestamp]
+      properties:
+        poolId:
+          type: string
+        trader:
+          type: string
+        tokenIn:
+          type: string
+        tokenOut:
+          type: string
+        amountIn:
+          type: number
+        amountOut:
+          type: number
+        fee:
+          type: number
+        timestamp:
+          type: integer
+
+    SwapHistory:
+      type: object
+      required: [count, swaps]
+      properties:
+        count:
+          type: integer
+        swaps:
+          type: array
+          items:
+            $ref: "#/components/schemas/SwapEvent"
+
+    ProviderPositions:
+      type: object
+      required: [provider, positions]
+      properties:
+        provider:
+          type: string
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiquidityPosition"
+
+    SwapQuote:
+      type: object
+      required: [poolId, tokenIn, tokenOut, amountIn, amountOut, fee, priceImpact, rate]
+      properties:
+        poolId:
+          type: string
+        tokenIn:
+          type: string
+        tokenOut:
+          type: string
+        amountIn:
+          type: number
+        amountOut:
+          type: number
+        fee:
+          type: number
+        priceImpact:
+          type: string
+        rate:
           type: number

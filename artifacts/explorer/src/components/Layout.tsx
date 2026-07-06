@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Activity, Box, ListTree, Users, Layers, Zap, Wallet, Shield, ShieldCheck, Vote, Droplets, Code2 } from "lucide-react";
+import { Search, Activity, Box, ListTree, Users, Layers, Wallet, Shield, ShieldCheck, Vote, Droplets, Code2, Coins, ArrowRightLeft } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -32,6 +32,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/mempool", label: "Mempool", icon: <ListTree className="w-4 h-4 mr-2" /> },
     { href: "/network", label: "Network", icon: <Users className="w-4 h-4 mr-2" /> },
     { href: "/validators", label: "Validators", icon: <Shield className="w-4 h-4 mr-2" /> },
+    { href: "/staking", label: "Staking", icon: <Coins className="w-4 h-4 mr-2" /> },
+    { href: "/dex", label: "DEX", icon: <ArrowRightLeft className="w-4 h-4 mr-2" /> },
     { href: "/governance", label: "Governance", icon: <Vote className="w-4 h-4 mr-2" /> },
     { href: "/faucet", label: "Faucet", icon: <Droplets className="w-4 h-4 mr-2" /> },
     { href: "/wallet", label: "Wallet", icon: <Wallet className="w-4 h-4 mr-2" /> },

@@ -20,6 +20,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AddLiquidityInput,
+  AddLiquidityResult,
   AddressInfo,
   ApiError,
   ApproveInput,
@@ -31,11 +33,15 @@ import type {
   ChainParameters,
   ChainStatus,
   DelegatorsResponse,
+  DexPoolDetail,
+  DexPoolList,
   FaucetDripResponse,
   FaucetRequest,
   FaucetStatus,
+  GetDexQuoteParams,
   HealthStatus,
   ListBlocksParams,
+  ListDexSwapsParams,
   Mempool,
   MultisigInfo,
   NewProposalInput,
@@ -44,10 +50,21 @@ import type {
   ProposalStatus,
   ProposalSummary,
   ProposeResult,
+  ProviderPositions,
   SignedTxInput,
   SlashInput,
   SlashResult,
+  StakeInput,
+  StakePositions,
+  StakeResult,
+  StakingSummary,
+  SwapHistory,
+  SwapInput,
+  SwapQuote,
+  SwapResult,
   Transaction,
+  UnstakeInput,
+  UnstakeResult,
   ValidatorDetail,
   ValidatorList,
   VoteInput,
@@ -1955,6 +1972,839 @@ export function useGetFaucetStatus<TData = Awaited<ReturnType<typeof getFaucetSt
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetFaucetStatusQueryOptions(address,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetStakePositionsUrl = (address: string,) => {
+
+
+
+
+  return `/api/stake/${address}`
+}
+
+/**
+ * @summary Get all staking positions and unbonding entries for a delegator address
+ */
+export const getStakePositions = async (address: string, options?: RequestInit): Promise<StakePositions> => {
+
+  return customFetch<StakePositions>(getGetStakePositionsUrl(address),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStakePositionsQueryKey = (address: string,) => {
+    return [
+    `/api/stake/${address}`
+    ] as const;
+    }
+
+
+export const getGetStakePositionsQueryOptions = <TData = Awaited<ReturnType<typeof getStakePositions>>, TError = ErrorType<unknown>>(address: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStakePositions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStakePositionsQueryKey(address);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStakePositions>>> = ({ signal }) => getStakePositions(address, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: address !== null && address !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStakePositions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStakePositionsQueryResult = NonNullable<Awaited<ReturnType<typeof getStakePositions>>>
+export type GetStakePositionsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get all staking positions and unbonding entries for a delegator address
+ */
+
+export function useGetStakePositions<TData = Awaited<ReturnType<typeof getStakePositions>>, TError = ErrorType<unknown>>(
+ address: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStakePositions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStakePositionsQueryOptions(address,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getStakeUrl = () => {
+
+
+
+
+  return `/api/stake`
+}
+
+/**
+ * @summary Bond EQU to a validator
+ */
+export const stake = async (stakeInput: StakeInput, options?: RequestInit): Promise<StakeResult> => {
+
+  return customFetch<StakeResult>(getStakeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(stakeInput)
+  }
+);}
+
+
+
+
+export const getStakeMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stake>>, TError,{data: BodyType<StakeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof stake>>, TError,{data: BodyType<StakeInput>}, TContext> => {
+
+const mutationKey = ['stake'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof stake>>, {data: BodyType<StakeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  stake(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StakeMutationResult = NonNullable<Awaited<ReturnType<typeof stake>>>
+    export type StakeMutationBody = BodyType<StakeInput>
+    export type StakeMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Bond EQU to a validator
+ */
+export const useStake = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stake>>, TError,{data: BodyType<StakeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof stake>>,
+        TError,
+        {data: BodyType<StakeInput>},
+        TContext
+      > => {
+      return useMutation(getStakeMutationOptions(options));
+    }
+
+export const getUnstakeUrl = () => {
+
+
+
+
+  return `/api/unstake`
+}
+
+/**
+ * @summary Begin unbonding EQU from a validator
+ */
+export const unstake = async (unstakeInput: UnstakeInput, options?: RequestInit): Promise<UnstakeResult> => {
+
+  return customFetch<UnstakeResult>(getUnstakeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(unstakeInput)
+  }
+);}
+
+
+
+
+export const getUnstakeMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unstake>>, TError,{data: BodyType<UnstakeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof unstake>>, TError,{data: BodyType<UnstakeInput>}, TContext> => {
+
+const mutationKey = ['unstake'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unstake>>, {data: BodyType<UnstakeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  unstake(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnstakeMutationResult = NonNullable<Awaited<ReturnType<typeof unstake>>>
+    export type UnstakeMutationBody = BodyType<UnstakeInput>
+    export type UnstakeMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Begin unbonding EQU from a validator
+ */
+export const useUnstake = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unstake>>, TError,{data: BodyType<UnstakeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof unstake>>,
+        TError,
+        {data: BodyType<UnstakeInput>},
+        TContext
+      > => {
+      return useMutation(getUnstakeMutationOptions(options));
+    }
+
+export const getGetStakingSummaryUrl = () => {
+
+
+
+
+  return `/api/staking/summary`
+}
+
+/**
+ * @summary Network-wide staking summary statistics
+ */
+export const getStakingSummary = async ( options?: RequestInit): Promise<StakingSummary> => {
+
+  return customFetch<StakingSummary>(getGetStakingSummaryUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStakingSummaryQueryKey = () => {
+    return [
+    `/api/staking/summary`
+    ] as const;
+    }
+
+
+export const getGetStakingSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getStakingSummary>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStakingSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStakingSummaryQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStakingSummary>>> = ({ signal }) => getStakingSummary({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStakingSummary>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStakingSummaryQueryResult = NonNullable<Awaited<ReturnType<typeof getStakingSummary>>>
+export type GetStakingSummaryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Network-wide staking summary statistics
+ */
+
+export function useGetStakingSummary<TData = Awaited<ReturnType<typeof getStakingSummary>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStakingSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStakingSummaryQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListDexPoolsUrl = () => {
+
+
+
+
+  return `/api/dex/pools`
+}
+
+/**
+ * @summary List all liquidity pools with live price and TVL
+ */
+export const listDexPools = async ( options?: RequestInit): Promise<DexPoolList> => {
+
+  return customFetch<DexPoolList>(getListDexPoolsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListDexPoolsQueryKey = () => {
+    return [
+    `/api/dex/pools`
+    ] as const;
+    }
+
+
+export const getListDexPoolsQueryOptions = <TData = Awaited<ReturnType<typeof listDexPools>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDexPools>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDexPoolsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDexPools>>> = ({ signal }) => listDexPools({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDexPools>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListDexPoolsQueryResult = NonNullable<Awaited<ReturnType<typeof listDexPools>>>
+export type ListDexPoolsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List all liquidity pools with live price and TVL
+ */
+
+export function useListDexPools<TData = Awaited<ReturnType<typeof listDexPools>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDexPools>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListDexPoolsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetDexPoolUrl = (id: string,) => {
+
+
+
+
+  return `/api/dex/pools/${id}`
+}
+
+/**
+ * @summary Get a single pool with its liquidity positions
+ */
+export const getDexPool = async (id: string, options?: RequestInit): Promise<DexPoolDetail> => {
+
+  return customFetch<DexPoolDetail>(getGetDexPoolUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDexPoolQueryKey = (id: string,) => {
+    return [
+    `/api/dex/pools/${id}`
+    ] as const;
+    }
+
+
+export const getGetDexPoolQueryOptions = <TData = Awaited<ReturnType<typeof getDexPool>>, TError = ErrorType<ApiError>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDexPool>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDexPoolQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDexPool>>> = ({ signal }) => getDexPool(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDexPool>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDexPoolQueryResult = NonNullable<Awaited<ReturnType<typeof getDexPool>>>
+export type GetDexPoolQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Get a single pool with its liquidity positions
+ */
+
+export function useGetDexPool<TData = Awaited<ReturnType<typeof getDexPool>>, TError = ErrorType<ApiError>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDexPool>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDexPoolQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDexSwapUrl = () => {
+
+
+
+
+  return `/api/dex/swap`
+}
+
+/**
+ * @summary Execute a token swap against a pool
+ */
+export const dexSwap = async (swapInput: SwapInput, options?: RequestInit): Promise<SwapResult> => {
+
+  return customFetch<SwapResult>(getDexSwapUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(swapInput)
+  }
+);}
+
+
+
+
+export const getDexSwapMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof dexSwap>>, TError,{data: BodyType<SwapInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof dexSwap>>, TError,{data: BodyType<SwapInput>}, TContext> => {
+
+const mutationKey = ['dexSwap'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof dexSwap>>, {data: BodyType<SwapInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  dexSwap(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DexSwapMutationResult = NonNullable<Awaited<ReturnType<typeof dexSwap>>>
+    export type DexSwapMutationBody = BodyType<SwapInput>
+    export type DexSwapMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Execute a token swap against a pool
+ */
+export const useDexSwap = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof dexSwap>>, TError,{data: BodyType<SwapInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof dexSwap>>,
+        TError,
+        {data: BodyType<SwapInput>},
+        TContext
+      > => {
+      return useMutation(getDexSwapMutationOptions(options));
+    }
+
+export const getAddLiquidityUrl = () => {
+
+
+
+
+  return `/api/dex/liquidity/add`
+}
+
+/**
+ * @summary Provide liquidity to a pool
+ */
+export const addLiquidity = async (addLiquidityInput: AddLiquidityInput, options?: RequestInit): Promise<AddLiquidityResult> => {
+
+  return customFetch<AddLiquidityResult>(getAddLiquidityUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(addLiquidityInput)
+  }
+);}
+
+
+
+
+export const getAddLiquidityMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addLiquidity>>, TError,{data: BodyType<AddLiquidityInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addLiquidity>>, TError,{data: BodyType<AddLiquidityInput>}, TContext> => {
+
+const mutationKey = ['addLiquidity'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addLiquidity>>, {data: BodyType<AddLiquidityInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  addLiquidity(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddLiquidityMutationResult = NonNullable<Awaited<ReturnType<typeof addLiquidity>>>
+    export type AddLiquidityMutationBody = BodyType<AddLiquidityInput>
+    export type AddLiquidityMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Provide liquidity to a pool
+ */
+export const useAddLiquidity = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addLiquidity>>, TError,{data: BodyType<AddLiquidityInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addLiquidity>>,
+        TError,
+        {data: BodyType<AddLiquidityInput>},
+        TContext
+      > => {
+      return useMutation(getAddLiquidityMutationOptions(options));
+    }
+
+export const getListDexSwapsUrl = (params?: ListDexSwapsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/dex/swaps?${stringifiedParams}` : `/api/dex/swaps`
+}
+
+/**
+ * @summary Recent swap history (latest first)
+ */
+export const listDexSwaps = async (params?: ListDexSwapsParams, options?: RequestInit): Promise<SwapHistory> => {
+
+  return customFetch<SwapHistory>(getListDexSwapsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListDexSwapsQueryKey = (params?: ListDexSwapsParams,) => {
+    return [
+    `/api/dex/swaps`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListDexSwapsQueryOptions = <TData = Awaited<ReturnType<typeof listDexSwaps>>, TError = ErrorType<unknown>>(params?: ListDexSwapsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDexSwaps>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDexSwapsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDexSwaps>>> = ({ signal }) => listDexSwaps(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDexSwaps>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListDexSwapsQueryResult = NonNullable<Awaited<ReturnType<typeof listDexSwaps>>>
+export type ListDexSwapsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Recent swap history (latest first)
+ */
+
+export function useListDexSwaps<TData = Awaited<ReturnType<typeof listDexSwaps>>, TError = ErrorType<unknown>>(
+ params?: ListDexSwapsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDexSwaps>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListDexSwapsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetDexPositionsUrl = (provider: string,) => {
+
+
+
+
+  return `/api/dex/positions/${provider}`
+}
+
+/**
+ * @summary Get all liquidity positions for a provider address
+ */
+export const getDexPositions = async (provider: string, options?: RequestInit): Promise<ProviderPositions> => {
+
+  return customFetch<ProviderPositions>(getGetDexPositionsUrl(provider),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDexPositionsQueryKey = (provider: string,) => {
+    return [
+    `/api/dex/positions/${provider}`
+    ] as const;
+    }
+
+
+export const getGetDexPositionsQueryOptions = <TData = Awaited<ReturnType<typeof getDexPositions>>, TError = ErrorType<unknown>>(provider: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDexPositions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDexPositionsQueryKey(provider);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDexPositions>>> = ({ signal }) => getDexPositions(provider, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: provider !== null && provider !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDexPositions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDexPositionsQueryResult = NonNullable<Awaited<ReturnType<typeof getDexPositions>>>
+export type GetDexPositionsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get all liquidity positions for a provider address
+ */
+
+export function useGetDexPositions<TData = Awaited<ReturnType<typeof getDexPositions>>, TError = ErrorType<unknown>>(
+ provider: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDexPositions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDexPositionsQueryOptions(provider,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetDexQuoteUrl = (params: GetDexQuoteParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/dex/quote?${stringifiedParams}` : `/api/dex/quote`
+}
+
+/**
+ * @summary Get a swap quote without executing the trade
+ */
+export const getDexQuote = async (params: GetDexQuoteParams, options?: RequestInit): Promise<SwapQuote> => {
+
+  return customFetch<SwapQuote>(getGetDexQuoteUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDexQuoteQueryKey = (params?: GetDexQuoteParams,) => {
+    return [
+    `/api/dex/quote`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetDexQuoteQueryOptions = <TData = Awaited<ReturnType<typeof getDexQuote>>, TError = ErrorType<ApiError>>(params: GetDexQuoteParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDexQuote>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDexQuoteQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDexQuote>>> = ({ signal }) => getDexQuote(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDexQuote>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDexQuoteQueryResult = NonNullable<Awaited<ReturnType<typeof getDexQuote>>>
+export type GetDexQuoteQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Get a swap quote without executing the trade
+ */
+
+export function useGetDexQuote<TData = Awaited<ReturnType<typeof getDexQuote>>, TError = ErrorType<ApiError>>(
+ params: GetDexQuoteParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDexQuote>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDexQuoteQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

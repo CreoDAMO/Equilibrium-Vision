@@ -348,8 +348,174 @@ export interface FaucetStatus {
   dripAmount: number;
 }
 
+export interface StakeRecord {
+  delegator: string;
+  validator: string;
+  amount: number;
+  startHeight: number;
+  startTimestamp: number;
+  rewardsEarned: number;
+  unbonding: boolean;
+}
+
+export interface UnbondingEntry {
+  delegator: string;
+  validator: string;
+  amount: number;
+  completionHeight: number;
+}
+
+export interface StakePositions {
+  delegator: string;
+  totalStaked: number;
+  totalUnbonding: number;
+  positions: StakeRecord[];
+  unbonding: UnbondingEntry[];
+}
+
+export interface StakeInput {
+  delegator: string;
+  validator: string;
+  amount: number;
+}
+
+export interface StakeResult {
+  success: boolean;
+  delegator: string;
+  validator: string;
+  amount: number;
+  effectiveHeight: number;
+}
+
+export interface UnstakeInput {
+  delegator: string;
+  validator: string;
+  amount: number;
+}
+
+export interface UnstakeResult {
+  success: boolean;
+  delegator: string;
+  validator: string;
+  amount: number;
+  unbondingPeriod: number;
+  completionHeight: number;
+}
+
+export interface StakingSummary {
+  totalBondedStake: number;
+  totalDelegated: number;
+  totalUnbonding: number;
+  validatorCount: number;
+  unbondingPeriodBlocks: number;
+  activeStakers: number;
+}
+
+export interface DexPool {
+  id: string;
+  tokenA: string;
+  tokenB: string;
+  reserveA: number;
+  reserveB: number;
+  totalLiquidity: number;
+  fee: number;
+  price: number;
+  tvl: number;
+}
+
+export interface LiquidityPosition {
+  poolId: string;
+  provider: string;
+  liquidity: number;
+  sharePercent: number;
+}
+
+export interface DexPoolList {
+  count: number;
+  pools: DexPool[];
+}
+
+export type DexPoolDetail = DexPool & {
+  positions: LiquidityPosition[];
+};
+
+export interface SwapInput {
+  poolId: string;
+  trader: string;
+  tokenIn: string;
+  amountIn: number;
+}
+
+export interface SwapResult {
+  success: boolean;
+  poolId: string;
+  trader: string;
+  tokenIn: string;
+  amountIn: number;
+  amountOut: number;
+  fee: number;
+}
+
+export interface AddLiquidityInput {
+  poolId: string;
+  provider: string;
+  amountA: number;
+  amountB: number;
+}
+
+export interface AddLiquidityResult {
+  success: boolean;
+  poolId: string;
+  provider: string;
+  amountA: number;
+  amountB: number;
+  liquidity: number;
+}
+
+export interface SwapEvent {
+  poolId: string;
+  trader: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: number;
+  amountOut: number;
+  fee: number;
+  timestamp: number;
+}
+
+export interface SwapHistory {
+  count: number;
+  swaps: SwapEvent[];
+}
+
+export interface ProviderPositions {
+  provider: string;
+  positions: LiquidityPosition[];
+}
+
+export interface SwapQuote {
+  poolId: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: number;
+  amountOut: number;
+  fee: number;
+  priceImpact: string;
+  rate: number;
+}
+
 export type ListBlocksParams = {
 page?: number;
 limit?: number;
+};
+
+export type ListDexSwapsParams = {
+limit?: number;
+};
+
+export type GetDexQuoteParams = {
+poolId: string;
+tokenIn: string;
+amountIn: string;
 };
 
