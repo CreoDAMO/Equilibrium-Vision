@@ -1,0 +1,123 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# android-apk-ci.yml — Build & sign the Equilibrium mobile miner APK.
+#
+# This file lives at the repo root because it was authored from Replit, where
+# pushing directly into `.github/workflows/` isn't available. Copy this file
+# to `.github/workflows/android-apk.yml` in your GitHub repo to activate it.
+#
+# What it does:
+#   1. Cross-compiles the Rust core (equilibrium/) for Android via cargo-ndk
+#      (arm64-v8a, armeabi-v7a, x86_64) and drops the .so files into
+#      equilibrium/mobile/android/app/src/main/jniLibs/.
+#   2. Builds the Kotlin/Gradle app and produces a signed release APK.
+#   3. Uploads the APK as a workflow artifact, and — on a `v*` tag push —
+#      attaches it to a GitHub Release for easy sideload distribution to
+#      trusted contributors.
+#
+# Required GitHub Secrets (Settings → Secrets and variables → Actions):
+#   ANDROID_KEYSTORE_BASE64    — base64-encoded .p12 keystore
+#                                 (see scripts/generate-android-keystore.sh)
+#   ANDROID_KEYSTORE_PASSWORD  — keystore password
+#   ANDROID_KEY_ALIAS          — key alias inside the keystore
+#   ANDROID_KEY_PASSWORD       — password for that key
+#
+# Trigger:
+#   - Manually via workflow_dispatch (Actions tab → Run workflow)
+#   - Automatically on pushing a tag like `mobile-v0.1.0`
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "mobile-v*"
+
+jobs:
+  build-apk:
+    name: Build signed release APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: equilibrium
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Rust toolchain + Android targets ────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: equilibrium -> target
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      # ── Android SDK / NDK ────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager --install "ndk;26.3.11579264"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/26.3.11579264" >> "$GITHUB_ENV"
+
+      # ── wabt (used to compile the on-chain multisig WAT contract that
+      #    ships with the node/wallet flows the miner app talks to) ────────
+      - name: Install wabt
+        run: sudo apt-get update && sudo apt-get install -y wabt
+
+      # ── Cross-compile Rust core → .so files under app/src/main/jniLibs ──
+      - name: Build JNI libraries (cargo-ndk)
+        working-directory: equilibrium/mobile/android
+        run: ./build-jni.sh release
+
+      # ── Decode signing keystore from secrets ────────────────────────────
+      - name: Decode release keystore
+        working-directory: equilibrium/mobile/android
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > app/release-keystore.p12
+
+      # ── Gradle build ─────────────────────────────────────────────────────
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build signed release APK
+        working-directory: equilibrium/mobile/android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/equilibrium/mobile/android/app/release-keystore.p12
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Clean up keystore from disk
+        if: always()
+        working-directory: equilibrium/mobile/android
+        run: rm -f app/release-keystore.p12
+
+      # ── Publish the APK ──────────────────────────────────────────────────
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: equilibrium-miner-release-apk
+          path: equilibrium/mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 90
+
+      - name: Attach APK to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/mobile-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: equilibrium/mobile/android/app/build/outputs/apk/release/app-release.apk
+          generate_release_notes: true

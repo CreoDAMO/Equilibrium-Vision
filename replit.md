@@ -120,3 +120,4 @@ _Populate as you build — explicit user instructions worth remembering across s
 - See `docs/zk-circuit.md` for the Groth16 circuit spec and `fpEncode`/`blockHashToFields` encoding rules
 - See `docs/incentive-model.md` for the miner incentive analysis
 - See `docs/grafana/README.md` for Prometheus + Grafana dashboard setup (chain overview, validators/staking, Stratum pool)
+- See `docs/mobile-apk-release.md` for the Android sideload APK release process (signing, CI, distribution) — iOS store release is deliberately out of scope for now
