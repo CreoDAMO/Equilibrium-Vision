@@ -1,5 +1,5 @@
 import React from "react";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ErrorBoundary, withErrorBoundary } from "@/components/ErrorBoundary";
 import { Switch, Route, Router } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -42,38 +42,60 @@ const queryClient = new QueryClient({
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+// Each page component is wrapped so a crash in one route shows an inline
+// fallback while the nav bar (and every other route) stays fully functional.
+const SafeDashboard      = withErrorBoundary(Dashboard);
+const SafeBlocks         = withErrorBoundary(Blocks);
+const SafeBlockDetail    = withErrorBoundary(BlockDetail);
+const SafeTxDetail       = withErrorBoundary(TxDetail);
+const SafeAddressDetail  = withErrorBoundary(AddressDetail);
+const SafeMempool        = withErrorBoundary(MempoolPage);
+const SafeNetwork        = withErrorBoundary(NetworkPage);
+const SafeValidators     = withErrorBoundary(Validators);
+const SafeValidatorDetail = withErrorBoundary(ValidatorDetail);
+const SafeGovernance     = withErrorBoundary(GovernancePage);
+const SafeFaucet         = withErrorBoundary(FaucetPage);
+const SafeWalletHome     = withErrorBoundary(WalletHome);
+const SafeWalletCreate   = withErrorBoundary(WalletCreate);
+const SafeWalletImport   = withErrorBoundary(WalletImport);
+const SafeWalletSend     = withErrorBoundary(WalletSend);
+const SafeWalletMultisig = withErrorBoundary(WalletMultisig);
+const SafeSearch         = withErrorBoundary(SearchPage);
+const SafeStaking        = withErrorBoundary(StakingPage);
+const SafeDex            = withErrorBoundary(DexPage);
+const SafeContracts      = withErrorBoundary(ContractsPage);
+const SafeContractDetail = withErrorBoundary(ContractDetail);
+const SafeAdminMultisig  = withErrorBoundary(AdminMultisig);
+
 function AppRouter() {
-  // Open a single WebSocket connection for the whole app; invalidates React
-  // Query caches on new_block / mempool_update events so all pages update
-  // instantly without waiting for the next poll interval.
   useChainWebSocket();
 
   return (
     <Router base={base}>
       <Layout>
         <Switch>
-          <Route path="/" component={Dashboard} />
-          <Route path="/blocks" component={Blocks} />
-          <Route path="/blocks/:hashOrHeight" component={BlockDetail} />
-          <Route path="/tx/:hash" component={TxDetail} />
-          <Route path="/address/:addr" component={AddressDetail} />
-          <Route path="/mempool" component={MempoolPage} />
-          <Route path="/network" component={NetworkPage} />
-          <Route path="/validators" component={Validators} />
-          <Route path="/validators/:addr" component={ValidatorDetail} />
-          <Route path="/governance" component={GovernancePage} />
-          <Route path="/faucet" component={FaucetPage} />
-          <Route path="/wallet" component={WalletHome} />
-          <Route path="/wallet/create" component={WalletCreate} />
-          <Route path="/wallet/import" component={WalletImport} />
-          <Route path="/wallet/send" component={WalletSend} />
-          <Route path="/wallet/multisig" component={WalletMultisig} />
-          <Route path="/search/:query" component={SearchPage} />
-          <Route path="/staking" component={StakingPage} />
-          <Route path="/dex" component={DexPage} />
-          <Route path="/contracts" component={ContractsPage} />
-          <Route path="/contracts/:address" component={ContractDetail} />
-          <Route path="/admin/multisig" component={AdminMultisig} />
+          <Route path="/"                    component={SafeDashboard} />
+          <Route path="/blocks"              component={SafeBlocks} />
+          <Route path="/blocks/:hashOrHeight" component={SafeBlockDetail} />
+          <Route path="/tx/:hash"            component={SafeTxDetail} />
+          <Route path="/address/:addr"       component={SafeAddressDetail} />
+          <Route path="/mempool"             component={SafeMempool} />
+          <Route path="/network"             component={SafeNetwork} />
+          <Route path="/validators"          component={SafeValidators} />
+          <Route path="/validators/:addr"    component={SafeValidatorDetail} />
+          <Route path="/governance"          component={SafeGovernance} />
+          <Route path="/faucet"              component={SafeFaucet} />
+          <Route path="/wallet"              component={SafeWalletHome} />
+          <Route path="/wallet/create"       component={SafeWalletCreate} />
+          <Route path="/wallet/import"       component={SafeWalletImport} />
+          <Route path="/wallet/send"         component={SafeWalletSend} />
+          <Route path="/wallet/multisig"     component={SafeWalletMultisig} />
+          <Route path="/search/:query"       component={SafeSearch} />
+          <Route path="/staking"             component={SafeStaking} />
+          <Route path="/dex"                 component={SafeDex} />
+          <Route path="/contracts"           component={SafeContracts} />
+          <Route path="/contracts/:address"  component={SafeContractDetail} />
+          <Route path="/admin/multisig"      component={SafeAdminMultisig} />
           <Route component={NotFound} />
         </Switch>
       </Layout>
