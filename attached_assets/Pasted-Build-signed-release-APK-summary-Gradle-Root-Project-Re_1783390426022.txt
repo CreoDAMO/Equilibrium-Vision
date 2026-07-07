@@ -1,0 +1,110 @@
+Build signed release APK summary
+Gradle Root Project	Requested Tasks	Gradle Version	Build Outcome	Build Scan®
+EquilibriumMiner	:app:assembleRelease	8.13	✅	Build Scan not published
+Caching for Gradle actions was enabled - expand for details
+Cache was enabled. Action attempted to both restore and save the Gradle User Home.
+Cache cleanup was enabled. Stale files in Gradle User Home were purged before saving to the cache.
+Count	Total Size (Mb)	Total Time (ms)
+Entries Restored	8	542	20394
+Entries Saved	0	0	0
+Cache Entry Details
+    Entry: Gradle User Home
+    Requested Key : gradle-home-v1|Linux-X64|build-apk[950eaec8589fb4acbb839cd2eb2eeef7]-988047e9a1cdf73077f3beab0d6c40a743b3c58a
+    Restored  Key : gradle-home-v1|Linux-X64|build-apk[950eaec8589fb4acbb839cd2eb2eeef7]-988047e9a1cdf73077f3beab0d6c40a743b3c58a
+              Size: 2 MB (2195830 B)
+              Time: 1920 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: cache key not changed)
+---
+Entry: /home/runner/.gradle/caches/8.13/generated-gradle-jars/gradle-api-8.13.jar
+    Requested Key : gradle-generated-gradle-jars-v1-697f81ec8d80712ce7da03f513960371
+    Restored  Key : gradle-generated-gradle-jars-v1-697f81ec8d80712ce7da03f513960371
+              Size: 39 MB (40868770 B)
+              Time: 2522 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: referencing 'Gradle User Home' cache entry not saved)
+---
+Entry: /home/runner/.gradle/wrapper/dists/gradle-8.13-bin/5xuhj0ry160q40clulazy9h7d
+    Requested Key : gradle-wrapper-zips-v1-2404ef08b03d28a6a12a9811a47b570f
+    Restored  Key : gradle-wrapper-zips-v1-2404ef08b03d28a6a12a9811a47b570f
+              Size: 130 MB (136296284 B)
+              Time: 3712 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: referencing 'Gradle User Home' cache entry not saved)
+---
+Entry: /home/runner/.gradle/caches/modules-*/files-*/*/*/*/*
+    Requested Key : gradle-dependencies-v1-f1424a150fd45d9afcf11e7deea5ca22
+    Restored  Key : gradle-dependencies-v1-f1424a150fd45d9afcf11e7deea5ca22
+              Size: 282 MB (295807668 B)
+              Time: 5392 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: referencing 'Gradle User Home' cache entry not saved)
+---
+Entry: /home/runner/.gradle/caches/jars-*/*/
+    Requested Key : gradle-instrumented-jars-v1-e251649dc1c1146b518deebc9ff7d936
+    Restored  Key : gradle-instrumented-jars-v1-e251649dc1c1146b518deebc9ff7d936
+              Size: 0 MB (121858 B)
+              Time: 994 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: referencing 'Gradle User Home' cache entry not saved)
+---
+Entry: /home/runner/.gradle/caches/*/kotlin-dsl/accessors/*/
+/home/runner/.gradle/caches/*/kotlin-dsl/scripts/*/
+    Requested Key : gradle-kotlin-dsl-v1-1971f0a12ffdb172ccd00bf3294d8ead
+    Restored  Key : gradle-kotlin-dsl-v1-1971f0a12ffdb172ccd00bf3294d8ead
+              Size: 0 MB (117687 B)
+              Time: 1067 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: referencing 'Gradle User Home' cache entry not saved)
+---
+Entry: /home/runner/.gradle/caches/*/groovy-dsl/*/
+    Requested Key : gradle-groovy-dsl-v1-1f83eca549d5b1a540e98cb589230133
+    Restored  Key : gradle-groovy-dsl-v1-1f83eca549d5b1a540e98cb589230133
+              Size: 0 MB (189699 B)
+              Time: 918 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: referencing 'Gradle User Home' cache entry not saved)
+---
+Entry: /home/runner/.gradle/caches/transforms-4/*/
+/home/runner/.gradle/caches/*/transforms/*/
+    Requested Key : gradle-transforms-v1-22adb8807d86fb6c971e87898bd5b092
+    Restored  Key : gradle-transforms-v1-22adb8807d86fb6c971e87898bd5b092
+              Size: 89 MB (92943326 B)
+              Time: 3869 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: referencing 'Gradle User Home' cache entry not saved)
+Job summary generated at run-time
+Annotations
+1 warning
+Build signed release APK
+Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-java@v4, actions/upload-artifact@v4, android-actions/setup-android@v3, gradle/actions/setup-gradle@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Artifacts
+Produced during runtime
+Name	Size	Digest	
+equilibrium-miner-release-apk
+2.49 MB	
+sha256:5153c4b326cfa6d3932c204fd8456b8e285777ae35943b39b53e1bb82404cb33

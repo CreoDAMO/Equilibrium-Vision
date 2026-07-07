@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docs/grafana/docker-compose.yml — One-command Prometheus + Grafana stack
+# wired to a live Equilibrium API server.
+#
+# Before running:
+#   Edit prometheus.yml in this directory and set the `targets` host to your
+#   running Equilibrium API. Then:
+#
+#   cd docs/grafana
+#   docker compose up -d
+#
+# Open:
+#   Grafana    → http://localhost:3000  (admin / admin — change on first login)
+#   Prometheus → http://localhost:9090
+#
+# Dashboards and the Prometheus data source are auto-provisioned — nothing
+# needs to be imported or configured manually. Grafana opens directly to the
+# Chain Overview dashboard.
+#
+# Custom Grafana password:
+#   GRAFANA_PASSWORD=mysecret docker compose up -d
+#
+# Stop (preserves data volumes):
+#   docker compose down
+#
+# Stop and wipe all stored metrics:
+#   docker compose down -v
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: equilibrium-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: equilibrium-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/dashboard-chain-overview.json
+    volumes:
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboard-chain-overview.json:/var/lib/grafana/dashboards/dashboard-chain-overview.json:ro
+      - ./dashboard-validators-staking.json:/var/lib/grafana/dashboards/dashboard-validators-staking.json:ro
+      - ./dashboard-stratum-pool.json:/var/lib/grafana/dashboards/dashboard-stratum-pool.json:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  grafana_data:

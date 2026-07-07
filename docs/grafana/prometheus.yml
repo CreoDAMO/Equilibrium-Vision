@@ -1,16 +1,35 @@
+# Prometheus scrape configuration for Equilibrium.
+#
+# Edit the `targets` value below to point at your running API server before
+# running `docker compose up`. The default points at the Replit dev URL.
+#
+# Common values:
+#   Replit dev URL  → 25fb2711-ecec-47c2-9e7d-98c664e2ac11-00-278xft39m2fl1.janeway.replit.dev  (scheme: https)
+#   Deployed app    → your-deployment.replit.app   (scheme: https)
+#   Local machine   → host.docker.internal:8080     (scheme: http)
+#
+# To reload after changing targets without restarting Prometheus:
+#   curl -X POST http://localhost:9090/-/reload
+#
+# Targets:
+#   /metrics         — chain, validators, staking, DEX, peers, mempool
+#   /metrics/stratum — Stratum mining-pool connections and rejection counters
+
 scrape_configs:
   - job_name: equilibrium_api_server
     metrics_path: /metrics
     scrape_interval: 15s
+    scheme: https
     static_configs:
-      - targets: ["localhost:8080"]
+      - targets: ["25fb2711-ecec-47c2-9e7d-98c664e2ac11-00-278xft39m2fl1.janeway.replit.dev"]
         labels:
           service: equilibrium-api-server
 
   - job_name: equilibrium_stratum
     metrics_path: /metrics/stratum
     scrape_interval: 15s
+    scheme: https
     static_configs:
-      - targets: ["localhost:8080"]
+      - targets: ["25fb2711-ecec-47c2-9e7d-98c664e2ac11-00-278xft39m2fl1.janeway.replit.dev"]
         labels:
           service: equilibrium-stratum
