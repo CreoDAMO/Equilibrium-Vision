@@ -33,4 +33,15 @@ router.get("/network/peers", (_req, res) => {
   res.json(chainState.peers);
 });
 
+/** GET /api/config — static server configuration readable by the explorer UI */
+router.get("/config", (_req, res) => {
+  const networkName = process.env["NETWORK_NAME"] ?? "Testnet";
+  const stratumPort = Number(process.env["STRATUM_PORT"] ?? 0);
+  res.json({
+    networkName,
+    stratumPort,
+    stratumEnabled: stratumPort > 0,
+  });
+});
+
 export default router;
