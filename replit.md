@@ -40,7 +40,7 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 
 | # | Item | File |
 |---|------|------|
-| 1 | **Stratum proof validation** — `onSubmit` accepts any nonce without checking residual meets difficulty. Add the same `validateResidual` check used in `POST /api/blocks/submit`. | `artifacts/api-server/src/lib/stratum-server.ts` |
+| 1 | ~~**Stratum proof validation**~~ — ✅ Done. `onSubmit` validates: finite positive residual, residual < `RESIDUAL_THRESHOLD` (1e-7), ntime drift ≤ 2 h, 40-char hex miner address, duplicate-share detection, per-IP rate limit — all before block assembly. Matches the HTTP `/blocks/submit` threshold exactly. | `artifacts/api-server/src/lib/stratum-server.ts` |
 | 2 | ~~**CORS lockdown**~~ — ✅ Done. `ALLOWED_ORIGINS` env var (comma-separated valid http/https URLs). Unrecognised origins → 403. Server-to-server (no Origin header) always allowed. `credentials: true` only when ≥1 origin is configured. | `artifacts/api-server/src/app.ts` |
 | 3 | ~~**Global API rate limiting**~~ — ✅ Done. `express-rate-limit`: read tier 300 req/min, write tier 20 req/min (auto-skips GET/HEAD/OPTIONS). | `artifacts/api-server/src/app.ts` |
 | 4 | ~~**`contracts.deployer` DB index**~~ — ✅ Done. Both `contracts_deployer_idx` (btree on deployer) and `contracts_deployed_at_idx` (btree on deployed_at) added and pushed to DB. Route also supports `?deployer=` filter + newest-first sort. | `lib/db/src/schema/contracts.ts` |
@@ -169,10 +169,10 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 | 21 | Android APK CI (signed, sideload, in-app update check) | ✅ Done — `android-apk-ci.yml` |
 | 22 | Postgres cold-start fix (Replit env var injection) | ✅ Done |
 | 23 | Android keystore OpenSSL 3.x compatibility | ✅ Done |
-| 24 | Stratum proof validation (residual check in onSubmit) | ⏳ Replit |
+| 24 | Stratum proof validation (residual check in onSubmit) | ✅ Done |
 | 25 | CORS lockdown (`ALLOWED_ORIGINS` env var) | ✅ Done |
 | 26 | Global API rate limiting (read + write tiers) | ✅ Done |
-| 27 | `contracts.deployer` DB index | ⏳ Replit |
+| 27 | `contracts.deployer` DB index | ✅ Done |
 | 28 | Multi-region nodes, HA Postgres, security audit | ⏳ External |
 | 29 | Operator docs, iOS release | ⏳ External |
 
