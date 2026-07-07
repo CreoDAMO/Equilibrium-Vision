@@ -220,6 +220,51 @@ router.get("/validators/:addr/fees", (req, res) => {
   });
 });
 
+// ── Earnings aggregate ───────────────────────────────────────────────────────
+//
+// GET /api/validators/:addr/earnings
+//
+// Lightweight aggregate (no per-block history array) summing coinbase rewards
+// + account-model tx fees + swept UTXO fees for every block this validator
+// has mined. Designed for summary cards / dashboards; use /fees for the full
+// per-block time series.
+router.get("/validators/:addr/earnings", (req, res) => {
+  const addr = req.params["addr"]!;
+  const v = chainState.validators.get(addr);
+  if (!v) {
+    res.status(404).json({ error: "Validator not found" });
+    return;
+  }
+
+  const minedBlocks = chainState.blocks.filter(b => b.miner === addr);
+
+  let totalCoinbaseRewards = 0;
+  let totalAccountFees = 0;
+  let totalUtxoFees = 0;
+
+  for (const block of minedBlocks) {
+    totalCoinbaseRewards += block.coinbaseReward;
+    totalAccountFees += block.transactions
+      .filter(tx => tx.fee > 0)
+      .reduce((sum, tx) => sum + tx.fee, 0);
+    const utxoFeeTxHash = hash256(`utxo-fees-${block.height}-${block.hash}`);
+    totalUtxoFees += chainState.utxoSet.get(utxoFeeTxHash, 0)?.amount ?? 0;
+  }
+
+  const totalFees = totalAccountFees + totalUtxoFees;
+
+  res.json({
+    validatorAddress: addr,
+    blocksMined: minedBlocks.length,
+    totalCoinbaseRewards,
+    totalAccountFees,
+    totalUtxoFees,
+    totalFees,
+    totalEarnings: totalCoinbaseRewards + totalFees,
+    avgFeePerBlock: minedBlocks.length > 0 ? totalFees / minedBlocks.length : 0,
+  });
+});
+
 router.get("/validators/:addr/delegators", (req, res) => {
   const addr = req.params["addr"]!;
   const v = chainState.validators.get(addr);

@@ -365,6 +365,25 @@ export const GetValidatorFeesResponse = zod.object({
 
 
 /**
+ * @summary Aggregate earnings summary for a validator (coinbase rewards + fee sweeps, no per-block history)
+ */
+export const GetValidatorEarningsParams = zod.object({
+  "addr": zod.coerce.string()
+})
+
+export const GetValidatorEarningsResponse = zod.object({
+  "validatorAddress": zod.string(),
+  "blocksMined": zod.number(),
+  "totalCoinbaseRewards": zod.number(),
+  "totalAccountFees": zod.number(),
+  "totalUtxoFees": zod.number(),
+  "totalFees": zod.number(),
+  "totalEarnings": zod.number(),
+  "avgFeePerBlock": zod.number()
+})
+
+
+/**
  * @summary Slash a validator. Requires multisig proposal approval when admin multisig is configured, otherwise falls back to the ADMIN_KEY header.
  */
 export const SlashValidatorParams = zod.object({

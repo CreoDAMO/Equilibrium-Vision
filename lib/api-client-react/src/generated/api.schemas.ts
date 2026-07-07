@@ -208,6 +208,17 @@ export interface DelegatorsResponse {
   delegators: Delegator[];
 }
 
+export interface ValidatorEarnings {
+  validatorAddress: string;
+  blocksMined: number;
+  totalCoinbaseRewards: number;
+  totalAccountFees: number;
+  totalUtxoFees: number;
+  totalFees: number;
+  totalEarnings: number;
+  avgFeePerBlock: number;
+}
+
 export type ValidatorFeesHistoryItem = {
   height: number;
   hash: string;

@@ -70,6 +70,7 @@ import type {
   UnstakeInput,
   UnstakeResult,
   ValidatorDetail,
+  ValidatorEarnings,
   ValidatorFees,
   ValidatorList,
   VoteInput,
@@ -1246,6 +1247,83 @@ export function useGetValidatorFees<TData = Awaited<ReturnType<typeof getValidat
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetValidatorFeesQueryOptions(addr,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetValidatorEarningsUrl = (addr: string,) => {
+
+
+
+
+  return `/api/validators/${addr}/earnings`
+}
+
+/**
+ * @summary Aggregate earnings summary for a validator (coinbase rewards + fee sweeps, no per-block history)
+ */
+export const getValidatorEarnings = async (addr: string, options?: RequestInit): Promise<ValidatorEarnings> => {
+
+  return customFetch<ValidatorEarnings>(getGetValidatorEarningsUrl(addr),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetValidatorEarningsQueryKey = (addr: string,) => {
+    return [
+    `/api/validators/${addr}/earnings`
+    ] as const;
+    }
+
+
+export const getGetValidatorEarningsQueryOptions = <TData = Awaited<ReturnType<typeof getValidatorEarnings>>, TError = ErrorType<ApiError>>(addr: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getValidatorEarnings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetValidatorEarningsQueryKey(addr);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getValidatorEarnings>>> = ({ signal }) => getValidatorEarnings(addr, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: addr !== null && addr !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getValidatorEarnings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetValidatorEarningsQueryResult = NonNullable<Awaited<ReturnType<typeof getValidatorEarnings>>>
+export type GetValidatorEarningsQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Aggregate earnings summary for a validator (coinbase rewards + fee sweeps, no per-block history)
+ */
+
+export function useGetValidatorEarnings<TData = Awaited<ReturnType<typeof getValidatorEarnings>>, TError = ErrorType<ApiError>>(
+ addr: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getValidatorEarnings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetValidatorEarningsQueryOptions(addr,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

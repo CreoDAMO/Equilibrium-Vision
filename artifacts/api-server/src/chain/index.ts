@@ -10,12 +10,11 @@ import { broadcast } from "../lib/ws-server.js";
 import { loadBlocksFromDb, persistBlock, persistBlocks } from "./persistence.js";
 import { deployAdminMultisigIfConfigured } from "./multisig.js";
 
-// Node's own mining address. This intentionally matches the seeded
-// "equilibrium-miner-1" validator (see seedValidators() in state.ts) so that
-// live block production credits a registered validator and its rewards flow
-// through the coinomics staking split (validator commission + delegator
-// payouts) instead of bypassing it.
-export const minerAddress = addressFromSeed("equilibrium-miner-1");
+// Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
+// address, but overridden by initChain() to the first genesis.json validator
+// when a genesis doc is present — so live block production credits a
+// registered validator and fee earnings appear in the Explorer.
+export let minerAddress = addressFromSeed("equilibrium-miner-1");
 
 // chainState is assigned by initChain() before the server starts listening.
 // Exported as `let` so tests and routes import a single stable reference.
@@ -109,6 +108,14 @@ export async function initChain(): Promise<void> {
     // state matches the original genesis document rather than dev seed data.
     const genesisDocForRestore = loadGenesisDoc();
     if (genesisDocForRestore) {
+      // Use the first genesis validator as the local miner so that blocks
+      // produced by this node are attributed to a registered validator and
+      // the Fee Earnings tab in the Explorer shows real data.
+      const firstGenesisValidator = genesisDocForRestore.initial_validators[0];
+      if (firstGenesisValidator) {
+        minerAddress = firstGenesisValidator.address;
+        logger.info({ minerAddress }, "Mining as first genesis validator");
+      }
       chainState = buildDocChainFromBlocks(genesisDocForRestore, dbBlocks);
       logger.info({ height: chainState.height, chainId: genesisDocForRestore.chain_id }, "Chain restored from doc genesis");
     } else {
@@ -119,6 +126,11 @@ export async function initChain(): Promise<void> {
     const genesisDoc = loadGenesisDoc();
     if (genesisDoc) {
       logger.info({ chainId: genesisDoc.chain_id }, "Building genesis chain from genesis.json");
+      const firstGenesisValidator = genesisDoc.initial_validators[0];
+      if (firstGenesisValidator) {
+        minerAddress = firstGenesisValidator.address;
+        logger.info({ minerAddress }, "Mining as first genesis validator");
+      }
       chainState = buildGenesisChainFromDoc(genesisDoc);
     } else {
       logger.info("Building dev genesis chain (no genesis.json found)");

@@ -226,7 +226,25 @@ export default function ValidatorDetail() {
 
         <TabsContent value="fees" className="space-y-6">
           {feesLoading && (
-            <div className="p-8 text-center text-muted-foreground">Loading fee earnings...</div>
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {[...Array(4)].map((_, i) => (
+                  <Card key={i}>
+                    <CardHeader className="pb-2">
+                      <div className="h-4 w-28 bg-muted rounded animate-pulse" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-8 w-32 bg-muted rounded animate-pulse mb-1" />
+                      <div className="h-3 w-24 bg-muted rounded animate-pulse mt-2" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              <Card>
+                <CardHeader><div className="h-5 w-40 bg-muted rounded animate-pulse" /></CardHeader>
+                <CardContent><div className="h-64 bg-muted/40 rounded animate-pulse" /></CardContent>
+              </Card>
+            </div>
           )}
           {!feesLoading && feesData && (
             <>

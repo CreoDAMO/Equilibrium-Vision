@@ -338,6 +338,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
 
+  /validators/{addr}/earnings:
+    get:
+      operationId: getValidatorEarnings
+      tags: [validators]
+      summary: Aggregate earnings summary for a validator (coinbase rewards + fee sweeps, no per-block history)
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Aggregate earnings summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidatorEarnings"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /validators/{addr}/slash:
     post:
       operationId: slashValidator
@@ -1353,6 +1378,35 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Delegator"
+
+    ValidatorEarnings:
+      type: object
+      required:
+        - validatorAddress
+        - blocksMined
+        - totalCoinbaseRewards
+        - totalAccountFees
+        - totalUtxoFees
+        - totalFees
+        - totalEarnings
+        - avgFeePerBlock
+      properties:
+        validatorAddress:
+          type: string
+        blocksMined:
+          type: integer
+        totalCoinbaseRewards:
+          type: number
+        totalAccountFees:
+          type: number
+        totalUtxoFees:
+          type: number
+        totalFees:
+          type: number
+        totalEarnings:
+          type: number
+        avgFeePerBlock:
+          type: number
 
     ValidatorFees:
       type: object
