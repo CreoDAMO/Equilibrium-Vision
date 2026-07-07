@@ -5,9 +5,25 @@ import { COUNTER_CONTRACT_WAT, ADDER_CONTRACT_WAT } from "../chain/wasm.js";
 const router = Router();
 
 // GET /api/contracts — list all deployed contracts
-router.get("/contracts", (_req, res) => {
+// Query params:
+//   deployer  — 40-char hex address; filters to contracts by that deployer
+//               (uses contracts_deployer_idx in DB; O(n) filter in-memory)
+router.get("/contracts", (req, res) => {
   const cs = chainState;
-  const contracts = cs.wasmVM.listContracts().map(c => ({
+  const deployerFilter = typeof req.query["deployer"] === "string"
+    ? req.query["deployer"].trim().toLowerCase()
+    : null;
+
+  let list = cs.wasmVM.listContracts();
+
+  if (deployerFilter) {
+    list = list.filter(c => c.deployer === deployerFilter);
+  }
+
+  // Newest first — consistent with DB query order (ORDER BY deployed_at DESC)
+  list = [...list].sort((a, b) => b.deployedAt - a.deployedAt);
+
+  const contracts = list.map(c => ({
     address: c.address,
     deployer: c.deployer,
     bytecodeHash: c.bytecodeHash,

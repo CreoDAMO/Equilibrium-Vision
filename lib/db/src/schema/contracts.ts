@@ -28,6 +28,8 @@ export const contractsTable = pgTable("contracts", {
 }, (table) => [
   // Speeds up filtering/listing contracts by deployer address
   index("contracts_deployer_idx").on(table.deployer),
+  // Speeds up ORDER BY deployed_at DESC (default list sort)
+  index("contracts_deployed_at_idx").on(table.deployedAt),
 ]);
 
 export type ContractRow = typeof contractsTable.$inferSelect;

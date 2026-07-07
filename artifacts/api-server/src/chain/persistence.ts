@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { asc, eq, gte } from "drizzle-orm";
+import { asc, desc, eq, gte } from "drizzle-orm";
 import { blocksTable, transactionsTable, contractsTable } from "@workspace/db/schema";
 import type { BlockRecord, TxRecord } from "./types.js";
 import type { ContractRecord } from "./wasm.js";
@@ -287,28 +287,55 @@ export async function persistContract(contract: ContractRecord): Promise<void> {
   }
 }
 
+function rowToContractRecord(r: typeof contractsTable.$inferSelect): ContractRecord {
+  return {
+    address:      r.address,
+    deployer:     r.deployer,
+    bytecode:     r.bytecode,
+    bytecodeHash: r.bytecodeHash,
+    storage:      (r.storage as Record<string, string>) ?? {},
+    deployedAt:   r.deployedAt,
+    callCount:    r.callCount,
+    totalGasUsed: r.totalGasUsed,
+    abi:          r.abi ?? undefined,
+  };
+}
+
 /**
- * Load all deployed contracts from DB on startup.
+ * Load all deployed contracts from DB on startup, newest first.
  * Returns an empty array if Postgres is unavailable.
  */
 export async function loadContractsFromDb(): Promise<ContractRecord[]> {
   const db = getDb();
   if (!db) return [];
   try {
-    const rows = await db.select().from(contractsTable);
-    return rows.map((r) => ({
-      address:      r.address,
-      deployer:     r.deployer,
-      bytecode:     r.bytecode,
-      bytecodeHash: r.bytecodeHash,
-      storage:      (r.storage as Record<string, string>) ?? {},
-      deployedAt:   r.deployedAt,
-      callCount:    r.callCount,
-      totalGasUsed: r.totalGasUsed,
-      abi:          r.abi ?? undefined,
-    }));
+    const rows = await db
+      .select()
+      .from(contractsTable)
+      .orderBy(desc(contractsTable.deployedAt));
+    return rows.map(rowToContractRecord);
   } catch (err) {
     logger.warn({ err }, "Failed to load contracts from DB — starting with empty contract set");
+    return [];
+  }
+}
+
+/**
+ * Load contracts deployed by a specific address, newest first.
+ * Uses the contracts_deployer_idx index — O(k) where k = contracts by that deployer.
+ */
+export async function loadContractsByDeployer(deployer: string): Promise<ContractRecord[]> {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    const rows = await db
+      .select()
+      .from(contractsTable)
+      .where(eq(contractsTable.deployer, deployer))
+      .orderBy(desc(contractsTable.deployedAt));
+    return rows.map(rowToContractRecord);
+  } catch (err) {
+    logger.warn({ err, deployer }, "Failed to load contracts by deployer");
     return [];
   }
 }
