@@ -564,7 +564,7 @@ function NodeTab() {
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {e.hops != null ? `${e.hops} hop${(e.hops as number) !== 1 ? "s" : ""}` : "—"}
-                    {e.latencyMs != null && <span className="ml-1 text-xs">({e.latencyMs}ms)</span>}
+                    {e.latencyMs != null && <span className="ml-1 text-xs">({e.latencyMs as number}ms)</span>}
                   </TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground">
                     {e.timestamp ? timeAgo(e.timestamp as number) : "—"}

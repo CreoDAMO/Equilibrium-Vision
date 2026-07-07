@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, gte } from "drizzle-orm";
 import { blocksTable, transactionsTable, contractsTable } from "@workspace/db/schema";
 import type { BlockRecord, TxRecord } from "./types.js";
 import type { ContractRecord } from "./wasm.js";
@@ -92,17 +92,54 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
 
     // ── Chain integrity check ────────────────────────────────────────────────
     // Validate contiguous heights and prevHash linkage before accepting DB data.
-    // A partial write (crash mid-genesis persist) produces a gap; we fall back
-    // to in-memory genesis rather than replaying a broken chain.
-    for (let i = 0; i < dbBlocks.length; i++) {
+    // A partial write (crash mid-genesis persist, or schema not yet applied on
+    // first boot) can produce a gap.  Rather than falling back to genesis and
+    // discarding all history, we truncate to the longest contiguous sequence
+    // from height 0 so any valid history is preserved.
+    //
+    // Exception: if the very first block isn't height 0 we have no base to
+    // build on, so fall back to genesis.
+    if (dbBlocks[0]!.height !== 0) {
+      logger.warn({ got: dbBlocks[0]!.height }, "Chain integrity check failed: missing genesis block — falling back to genesis");
+      return null;
+    }
+    let contiguousEnd = dbBlocks.length; // exclusive index of first broken block
+    for (let i = 1; i < dbBlocks.length; i++) {
       const b = dbBlocks[i]!;
       if (b.height !== i) {
-        logger.warn({ expected: i, got: b.height }, "Chain integrity check failed: height gap — falling back to genesis");
-        return null;
+        logger.warn(
+          { expected: i, got: b.height, truncatingAt: i },
+          "Chain integrity: height gap detected — truncating to last contiguous block",
+        );
+        contiguousEnd = i;
+        break;
       }
-      if (i > 0 && b.prevHash !== dbBlocks[i - 1]!.hash) {
-        logger.warn({ height: i }, "Chain integrity check failed: prevHash mismatch — falling back to genesis");
-        return null;
+      if (b.prevHash !== dbBlocks[i - 1]!.hash) {
+        logger.warn(
+          { height: i, truncatingAt: i },
+          "Chain integrity: prevHash mismatch — truncating to last contiguous block",
+        );
+        contiguousEnd = i;
+        break;
+      }
+    }
+    // Drop any blocks beyond the first integrity violation — both in memory
+    // and in the DB so subsequent restarts don't re-hit the same truncation.
+    const validBlocks = dbBlocks.slice(0, contiguousEnd);
+    if (contiguousEnd < dbBlocks.length) {
+      const cutHeight = contiguousEnd; // first invalid height
+      try {
+        const db2 = getDb()!;
+        await db2.transaction(async (tx) => {
+          // Delete orphaned transactions first (FK-safe order).
+          await tx.delete(transactionsTable).where(gte(transactionsTable.blockHeight, cutHeight));
+          await tx.delete(blocksTable).where(gte(blocksTable.height, cutHeight));
+        });
+        logger.info({ deletedFrom: cutHeight }, "Pruned invalid chain suffix from DB");
+      } catch (pruneErr) {
+        // Non-fatal — in-memory chain is still correct; next restart will
+        // re-truncate until the prune eventually succeeds.
+        logger.warn({ pruneErr }, "Failed to prune invalid chain suffix from DB (will retry)");
       }
     }
 
@@ -115,7 +152,7 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       txsByBlock.set(row.blockHash, list);
     }
 
-    return dbBlocks.map((b) => ({
+    return validBlocks.map((b) => ({
       hash:          b.hash,
       height:        b.height,
       prevHash:      b.prevHash,

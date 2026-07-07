@@ -1,6 +1,6 @@
 import React from "react";
 import { useRoute, useLocation } from "wouter";
-import { useGetBlock, useGetTransaction } from "@workspace/api-client-react";
+import { useGetBlock, useGetTransaction, getGetBlockQueryKey, getGetTransactionQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "wouter";
 import { Box, ArrowRightLeft, Search } from "lucide-react";
@@ -16,11 +16,11 @@ export default function SearchPage() {
   // Try block and tx in parallel; retry: false so a 404 doesn't spin-retry
   const { data: block, isLoading: blockLoading, isError: blockError } = useGetBlock(
     query,
-    { query: { retry: false, enabled: isValidHash } },
+    { query: { queryKey: getGetBlockQueryKey(query), retry: false, enabled: isValidHash } },
   );
   const { data: tx, isLoading: txLoading, isError: txError } = useGetTransaction(
     query,
-    { query: { retry: false, enabled: isValidHash } },
+    { query: { queryKey: getGetTransactionQueryKey(query), retry: false, enabled: isValidHash } },
   );
 
   const loading = isValidHash && (blockLoading || txLoading);

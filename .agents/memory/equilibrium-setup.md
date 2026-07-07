@@ -3,6 +3,17 @@ name: Equilibrium setup
 description: Run commands, ports, key architecture rules, and gotchas for the Equilibrium blockchain project
 ---
 
+## TypeScript query hook pattern (TanStack Query v5 / Orval)
+- Generated hooks (e.g. `useGetBlock`, `useGetTransaction`) require `queryKey` in the `query` options object
+- Pattern: `{ query: { queryKey: getGetBlockQueryKey(param), retry: false, enabled: flag } }`
+- The `getGet*QueryKey` helpers are exported from `@workspace/api-client-react`
+
+## Chain persistence — cold boot and restart recovery
+- `scripts/start-postgres.sh` now auto-runs `pnpm install --frozen-lockfile` if `node_modules` is missing before schema push (cold-boot safe)
+- `loadBlocksFromDb()` truncates to the longest contiguous sequence from height 0 on gap/mismatch, then **prunes the bad suffix rows from the DB** so subsequent restarts don't re-hit truncation
+- Only returns `null` (falls back to genesis) if the very first block isn't height 0 or the DB is empty
+- `.replit` Project workflow is **sequential**: Postgres → API Server → Explorer (not parallel) to prevent startup race
+
 ## Search page
 - Route: `/search/:query` — parallel block+tx lookup for 64-char hex hashes
 - Auto-redirects if only one match; disambiguation UI if both; not-found/invalid-format states
