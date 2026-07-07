@@ -14,21 +14,37 @@ const app: Express = express();
 app.set("trust proxy", 1);
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
-// In production, lock to known origins via ALLOWED_ORIGINS (comma-separated).
-// In development (no env var), use * so the Replit preview iframe works freely.
-// Credentials are only enabled when a specific origin allowlist is configured.
-const rawOrigins = process.env.ALLOWED_ORIGINS?.trim();
-const isProd = process.env.NODE_ENV === "production";
-const corsOrigin: string | string[] | false =
+// Restrict CORS to a validated ALLOWED_ORIGINS allowlist (comma-separated).
+// If not configured, fail closed for browser-originated requests.
+const rawOrigins = process.env.ALLOWED_ORIGINS?.trim() ?? "";
+const allowedOrigins = new Set(
   rawOrigins
-    ? rawOrigins.split(",").map((o) => o.trim()).filter(Boolean)
-    : isProd
-      ? false   // fail-closed in production when not configured
-      : "*";
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .filter((o) => {
+      try {
+        const parsed = new URL(o);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch {
+        return false;
+      }
+    }),
+);
+
 app.use(
   cors({
-    origin: corsOrigin,
-    credentials: !!(rawOrigins && rawOrigins.length > 0),
+    origin: (origin, callback) => {
+      if (!origin) {
+        // Allow non-browser/server-to-server requests with no Origin header.
+        return callback(null, true);
+      }
+      if (allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("CORS origin denied"));
+    },
+    credentials: allowedOrigins.size > 0,
   }),
 );
 
