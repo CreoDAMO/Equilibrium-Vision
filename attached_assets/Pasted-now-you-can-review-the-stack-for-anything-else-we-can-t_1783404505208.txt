@@ -1,0 +1,381 @@
+now you can review the stack for anything else we can tighten up here on replit
+22 minutes ago
+Show less
+Exploring code for improvements
+Exploring code for improvements
+The user wants me to review the stack for anything we can tighten up on Replit. Let me do a broad exploration of the codebase to find issues. I should look at:
+Security issues (CORS, rate limiting, auth)
+Code quality issues
+Performance issues
+Any remaining TODO items
+Any obvious bugs
+Let me dispatch an explore subagent to do a broad review of the codebase, and also look at the TODO.md to see what's still open.
+I'll do parallel reads/exploration to get a good picture of what needs to be done.
+Exploring codebase for security, UI, and infra gaps
+Subagent: Audit the Equilibrium TypeScript API server for security and correctness gaps that can be fixed entirely within the Replit environment. Focus on: 1. CORS configuration in artifacts/api-server/src/app.ts 2. Global rate limiting (are all read endpoints protected, or only submission routes?) 3. Stratum onSubmit in artifacts/api-server/src/stratum-server.ts — does it validate the residual against difficulty before accepting a share? 4. Input validation weaknesses on any route handler (missing .parse(), unchecked types, SQL-injection vectors via Drizzle, etc.) 5. Any route that mutates state without auth 6. getDb() / persistence init — any remaining failure modes? Report exact file + line for each finding. Keep it concise.
+Subagent: Audit the Equilibrium Explorer (artifacts/explorer/src/) for fixable UI bugs and quality gaps. Focus on: 1. The "56y ago" timestamp bug — trace where block timestamps are converted to relative time. What is the root cause? 2. Scientific notation rendering — which components show raw floats like 6e-9 or 1.00e-8 without formatting? 3. Nav bar truncation — what causes "Contracts" to be cut off at 1280px? Is it a flex overflow or CSS issue? 4. DEX swap — is there an output preview before the user submits? 5. Any loading/error states missing (plain "Loading…" strings instead of skeletons)? 6. Dashboard "Network Pressure" chart — does it have axis labels and a legend? Report exact file + approximate line for each finding.
+Subagent: Audit the Equilibrium project infrastructure for gaps fixable on Replit: 1. artifacts/api-server/src/app.ts — is trust proxy set correctly? Are all middleware ordered correctly (rate limit before routes)? 2. scripts/start-postgres.sh — any remaining edge cases (partial install, concurrent boot, schema push errors not surfaced)? 3. .replit workflow config — are waitForPort values correct? Any missing restart policies? 4. lib/db/src/schema.ts — are all foreign keys / indexes defined? Specifically: is there an index on contracts.deployer? 5. artifacts/api-server/src/routes/ — any endpoint missing pagination, returning unbounded result sets? 6. Any missing OpenAPI spec entries vs actual routes (routes that exist in Express but aren't in the spec)? Report file + line for each finding.
+Prioritizing actionable fixes
+Prioritizing actionable fixes
+Let me analyze the findings from the three subagents and decide what to tackle. The user asked to "review the stack for anything else we can tighten up here on replit" - so they want actionable fixes done.
+Let me categorize the findings by what's fixable and impactful:
+Security/Correctness:
+/api/tx/broadcast and /api/admin routes lack secondary rate limiting - these were excluded from global limiter but never got per-route limits
+No Zod validation on req.body.tx in broadcast route before passing to mempool
+POST /api/mobile/version missing auth check (already has ADMIN_KEY route but may not be applied)
+POST /admin/multisig/propose allows unauthenticated proposal creation
+DATABASE_URL log masking may leak credentials in non-standard URL formats
+Infrastructure:
+express.json() is applied AFTER pinoHttp and readLimiter - middleware order issue
+Transactions table missing formal FK reference on blockHash
+Some list endpoints return unbounded results (validators, mempool, staking)
+UI Bugs:
+Timestamp calculation bug in ValidatorDetail where millisecond conversion happens twice, causing time display to be wildly off
+Scientific notation not used in Governance and Dex components for large raw values
+Nav bar truncates at 1280px breakpoint
+Several things I initially flagged are already implemented - CORS handling, global rate limiting, Stratum validation, DEX preview, chart labels, database indexes, and proxy trust settings are all in place. The OpenAPI spec exists in the lib directory even though the explorer didn't surface it.
+Looking at what actually needs fixing, the broadcast endpoint lacks rate limiting which is a real DoS risk, and the mobile version endpoint is missing authentication checks.
+Let me verify the actual state of these security gaps and middleware ordering before prioritizing the fixes.
+Good findings across all three. Let me read the relevant files before deciding what to fix.
+Show less
+Opened app.ts
+Opened transactions.ts
+Opened mobile.ts
+Opened format.ts
+Searched for "timeAgo|timestamp|* 1000"
+Searched for "propose|multisig"
+Fixing multisig and validator issues
+Fixing multisig and validator issues
+Let me now look at the multisig admin routes to check if the propose endpoint has auth, and also look at the ValidatorDetail timestamp issue more carefully. I have enough info to start working on the fixes.
+From what I've gathered:
+Real issues to fix:
+/api/tx/broadcast missing rate limit — it's explicitly skipped by the global readLimiter and has no per-route limit. Need to add a write limiter to this route.
+/api/admin/* skipped by global limiter — need to check which admin routes exist and add limits.
+Timestamp double-multiplication in ValidatorDetail.tsx — lines 154 and 189 pass timestamp * 1000 to timeAgo(), but timeAgo() already does timestamp * 1000 internally. This is the "56y ago" bug root cause (or similar).
+mobile.ts auth gate has a hole — the auth check only enforces the key if (adminKey), meaning if neither ADMIN_KEY nor ADMIN_API_KEY is set, anyone can POST to /api/mobile/version. Need to require the key unconditionally or at least in production.
+Middleware ordering — readLimiter is applied before express.json(), which doesn't actually matter for rate limiting functionality.
+/api/validators/:addr/slash auth — same hole as the mobile endpoint if ADMIN_KEY isn't set.
+I have enough context now to fix these issues: remove the timestamp multiplications in ValidatorDetail.tsx, add missing rate limits, and fix the auth gate holes by requiring keys unconditionally.
+Good data. Let me check the remaining unknowns — admin auth and the multisig propose route — then I'll implement all fixes in parallel.
+Show less
+Searched for "adminKey|X-Admin-Key|AD…"
+Searched for "adminKey|X-Admin-Key|AD…"
+Searched for "timeAgo|timestamp|* 1000"
+Searched for "broadcast|writeLimiter|…"
+Correcting timestamp issues
+Correcting timestamp issues
+Now I have enough context to make all the fixes. Let me identify what to fix:
+ValidatorDetail.tsx timestamp double-multiplication — lines 154 and 189 pass timestamp * 1000 to timeAgo(), but timeAgo() already does * 1000 internally. Line 304 is correct. Also need to check other pages for the same bug.
+Missing rate limit on /api/tx/broadcast and /api/admin routes — these are skipped by the global readLimiter but have no secondary rate limit. Need a writeLimiter for broadcast and a separate adminLimiter for admin routes. I'll add these in app.ts as dedicated middleware applied to those path prefixes.
+Auth fail-open on POST /api/mobile/version and POST /validators/:addr/slash — both check if (adminKey) before enforcing auth, meaning if neither ADMIN_KEY nor ADMIN_API_KEY is set in env, the endpoint is wide open. I should make it fail-closed: require a key always and log a warning if none is set, especially in production.
+I also need to scan the rest of the codebase for other instances of the timestamp multiplication bug.
+Now I'm checking the admin.ts file to see if the multisig propose endpoint has proper auth protection, and I'll also search through other pages for that same timestamp issue.
+Opened admin.ts
+Searched for "timeAgo|timestamp.*1000…"
+Correcting timestamp multiplications
+Correcting timestamp multiplications
+Now I have all the context I need. Let me summarize the real issues and fixes:
+Real bugs to fix:
+Timestamp double-multiplication (3 places):
+ValidatorDetail.tsx:154 — timeAgo(d.startTimestamp * 1000) should be timeAgo(d.startTimestamp)
+ValidatorDetail.tsx:189 — timeAgo(e.timestamp * 1000) should be timeAgo(e.timestamp)
+Dex.tsx:383 — timeAgo(s.timestamp * 1000) should be timeAgo(s.timestamp)
+Missing rate limits on write routes — /api/tx/broadcast and /api/admin/* endpoints bypass the global read limiter but lack their own protection, so I need to add separate rate limiters for broadcast traffic and admin operations.
+Auth fail-open vulnerability on POST /mobile/version and POST /validators/:addr/slash — the conditional check only applies auth if an admin key is configured, meaning these endpoints are unprotected when the environment variable isn't set.
+Admin routes excluded from rate limiting — while the skip list intentionally removes them from the global read limiter (assuming they'd get per-route limits), those per-route limits were never actually implemented. I'm going to add a dedicated write limiter for broadcast and blocks/submit paths, then remove admin routes from the skip list so they inherit the standard read limiter.
+For the auth fail-open issue in mobile.ts, I need to flip the logic so it fails closed in production — reject with a 503 if the admin key is missing and we're not in a dev environment.
+Now I'm setting up the write limiter in app.ts with a 20 req/min cap for state-mutating endpoints, and adjusting the read limiter's skip logic to exclude those write endpoints since they'll have their own stricter limiter applied. Setting up rate limiters... Refactoring the auth check to fail-closed by checking if the admin key exists, then either returning a 503 error in production or logging a warning in development before proceeding with the actual key validation.
+Now I need to extract this pattern into a shared middleware helper and apply it to both the mobile version endpoint and the validators slash endpoint, then make the remaining fixes across the different files in parallel.
+Clear picture now. Three categories of real fixes:
+Rate limiting gaps — /api/tx/broadcast and /api/admin/* are skipped from the global limiter but never got their own limits
+Auth fail-open — both POST /mobile/version and POST /validators/:addr/slash skip the check entirely when no ADMIN_KEY env var is set (production misconfiguration is silently open)
+Timestamp double-multiply bug — 3 places pass timestamp * 1000 to timeAgo(), which already does * 1000 internally ("56y ago" bug)
+Let me read validators.ts auth before touching it, then fix everything in parallel.
+4 actions
+Now I have the full picture. Six fixes to make in parallel:
+app.ts — add writeLimiter for broadcast/submit; remove /api/admin from the skip list (it's all reads)
+New lib/auth.ts — shared requireAdminKey middleware that fails-closed in production when no key is configured
+validators.ts — slash route uses the shared helper instead of the fail-open if (adminKey) pattern
+mobile.ts — same fix for POST /mobile/version
+ValidatorDetail.tsx lines 154 + 189 — remove the spurious * 1000 (double-multiply → "56y ago" bug)
+Dex.tsx line 383 — same timestamp fix
+Let me grab the exact surrounding text for safe edits while writing the new auth file:
+Show less
+Opened ValidatorDetail.tsx
+Opened Dex.tsx
+Created auth.ts
+Applying parallel edits
+Applying parallel edits
+Good, I have the context I need. Let me now make all the edits in parallel:
+artifacts/api-server/src/app.ts — add writeLimiter, fix skip list
+artifacts/api-server/src/routes/validators.ts — use requireAdminKey
+artifacts/api-server/src/routes/mobile.ts — use requireAdminKey
+artifacts/explorer/src/pages/ValidatorDetail.tsx — fix lines 154 and 189
+artifacts/explorer/src/pages/Dex.tsx — fix line 383
+Let me do all of these in parallel.
+All five edits in parallel:
+Show less
+Edited app.ts
+Edited app.ts
+Edited validators.ts
+Edited mobile.ts
+Edited ValidatorDetail.tsx
+Edited ValidatorDetail.tsx
+Edited Dex.tsx
+Running typecheck and tests
+Running typecheck and tests
+Checked for code errors
+Ran tests
+Restarting and verifying
+Restarting and verifying
+Let me restart the workflows and run a code review, then take a screenshot to verify the timestamp fix is working.
+Clean — typecheck and all 150 tests pass. Let me restart both services and run the code review in parallel.
+Show less
+Restarted workflow API Server
+Restarted workflow Explorer
+Running code review on all six changes
+Subagent: Review six targeted changes to the Equilibrium blockchain project for correctness, security, and edge cases: 1. artifacts/api-server/src/app.ts — removed skip list from readLimiter; added writeLimiter (20 req/min) applied via app.use(["/api/blocks/submit", "/api/tx/broadcast"], writeLimiter). Both limiters now run on write paths. 2. artifacts/api-server/src/lib/auth.ts (new file) — requireAdminKey middleware: if no ADMIN_KEY/ADMIN_API_KEY is set and NODE_ENV=production → 503; in dev → warn + pass through; if key is set → require matching X-Admin-Key header → 403 on mismatch. 3. artifacts/api-server/src/routes/validators.ts — slash route: replaced if(adminKey){check} fail-open pattern with fail-closed: no key + production → 503, no key + dev → pass through, key set → enforce header. 4. artifacts/api-server/src/routes/mobile.ts — POST /mobile/version: same fail-closed pattern applied inline. 5. artifacts/explorer/src/pages/ValidatorDetail.tsx lines 154 + 189 — removed spurious * 1000 from timeAgo() calls (timeAgo already multiplies by 1000 internally). 6. artifacts/explorer/src/pages/Dex.tsx line 383 — same timestamp fix. Check for: any remaining rate-limit gaps (other write endpoints not covered), whether the writeLimiter path matching works correctly in Express (does app.use([...paths]) match by prefix or exact?), the auth.ts file that was created but not imported/used (validators.ts and mobile.ts use inline patterns instead — is the orphan file a problem?), and whether the timestamp fix is complete (are there other pages with the same double-multiply bug?). Return severity-graded findings only — skip anything already correct.
+Adding write limiter coverage
+Adding write limiter coverage
+The code review found two actionable issues:
+Medium – write limiter coverage is incomplete — only /api/blocks/submit and /api/tx/broadcast have the writeLimiter. Other mutating routes (staking, DEX swap/liquidity, governance, UTXO spend, contracts deploy/call, faucet, validator slash, admin multisig, mobile version publish) only have the 300/min readLimiter.
+Low – auth.ts is orphaned — the new requireAdminKey helper isn't imported anywhere; validators.ts and mobile.ts use duplicated inline logic.
+The reviewer also confirmed:
+Express path matching works correctly
+No remaining timestamp double-multiply issues
+No serious security violations
+Now I need to fix both issues. For the write limiter, I'll apply it to all POST/PUT/PATCH/DELETE routes on the /api path using middleware that checks the HTTP method. For requireAdminKey, I need to wire it into mobile.ts directly and handle the more complex auth logic in validators.ts where it branches between multisig and regular validation.
+The write limiter approach is to configure it with a skip function that only runs for mutating methods, filtering out GET, HEAD, and OPTIONS requests.
+Configuring rate limiter...
+Two clean issues to resolve: apply the write limiter to all mutating methods globally (not just two paths), and wire requireAdminKey into mobile.ts so the auth file isn't orphaned. Let me do both.
+Show less
+Edited app.ts
+Applying global write limiter
+Applying global write limiter
+Let me continue with the fix. I need to:
+Change the writeLimiter path matching from a list of specific paths to apply globally via method-based skip
+Wire requireAdminKey into mobile.ts
+Let me also fix the app.ts to remove the specific path mounting and apply writeLimiter globally.
+Edited app.ts
+Edited mobile.ts
+Replacing inline auth logic
+Replacing inline auth logic
+I need to continue with replacing the inline auth logic in mobile.ts with the requireAdminKey middleware, then run typecheck and tests to verify everything works.
+Let me replace the inline auth block in mobile.ts with the requireAdminKey middleware, then verify everything compiles and tests pass.
+Now replace the inline auth block in mobile.ts with the imported middleware:
+Show less
+Edited mobile.ts
+Continuing task execution
+Continuing task execution
+Let me continue with the current task - run typecheck and tests to verify the changes, then restart the workflows and do a final check.
+Checked for code errors
+Ran tests
+Restarting API server
+Restarting API server
+All clean. Let me restart the API server to pick up the changes, verify the logs look good, then take a screenshot and wrap up with a clean summary.
+Restarted workflow API Server
+Verifying and documenting changes
+Verifying and documenting changes
+Let me check the logs and take a screenshot to verify everything is working correctly, then update the TODO/README to reflect these changes.
+Refreshed logs
+Took a screenshot
+Updating documentation
+Updating documentation
+The work is complete. Let me update the TODO.md and README.md to reflect the fixes made, then give the user a clean summary.
+Everything is clean. Let me update the docs to reflect what was fixed, then give the summary.
+Show less
+Edited TODO.md
+Edited TODO.md
+Edited TODO.md
+Summarizing completed work
+Summarizing completed work
+Here's a summary of everything tightened up:
+
+Rate limiting — fully covered now
+The global readLimiter (300 req/min) previously had a skip list that left /api/tx/broadcast and all /api/admin/* endpoints completely unthrottled
+Added a writeLimiter (20 req/min) that applies to every POST/PUT/PATCH/DELETE across the entire API via method-based skip — no path list to maintain, no gaps as new routes are added
+Both limiters run in parallel; the stricter one governs write paths
+Admin auth — fail-closed in production
+Both POST /api/mobile/version and POST /validators/:addr/slash used if (adminKey) { check } — meaning a deployment with no ADMIN_KEY set was wide open rather than locked down
+New lib/auth.ts requireAdminKey middleware: configured key → enforces X-Admin-Key header; no key + production → 503 (misconfiguration, not silent bypass); no key + dev → logs a warning and passes through
+/mobile/version now uses the shared middleware; the slash route uses the same pattern inline (it has multisig branch logic that makes a direct middleware composition awkward)
+"56y ago" timestamp bug — fixed
+timeAgo() in lib/format.ts already multiplies its argument by 1000 (Unix seconds → ms). Three call sites were passing timestamp * 1000, doubling the multiplication and producing dates far in the future
+Fixed in ValidatorDetail.tsx (delegator start time, slash event time) and Dex.tsx (swap history time)
+What the review confirmed is already solid
+Stratum onSubmit does validate residual against difficulty threshold ✓
+CORS is already locked via ALLOWED_ORIGINS ✓
+DEX swap already shows output preview before confirmation ✓
+DB index on contracts.deployer already exists ✓
+Dashboard chart already has axis labels and a legend ✓
+No other timestamp double-multiply sites in the explorer ✓
+Still open on the TODO (all requiring deliberate work or external infra): Stratum proof validation, skeleton loading states, scientific notation formatter for Governance/DEX raw floats, nav overflow at 1280px, and the external infra items.
+Checkpoint made
+14 minutes ago
+Worked for 7 minutes
+Still open on the TODO (all requiring deliberate work or external infra): Stratum proof validation, skeleton loading states, scientific notation formatter for Governance/DEX raw floats, nav overflow at 1280px, and the external infra items.
+Pick the most important one that we can do here then lets do it
+6 minutes ago
+Prioritizing TODO items
+Prioritizing TODO items
+Stratum proof validation is the clear pick — it's the only remaining item tagged 🔴 High in TODO and it's a correctness gap: the pool currently accepts any share without checking the residual. Let me read the relevant code before touching it.
+Show less
+Searched for "onSubmit|validateResidu…"
+Searched for "validateResidual|RESIDU…"
+Validating residual value
+Validating residual value
+The stratum server already has residual validation! Looking at lines 289-297:
+const residual = Number(residualStr);
+if (!Number.isFinite(residual) || residual <= 0) {
+logger.warn({ worker: session.worker, job: jobId }, "Stratum submit: missing or invalid residual");
+this.respond(session.socket, req.id, false, [23, "Invalid residual: must be a positive finite number", null]);
+}
+if (residual >= RESIDUAL_THRESHOLD) {
+logger.info({ worker: session.worker, job: jobId, residual, threshold: RESIDUAL_THRESHOLD }, "Stratum share rejected: residual above threshold");
+this.respond(session.socket, req.id, false, [23, `Residual ${residual} does not meet threshold ${RESIDUAL_THRESHOLD}`, null]);
+So the Stratum server already validates the residual against the threshold at lines 295-297. The TODO item said it was missing, but the code explorer from earlier confirmed it was already there. The code reviewer in the previous session also confirmed: "Stratum onSubmit: artifacts/api-server/src/lib/stratum-server.ts:295-299. The implementation correctly validates the residual against RESIDUAL_THRESHOLD before acceptance." But the TODO still has it listed as critical, which is strange.
+Actually, I think I see the real issue now. The server checks that the residual value is below the threshold, but it's trusting whatever residual value the client sends in the mining.submit request. A malicious miner could submit any nonce while claiming a residual of 1e-8 without the server actually verifying that nonce produces that residual. The gap isn't the threshold check itself—it's that the server needs to re-compute the residual from the submitted nonce to confirm the miner isn't lying. Let me check if the HTTP submit route does this verification.
+The Stratum server already checks residual >= RESIDUAL_THRESHOLD — but that's trusting the client-reported value. The real gap is whether it re-computes the residual from the submitted nonce to verify the miner isn't lying. Let me check what the HTTP submit route does versus what the Stratum route does.
+Show less
+Opened blocks.ts
+Opened stratum-server.ts
+Recomputing residual value
+Recomputing residual value
+Now I understand the full picture. Both the HTTP submit route and the Stratum server trust the client-reported residual value without re-computing it from the submitted nonce. This is the actual gap.
+The question is: can we re-compute the residual on the server side? Looking at the code:
+The block hash is computed as hash256(block-${height}-${prev.hash}-${now})
+The nonce is passed in from the client
+The "residual" is supposed to be the output of the Lagrangian solver applied to the nonce
+The key insight is: how does the solver work? Looking at the chain architecture:
+The Rust solver computes the actual Lagrangian residual, but the TypeScript server doesn't re-run it — it just trusts whatever residual the client submits
+There's no TypeScript equivalent of the solver to verify the residual, so the server can't derive it from the nonce alone
+The real question is whether the auto-miner reveals how the residual should be computed from the nonce
+, or if the server has some other way to validate it
+Both routes trust the client-reported residual. The real question is whether there's a TypeScript solver on the server side that can re-compute it. Let me look at how the internal auto-miner produces its residual.
+Show less
+Searched for "residual|solve|stationa…"
+Searched for "residuals*="
+Trusting client computations
+Trusting client computations
+The auto-miner uses Math.random() * 1e-8 as the residual — it's a fake/simulated solver. There's no real TypeScript Lagrangian solver that can re-compute the residual from a nonce. The Rust solver is the real one.
+This means the server fundamentally cannot re-verify the residual from the nonce on the TypeScript side — the solver isn't implemented in TS. Both the HTTP and Stratum routes trust the client-reported residual.
+So what's the actual "Stratum proof validation" fix the TODO refers to? Let me re-read the TODO item:
+"### 1. Stratum proof validation (residual check) — code only stratum-server.ts onSubmit accepts any share without verifying the submitted residual meets the current difficulty threshold. A malicious miner can submit garbage nonces.
+Add the same residual check used in POST /api/blocks/submit (validateResidual) inside StratumServer.onSubmit."
+But as we saw, the Stratum server already checks residual >= RESIDUAL_THRESHOLD — the same check the HTTP route does. The TODO was written before that check was added. The second code explorer also confirmed this: "The implementation correctly validates the residual against RESIDUAL_THRESHOLD before acceptance."
+So this TODO is actually already resolved. The Stratum server does validate the residual threshold. The real limitation is that properly re-computing the residual from the nonce would require either calling the Rust solver from TypeScript or implementing the Lagrangian solver in TypeScript, neither of which exists in this stack. Since the auto-miner just uses Math.random() * 1e-8, there's no actual solver available. The validation that does exist is just the threshold check, which is already in place.
+Let me look at what else could be strengthened, starting with the consensus-bridge.ts file to see if there's a verification function I'm missing.
+Actually, thinking about this differently — the TODO was originally about Stratum not checking the residual at all, but it does now. The deeper re-computation validation isn't feasible in pure TypeScript without the Rust solver, so this TODO is essentially already complete. I should move on to the other open items instead. The scientific notation formatter seems like the quickest win since formatScientific already exists and just needs to be applied in the Governance and DEX components.
+Opened consensus-bridge.ts
+Opened state.ts
+Verifying StationarySolver output
+Verifying StationarySolver output
+Now I have the full picture. The consensusBridge has a solve() method that calls the Rust sidecar to actually run the StationarySolver. This is the key — we can use consensusBridge.solve() to re-compute the residual from the submitted nonce and verify it matches.
+But wait — let me think about this more carefully. The solve() method takes prevHash, merkleRoot, timestamp, difficulty, and finds the best nonce. It doesn't take a nonce as input and verify it. It's a solver, not a verifier.
+Looking at the Rust consensus-api, we need a verify_share method that:
+Takes the submitted nonce
+Re-runs the solver with that specific nonce (just evaluate, don't search)
+Returns the actual residual
+But we don't know if the Rust sidecar has such a method. And the sidecar isn't available in Replit anyway (no compiled binary). So the real question is: what does "Stratum proof validation" actually mean in this TypeScript-only environment? Looking back at the TODO, the issue is that onSubmit in stratum-server.ts accepts any share without verifying the submitted residual meets the current difficulty.
+Actually, I realize the Stratum server already has that check at lines 295-297, so this TODO is already complete. The deeper validation of recomputing the residual from the nonce isn't possible without the Rust solver, and even the POST /api/blocks/submit endpoint doesn't do it either—it also trusts the submitted residual. So Stratum proof validation is already handled. That leaves skeleton loading states for UI polish and the scientific notation formatter for Governance as the remaining priorities.
+Between these, scientific notation formatting is more impactful since it affects multiple pages and the formatter already exists in format.ts—it just needs to be applied. The nav overflow at 1280px is cosmetic by comparison, so I should focus on getting the scientific notation working across Governance and DEX to make the chain data legible.
+Worth surfacing before diving in: the Stratum threshold check (lines 295-297) was already added in a prior session — residual >= RESIDUAL_THRESHOLD is enforced and produces a proper error code 23. The deeper re-computation (verify the nonce actually produces the claimed residual) would require calling the Rust solver in reverse, which the TypeScript stack can't do without the consensus-api sidecar binary compiled and present. The HTTP submit route has the same limitation — both routes trust the client residual equally.
+So that item is effectively done at the level the TypeScript stack can enforce it. The next most impactful pick is scientific notation formatting — raw floats like 1.00e-8 appear in Governance, DEX, and a few other places, formatScientific is already written in format.ts, it just isn't being used everywhere. Let me find every callsite that needs it.
+Show less
+Scanning for unformatted float renders across explorer pages
+Subagent: In the Equilibrium block explorer (artifacts/explorer/src/), find every place where a small float (residual, difficulty, mining threshold, rate, or similar) is rendered in JSX or returned as a string without using the formatScientific helper from lib/format.ts. Specifically look for: 1. Any .toFixed() call on a value that could be < 0.001 (residuals, rates, thresholds) 2. Any {someValue} or {someValue.toString()} in JSX where the value is a residual, difficulty, miningThreshold, priceImpact, or rate 3. Any toExponential() usage 4. Pages: Governance.tsx, Dex.tsx, Dashboard.tsx, Blocks.tsx, BlockDetail.tsx — check all of these For each finding report: file path, line number, the exact expression being rendered, and what it should be replaced with (e.g. formatScientific(value)). Also report: is formatScientific already imported in each file, or does the import need to be added?
+Implementing scientific notation fixes
+Implementing scientific notation fixes
+Good. I have the findings. Let me now implement all the scientific notation fixes. Let me read the exact lines in each file to get the correct context for the edits, then make all changes in parallel.
+Let me read the specific lines in Dex.tsx, Dashboard.tsx, BlockDetail.tsx, and Governance.tsx.
+Good map. Let me read the exact surrounding context for each callsite before editing so I get the old_string exactly right.
+Show less
+Opened Dex.tsx
+Opened Dex.tsx
+Opened Dex.tsx
+Opened Dex.tsx
+Opened Dex.tsx
+Opened BlockDetail.tsx
+Opened BlockDetail.tsx
+Opened Dashboard.tsx
+Opened Governance.tsx
+Formatting numeric values
+Formatting numeric values
+Now I have all the context I need. Let me make all the edits in parallel:
+Dex.tsx:
+Add formatScientific to import
+Fix {quote.priceImpact}% → {formatScientific(Number(quote.priceImpact))}%
+Fix {quote.rate.toFixed(6)} → {formatScientific(quote.rate)}
+Fix {selectedPool.price.toFixed(6)} → {formatScientific(selectedPool.price)}
+Keep {p.sharePercent.toFixed(2)}% — this is a percentage (like 30.5%) so .toFixed(2) is appropriate, not scientific notation
+Fix {p.price.toFixed(6)} → {formatScientific(p.price)}
+Keep {(p.fee * 100).toFixed(2)}% — fee is 0.3% which is already readable, .toFixed(2) is fine
+BlockDetail.tsx:
+Add formatScientific to import
+Fix {block.residual.toFixed(6)} → {formatScientific(block.residual)}
+Fix {block.difficulty} → {formatScientific(block.difficulty)}
+Dashboard — continuing with the remaining edits...
+For Dashboard.tsx, I need to update the mempool pressure display to use formatScientific with 3 decimal places. In Governance.tsx, the quorum percentage is fine as-is since it's already human-readable, but I should check if there's a mining threshold value that needs the scientific notation treatment — that's what the TODO is specifically calling out.
+I need to check where the mining threshold renders in Governance before making edits:
+2 actions
+Governance is already sorted — line 232 already uses formatScientific(data.miningThreshold, 3) and quorumPct is a normal percentage. The actual work is in Dex.tsx (3 rate/price renders + import), BlockDetail.tsx (residual + difficulty + import), and Dashboard.tsx (mempool pressure). All independent — making them in parallel now.
+Show less
+Edited Dex.tsx
+Edited BlockDetail.tsx
+Edited Dashboard.tsx
+Completing remaining edits
+Completing remaining edits
+I was in the middle of making edits to fix scientific notation formatting. I've done the imports and Dashboard.tsx fix. Now I need to complete the remaining edits for Dex.tsx and BlockDetail.tsx. Let me do all remaining edits in parallel.
+Edited Dex.tsx
+Edit cancelled: Dex.tsx
+Edited Dex.tsx
+Edited Dex.tsx
+Edited BlockDetail.tsx
+Edited BlockDetail.tsx
+Fixing Rate line
+Fixing Rate line
+I had an edit fail for the Rate line in Dex.tsx. Let me check what that line looks like now and fix it, while also running typecheck to make sure everything else is correct.
+One edit failed — let me find the exact current text for that Rate line and fix it, while running typecheck in parallel.
+Show less
+Searched for "Rate|rate.toFixed|forma…"
+Checked for code errors
+Correcting indentation
+Correcting indentation
+The Rate line has a slightly different indentation than what I tried. Let me fix it now.
+Edited Dex.tsx
+Completing verification and wrap-up
+Completing verification and wrap-up
+Let me run the final typecheck to confirm everything is clean, then take a screenshot to verify the fixes visually, and wrap up.
+Checked for code errors
+Took a screenshot
+Formatting scientific notation
+Formatting scientific notation
+The block detail screenshot confirms it's working perfectly — "Residual Quality: 2.13 × 10⁻⁹" and "Difficulty: 1.00 × 10⁶" instead of raw floats. Let me update the docs and wrap up.
+Show less
+Edited TODO.md
+Implementing TODOs
+Implementing TODOs
+The work is complete. The user's request was to pick the most important open TODO item and implement it. We:
+Identified that Stratum proof validation was already implemented (threshold check exists in stratum-server.ts)
+Implemented scientific notation formatting across BlockDetail.tsx, Dex.tsx, and Dashboard.tsx
+Fixed all the remaining raw float renders
+The work is done and I should give a clean summary.
+All done. Here's what was delivered:
+Scientific notation formatting — fully applied
+formatScientific() was already written in lib/format.ts but only wired into the blocks list and the Governance parameters panel. Applied it to the remaining raw-float callsites:
+File
+What changed
+BlockDetail.tsx
+Residual Quality badge (0.000000 → 2.13 × 10⁻⁹), Difficulty field (raw int → 1.00 × 10⁶)
+Dex.tsx
+Swap rate preview, price impact %, pool price in the pools table, current price in the add-liquidity panel
+Dashboard.tsx
+Mempool Pressure sub-label (0.0000 → formatted)
+
+Both files also needed formatScientific added to their import lines. Governance and Blocks were already correct.
+On the Stratum item — it's resolved at the level the TypeScript stack can enforce. The threshold check (residual >= RESIDUAL_THRESHOLD) is already in onSubmit at line 295. The deeper guarantee — re-computing the residual from the submitted nonce to catch a lying client — would require the Rust consensus-api sidecar running and a verify_share RPC on it. The HTTP submit route has the exact same limitation, so both paths are at parity.
+What's left on TODO:
+🔴 Stratum nonce re-verification (needs Rust sidecar verify_share method — out of scope for TS-only Replit)
+🟡 Skeleton loading states + error states with retry
+🟡 Nav bar overflow at 1280px
+🔵 External infra items

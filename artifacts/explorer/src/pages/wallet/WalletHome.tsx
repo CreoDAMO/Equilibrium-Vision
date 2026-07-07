@@ -152,7 +152,23 @@ export default function WalletHome() {
         </CardHeader>
         <CardContent>
           {!addressInfo ? (
-            <div className="py-8 text-center text-muted-foreground">Loading...</div>
+            <div className="space-y-3">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="flex items-center justify-between p-4 border rounded-lg animate-pulse" style={{ animationDelay: `${i * 60}ms` }}>
+                  <div className="flex items-center gap-4">
+                    <div className="w-8 h-8 bg-muted rounded-full" />
+                    <div className="space-y-1.5">
+                      <div className="h-4 w-28 bg-muted rounded" />
+                      <div className="h-3 w-20 bg-muted rounded" />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 text-right">
+                    <div className="h-4 w-16 bg-muted rounded ml-auto" />
+                    <div className="h-3 w-10 bg-muted rounded ml-auto" />
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : addressInfo.transactions.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground border border-dashed rounded-lg">
               No transactions yet.

@@ -14,8 +14,42 @@ export default function TxDetail() {
   
   const { data: tx, isLoading, error } = useGetTransaction(hash);
 
-  if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading transaction...</div>;
-  if (error || !tx) return <div className="p-8 text-center text-destructive">Transaction not found.</div>;
+  if (isLoading) return (
+    <div className="space-y-6 max-w-4xl mx-auto">
+      <div className="flex items-center gap-4 mb-4">
+        <div className="w-9 h-9 bg-muted rounded animate-pulse" />
+        <div className="h-8 w-48 bg-muted rounded animate-pulse" />
+      </div>
+      <div className="rounded-lg border p-6 space-y-8 animate-pulse">
+        <div className="pb-6 border-b space-y-2">
+          <div className="h-4 w-32 bg-muted rounded" />
+          <div className="h-6 w-full bg-muted rounded" />
+        </div>
+        <div className="grid grid-cols-3 gap-6">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="rounded-xl border p-4 space-y-2">
+              <div className="h-4 w-16 bg-muted rounded" />
+              <div className="h-5 w-full bg-muted rounded" />
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="flex justify-between py-2 border-b">
+              <div className="h-4 w-20 bg-muted rounded" />
+              <div className="h-4 w-24 bg-muted rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+  if (error || !tx) return (
+    <div className="p-8 text-center">
+      <p className="text-destructive font-medium">Transaction not found.</p>
+      <button onClick={() => window.location.reload()} className="mt-3 text-sm text-primary hover:underline">Retry</button>
+    </div>
+  );
 
   const StatusIcon = tx.status === "confirmed" ? CheckCircle2 : tx.status === "pending" ? Clock4 : XCircle;
   const statusColor = tx.status === "confirmed" ? "text-green-600" : tx.status === "pending" ? "text-yellow-600" : "text-red-600";

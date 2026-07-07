@@ -136,12 +136,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   href={link.href}
                   aria-label={link.label}
                   title={link.label}
-                  className={`flex items-center gap-1.5 px-2 xl:px-3 py-2 rounded-md text-sm font-medium transition-colors hover:bg-muted ${
+                  className={`flex items-center gap-1.5 px-2 2xl:px-3 py-2 rounded-md text-sm font-medium transition-colors hover:bg-muted ${
                     location === link.href ? "bg-muted text-foreground" : "text-muted-foreground"
                   }`}
                 >
                   {link.icon}
-                  <span className="hidden xl:inline" aria-hidden="true">{link.label}</span>
+                  <span className="hidden 2xl:inline" aria-hidden="true">{link.label}</span>
                 </Link>
               ))}
             </nav>
