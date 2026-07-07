@@ -4,7 +4,7 @@ import { useGetBlock, useGetBlockFees } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { truncateHash, timeAgo, formatAmount } from "@/lib/format";
+import { truncateHash, timeAgo, formatAmount, formatScientific } from "@/lib/format";
 import { ArrowLeft, Box, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/CopyButton";
@@ -76,12 +76,12 @@ export default function BlockDetail() {
             <div className="flex justify-between items-center py-2 border-b">
               <span className="text-muted-foreground">Residual Quality</span>
               <Badge variant="outline" className={block.residual < 0.1 ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"}>
-                {block.residual.toFixed(6)}
+                {formatScientific(block.residual)}
               </Badge>
             </div>
             <div className="flex justify-between items-center py-2 border-b">
               <span className="text-muted-foreground">Difficulty</span>
-              <span>{block.difficulty}</span>
+              <span>{formatScientific(block.difficulty)}</span>
             </div>
             <div className="flex justify-between items-center py-2 border-b">
               <span className="text-muted-foreground">Recursion Depth</span>

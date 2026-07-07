@@ -21,7 +21,7 @@ export default function Dashboard() {
         {[
           { label: "Network Height", icon: <Box className="w-4 h-4 text-primary" />, value: status ? new Intl.NumberFormat().format(status.height) : null, sub: status ? `Latest: ${truncateHash(status.latestHash)}` : null },
           { label: "Throughput",     icon: <Activity className="w-4 h-4 text-primary" />, value: status ? `${status.tps.toFixed(2)} TPS` : null, sub: status ? `${new Intl.NumberFormat().format(status.totalTxCount)} total txs` : null },
-          { label: "Mempool",        icon: <Database className="w-4 h-4 text-primary" />, value: status ? String(status.mempoolSize) : null, sub: status ? `Pressure: ${status.mempoolPressure.toFixed(4)}` : null },
+          { label: "Mempool",        icon: <Database className="w-4 h-4 text-primary" />, value: status ? String(status.mempoolSize) : null, sub: status ? `Pressure: ${formatScientific(status.mempoolPressure, 3)}` : null },
           { label: "Consensus",      icon: <Cpu className="w-4 h-4 text-primary" />, value: status ? `${status.validatorCount} Peers` : null, sub: status ? `Residual: ${formatScientific(status.lastResidual, 3)}` : null },
         ].map((card) => (
           <Card key={card.label}>

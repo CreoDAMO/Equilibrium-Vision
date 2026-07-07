@@ -54,13 +54,13 @@ The contract list queries by deployer address on every page load. Without an ind
 Every block in the blocks list and dashboard shows "56 years ago". The age calculation is likely comparing against a wrong epoch baseline or treating a genesis timestamp differently.
 - Audit the relative-time helper used in `BlockList` and `Dashboard`; confirm it handles the block `timestamp` field (Unix seconds) correctly.
 
-### 6. Scientific notation everywhere
-Multiple places render raw floats without formatting:
-- Dashboard right Y-axis: `6e-9`, `4.5e-9`, `3e-9` (residual values)
-- Governance page: `Mining Threshold: 1.00e-8`
-- DEX pool price: `0.000010` (inconsistent precision)
-- Blocks table: `Residual: 0.0000` (truncated to zero for small values)
-- Add a shared `formatScientific(n, sigFigs)` utility that renders these as e.g. `1.0 × 10⁻⁸` or `< 0.000001` depending on context.
+### 6. ~~Scientific notation everywhere~~ — **Resolved**
+`formatScientific` was already in `lib/format.ts` — applied it to all remaining raw-float renders:
+- `BlockDetail.tsx` — Residual Quality badge + Difficulty field
+- `Dex.tsx` — swap rate, price impact, pool price column, add-liquidity current price
+- `Dashboard.tsx` — Mempool pressure sub-label
+- `Governance.tsx` — Mining Threshold (was already done in a prior pass)
+- `Blocks.tsx` — Residual column (was already done in a prior pass)
 
 ### 7. Nav bar truncation at 1280 px
 "Contracts" is cut off to "Con…" at 1280 px wide. The nav doesn't scroll or collapse.

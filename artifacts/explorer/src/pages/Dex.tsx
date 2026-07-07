@@ -22,7 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { useWallet } from "@/wallet/context";
-import { formatAmount, truncateHash, timeAgo } from "@/lib/format";
+import { formatAmount, formatScientific, truncateHash, timeAgo } from "@/lib/format";
 import { ArrowRightLeft, Droplets, TrendingUp, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -125,9 +125,9 @@ function SwapTab({ pools }: { pools: DexPoolList | undefined }) {
                   <div className="flex justify-between"><span className="text-muted-foreground">You receive</span><span className="font-semibold">{formatAmount(quote.amountOut)} {tokenOut}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Fee</span><span>{formatAmount(quote.fee)} {tokenIn}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Price impact</span>
-                    <span className={Number(quote.priceImpact) > 2 ? "text-orange-600 font-medium" : ""}>{quote.priceImpact}%</span>
+                    <span className={Number(quote.priceImpact) > 2 ? "text-orange-600 font-medium" : ""}>{formatScientific(Number(quote.priceImpact))}%</span>
                   </div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Rate</span><span>1 {tokenIn} = {quote.rate.toFixed(6)} {tokenOut}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Rate</span><span>1 {tokenIn} = {formatScientific(quote.rate)} {tokenOut}</span></div>
                 </>
               ) : null}
             </div>
@@ -199,7 +199,7 @@ function LiquidityTab({ pools }: { pools: DexPoolList | undefined }) {
 
           {selectedPool && (
             <div className="bg-muted/50 rounded-md p-3 text-xs text-muted-foreground space-y-1">
-              <div className="flex justify-between"><span>Current price</span><span className="font-medium text-foreground">1 {selectedPool.tokenA} = {selectedPool.price.toFixed(6)} {selectedPool.tokenB}</span></div>
+              <div className="flex justify-between"><span>Current price</span><span className="font-medium text-foreground">1 {selectedPool.tokenA} = {formatScientific(selectedPool.price)} {selectedPool.tokenB}</span></div>
               <div className="flex justify-between"><span>Reserve {selectedPool.tokenA}</span><span>{formatAmount(selectedPool.reserveA)}</span></div>
               <div className="flex justify-between"><span>Reserve {selectedPool.tokenB}</span><span>{formatAmount(selectedPool.reserveB)}</span></div>
             </div>
@@ -344,7 +344,7 @@ export default function DexPage() {
                           <div className="font-medium">{p.tokenA}/{p.tokenB}</div>
                           <PoolBadge poolId={p.id} />
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm">{p.price.toFixed(6)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{formatScientific(p.price)}</TableCell>
                         <TableCell className="text-right">{formatAmount(p.tvl)}</TableCell>
                         <TableCell className="text-right text-muted-foreground">{(p.fee * 100).toFixed(2)}%</TableCell>
                       </TableRow>
