@@ -251,8 +251,9 @@ export default function ValidatorDetail() {
                 </CardHeader>
                 <CardContent>
                   {feesData.history.length === 0 ? (
-                    <div className="h-24 flex items-center justify-center text-muted-foreground">
-                      No blocks mined by this validator yet.
+                    <div className="h-24 flex flex-col items-center justify-center gap-2 text-muted-foreground text-sm text-center">
+                      <span>No fee-paying transactions have been included in blocks proposed by this validator yet.</span>
+                      <span className="text-xs">Earnings will appear here once blocks with transactions are mined.</span>
                     </div>
                   ) : (
                     <ResponsiveContainer width="100%" height={260}>
@@ -300,7 +301,7 @@ export default function ValidatorDetail() {
                           <TableCell className="text-right">{formatAmount(h.accountFees)} EQU</TableCell>
                           <TableCell className="text-right">{formatAmount(h.utxoFees)} EQU</TableCell>
                           <TableCell className="text-right font-medium text-green-600">{formatAmount(h.totalFees)} EQU</TableCell>
-                          <TableCell className="text-right text-muted-foreground whitespace-nowrap">{timeAgo(h.timestamp * 1000)}</TableCell>
+                          <TableCell className="text-right text-muted-foreground whitespace-nowrap">{timeAgo(h.timestamp)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

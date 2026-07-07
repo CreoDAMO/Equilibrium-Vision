@@ -3,6 +3,11 @@ name: Equilibrium setup
 description: Run commands, ports, key architecture rules, and gotchas for the Equilibrium blockchain project
 ---
 
+## Search page
+- Route: `/search/:query` — parallel block+tx lookup for 64-char hex hashes
+- Auto-redirects if only one match; disambiguation UI if both; not-found/invalid-format states
+- Layout.tsx handleSearch now routes 64-char hex to `/search/` (not `/tx/`)
+
 ## express-rate-limit
 - Installed in `@workspace/api-server` — skip paths use `/api/tx/broadcast` (NOT `/api/tx/submit`)
 - CORS: `ALLOWED_ORIGINS` env var (comma-separated); defaults to `*` dev / `false` prod (fail-closed)

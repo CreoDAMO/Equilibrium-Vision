@@ -28,6 +28,7 @@ import ContractDetail from "@/pages/ContractDetail";
 import AdminMultisig from "@/pages/AdminMultisig";
 import StakingPage from "@/pages/Staking";
 import DexPage from "@/pages/Dex";
+import SearchPage from "@/pages/Search";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -66,6 +67,7 @@ function AppRouter() {
           <Route path="/wallet/import" component={WalletImport} />
           <Route path="/wallet/send" component={WalletSend} />
           <Route path="/wallet/multisig" component={WalletMultisig} />
+          <Route path="/search/:query" component={SearchPage} />
           <Route path="/staking" component={StakingPage} />
           <Route path="/dex" component={DexPage} />
           <Route path="/contracts" component={ContractsPage} />

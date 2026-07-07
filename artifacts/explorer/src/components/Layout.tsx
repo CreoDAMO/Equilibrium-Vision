@@ -12,16 +12,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
     e.preventDefault();
     if (!search.trim()) return;
     
-    const query = search.trim();
-    if (query.length === 64) {
-      // Could be block hash or tx hash. We'll default to block, or if we had a smart search we'd check both.
-      // Let's route to tx first if they prefix it, but assuming we just route to search results or try tx first.
-      setLocation(`/tx/${query}`);
-    } else if (query.length === 40) {
+    const query = search.trim().toLowerCase();
+    if (query.length === 64 && /^[0-9a-f]+$/.test(query)) {
+      // Could be a block hash or a tx hash — let the Search page resolve it
+      setLocation(`/search/${query}`);
+    } else if (query.length === 40 && /^[0-9a-f]+$/.test(query)) {
       setLocation(`/address/${query}`);
-    } else if (!isNaN(Number(query))) {
+    } else if (/^\d+$/.test(query)) {
       setLocation(`/blocks/${query}`);
     } else {
+      // Unknown format — try block anyway (BlockDetail shows a "not found" gracefully)
       setLocation(`/blocks/${query}`);
     }
   };

@@ -222,7 +222,19 @@ export default function Staking() {
             <Card>
               <CardHeader><CardTitle className="text-base">My Positions</CardTitle></CardHeader>
               <CardContent className="space-y-3 text-sm">
-                {pLoading && <p className="text-muted-foreground">Loading…</p>}
+                {pLoading && (
+                  <div className="space-y-3">
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="flex items-center justify-between animate-pulse" style={{ animationDelay: `${i * 60}ms` }}>
+                        <div className="space-y-1.5">
+                          <div className="h-3 w-32 bg-muted rounded" />
+                          <div className="h-3 w-24 bg-muted rounded" />
+                        </div>
+                        <div className="h-4 w-20 bg-muted rounded" />
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {positions && positions.positions.length === 0 && positions.unbonding.length === 0 && (
                   <p className="text-muted-foreground">No active positions.</p>
                 )}
@@ -263,7 +275,19 @@ export default function Staking() {
             <CardHeader><CardTitle>Validator Set</CardTitle></CardHeader>
             <CardContent className="p-0">
               {vLoading ? (
-                <p className="p-6 text-center text-muted-foreground">Loading validators…</p>
+                <table className="w-full">
+                  <tbody>
+                    {[...Array(5)].map((_, i) => (
+                      <tr key={i} className="border-b last:border-0">
+                        {[...Array(6)].map((__, j) => (
+                          <td key={j} className="p-3">
+                            <div className="h-4 bg-muted rounded animate-pulse" style={{ animationDelay: `${i * 50}ms` }} />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               ) : (
                 <Table>
                   <TableHeader>

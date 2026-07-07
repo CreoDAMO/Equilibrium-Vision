@@ -7,9 +7,9 @@ import { truncateHash, timeAgo, formatAmount, formatScientific } from "@/lib/for
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 
 export default function Dashboard() {
-  const { data: status } = useGetChainStatus({ query: { queryKey: getGetChainStatusQueryKey(), refetchInterval: 10000 } });
+  const { data: status, isLoading: statusLoading } = useGetChainStatus({ query: { queryKey: getGetChainStatusQueryKey(), refetchInterval: 10000 } });
   const { data: stats } = useGetChainStats({ query: { queryKey: getGetChainStatsQueryKey(), refetchInterval: 10000 } });
-  const { data: recentBlocks } = useListBlocks({ limit: 10 }, { query: { queryKey: getListBlocksQueryKey({ limit: 10 }), refetchInterval: 10000 } });
+  const { data: recentBlocks, isLoading: blocksLoading } = useListBlocks({ limit: 10 }, { query: { queryKey: getListBlocksQueryKey({ limit: 10 }), refetchInterval: 10000 } });
   const { data: mempool } = useGetMempool({ query: { queryKey: getGetMempoolQueryKey(), refetchInterval: 10000 } });
 
   // Get recent txs either from latest block or mempool
@@ -18,57 +18,32 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Network Height</CardTitle>
-            <Box className="w-4 h-4 text-primary" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{status ? new Intl.NumberFormat().format(status.height) : "..."}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Latest: {status ? truncateHash(status.latestHash) : "..."}
-            </p>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Throughput</CardTitle>
-            <Activity className="w-4 h-4 text-primary" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{status ? `${status.tps.toFixed(2)} TPS` : "..."}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {status ? `${new Intl.NumberFormat().format(status.totalTxCount)} total txs` : "..."}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Mempool</CardTitle>
-            <Database className="w-4 h-4 text-primary" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{status ? status.mempoolSize : "..."}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Pressure: {status ? status.mempoolPressure.toFixed(4) : "..."}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Consensus</CardTitle>
-            <Cpu className="w-4 h-4 text-primary" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{status ? status.validatorCount : "..."} Peers</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Residual: {status ? formatScientific(status.lastResidual, 3) : "..."}
-            </p>
-          </CardContent>
-        </Card>
+        {[
+          { label: "Network Height", icon: <Box className="w-4 h-4 text-primary" />, value: status ? new Intl.NumberFormat().format(status.height) : null, sub: status ? `Latest: ${truncateHash(status.latestHash)}` : null },
+          { label: "Throughput",     icon: <Activity className="w-4 h-4 text-primary" />, value: status ? `${status.tps.toFixed(2)} TPS` : null, sub: status ? `${new Intl.NumberFormat().format(status.totalTxCount)} total txs` : null },
+          { label: "Mempool",        icon: <Database className="w-4 h-4 text-primary" />, value: status ? String(status.mempoolSize) : null, sub: status ? `Pressure: ${status.mempoolPressure.toFixed(4)}` : null },
+          { label: "Consensus",      icon: <Cpu className="w-4 h-4 text-primary" />, value: status ? `${status.validatorCount} Peers` : null, sub: status ? `Residual: ${formatScientific(status.lastResidual, 3)}` : null },
+        ].map((card) => (
+          <Card key={card.label}>
+            <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+              <CardTitle className="text-sm font-medium text-muted-foreground">{card.label}</CardTitle>
+              {card.icon}
+            </CardHeader>
+            <CardContent>
+              {statusLoading ? (
+                <>
+                  <div className="h-8 w-28 bg-muted rounded animate-pulse mb-1" />
+                  <div className="h-3 w-40 bg-muted rounded animate-pulse" />
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">{card.value}</div>
+                  <p className="text-xs text-muted-foreground mt-1">{card.sub}</p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -110,27 +85,44 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {recentBlocks?.blocks.map((block) => (
-                <div key={block.hash} className="flex items-center justify-between p-3 rounded-lg border bg-muted/20">
-                  <div className="flex items-center gap-4">
-                    <div className="bg-primary/10 text-primary p-2 rounded flex items-center justify-center">
-                      <Box className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <Link href={`/blocks/${block.height}`} className="font-semibold hover:underline">
-                        Block #{block.height}
-                      </Link>
-                      <div className="text-xs text-muted-foreground font-mono mt-0.5">
-                        {truncateHash(block.hash)}
+              {blocksLoading
+                ? [...Array(4)].map((_, i) => (
+                    <div key={i} className="flex items-center justify-between p-3 rounded-lg border bg-muted/20 animate-pulse" style={{ animationDelay: `${i * 60}ms` }}>
+                      <div className="flex items-center gap-4">
+                        <div className="w-8 h-8 bg-muted rounded" />
+                        <div className="space-y-1.5">
+                          <div className="h-4 w-24 bg-muted rounded" />
+                          <div className="h-3 w-32 bg-muted rounded" />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5 text-right">
+                        <div className="h-4 w-10 bg-muted rounded ml-auto" />
+                        <div className="h-3 w-14 bg-muted rounded ml-auto" />
                       </div>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-medium">{block.txCount} txs</div>
-                    <div className="text-xs text-muted-foreground mt-0.5">{timeAgo(block.timestamp)}</div>
-                  </div>
-                </div>
-              ))}
+                  ))
+                : recentBlocks?.blocks.map((block) => (
+                    <div key={block.hash} className="flex items-center justify-between p-3 rounded-lg border bg-muted/20">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-primary/10 text-primary p-2 rounded flex items-center justify-center">
+                          <Box className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <Link href={`/blocks/${block.height}`} className="font-semibold hover:underline">
+                            Block #{block.height}
+                          </Link>
+                          <div className="text-xs text-muted-foreground font-mono mt-0.5">
+                            {truncateHash(block.hash)}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-medium">{block.txCount} txs</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{timeAgo(block.timestamp)}</div>
+                      </div>
+                    </div>
+                  ))
+              }
             </div>
           </CardContent>
         </Card>

@@ -67,9 +67,15 @@ export default function NetworkPage() {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">Discovering peers...</TableCell>
-                </TableRow>
+                [...Array(4)].map((_, i) => (
+                  <TableRow key={i}>
+                    {[...Array(5)].map((__, j) => (
+                      <TableCell key={j}>
+                        <div className="h-4 bg-muted rounded animate-pulse" style={{ animationDelay: `${i * 50}ms` }} />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
               ) : peers?.map((peer) => (
                 <TableRow key={peer.peerId}>
                   <TableCell className="font-mono text-sm font-medium">
