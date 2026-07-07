@@ -9,6 +9,10 @@ import { logger } from "./lib/logger.js";
 
 const app: Express = express();
 
+// Trust the reverse proxy sitting in front of us (Replit's edge, nginx, etc.)
+// so express-rate-limit can read X-Forwarded-For reliably.
+app.set("trust proxy", 1);
+
 // ── CORS ──────────────────────────────────────────────────────────────────────
 // In production, lock to known origins via ALLOWED_ORIGINS (comma-separated).
 // In development (no env var), use * so the Replit preview iframe works freely.

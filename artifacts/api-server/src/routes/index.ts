@@ -15,6 +15,7 @@ import contractsRouter from "./contracts.js";
 import evmRouter from "./evm.js";
 import governanceRouter from "./governance.js";
 import mobileRouter from "./mobile.js";
+import adminRouter from "./admin.js";
 
 const router: IRouter = Router();
 
@@ -34,5 +35,6 @@ router.use(contractsRouter);
 router.use(evmRouter);
 router.use(governanceRouter);
 router.use(mobileRouter);
+router.use(adminRouter);
 
 export default router;
