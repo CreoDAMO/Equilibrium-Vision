@@ -27,18 +27,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
   };
 
   const navLinks = [
-    { href: "/", label: "Dashboard", icon: <Activity className="w-4 h-4 mr-2" /> },
-    { href: "/blocks", label: "Blocks", icon: <Box className="w-4 h-4 mr-2" /> },
-    { href: "/mempool", label: "Mempool", icon: <ListTree className="w-4 h-4 mr-2" /> },
-    { href: "/network", label: "Network", icon: <Users className="w-4 h-4 mr-2" /> },
-    { href: "/validators", label: "Validators", icon: <Shield className="w-4 h-4 mr-2" /> },
-    { href: "/staking", label: "Staking", icon: <Coins className="w-4 h-4 mr-2" /> },
-    { href: "/dex", label: "DEX", icon: <ArrowRightLeft className="w-4 h-4 mr-2" /> },
-    { href: "/governance", label: "Governance", icon: <Vote className="w-4 h-4 mr-2" /> },
-    { href: "/faucet", label: "Faucet", icon: <Droplets className="w-4 h-4 mr-2" /> },
-    { href: "/wallet", label: "Wallet", icon: <Wallet className="w-4 h-4 mr-2" /> },
-    { href: "/contracts", label: "Contracts", icon: <Code2 className="w-4 h-4 mr-2" /> },
-    { href: "/admin/multisig", label: "Admin", icon: <ShieldCheck className="w-4 h-4 mr-2" /> },
+    { href: "/", label: "Dashboard", icon: <Activity className="w-4 h-4" /> },
+    { href: "/blocks", label: "Blocks", icon: <Box className="w-4 h-4" /> },
+    { href: "/mempool", label: "Mempool", icon: <ListTree className="w-4 h-4" /> },
+    { href: "/network", label: "Network", icon: <Users className="w-4 h-4" /> },
+    { href: "/validators", label: "Validators", icon: <Shield className="w-4 h-4" /> },
+    { href: "/staking", label: "Staking", icon: <Coins className="w-4 h-4" /> },
+    { href: "/dex", label: "DEX", icon: <ArrowRightLeft className="w-4 h-4" /> },
+    { href: "/governance", label: "Governance", icon: <Vote className="w-4 h-4" /> },
+    { href: "/faucet", label: "Faucet", icon: <Droplets className="w-4 h-4" /> },
+    { href: "/wallet", label: "Wallet", icon: <Wallet className="w-4 h-4" /> },
+    { href: "/contracts", label: "Contracts", icon: <Code2 className="w-4 h-4" /> },
+    { href: "/admin/multisig", label: "Admin", icon: <ShieldCheck className="w-4 h-4" /> },
   ];
 
   return (
@@ -51,17 +51,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <span>EQU Explorer</span>
             </Link>
 
-            <nav className="hidden md:flex items-center gap-1">
+            <nav className="hidden md:flex items-center gap-0.5">
               {navLinks.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`flex items-center px-3 py-2 rounded-md text-sm font-medium transition-colors hover:bg-muted ${
+                  aria-label={link.label}
+                  title={link.label}
+                  className={`flex items-center gap-1.5 px-2 xl:px-3 py-2 rounded-md text-sm font-medium transition-colors hover:bg-muted ${
                     location === link.href ? "bg-muted text-foreground" : "text-muted-foreground"
                   }`}
                 >
                   {link.icon}
-                  {link.label}
+                  <span className="hidden xl:inline" aria-hidden="true">{link.label}</span>
                 </Link>
               ))}
             </nav>

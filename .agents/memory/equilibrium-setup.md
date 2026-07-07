@@ -3,6 +3,14 @@ name: Equilibrium setup
 description: Run commands, ports, key architecture rules, and gotchas for the Equilibrium blockchain project
 ---
 
+## express-rate-limit
+- Installed in `@workspace/api-server` — skip paths use `/api/tx/broadcast` (NOT `/api/tx/submit`)
+- CORS: `ALLOWED_ORIGINS` env var (comma-separated); defaults to `*` dev / `false` prod (fail-closed)
+
+## timeAgo / timestamp bug (fixed)
+- Block timestamps are Unix **seconds**; `Date.now()` is ms — multiply block.timestamp × 1000
+- Fixed in `artifacts/explorer/src/lib/format.ts`; also added `formatScientific` and `formatCompact` helpers
+
 ## Run commands & ports
 - API server: `pnpm --filter @workspace/api-server run dev` → port 8080 (workflow: `API Server`)
 - Explorer: `pnpm --filter @workspace/explorer run dev` → port 5000 (workflow: `Explorer`)

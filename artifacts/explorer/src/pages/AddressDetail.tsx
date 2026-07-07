@@ -14,8 +14,36 @@ export default function AddressDetail() {
   
   const { data: info, isLoading, error } = useGetAddress(addr);
 
-  if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading address...</div>;
-  if (error || !info) return <div className="p-8 text-center text-destructive">Address not found.</div>;
+  if (isLoading) return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4 mb-4">
+        <div className="bg-muted rounded-xl w-14 h-14 animate-pulse" />
+        <div className="space-y-2">
+          <div className="h-8 w-32 bg-muted rounded animate-pulse" />
+          <div className="h-4 w-80 bg-muted rounded animate-pulse" />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="rounded-lg border p-6 space-y-2 animate-pulse">
+            <div className="h-4 w-24 bg-muted rounded" />
+            <div className="h-9 w-32 bg-muted rounded" />
+          </div>
+        ))}
+      </div>
+      <div className="rounded-lg border overflow-hidden">
+        {[...Array(6)].map((_, i) => (
+          <div key={i} className="h-16 bg-muted/40 border-b last:border-0 animate-pulse" style={{ animationDelay: `${i * 60}ms` }} />
+        ))}
+      </div>
+    </div>
+  );
+  if (error || !info) return (
+    <div className="p-8 text-center">
+      <p className="text-destructive font-medium">Address not found.</p>
+      <button onClick={() => window.location.reload()} className="mt-3 text-sm text-primary hover:underline">Retry</button>
+    </div>
+  );
 
   return (
     <div className="space-y-6">

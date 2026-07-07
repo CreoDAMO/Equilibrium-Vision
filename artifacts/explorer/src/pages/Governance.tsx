@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
 import { Vote, CheckCircle2, XCircle, Clock, Zap } from "lucide-react";
-import { formatAmount } from "@/lib/format";
+import { formatAmount, formatScientific } from "@/lib/format";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -229,7 +229,7 @@ function ChainParamsPanel() {
 
   const params = [
     { label: "Base Reward", value: `${formatAmount(data.baseReward)} EQU` },
-    { label: "Mining Threshold", value: data.miningThreshold.toExponential(2) },
+    { label: "Mining Threshold", value: formatScientific(data.miningThreshold, 3) },
     { label: "Unbonding Period", value: `${data.unbondingPeriod} blocks` },
     { label: "Max Mempool Size", value: data.maxMempoolSize.toLocaleString() },
     { label: "Min Validator Stake", value: `${formatAmount(data.minValidatorStake)} EQU` },

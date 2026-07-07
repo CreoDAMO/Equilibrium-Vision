@@ -3,11 +3,11 @@ import { useGetChainStatus, useGetChainStats, useListBlocks, useGetMempool, getG
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Activity, Box, Database, HardDrive, Cpu, Hash, ArrowRight, ArrowRightLeft } from "lucide-react";
 import { Link } from "wouter";
-import { truncateHash, timeAgo, formatAmount } from "@/lib/format";
-import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { truncateHash, timeAgo, formatAmount, formatScientific } from "@/lib/format";
+import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 
 export default function Dashboard() {
-  const { data: status, isLoading: statusLoading } = useGetChainStatus({ query: { queryKey: getGetChainStatusQueryKey(), refetchInterval: 10000 } });
+  const { data: status } = useGetChainStatus({ query: { queryKey: getGetChainStatusQueryKey(), refetchInterval: 10000 } });
   const { data: stats } = useGetChainStats({ query: { queryKey: getGetChainStatsQueryKey(), refetchInterval: 10000 } });
   const { data: recentBlocks } = useListBlocks({ limit: 10 }, { query: { queryKey: getListBlocksQueryKey({ limit: 10 }), refetchInterval: 10000 } });
   const { data: mempool } = useGetMempool({ query: { queryKey: getGetMempoolQueryKey(), refetchInterval: 10000 } });
@@ -65,7 +65,7 @@ export default function Dashboard() {
           <CardContent>
             <div className="text-2xl font-bold">{status ? status.validatorCount : "..."} Peers</div>
             <p className="text-xs text-muted-foreground mt-1">
-              Residual: {status ? status.lastResidual.toFixed(6) : "..."}
+              Residual: {status ? formatScientific(status.lastResidual, 3) : "..."}
             </p>
           </CardContent>
         </Card>
@@ -74,20 +74,24 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Network Pressure (Last 20 Blocks)</CardTitle>
+            <CardTitle>Mempool Size &amp; PoS Residual (Last 20 Blocks)</CardTitle>
           </CardHeader>
           <CardContent className="h-[300px]">
             {stats && stats.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={stats.slice().reverse()}>
+                <LineChart data={stats.slice().reverse()} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis dataKey="height" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} width={40} />
-                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} width={40} />
-                  <RechartsTooltip 
+                  <XAxis dataKey="height" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} label={{ value: "Block Height", position: "insideBottom", offset: -2, fontSize: 11, fill: "var(--muted-foreground)" }} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={45} label={{ value: "Mempool", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fill: "var(--muted-foreground)" }} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={70} tickFormatter={(v: number) => formatScientific(v, 2)} label={{ value: "Residual", angle: 90, position: "insideRight", offset: 10, fontSize: 11, fill: "var(--muted-foreground)" }} />
+                  <RechartsTooltip
                     contentStyle={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)', borderRadius: '6px' }}
+                    formatter={(value: number, name: string) =>
+                      name === "Residual" ? [formatScientific(value, 3), name] : [value, name]
+                    }
                   />
-                  <Line yAxisId="left" type="monotone" dataKey="mempoolPressure" stroke="var(--primary)" strokeWidth={2} dot={false} name="Pressure" />
+                  <Legend verticalAlign="top" height={28} />
+                  <Line yAxisId="left" type="monotone" dataKey="mempoolPressure" stroke="var(--primary)" strokeWidth={2} dot={false} name="Mempool Pressure" />
                   <Line yAxisId="right" type="monotone" dataKey="residual" stroke="var(--chart-4)" strokeWidth={2} dot={false} name="Residual" />
                 </LineChart>
               </ResponsiveContainer>
