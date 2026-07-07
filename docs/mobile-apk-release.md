@@ -14,7 +14,7 @@ equilibrium/                        Rust core (mining solver, JNI bridge)
 equilibrium/mobile/android/         Android app (Kotlin + Gradle)
   build-jni.sh                      cross-compiles Rust → .so via cargo-ndk
   app/build.gradle.kts              release signingConfig reads ANDROID_* env vars
-scripts/generate-android-keystore.sh   one-time keystore generator (openssl, no JDK needed)
+scripts/generate-android-keystore.sh   one-time keystore generator (keytool preferred; openssl -legacy fallback)
 android-apk-ci.yml                  GitHub Actions workflow (repo root — see below)
 ```
 
@@ -40,6 +40,15 @@ android-apk-ci.yml                  GitHub Actions workflow (repo root — see b
    | `ANDROID_KEYSTORE_PASSWORD` | store password from `credentials.txt` |
    | `ANDROID_KEY_ALIAS` | alias from `credentials.txt` (`equilibrium-release`) |
    | `ANDROID_KEY_PASSWORD` | key password from `credentials.txt` |
+
+   > **⚠️ Keystore compatibility note:** The script previously used `openssl
+   > pkcs12 -export` without the `-legacy` flag. OpenSSL 3.x then encrypts
+   > private keys with AES-256-CBC, which Android Gradle Plugin cannot read —
+   > this shows up as *"Given final block not properly padded"* in the
+   > `packageRelease` step. The script now uses `keytool` (preferred) or
+   > `openssl -legacy` as a fallback. **If you generated your keystore before
+   > this fix, re-run `./scripts/generate-android-keystore.sh` and update all
+   > four secrets.**
    | `API_BASE_URL` *(optional)* | public URL of your running node API (e.g. `https://your-repl.replit.dev`) — enables the in-app "check for updates" screen |
    | `ADMIN_API_KEY` *(optional)* | same value as the API server's `ADMIN_KEY`/`ADMIN_API_KEY` secret — required alongside `API_BASE_URL` |
 4. **Back up `release-keystore.p12` somewhere private** (password manager,
