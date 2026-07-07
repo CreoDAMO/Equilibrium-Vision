@@ -1,5 +1,5 @@
 # Equilibrium — TODO & Gap Analysis
-_Last updated: 2026-07-07_
+_Last updated: 2026-07-07 (session 2)_
 
 ---
 
@@ -16,6 +16,10 @@ _Last updated: 2026-07-07_
 | **Grafana stack** | Three dashboard JSONs (chain overview, validators/staking, stratum pool); `docker-compose.yml` spins up Prometheus + Grafana pre-wired; Grafana provisioning auto-loads datasource and dashboards — no manual import needed |
 | **Android APK CI** | Full `android-apk.yml` CI workflow; `gradlew` + `gradle-wrapper.jar` added; keystore regenerated with `keytool` (OpenSSL 3.x compatibility fix); debug secret-logging step removed |
 | **Postgres cold-start** | `start-postgres.sh` unsets Replit's injected `PGHOST`/`PGDATABASE`/`PGPASSWORD`; forces correct `PGUSER`; pins role-management calls to `-d postgres` — survives every container restart automatically |
+| **Cold-boot auto-install (#20)** | `start-postgres.sh` now runs `pnpm install --frozen-lockfile` when `node_modules` is absent before attempting schema push — no manual intervention needed after a fresh clone or container reset |
+| **Chain persistence on restart** | `loadBlocksFromDb()` recovers the longest contiguous block sequence from height 0 instead of resetting to genesis on any height gap or prevHash mismatch; bad suffix rows are pruned from the DB so the next restart converges cleanly |
+| **TypeScript CI clean** | Fixed two typecheck errors introduced by a prior push: `Search.tsx` — added required `queryKey` option (TanStack Query v5) using generated `getGetBlock/TransactionQueryKey` helpers; `AdminMultisig.tsx` — cast `e.latencyMs as number` to satisfy `ReactNode` constraint. `pnpm run typecheck` now passes clean across all packages (150 TS + 28 Rust tests passing) |
+| **Sequential workflow order** | `.replit` Project workflow changed from `mode = "parallel"` → `mode = "sequential"` with `waitForPort = 5432` on the Postgres step, eliminating the startup race between the API Server and the DB |
 
 ---
 
@@ -118,11 +122,7 @@ No high-level diagram shows how the Rust core, TypeScript API server, Explorer, 
 CI runs tests and builds the APK, but there is no automated deploy of the API server or Explorer to a production/staging environment. A manual push to Replit deployment is the current process.
 - Consider a `deploy.yml` GitHub Action that runs on `main` push and calls the Replit Deploy API (or equivalent) for the web artifact.
 
-### 20. `pnpm install` required after every container reset
-The `post-merge.sh` script handles migrations but `node_modules` is not persisted. Contributors who open the Repl after a reset get a broken environment until they manually run `pnpm install`.
-- Add a `.replit` run hook or a startup check in `scripts/start-postgres.sh` that runs `pnpm install --frozen-lockfile` if `node_modules` is absent.
-
-### 21. Rust/node binary release artifacts
+### 20. Rust/node binary release artifacts
 The Android APK has a CI release pipeline, but there is no equivalent for the Rust validator node binary. Operators who want to run a full node have no pre-built binary to download.
 - Add a `release-node.yml` GitHub Action that builds `equilibrium` for linux-amd64 and linux-arm64 and attaches the binaries to GitHub Releases on version tags.
 

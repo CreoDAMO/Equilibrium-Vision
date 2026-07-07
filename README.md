@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. **173 tests pass** (28 Rust, 145 TypeScript). All critical security fixes applied: `REQUIRE_TX_SIGNATURES=true` enforced, Ed25519 batch verification wired into UTXO validation and block assembly, ADMIN key auth hardened, HTTP + Stratum rate limiting with replay protection, UTXO fee collection wired (fees credited to miner, not burned), and the single admin key replaced with a native on-chain WASM M-of-N multisig. Remote load test: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted**. Android APK CI pipeline live (GitHub Actions, signed sideload release). Grafana monitoring stack ready to wire to any live instance. Remaining work is infra/ops (multi-region nodes, HA Postgres, security audit) — external to Replit.
+> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. **178 tests pass** (28 Rust, 150 TypeScript). All critical security fixes applied: `REQUIRE_TX_SIGNATURES=true` enforced, Ed25519 batch verification wired into UTXO validation and block assembly, ADMIN key auth hardened, HTTP + Stratum rate limiting with replay protection, UTXO fee collection wired (fees credited to miner, not burned), and the single admin key replaced with a native on-chain WASM M-of-N multisig. Postgres persistence fully hardened: cold-boot auto-installs deps before schema push; chain restores from DB on every restart instead of resetting to genesis. Remote load test: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted**. Android APK CI pipeline live (GitHub Actions, signed sideload release). Grafana monitoring stack ready to wire to any live instance. Remaining work is infra/ops (multi-region nodes, HA Postgres, security audit) — external to Replit.
 
 ---
 
@@ -522,10 +522,11 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 ### Infrastructure
 
 - [x] **Genesis block** — `genesis.json`: 7 allocations totalling 95 M EQU + 4 validators × 5 M bonded = 100 M supply; real Ed25519 keypairs
-- [x] **Postgres persistence** — Drizzle ORM (`blocks`, `transactions`, `validators`, `contracts` tables); `start-postgres.sh` is idempotent — unsets Replit's injected `PGHOST`/`PGDATABASE`/`PGPASSWORD`, forces correct user, survives every container restart
+- [x] **Postgres persistence** — Drizzle ORM (`blocks`, `transactions`, `validators`, `contracts` tables); `start-postgres.sh` is idempotent — unsets Replit's injected `PGHOST`/`PGDATABASE`/`PGPASSWORD`, forces correct user, runs `pnpm install --frozen-lockfile` automatically if `node_modules` is absent (cold-boot safe), survives every container restart
+- [x] **Chain restoration on restart** — `loadBlocksFromDb()` recovers the longest contiguous sequence from height 0 rather than resetting to genesis on any gap; prunes orphaned suffix rows from the DB so subsequent restarts converge instead of re-truncating
 - [x] **WebSocket subscriptions** — real-time `new_block` and `mempool_update` events; explorer cache-invalidates instantly
 - [x] **Contract-first API** — OpenAPI 3.1 spec → Orval → typed React Query hooks + Zod schemas
-- [x] **CI/CD pipeline** — `ci.yml`: `pnpm typecheck` + `pnpm test` + `cargo test --lib` on every push
+- [x] **CI/CD pipeline** — `ci.yml`: `pnpm typecheck` + `pnpm test` + `cargo test --lib` on every push; Explorer and API Server TypeScript errors fixed (TanStack Query v5 `queryKey` requirement, `ReactNode` cast)
 - [x] **Android APK CI** — `android-apk-ci.yml`: cargo-ndk cross-compile → Gradle signed release APK → GitHub Actions artifact + Release attachment on version tags; `gradlew` + `gradle-wrapper.jar` present; keystore uses `keytool` (OpenSSL 3.x AES-256-CBC incompatibility fixed)
 - [x] **Grafana monitoring stack** — `docs/grafana/docker-compose.yml`: one command spins up Prometheus + Grafana with all three dashboards auto-provisioned (no manual import); `prometheus.yml` targets live API
 - [x] **Stratum metrics** — `GET /metrics/stratum`: Prometheus-format endpoint for pool abuse monitoring; reports `enabled 0` gracefully when pool is off
@@ -557,7 +558,6 @@ See `TODO.md` for the full prioritised list. Summary:
 | 🟡 Medium | Skeleton loading states + error states with retry buttons |
 | 🟡 Medium | Dashboard chart legend + axis labels |
 | 🟢 Low | DB index on `contracts.deployer` |
-| 🟢 Low | `pnpm install` auto-check on container reset |
 | 🟢 Low | Validator earnings aggregate endpoint |
 | 🟢 Low | Architectural diagram (`docs/architecture.md`) |
 | 🟢 Low | Operator docs (validator setup, delegation, governance guides) |
@@ -588,6 +588,9 @@ See `TODO.md` for the full prioritised list. Summary:
 | ~~8~~ | ~~Stratum rate-limit key spoofable via worker name rotation~~ | **Resolved** — keyed by TCP socket `remoteIp` |
 | ~~9~~ | ~~Android keystore OpenSSL 3.x incompatibility~~ | **Resolved** — `keytool`-first with `-legacy` fallback |
 | ~~10~~ | ~~Postgres cold-start failures (Replit env var injection)~~ | **Resolved** — `start-postgres.sh` unsets injected vars |
+| ~~11~~ | ~~`pnpm install` required manually after container reset~~ | **Resolved** — `start-postgres.sh` auto-installs deps when `node_modules` is absent |
+| ~~12~~ | ~~Chain resets to genesis on every restart~~ | **Resolved** — `loadBlocksFromDb()` restores longest contiguous chain; prunes bad suffix rows from DB |
+| ~~13~~ | ~~TypeScript CI failures (TanStack Query v5 `queryKey`, `ReactNode` type error)~~ | **Resolved** — `Search.tsx` and `AdminMultisig.tsx` fixed; `pnpm run typecheck` clean across all packages |
 
 ---
 
