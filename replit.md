@@ -41,9 +41,9 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 | # | Item | File |
 |---|------|------|
 | 1 | **Stratum proof validation** — `onSubmit` accepts any nonce without checking residual meets difficulty. Add the same `validateResidual` check used in `POST /api/blocks/submit`. | `artifacts/api-server/src/lib/stratum-server.ts` |
-| 2 | **CORS lockdown** — `cors()` is called with no origin restriction. Add `ALLOWED_ORIGINS` env var (`*` dev default, locked in prod). | `artifacts/api-server/src/app.ts` |
-| 3 | **Global API rate limiting** — all read endpoints (`/api/blocks`, `/api/tx`, etc.) are unthrottled. Add `express-rate-limit` middleware with separate tiers for read/write/admin. | `artifacts/api-server/src/app.ts` |
-| 4 | **`contracts.deployer` DB index** — contract list queries by deployer on every page load with no index. One Drizzle schema change + migration. | `artifacts/api-server/src/db/schema.ts` |
+| 2 | ~~**CORS lockdown**~~ — ✅ Done. `ALLOWED_ORIGINS` env var (comma-separated valid http/https URLs). Unrecognised origins → 403. Server-to-server (no Origin header) always allowed. `credentials: true` only when ≥1 origin is configured. | `artifacts/api-server/src/app.ts` |
+| 3 | ~~**Global API rate limiting**~~ — ✅ Done. `express-rate-limit`: read tier 300 req/min, write tier 20 req/min (auto-skips GET/HEAD/OPTIONS). | `artifacts/api-server/src/app.ts` |
+| 4 | ~~**`contracts.deployer` DB index**~~ — ✅ Done. Both `contracts_deployer_idx` (btree on deployer) and `contracts_deployed_at_idx` (btree on deployed_at) added and pushed to DB. Route also supports `?deployer=` filter + newest-first sort. | `lib/db/src/schema/contracts.ts` |
 
 ### 🟡 UI bugs — visible in the live Explorer right now
 
@@ -170,8 +170,8 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 | 22 | Postgres cold-start fix (Replit env var injection) | ✅ Done |
 | 23 | Android keystore OpenSSL 3.x compatibility | ✅ Done |
 | 24 | Stratum proof validation (residual check in onSubmit) | ⏳ Replit |
-| 25 | CORS lockdown (`ALLOWED_ORIGINS` env var) | ⏳ Replit |
-| 26 | Global API rate limiting (read endpoints) | ⏳ Replit |
+| 25 | CORS lockdown (`ALLOWED_ORIGINS` env var) | ✅ Done |
+| 26 | Global API rate limiting (read + write tiers) | ✅ Done |
 | 27 | `contracts.deployer` DB index | ⏳ Replit |
 | 28 | Multi-region nodes, HA Postgres, security audit | ⏳ External |
 | 29 | Operator docs, iOS release | ⏳ External |
