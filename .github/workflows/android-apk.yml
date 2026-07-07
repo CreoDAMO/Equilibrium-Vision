@@ -89,6 +89,18 @@ jobs:
         working-directory: equilibrium/mobile/android
         run: ./build-jni.sh release
 
+      # ── TEMPORARY DEBUG — remove once the keystore secret is confirmed clean ──
+      # Prints length and first/last characters only — never the full secret.
+      # A valid base64-encoded .p12 should be a few KB, only A-Za-z0-9+/= chars.
+      - name: Debug keystore secret shape
+        working-directory: equilibrium/mobile/android
+        run: |
+          echo "Length: ${#SECRET}"
+          echo "First 20 chars: ${SECRET:0:20}"
+          echo "Last 20 chars: ${SECRET: -20}"
+        env:
+          SECRET: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
       # ── Decode signing keystore from secrets ────────────────────────────
       # `-i`/`--ignore-garbage` discards any non-base64-alphabet byte during
       # decode (a stray BOM, quote, or copy/paste artifact), not just
