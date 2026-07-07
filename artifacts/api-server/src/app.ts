@@ -34,17 +34,25 @@ app.use(
 
 // ── Global rate limits ────────────────────────────────────────────────────────
 // Public read endpoints: 300 req/min per IP (generous for explorers/dashboards).
-// Write/admin endpoints have their own stricter per-route limits applied later.
 const readLimiter = rateLimit({
   windowMs: 60_000,
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests — try again in a minute." },
+});
+
+// Write endpoints: tighter budget applied to all state-mutating methods.
+// Skips GET / HEAD / OPTIONS so read traffic is unaffected.
+// Both limiters run independently; 20/min fires before the 300/min read limit.
+const writeLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many write requests — try again in a minute." },
   skip: (req) =>
-    req.path.startsWith("/api/blocks/submit") ||
-    req.path.startsWith("/api/tx/broadcast") ||
-    req.path.startsWith("/api/admin"),
+    req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS",
 });
 
 app.use(
@@ -69,6 +77,9 @@ app.use(
 app.use(readLimiter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Apply the write limiter globally — the skip function above handles GET/HEAD/OPTIONS.
+app.use(writeLimiter);
 
 app.use("/api", router);
 app.use(metricsRouter);

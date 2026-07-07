@@ -380,7 +380,7 @@ export default function DexPage() {
                       <TableCell className="text-sm">{s.tokenIn} → {s.tokenOut}</TableCell>
                       <TableCell className="text-right text-sm">{formatAmount(s.amountIn)}</TableCell>
                       <TableCell className="text-right text-sm">{formatAmount(s.amountOut)}</TableCell>
-                      <TableCell className="text-right text-xs text-muted-foreground">{timeAgo(s.timestamp * 1000)}</TableCell>
+                      <TableCell className="text-right text-xs text-muted-foreground">{timeAgo(s.timestamp)}</TableCell>
                     </TableRow>
                   ))}
                   {(!swaps || swaps.swaps.length === 0) && (

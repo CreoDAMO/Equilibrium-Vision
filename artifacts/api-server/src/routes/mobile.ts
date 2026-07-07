@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { eq } from "drizzle-orm";
 import { appReleasesTable, type AppReleaseRow } from "@workspace/db/schema";
+import { requireAdminKey } from "../lib/auth.js";
 
 const router = Router();
 
@@ -74,15 +75,7 @@ router.get("/mobile/version", async (req, res) => {
  * GitHub Release — see android-apk-ci.yml. Protected by the same ADMIN_KEY /
  * ADMIN_API_KEY + X-Admin-Key header convention used for validator slashing.
  */
-router.post("/mobile/version", async (req, res) => {
-  const adminKey = process.env["ADMIN_KEY"] || process.env["ADMIN_API_KEY"];
-  if (adminKey) {
-    const provided = req.headers["x-admin-key"];
-    if (provided !== adminKey) {
-      res.status(403).json({ error: "Forbidden: valid X-Admin-Key header required" });
-      return;
-    }
-  }
+router.post("/mobile/version", requireAdminKey, async (req, res) => {
 
   const { platform, versionCode, versionName, downloadUrl, releaseNotes } = req.body as {
     platform?: string;

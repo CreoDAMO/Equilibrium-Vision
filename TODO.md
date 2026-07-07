@@ -20,6 +20,9 @@ _Last updated: 2026-07-07 (session 2)_
 | **Chain persistence on restart** | `loadBlocksFromDb()` recovers the longest contiguous block sequence from height 0 instead of resetting to genesis on any height gap or prevHash mismatch; bad suffix rows are pruned from the DB so the next restart converges cleanly |
 | **TypeScript CI clean** | Fixed two typecheck errors introduced by a prior push: `Search.tsx` — added required `queryKey` option (TanStack Query v5) using generated `getGetBlock/TransactionQueryKey` helpers; `AdminMultisig.tsx` — cast `e.latencyMs as number` to satisfy `ReactNode` constraint. `pnpm run typecheck` now passes clean across all packages (150 TS + 28 Rust tests passing) |
 | **Sequential workflow order** | `.replit` Project workflow changed from `mode = "parallel"` → `mode = "sequential"` with `waitForPort = 5432` on the Postgres step, eliminating the startup race between the API Server and the DB |
+| **Write-path rate limiting** | `writeLimiter` (20 req/min) added in `app.ts`, applied globally to all POST/PUT/PATCH/DELETE methods via method-based skip; runs on top of the existing 300 req/min read limiter so all mutating endpoints are now covered |
+| **Admin auth fail-closed** | `POST /api/mobile/version` and `POST /validators/:addr/slash` both used a fail-open `if (adminKey) { check }` pattern — if no `ADMIN_KEY`/`ADMIN_API_KEY` was set the endpoints were wide open. Fixed to fail-closed in production (503 on misconfiguration); dev mode warns and passes through. Shared `lib/auth.ts` `requireAdminKey` middleware extracted for `/mobile/version`; slash route uses inline equivalent due to multisig branch logic |
+| **"56y ago" timestamp bug** | Three Explorer pages passed `timestamp * 1000` to `timeAgo()`, which already multiplies by 1000 internally — causing "56 years ago" display. Fixed in `ValidatorDetail.tsx` (delegator start time, slash history time) and `Dex.tsx` (swap history time) |
 
 ---
 
@@ -27,19 +30,16 @@ _Last updated: 2026-07-07 (session 2)_
 
 These are bugs or gaps that affect correctness or security of the live chain.
 
-### 1. Stratum proof validation (residual check) — **code only**
+### 1. Stratum proof validation (residual check) — **code only** _(priority unchanged)_
 `stratum-server.ts` `onSubmit` accepts any share without verifying the submitted residual meets the current difficulty threshold. A malicious miner can submit garbage nonces.
 - Add the same residual check used in `POST /api/blocks/submit` (`validateResidual`) inside `StratumServer.onSubmit`.
 - File: `artifacts/api-server/src/stratum-server.ts`
 
-### 2. CORS is wide open
-`app.ts` calls `cors()` with no origin restriction — every browser tab on the internet can make credentialed requests to the API.
-- Lock to known origins in production (`ALLOWED_ORIGINS` env var with a sensible dev default of `*`).
-- File: `artifacts/api-server/src/app.ts`
+### 2. ~~CORS is wide open~~ — **Resolved**
+`app.ts` now locks to `ALLOWED_ORIGINS` in production (fails-closed when unset); dev defaults to `*`.
 
-### 3. No global API rate limiting
-Individual submission routes are protected, but all read endpoints (`/api/blocks`, `/api/tx`, `/api/validators`, etc.) are completely unthrottled. A scraper or misconfigured client can DoS the node.
-- Add a lightweight global rate-limit middleware (e.g. `express-rate-limit`) in `app.ts` — separate tiers for public read vs. write vs. admin endpoints.
+### 3. ~~No global API rate limiting~~ — **Resolved**
+All read endpoints have a 300 req/min limiter; all write methods (POST/PUT/PATCH/DELETE) have an additional 20 req/min limiter applied globally via method-based skip.
 
 ### 4. Missing DB index on `contracts.deployer`
 The contract list queries by deployer address on every page load. Without an index this is a full-table scan that will degrade as contracts accumulate.

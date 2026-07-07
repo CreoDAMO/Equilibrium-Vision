@@ -151,7 +151,7 @@ export default function ValidatorDetail() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground whitespace-nowrap">
-                        {timeAgo(d.startTimestamp * 1000)}
+                        {timeAgo(d.startTimestamp)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -186,7 +186,7 @@ export default function ValidatorDetail() {
                         <TableCell className="capitalize">{e.reason.replace("_", " ")}</TableCell>
                         <TableCell className="text-right text-destructive font-medium">{formatAmount(e.slashAmount)} EQU</TableCell>
                         <TableCell className="text-right text-muted-foreground">{e.height}</TableCell>
-                        <TableCell className="text-right text-muted-foreground whitespace-nowrap">{timeAgo(e.timestamp * 1000)}</TableCell>
+                        <TableCell className="text-right text-muted-foreground whitespace-nowrap">{timeAgo(e.timestamp)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

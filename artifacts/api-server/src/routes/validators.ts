@@ -69,8 +69,16 @@ router.post("/validators/:addr/slash", async (req, res) => {
   } else {
     // Accept either ADMIN_KEY (legacy name) or ADMIN_API_KEY (current Replit
     // secret name) so deployments aren't coupled to one specific secret name.
+    // Fails CLOSED: if no key is configured in production the request is
+    // rejected (misconfigured deployment should never be open by default).
     const adminKey = process.env["ADMIN_KEY"] || process.env["ADMIN_API_KEY"];
-    if (adminKey) {
+    if (!adminKey) {
+      if (process.env["NODE_ENV"] === "production") {
+        res.status(503).json({ error: "Server misconfiguration: neither ADMIN_KEY nor ADMIN_API_KEY is set" });
+        return;
+      }
+      // Dev convenience: no key configured → pass through with a log warning.
+    } else {
       const provided = req.headers["x-admin-key"];
       if (provided !== adminKey) {
         res.status(403).json({ error: "Forbidden: valid X-Admin-Key header required" });
