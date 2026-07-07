@@ -13,8 +13,12 @@ runButton = "Project"
 
 [[workflows.workflow]]
 name = "Project"
-mode = "parallel"
+mode = "sequential"
 author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Postgres"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
@@ -23,10 +27,6 @@ args = "API Server"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "Explorer"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Postgres"
 
 [[workflows.workflow]]
 name = "API Server"
@@ -62,6 +62,7 @@ outputType = "console"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "bash scripts/start-postgres.sh"
+waitForPort = 5432
 
 [agent]
 stack = "BEST_EFFORT_FALLBACK"

@@ -26,13 +26,16 @@ type Db = ReturnType<typeof drizzle<{
 let _db: Db | null = null;
 let _initDone = false;
 
-/** Lazy singleton — returns null when DATABASE_URL is absent. */
+/** Lazy singleton — returns null when DATABASE_URL is absent.
+ *  Does NOT cache null on failure so a transient startup race
+ *  (Postgres not yet ready) is retried on the next call. */
 function getDb(): Db | null {
   if (_initDone) return _db;
-  _initDone = true;
 
   const url = process.env["DATABASE_URL"];
   if (!url) {
+    // No URL configured — settle into in-memory mode permanently.
+    _initDone = true;
     logger.info("DATABASE_URL not set — running in-memory mode (chain will not survive restarts)");
     return null;
   }
@@ -40,10 +43,13 @@ function getDb(): Db | null {
   try {
     const pool = new Pool({ connectionString: url });
     _db = drizzle(pool, { schema: { blocksTable, transactionsTable, contractsTable } }) as unknown as Db;
+    // Only mark done once we have a real db handle.
+    _initDone = true;
     logger.info({ url: url.replace(/:[^@]*@/, ":***@") }, "Postgres persistence enabled");
     return _db;
   } catch (err) {
-    logger.warn({ err }, "Failed to connect to Postgres — falling back to in-memory");
+    // Leave _initDone = false so the next call retries.
+    logger.warn({ err }, "Failed to initialise Postgres pool — will retry on next access");
     return null;
   }
 }
