@@ -1,4 +1,5 @@
 import React from "react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Switch, Route, Router } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -82,14 +83,16 @@ function AppRouter() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WalletProvider>
-          <AppRouter />
-        </WalletProvider>
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <WalletProvider>
+            <AppRouter />
+          </WalletProvider>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 
