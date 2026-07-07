@@ -17,15 +17,12 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 ## Workflow names (exact, for WorkflowsRestart)
 - `API Server`, `Explorer`, `Postgres` — NOT "artifacts/api-server: API Server" etc.
 
-## Postgres role/permission issue (recurs every session)
-- `.pgdata` persists across sessions but the `runner` role may not exist after a container reset
-- Even when role exists, tables may be missing or `runner` may lack table permissions if schema was pushed as `postgres` superuser
-- Manual fix sequence:
-  1. `psql -U postgres -h 127.0.0.1 -d equilibrium -c "DO \$\$ BEGIN CREATE ROLE runner WITH LOGIN SUPERUSER; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"`
-  2. `DATABASE_URL="postgresql://postgres@127.0.0.1:5432/equilibrium" pnpm --filter @workspace/db run push`
-  3. `psql -U postgres -h 127.0.0.1 -d equilibrium -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO runner; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO runner;"`
-  4. Restart API Server workflow
-- `scripts/start-postgres.sh` now: (a) creates runner role via DO block, (b) pushes schema as superuser (SU), (c) grants ALL TABLE/SEQUENCE privileges to runner — all idempotent, all on every boot
+## Postgres role/permission — ROOT CAUSE (fixed)
+- Replit injects `PGDATABASE=heliumdb`, `PGHOST=helium`, `PGUSER=postgres` env vars for its managed DB integration
+- Any `psql` call without explicit `-d` and `-h 127.0.0.1` silently connects to the wrong host/db (helium/heliumdb) → role creation and grants fail with `2>/dev/null` hiding the error
+- **Fix applied** in `scripts/start-postgres.sh`: `unset PGHOST PGPASSWORD PGDATABASE` at top + force `PGUSER="$(whoami)"` + add `-d postgres` to all role-management psql calls
+- After fix, Postgres log shows: "Role 'runner' ensured." → "Schema up to date." → "Granted table/sequence access to runner." with no manual steps needed
+- Manual fallback (if script somehow still fails): run the three psql commands with explicit `-d postgres` and `-d equilibrium` flags, then restart API Server
 
 ## Address derivation — CRITICAL
 - Rust: `SHA-256(pubkey.as_bytes())[..20]` as 40 hex chars (raw 32 bytes)

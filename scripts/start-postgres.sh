@@ -17,7 +17,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PGDATA="${PGDATA:-$REPO_ROOT/.pgdata}"
 export PGPORT="${PGPORT:-5432}"
-PGUSER="${PGUSER:-$(whoami)}"
+# Unset Replit-injected PG env vars that point at a managed cloud DB — they
+# would misdirect any psql/createdb call that doesn't pass explicit flags.
+unset PGHOST PGPASSWORD PGDATABASE
+# Use the OS user as the default superuser name (Replit sets PGUSER=postgres
+# via its managed-DB injection, which we do NOT want here).
+PGUSER="$(whoami)"
 PGDB="${PGDB:-equilibrium}"
 
 CUSTOM_CONF="$PGDATA/replit.conf"
@@ -62,20 +67,20 @@ fi
 echo "[postgres] Using superuser: $SU"
 
 # Ensure the OS user role exists with login privileges
-psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -tc \
+psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -d postgres -tc \
   "SELECT 1 FROM pg_roles WHERE rolname='$OS_USER'" 2>/dev/null \
   | grep -q 1 \
-  || { psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" \
-         -c "CREATE ROLE \"$OS_USER\" WITH LOGIN SUPERUSER;" 2>/dev/null \
+  || { psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -d postgres \
+         -c "CREATE ROLE \"$OS_USER\" WITH LOGIN SUPERUSER;" \
        && echo "[postgres] Created role '$OS_USER'."; }
 
 # Also ensure the 'runner' role always exists (API server connects as runner).
 # Use a DO block so the CREATE is atomic — no TOCTOU race between check and create.
-psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -c \
+psql -p "$PGPORT" -h 127.0.0.1 -U "$SU" -d postgres -c \
   "DO \$\$ BEGIN
      CREATE ROLE runner WITH LOGIN SUPERUSER;
    EXCEPTION WHEN duplicate_object THEN NULL;
-   END \$\$;" 2>/dev/null \
+   END \$\$;" \
   && echo "[postgres] Role 'runner' ensured."
 
 # Create application database if missing
