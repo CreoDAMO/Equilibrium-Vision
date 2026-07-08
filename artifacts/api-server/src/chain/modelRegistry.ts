@@ -1,11 +1,27 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { WasmVM } from "./wasm.js";
 import { logger } from "../lib/logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Locates a checked-in contract artifact relative to the repo's `contracts/`
+ * directory. __dirname's depth from the repo root differs between running
+ * from source (src/chain/, one level deeper) and the bundled dist output
+ * (dist/, one level shallower) — try both instead of hardcoding "..".
+ */
+function resolveContractArtifact(...segments: string[]): string {
+  const candidates = [
+    join(__dirname, "..", "..", "..", "contracts", ...segments),      // bundled dist/index.mjs
+    join(__dirname, "..", "..", "..", "..", "contracts", ...segments), // source src/chain/*.ts
+    resolve(process.cwd(), "..", "..", "contracts", ...segments),
+    resolve(process.cwd(), "contracts", ...segments),
+  ];
+  return candidates.find((c) => existsSync(c)) ?? candidates[0]!;
+}
 
 // ── ModelRegistry Integration ────────────────────────────────────────────────
 //
@@ -31,7 +47,7 @@ const RESIDUAL_SCALE = 1_000_000_000_000; // 1e12
 const FIELD_SCALE = 1_000_000; // 1e6 (lambda, support data/labels, tol)
 
 function loadModelRegistryWasmHex(): string {
-  const hexPath = join(__dirname, "..", "..", "..", "contracts", "model_registry", "model_registry.hex");
+  const hexPath = resolveContractArtifact("model_registry", "model_registry.hex");
   return readFileSync(hexPath, "utf-8").trim();
 }
 

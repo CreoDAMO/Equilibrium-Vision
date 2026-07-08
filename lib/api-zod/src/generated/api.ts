@@ -865,6 +865,166 @@ export const GetArbitrageOpportunitiesResponse = zod.object({
 
 
 /**
+ * @summary Governed-contract status (active model, pause switch, circuit breaker)
+ */
+export const GetArbitrageStatusResponse = zod.object({
+  "address": zod.string(),
+  "owner": zod.string().nullish(),
+  "registry": zod.string().nullish(),
+  "modelId": zod.number().nullish(),
+  "paused": zod.boolean(),
+  "circuitTripped": zod.boolean(),
+  "execCount": zod.number()
+})
+
+
+/**
+ * @summary Point the Arbitrage contract at a verified ModelRegistry model (owner-only)
+ */
+export const SetArbitrageModelBody = zod.object({
+  "caller": zod.string(),
+  "registryAddress": zod.string(),
+  "modelId": zod.number()
+})
+
+export const SetArbitrageModelResponse = zod.object({
+  "success": zod.boolean(),
+  "error": zod.string().optional()
+})
+
+
+/**
+ * @summary Pause arbitrage execution (owner-only)
+ */
+export const PauseArbitrageBody = zod.object({
+  "caller": zod.string().describe('40-hex-char address of the calling account')
+})
+
+export const PauseArbitrageResponse = zod.object({
+  "success": zod.boolean(),
+  "error": zod.string().optional()
+})
+
+
+/**
+ * @summary Unpause arbitrage execution (owner-only)
+ */
+export const UnpauseArbitrageBody = zod.object({
+  "caller": zod.string().describe('40-hex-char address of the calling account')
+})
+
+export const UnpauseArbitrageResponse = zod.object({
+  "success": zod.boolean(),
+  "error": zod.string().optional()
+})
+
+
+/**
+ * @summary Execute an atomic multi-hop arbitrage swap (permissionless; contract enforces its own safety rails)
+ */
+export const ExecuteArbitrageBody = zod.object({
+  "caller": zod.string(),
+  "poolIds": zod.array(zod.string()),
+  "tokenIn": zod.string(),
+  "amountIn": zod.number(),
+  "minProfit": zod.number().optional()
+})
+
+export const ExecuteArbitrageResponse = zod.object({
+  "success": zod.boolean(),
+  "profit": zod.number().optional(),
+  "error": zod.string().optional()
+})
+
+
+/**
+ * @summary List all models proposed to the ModelRegistry contract
+ */
+export const ListModelsResponse = zod.object({
+  "count": zod.number(),
+  "address": zod.string(),
+  "models": zod.array(zod.object({
+  "id": zod.number(),
+  "status": zod.enum(['proposed', 'verified', 'slashed', 'unknown'])
+}))
+})
+
+
+/**
+ * @summary Propose a new model to the registry (posts an economic bond)
+ */
+export const ProposeModelBody = zod.object({
+  "caller": zod.string(),
+  "claimedResidual": zod.number(),
+  "supportHashHex": zod.string().describe('SHA-256 hex (64 chars) commitment of the support set'),
+  "inputDim": zod.number(),
+  "hiddenDim": zod.number(),
+  "lambda": zod.number(),
+  "seed": zod.number(),
+  "uri": zod.string().describe('Off-chain pointer to the full model artifact (max 256 bytes)')
+})
+
+export const ProposeModelResponse = zod.object({
+  "success": zod.boolean(),
+  "modelId": zod.number().optional(),
+  "error": zod.string().optional()
+})
+
+
+/**
+ * @summary Get a single model's status and on-chain details
+ */
+export const GetModelParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetModelResponse = zod.object({
+  "id": zod.number(),
+  "status": zod.enum(['proposed', 'verified', 'slashed', 'unknown'])
+})
+
+
+/**
+ * @summary Finalize verification once the challenge window has elapsed (permissionless)
+ */
+export const VerifyModelParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const VerifyModelBody = zod.object({
+  "caller": zod.string().describe('40-hex-char address of the calling account')
+})
+
+export const VerifyModelResponse = zod.object({
+  "success": zod.boolean(),
+  "status": zod.enum(['verified', 'already-verified', 'slashed']).optional(),
+  "error": zod.string().optional()
+})
+
+
+/**
+ * @summary Challenge a proposed model's claimed residual with a support set (posts a bond; slashes the proposer if the challenge succeeds)
+ */
+export const ChallengeModelParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ChallengeModelBody = zod.object({
+  "caller": zod.string(),
+  "supportData": zod.array(zod.array(zod.number())).describe('[nSupport][inputDim] support set inputs'),
+  "supportLabels": zod.array(zod.number()),
+  "tol": zod.number().optional(),
+  "maxIter": zod.number().optional()
+})
+
+export const ChallengeModelResponse = zod.object({
+  "success": zod.boolean(),
+  "outcome": zod.enum(['slashed', 'failed']).optional(),
+  "error": zod.string().optional()
+})
+
+
+/**
  * @summary Get a swap quote without executing the trade
  */
 export const GetDexQuoteQueryParams = zod.object({

@@ -28,16 +28,22 @@ import type {
   ApproveInput,
   ApproveResult,
   ArbitrageOpportunityList,
+  ArbitrageStatus,
   Block,
   BlockFees,
   BlockPage,
   BlockStat,
   BroadcastResult,
+  CallerInput,
   ChainParameters,
   ChainStatus,
+  ChallengeModelInput,
+  ChallengeModelResult,
   DelegatorsResponse,
   DexPoolDetail,
   DexPoolList,
+  ExecuteArbitrageInput,
+  ExecuteArbitrageResult,
   FaucetDripResponse,
   FaucetRequest,
   FaucetStatus,
@@ -48,16 +54,22 @@ import type {
   ListBlocksParams,
   ListDexSwapsParams,
   Mempool,
+  Model,
+  ModelList,
   MultisigInfo,
   NewProposalInput,
   Peer,
   ProposalList,
   ProposalStatus,
   ProposalSummary,
+  ProposeModelInput,
+  ProposeModelResult,
   ProposeResult,
   ProviderPositions,
   PublishAppReleaseRequest,
+  SetArbitrageModelInput,
   SignedTxInput,
+  SimpleResult,
   SlashInput,
   SlashResult,
   StakeInput,
@@ -75,6 +87,7 @@ import type {
   ValidatorEarnings,
   ValidatorFees,
   ValidatorList,
+  VerifyModelResult,
   VoteInput,
   VoteResult
 } from './api.schemas';
@@ -3056,6 +3069,729 @@ export function useGetArbitrageOpportunities<TData = Awaited<ReturnType<typeof g
 
 
 
+
+export const getGetArbitrageStatusUrl = () => {
+
+
+
+
+  return `/api/arbitrage/status`
+}
+
+/**
+ * @summary Governed-contract status (active model, pause switch, circuit breaker)
+ */
+export const getArbitrageStatus = async ( options?: RequestInit): Promise<ArbitrageStatus> => {
+
+  return customFetch<ArbitrageStatus>(getGetArbitrageStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetArbitrageStatusQueryKey = () => {
+    return [
+    `/api/arbitrage/status`
+    ] as const;
+    }
+
+
+export const getGetArbitrageStatusQueryOptions = <TData = Awaited<ReturnType<typeof getArbitrageStatus>>, TError = ErrorType<ApiError>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getArbitrageStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetArbitrageStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getArbitrageStatus>>> = ({ signal }) => getArbitrageStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getArbitrageStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetArbitrageStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getArbitrageStatus>>>
+export type GetArbitrageStatusQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Governed-contract status (active model, pause switch, circuit breaker)
+ */
+
+export function useGetArbitrageStatus<TData = Awaited<ReturnType<typeof getArbitrageStatus>>, TError = ErrorType<ApiError>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getArbitrageStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetArbitrageStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSetArbitrageModelUrl = () => {
+
+
+
+
+  return `/api/arbitrage/set-model`
+}
+
+/**
+ * @summary Point the Arbitrage contract at a verified ModelRegistry model (owner-only)
+ */
+export const setArbitrageModel = async (setArbitrageModelInput: SetArbitrageModelInput, options?: RequestInit): Promise<SimpleResult> => {
+
+  return customFetch<SimpleResult>(getSetArbitrageModelUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setArbitrageModelInput)
+  }
+);}
+
+
+
+
+export const getSetArbitrageModelMutationOptions = <TError = ErrorType<SimpleResult | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setArbitrageModel>>, TError,{data: BodyType<SetArbitrageModelInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setArbitrageModel>>, TError,{data: BodyType<SetArbitrageModelInput>}, TContext> => {
+
+const mutationKey = ['setArbitrageModel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setArbitrageModel>>, {data: BodyType<SetArbitrageModelInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setArbitrageModel(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetArbitrageModelMutationResult = NonNullable<Awaited<ReturnType<typeof setArbitrageModel>>>
+    export type SetArbitrageModelMutationBody = BodyType<SetArbitrageModelInput>
+    export type SetArbitrageModelMutationError = ErrorType<SimpleResult | ApiError>
+
+    /**
+ * @summary Point the Arbitrage contract at a verified ModelRegistry model (owner-only)
+ */
+export const useSetArbitrageModel = <TError = ErrorType<SimpleResult | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setArbitrageModel>>, TError,{data: BodyType<SetArbitrageModelInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setArbitrageModel>>,
+        TError,
+        {data: BodyType<SetArbitrageModelInput>},
+        TContext
+      > => {
+      return useMutation(getSetArbitrageModelMutationOptions(options));
+    }
+
+export const getPauseArbitrageUrl = () => {
+
+
+
+
+  return `/api/arbitrage/pause`
+}
+
+/**
+ * @summary Pause arbitrage execution (owner-only)
+ */
+export const pauseArbitrage = async (callerInput: CallerInput, options?: RequestInit): Promise<SimpleResult> => {
+
+  return customFetch<SimpleResult>(getPauseArbitrageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(callerInput)
+  }
+);}
+
+
+
+
+export const getPauseArbitrageMutationOptions = <TError = ErrorType<SimpleResult | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof pauseArbitrage>>, TError,{data: BodyType<CallerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof pauseArbitrage>>, TError,{data: BodyType<CallerInput>}, TContext> => {
+
+const mutationKey = ['pauseArbitrage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof pauseArbitrage>>, {data: BodyType<CallerInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  pauseArbitrage(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PauseArbitrageMutationResult = NonNullable<Awaited<ReturnType<typeof pauseArbitrage>>>
+    export type PauseArbitrageMutationBody = BodyType<CallerInput>
+    export type PauseArbitrageMutationError = ErrorType<SimpleResult | ApiError>
+
+    /**
+ * @summary Pause arbitrage execution (owner-only)
+ */
+export const usePauseArbitrage = <TError = ErrorType<SimpleResult | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof pauseArbitrage>>, TError,{data: BodyType<CallerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof pauseArbitrage>>,
+        TError,
+        {data: BodyType<CallerInput>},
+        TContext
+      > => {
+      return useMutation(getPauseArbitrageMutationOptions(options));
+    }
+
+export const getUnpauseArbitrageUrl = () => {
+
+
+
+
+  return `/api/arbitrage/unpause`
+}
+
+/**
+ * @summary Unpause arbitrage execution (owner-only)
+ */
+export const unpauseArbitrage = async (callerInput: CallerInput, options?: RequestInit): Promise<SimpleResult> => {
+
+  return customFetch<SimpleResult>(getUnpauseArbitrageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(callerInput)
+  }
+);}
+
+
+
+
+export const getUnpauseArbitrageMutationOptions = <TError = ErrorType<SimpleResult | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unpauseArbitrage>>, TError,{data: BodyType<CallerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof unpauseArbitrage>>, TError,{data: BodyType<CallerInput>}, TContext> => {
+
+const mutationKey = ['unpauseArbitrage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unpauseArbitrage>>, {data: BodyType<CallerInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  unpauseArbitrage(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnpauseArbitrageMutationResult = NonNullable<Awaited<ReturnType<typeof unpauseArbitrage>>>
+    export type UnpauseArbitrageMutationBody = BodyType<CallerInput>
+    export type UnpauseArbitrageMutationError = ErrorType<SimpleResult | ApiError>
+
+    /**
+ * @summary Unpause arbitrage execution (owner-only)
+ */
+export const useUnpauseArbitrage = <TError = ErrorType<SimpleResult | ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unpauseArbitrage>>, TError,{data: BodyType<CallerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof unpauseArbitrage>>,
+        TError,
+        {data: BodyType<CallerInput>},
+        TContext
+      > => {
+      return useMutation(getUnpauseArbitrageMutationOptions(options));
+    }
+
+export const getExecuteArbitrageUrl = () => {
+
+
+
+
+  return `/api/arbitrage/execute`
+}
+
+/**
+ * @summary Execute an atomic multi-hop arbitrage swap (permissionless; contract enforces its own safety rails)
+ */
+export const executeArbitrage = async (executeArbitrageInput: ExecuteArbitrageInput, options?: RequestInit): Promise<ExecuteArbitrageResult> => {
+
+  return customFetch<ExecuteArbitrageResult>(getExecuteArbitrageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(executeArbitrageInput)
+  }
+);}
+
+
+
+
+export const getExecuteArbitrageMutationOptions = <TError = ErrorType<ExecuteArbitrageResult>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof executeArbitrage>>, TError,{data: BodyType<ExecuteArbitrageInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof executeArbitrage>>, TError,{data: BodyType<ExecuteArbitrageInput>}, TContext> => {
+
+const mutationKey = ['executeArbitrage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof executeArbitrage>>, {data: BodyType<ExecuteArbitrageInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  executeArbitrage(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ExecuteArbitrageMutationResult = NonNullable<Awaited<ReturnType<typeof executeArbitrage>>>
+    export type ExecuteArbitrageMutationBody = BodyType<ExecuteArbitrageInput>
+    export type ExecuteArbitrageMutationError = ErrorType<ExecuteArbitrageResult>
+
+    /**
+ * @summary Execute an atomic multi-hop arbitrage swap (permissionless; contract enforces its own safety rails)
+ */
+export const useExecuteArbitrage = <TError = ErrorType<ExecuteArbitrageResult>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof executeArbitrage>>, TError,{data: BodyType<ExecuteArbitrageInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof executeArbitrage>>,
+        TError,
+        {data: BodyType<ExecuteArbitrageInput>},
+        TContext
+      > => {
+      return useMutation(getExecuteArbitrageMutationOptions(options));
+    }
+
+export const getListModelsUrl = () => {
+
+
+
+
+  return `/api/models`
+}
+
+/**
+ * @summary List all models proposed to the ModelRegistry contract
+ */
+export const listModels = async ( options?: RequestInit): Promise<ModelList> => {
+
+  return customFetch<ModelList>(getListModelsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListModelsQueryKey = () => {
+    return [
+    `/api/models`
+    ] as const;
+    }
+
+
+export const getListModelsQueryOptions = <TData = Awaited<ReturnType<typeof listModels>>, TError = ErrorType<ApiError>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listModels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListModelsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listModels>>> = ({ signal }) => listModels({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listModels>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListModelsQueryResult = NonNullable<Awaited<ReturnType<typeof listModels>>>
+export type ListModelsQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary List all models proposed to the ModelRegistry contract
+ */
+
+export function useListModels<TData = Awaited<ReturnType<typeof listModels>>, TError = ErrorType<ApiError>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listModels>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListModelsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getProposeModelUrl = () => {
+
+
+
+
+  return `/api/models`
+}
+
+/**
+ * @summary Propose a new model to the registry (posts an economic bond)
+ */
+export const proposeModel = async (proposeModelInput: ProposeModelInput, options?: RequestInit): Promise<ProposeModelResult> => {
+
+  return customFetch<ProposeModelResult>(getProposeModelUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(proposeModelInput)
+  }
+);}
+
+
+
+
+export const getProposeModelMutationOptions = <TError = ErrorType<ProposeModelResult>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof proposeModel>>, TError,{data: BodyType<ProposeModelInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof proposeModel>>, TError,{data: BodyType<ProposeModelInput>}, TContext> => {
+
+const mutationKey = ['proposeModel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof proposeModel>>, {data: BodyType<ProposeModelInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  proposeModel(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ProposeModelMutationResult = NonNullable<Awaited<ReturnType<typeof proposeModel>>>
+    export type ProposeModelMutationBody = BodyType<ProposeModelInput>
+    export type ProposeModelMutationError = ErrorType<ProposeModelResult>
+
+    /**
+ * @summary Propose a new model to the registry (posts an economic bond)
+ */
+export const useProposeModel = <TError = ErrorType<ProposeModelResult>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof proposeModel>>, TError,{data: BodyType<ProposeModelInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof proposeModel>>,
+        TError,
+        {data: BodyType<ProposeModelInput>},
+        TContext
+      > => {
+      return useMutation(getProposeModelMutationOptions(options));
+    }
+
+export const getGetModelUrl = (id: number,) => {
+
+
+
+
+  return `/api/models/${id}`
+}
+
+/**
+ * @summary Get a single model's status and on-chain details
+ */
+export const getModel = async (id: number, options?: RequestInit): Promise<Model> => {
+
+  return customFetch<Model>(getGetModelUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetModelQueryKey = (id: number,) => {
+    return [
+    `/api/models/${id}`
+    ] as const;
+    }
+
+
+export const getGetModelQueryOptions = <TData = Awaited<ReturnType<typeof getModel>>, TError = ErrorType<ApiError>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getModel>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetModelQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getModel>>> = ({ signal }) => getModel(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getModel>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetModelQueryResult = NonNullable<Awaited<ReturnType<typeof getModel>>>
+export type GetModelQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Get a single model's status and on-chain details
+ */
+
+export function useGetModel<TData = Awaited<ReturnType<typeof getModel>>, TError = ErrorType<ApiError>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getModel>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetModelQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getVerifyModelUrl = (id: number,) => {
+
+
+
+
+  return `/api/models/${id}/verify`
+}
+
+/**
+ * @summary Finalize verification once the challenge window has elapsed (permissionless)
+ */
+export const verifyModel = async (id: number,
+    callerInput: CallerInput, options?: RequestInit): Promise<VerifyModelResult> => {
+
+  return customFetch<VerifyModelResult>(getVerifyModelUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(callerInput)
+  }
+);}
+
+
+
+
+export const getVerifyModelMutationOptions = <TError = ErrorType<VerifyModelResult>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyModel>>, TError,{id: number;data: BodyType<CallerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof verifyModel>>, TError,{id: number;data: BodyType<CallerInput>}, TContext> => {
+
+const mutationKey = ['verifyModel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyModel>>, {id: number;data: BodyType<CallerInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  verifyModel(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifyModelMutationResult = NonNullable<Awaited<ReturnType<typeof verifyModel>>>
+    export type VerifyModelMutationBody = BodyType<CallerInput>
+    export type VerifyModelMutationError = ErrorType<VerifyModelResult>
+
+    /**
+ * @summary Finalize verification once the challenge window has elapsed (permissionless)
+ */
+export const useVerifyModel = <TError = ErrorType<VerifyModelResult>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyModel>>, TError,{id: number;data: BodyType<CallerInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof verifyModel>>,
+        TError,
+        {id: number;data: BodyType<CallerInput>},
+        TContext
+      > => {
+      return useMutation(getVerifyModelMutationOptions(options));
+    }
+
+export const getChallengeModelUrl = (id: number,) => {
+
+
+
+
+  return `/api/models/${id}/challenge`
+}
+
+/**
+ * @summary Challenge a proposed model's claimed residual with a support set (posts a bond; slashes the proposer if the challenge succeeds)
+ */
+export const challengeModel = async (id: number,
+    challengeModelInput: ChallengeModelInput, options?: RequestInit): Promise<ChallengeModelResult> => {
+
+  return customFetch<ChallengeModelResult>(getChallengeModelUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(challengeModelInput)
+  }
+);}
+
+
+
+
+export const getChallengeModelMutationOptions = <TError = ErrorType<ChallengeModelResult>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof challengeModel>>, TError,{id: number;data: BodyType<ChallengeModelInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof challengeModel>>, TError,{id: number;data: BodyType<ChallengeModelInput>}, TContext> => {
+
+const mutationKey = ['challengeModel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof challengeModel>>, {id: number;data: BodyType<ChallengeModelInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  challengeModel(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChallengeModelMutationResult = NonNullable<Awaited<ReturnType<typeof challengeModel>>>
+    export type ChallengeModelMutationBody = BodyType<ChallengeModelInput>
+    export type ChallengeModelMutationError = ErrorType<ChallengeModelResult>
+
+    /**
+ * @summary Challenge a proposed model's claimed residual with a support set (posts a bond; slashes the proposer if the challenge succeeds)
+ */
+export const useChallengeModel = <TError = ErrorType<ChallengeModelResult>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof challengeModel>>, TError,{id: number;data: BodyType<ChallengeModelInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof challengeModel>>,
+        TError,
+        {id: number;data: BodyType<ChallengeModelInput>},
+        TContext
+      > => {
+      return useMutation(getChallengeModelMutationOptions(options));
+    }
 
 export const getGetDexQuoteUrl = (params: GetDexQuoteParams,) => {
   const normalizedParams = new URLSearchParams();

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Activity, Box, ListTree, Users, Wallet, Shield, ShieldCheck, Vote, Droplets, Code2, Coins, ArrowRightLeft, Layers, ChevronDown, Globe, Check } from "lucide-react";
+import { Search, Activity, Box, ListTree, Users, Wallet, Shield, ShieldCheck, Vote, Droplets, Code2, Coins, ArrowRightLeft, Layers, ChevronDown, Globe, Check, BrainCircuit, Zap } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
@@ -105,6 +105,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/faucet", label: "Faucet", icon: <Droplets className="w-4 h-4" /> },
     { href: "/wallet", label: "Wallet", icon: <Wallet className="w-4 h-4" /> },
     { href: "/contracts", label: "Contracts", icon: <Code2 className="w-4 h-4" /> },
+    { href: "/models", label: "Models", icon: <BrainCircuit className="w-4 h-4" /> },
+    { href: "/arbitrage", label: "Arbitrage", icon: <Zap className="w-4 h-4" /> },
     { href: "/admin/multisig", label: "Admin", icon: <ShieldCheck className="w-4 h-4" /> },
   ];
 

@@ -107,6 +107,7 @@ router.post("/arbitrage/set-model", async (req, res) => {
   if (typeof caller !== "string" || typeof registryAddress !== "string" || typeof modelId !== "number") {
     return res.status(400).json({ error: "caller, registryAddress, modelId are required" });
   }
+  chainState.wasmVM.setBlockHeight(chainState.height);
   const result = await setArbitrageModel(chainState.wasmVM, caller.trim().toLowerCase(), registryAddress.trim().toLowerCase(), modelId);
   if (!result.success) return res.status(400).json(result);
   return res.json(result);
@@ -117,6 +118,7 @@ router.post("/arbitrage/pause", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const { caller } = req.body ?? {};
   if (typeof caller !== "string") return res.status(400).json({ error: "caller is required" });
+  chainState.wasmVM.setBlockHeight(chainState.height);
   const result = await pauseArbitrage(chainState.wasmVM, caller.trim().toLowerCase());
   if (!result.success) return res.status(400).json(result);
   return res.json(result);
@@ -127,6 +129,7 @@ router.post("/arbitrage/unpause", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const { caller } = req.body ?? {};
   if (typeof caller !== "string") return res.status(400).json({ error: "caller is required" });
+  chainState.wasmVM.setBlockHeight(chainState.height);
   const result = await unpauseArbitrage(chainState.wasmVM, caller.trim().toLowerCase());
   if (!result.success) return res.status(400).json(result);
   return res.json(result);
@@ -141,6 +144,7 @@ router.post("/arbitrage/execute", async (req, res) => {
   if (typeof caller !== "string" || !Array.isArray(poolIds) || typeof tokenIn !== "string" || typeof amountIn !== "number") {
     return res.status(400).json({ error: "caller, poolIds (array), tokenIn, amountIn are required" });
   }
+  chainState.wasmVM.setBlockHeight(chainState.height);
   const result = await executeArbitrage(chainState.wasmVM, caller.trim().toLowerCase(), {
     poolIds,
     tokenIn,

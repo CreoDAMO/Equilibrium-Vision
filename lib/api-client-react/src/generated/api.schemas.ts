@@ -586,6 +586,125 @@ export interface SwapQuote {
   rate: number;
 }
 
+export interface CallerInput {
+  /** 40-hex-char address of the calling account */
+  caller: string;
+}
+
+export interface SimpleResult {
+  success: boolean;
+  error?: string;
+}
+
+export interface ArbitrageStatus {
+  address: string;
+  owner?: string | null;
+  registry?: string | null;
+  modelId?: number | null;
+  paused: boolean;
+  circuitTripped: boolean;
+  execCount: number;
+}
+
+export interface SetArbitrageModelInput {
+  caller: string;
+  registryAddress: string;
+  modelId: number;
+}
+
+export interface ExecuteArbitrageInput {
+  caller: string;
+  poolIds: string[];
+  tokenIn: string;
+  amountIn: number;
+  minProfit?: number;
+}
+
+export interface ExecuteArbitrageResult {
+  success: boolean;
+  profit?: number;
+  error?: string;
+}
+
+export type ModelStatus = typeof ModelStatus[keyof typeof ModelStatus];
+
+
+export const ModelStatus = {
+  proposed: 'proposed',
+  verified: 'verified',
+  slashed: 'slashed',
+  unknown: 'unknown',
+} as const;
+
+export interface Model {
+  id: number;
+  status: ModelStatus;
+  [key: string]: unknown;
+}
+
+export interface ModelList {
+  count: number;
+  address: string;
+  models: Model[];
+}
+
+export interface ProposeModelInput {
+  caller: string;
+  claimedResidual: number;
+  /** SHA-256 hex (64 chars) commitment of the support set */
+  supportHashHex: string;
+  inputDim: number;
+  hiddenDim: number;
+  lambda: number;
+  seed: number;
+  /** Off-chain pointer to the full model artifact (max 256 bytes) */
+  uri: string;
+}
+
+export interface ProposeModelResult {
+  success: boolean;
+  modelId?: number;
+  error?: string;
+}
+
+export type VerifyModelResultStatus = typeof VerifyModelResultStatus[keyof typeof VerifyModelResultStatus];
+
+
+export const VerifyModelResultStatus = {
+  verified: 'verified',
+  'already-verified': 'already-verified',
+  slashed: 'slashed',
+} as const;
+
+export interface VerifyModelResult {
+  success: boolean;
+  status?: VerifyModelResultStatus;
+  error?: string;
+}
+
+export interface ChallengeModelInput {
+  caller: string;
+  /** [nSupport][inputDim] support set inputs */
+  supportData: number[][];
+  supportLabels: number[];
+  tol?: number;
+  maxIter?: number;
+}
+
+export type ChallengeModelResultOutcome = typeof ChallengeModelResultOutcome[keyof typeof ChallengeModelResultOutcome];
+
+
+export const ChallengeModelResultOutcome = {
+  slashed: 'slashed',
+  failed: 'failed',
+} as const;
+
+export interface ChallengeModelResult {
+  success: boolean;
+  outcome?: ChallengeModelResultOutcome;
+  error?: string;
+}
+
 export interface AppRelease {
   platform: string;
   versionCode: number;

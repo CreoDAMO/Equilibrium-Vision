@@ -31,6 +31,7 @@ tags:
   - name: admin
     description: On-chain M-of-N multisig gate for privileged admin actions (e.g. validator slashing)
   - name: arbitrage
+  - name: models
     description: Bellman-Ford currency-arbitrage detection over live DEX pool reserves
 
 paths:
@@ -894,6 +895,278 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+
+  /arbitrage/status:
+    get:
+      operationId: getArbitrageStatus
+      tags: [arbitrage]
+      summary: Governed-contract status (active model, pause switch, circuit breaker)
+      responses:
+        "200":
+          description: Arbitrage contract status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArbitrageStatus"
+        "503":
+          description: Arbitrage contract not deployed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /arbitrage/set-model:
+    post:
+      operationId: setArbitrageModel
+      tags: [arbitrage]
+      summary: Point the Arbitrage contract at a verified ModelRegistry model (owner-only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetArbitrageModelInput"
+      responses:
+        "200":
+          description: Model set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleResult"
+        "400":
+          description: Invalid request or contract rejected the call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleResult"
+        "403":
+          description: Missing or invalid X-Admin-Key header
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /arbitrage/pause:
+    post:
+      operationId: pauseArbitrage
+      tags: [arbitrage]
+      summary: Pause arbitrage execution (owner-only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CallerInput"
+      responses:
+        "200":
+          description: Paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleResult"
+        "400":
+          description: Contract rejected the call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleResult"
+        "403":
+          description: Missing or invalid X-Admin-Key header
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /arbitrage/unpause:
+    post:
+      operationId: unpauseArbitrage
+      tags: [arbitrage]
+      summary: Unpause arbitrage execution (owner-only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CallerInput"
+      responses:
+        "200":
+          description: Unpaused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleResult"
+        "400":
+          description: Contract rejected the call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleResult"
+        "403":
+          description: Missing or invalid X-Admin-Key header
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /arbitrage/execute:
+    post:
+      operationId: executeArbitrage
+      tags: [arbitrage]
+      summary: Execute an atomic multi-hop arbitrage swap (permissionless; contract enforces its own safety rails)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteArbitrageInput"
+      responses:
+        "200":
+          description: Execution result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecuteArbitrageResult"
+        "400":
+          description: Contract rejected the call (paused, unverified model, over max size, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecuteArbitrageResult"
+
+  /models:
+    get:
+      operationId: listModels
+      tags: [models]
+      summary: List all models proposed to the ModelRegistry contract
+      responses:
+        "200":
+          description: Model list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelList"
+        "503":
+          description: ModelRegistry not deployed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    post:
+      operationId: proposeModel
+      tags: [models]
+      summary: Propose a new model to the registry (posts an economic bond)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProposeModelInput"
+      responses:
+        "200":
+          description: Proposal accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposeModelResult"
+        "400":
+          description: Invalid request or contract rejected the proposal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposeModelResult"
+
+  /models/{id}:
+    get:
+      operationId: getModel
+      tags: [models]
+      summary: Get a single model's status and on-chain details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Model detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Model"
+        "400":
+          description: Invalid model id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Model not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /models/{id}/verify:
+    post:
+      operationId: verifyModel
+      tags: [models]
+      summary: Finalize verification once the challenge window has elapsed (permissionless)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CallerInput"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyModelResult"
+        "400":
+          description: Invalid request or contract rejected the call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyModelResult"
+
+  /models/{id}/challenge:
+    post:
+      operationId: challengeModel
+      tags: [models]
+      summary: Challenge a proposed model's claimed residual with a support set (posts a bond; slashes the proposer if the challenge succeeds)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChallengeModelInput"
+      responses:
+        "200":
+          description: Challenge result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChallengeModelResult"
+        "400":
+          description: Invalid request or contract rejected the challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChallengeModelResult"
 
   /dex/quote:
     get:
@@ -2080,6 +2353,190 @@ components:
           type: string
         rate:
           type: number
+
+    CallerInput:
+      type: object
+      required: [caller]
+      properties:
+        caller:
+          type: string
+          description: 40-hex-char address of the calling account
+
+    SimpleResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        error:
+          type: string
+
+    ArbitrageStatus:
+      type: object
+      required: [address, paused, circuitTripped, execCount]
+      properties:
+        address:
+          type: string
+        owner:
+          type: string
+          nullable: true
+        registry:
+          type: string
+          nullable: true
+        modelId:
+          type: integer
+          nullable: true
+        paused:
+          type: boolean
+        circuitTripped:
+          type: boolean
+        execCount:
+          type: integer
+
+    SetArbitrageModelInput:
+      type: object
+      required: [caller, registryAddress, modelId]
+      properties:
+        caller:
+          type: string
+        registryAddress:
+          type: string
+        modelId:
+          type: integer
+
+    ExecuteArbitrageInput:
+      type: object
+      required: [caller, poolIds, tokenIn, amountIn]
+      properties:
+        caller:
+          type: string
+        poolIds:
+          type: array
+          items:
+            type: string
+        tokenIn:
+          type: string
+        amountIn:
+          type: number
+        minProfit:
+          type: number
+
+    ExecuteArbitrageResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        profit:
+          type: number
+        error:
+          type: string
+
+    Model:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [proposed, verified, slashed, unknown]
+      additionalProperties:
+        type: string
+        description: Flat on-chain storage fields for this model (model_proposer, model_uri, model_residual_fp, model_bond, model_proposed_at, model_verified_at, model_support_hash, etc.), stringified as stored.
+
+    ModelList:
+      type: object
+      required: [count, address, models]
+      properties:
+        count:
+          type: integer
+        address:
+          type: string
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/Model"
+
+    ProposeModelInput:
+      type: object
+      required: [caller, claimedResidual, supportHashHex, inputDim, hiddenDim, lambda, seed, uri]
+      properties:
+        caller:
+          type: string
+        claimedResidual:
+          type: number
+        supportHashHex:
+          type: string
+          description: SHA-256 hex (64 chars) commitment of the support set
+        inputDim:
+          type: integer
+        hiddenDim:
+          type: integer
+        lambda:
+          type: number
+        seed:
+          type: integer
+        uri:
+          type: string
+          description: Off-chain pointer to the full model artifact (max 256 bytes)
+
+    ProposeModelResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        modelId:
+          type: integer
+        error:
+          type: string
+
+    VerifyModelResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        status:
+          type: string
+          enum: [verified, already-verified, slashed]
+        error:
+          type: string
+
+    ChallengeModelInput:
+      type: object
+      required: [caller, supportData, supportLabels]
+      properties:
+        caller:
+          type: string
+        supportData:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+          description: "[nSupport][inputDim] support set inputs"
+        supportLabels:
+          type: array
+          items:
+            type: number
+        tol:
+          type: number
+        maxIter:
+          type: integer
+
+    ChallengeModelResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        outcome:
+          type: string
+          enum: [slashed, failed]
+        error:
+          type: string
 
     AppRelease:
       type: object

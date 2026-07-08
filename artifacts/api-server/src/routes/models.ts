@@ -55,6 +55,7 @@ router.get("/models/:id", async (req, res) => {
   const address = getModelRegistryAddress();
   if (!address) return res.status(503).json({ error: "ModelRegistry not deployed" });
 
+  chainState.wasmVM.setBlockHeight(chainState.height);
   const status = await getModelStatus(chainState.wasmVM, id);
   if (status === "unknown") return res.status(404).json({ error: "Model not found" });
   return res.json({ id, status, ...getModelDetails(chainState.wasmVM, id) });
@@ -78,6 +79,7 @@ router.post("/models/propose", async (req, res) => {
     return res.status(400).json({ error: "claimedResidual, supportHashHex, inputDim, hiddenDim, lambda, seed, uri are required" });
   }
 
+  chainState.wasmVM.setBlockHeight(chainState.height);
   const result = await proposeModel(chainState.wasmVM, caller, { claimedResidual, supportHashHex, inputDim, hiddenDim, lambda, seed, uri });
   if (!result.success) return res.status(400).json(result);
   return res.json(result);
@@ -91,6 +93,7 @@ router.post("/models/:id/verify", async (req, res) => {
   const caller = requireCaller(req, res);
   if (!caller) return;
 
+  chainState.wasmVM.setBlockHeight(chainState.height);
   const result = await verifyModel(chainState.wasmVM, caller, id);
   if (!result.success) return res.status(400).json(result);
   return res.json(result);
@@ -109,6 +112,7 @@ router.post("/models/:id/challenge", async (req, res) => {
     return res.status(400).json({ error: "supportData and supportLabels arrays are required" });
   }
 
+  chainState.wasmVM.setBlockHeight(chainState.height);
   const result = await challengeModel(chainState.wasmVM, caller, { modelId: id, supportData, supportLabels, tol, maxIter });
   if (!result.success) return res.status(400).json(result);
   return res.json(result);
