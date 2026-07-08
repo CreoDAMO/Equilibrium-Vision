@@ -182,10 +182,43 @@ export class ChainState {
     },
   );
 
+  private wireWasmHostContext(): void {
+    this.wasmVM.setHostContext({
+      getBalance: (addr) => this.ledger.balance(addr),
+      credit: (addr, amount) => this.ledger.credit(addr, amount),
+      debit: (addr, amount) => this.ledger.debit(addr, amount),
+      getGovParam: (name) => {
+        const params = this.governance.params as unknown as Record<string, number>;
+        return Object.prototype.hasOwnProperty.call(params, name) ? params[name] : undefined;
+      },
+      dexMultiSwap: (poolIds, tokenIn, amountIn, trader) => {
+        if (!this.ledger.debit(trader, amountIn)) return null;
+        let currentToken = tokenIn;
+        let currentAmount = amountIn;
+        // Credit back to the trader up front so each hop's internal
+        // `swap()` debit (which pulls from `trader`) has funds to draw from.
+        this.ledger.credit(trader, amountIn);
+        for (const poolId of poolIds) {
+          const result = this.swap(poolId, trader, currentToken, currentAmount);
+          if (typeof result === "string") return null;
+          const pool = this.dexPools.get(poolId);
+          if (!pool) return null;
+          currentToken = currentToken === pool.tokenA ? pool.tokenB : pool.tokenA;
+          currentAmount = result.amountOut;
+        }
+        return currentAmount;
+      },
+    });
+  }
+
   // Slash rate-limiting: tracks timestamps of slashes per validator in the last 24 h
   private _slashWindows = new Map<string, number[]>();
   private static readonly MAX_SLASHES_PER_DAY = 5;
   private static readonly SLASH_WINDOW_S = 86_400;
+
+  constructor() {
+    this.wireWasmHostContext();
+  }
 
   get height(): number {
     return this.blocks.length - 1;

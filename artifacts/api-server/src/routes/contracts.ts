@@ -85,6 +85,14 @@ router.get("/contracts/:address/storage", (req, res) => {
   return res.json({ address: req.params.address, storage, keys: Object.keys(storage).length });
 });
 
+// GET /api/contracts/:address/events — rolling log() event history (last 200)
+router.get("/contracts/:address/events", (req, res) => {
+  const cs = chainState;
+  const contract = cs.wasmVM.getContract(req.params.address);
+  if (!contract) return res.status(404).json({ error: "Contract not found" });
+  return res.json({ address: req.params.address, events: contract.events ?? [] });
+});
+
 // POST /api/contracts/deploy — deploy a WASM contract
 // Body: { deployer, bytecodeHex, abi? }
 // To deploy from WAT, client must compile WAT → WASM first, or use bytecodeHex directly.
@@ -120,7 +128,8 @@ router.post("/contracts/:address/call", async (req, res) => {
   const cs = chainState;
   cs.wasmVM.setBlockHeight(cs.height);
 
-  const result = await cs.wasmVM.call(address, Number(methodId), args.map(Number), Number(gasLimit));
+  const callerAddr = typeof caller === "string" ? caller.trim().toLowerCase() : "";
+  const result = await cs.wasmVM.call(address, Number(methodId), args.map(Number), Number(gasLimit), callerAddr);
 
   if (!result.success) {
     return res.status(400).json({

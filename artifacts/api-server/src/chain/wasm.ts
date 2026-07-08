@@ -42,6 +42,8 @@ export interface ContractRecord {
   callCount: number;
   totalGasUsed: number;
   abi?: ContractABI;
+  /** Rolling log of `log()` host-import messages emitted across all calls, most recent last. Capped at 200. */
+  events?: string[];
 }
 
 export interface ContractABI {
@@ -63,12 +65,43 @@ export interface CallResult {
   error?: string;
 }
 
+/**
+ * Bridges the WASM VM to the rest of the chain (ledger balances, governance
+ * parameters, DEX pools) without creating an import cycle — state.ts wires
+ * this in once at boot via `setHostContext`. Any host import that touches
+ * chain state outside the contract's own KV storage goes through here.
+ */
+export interface WasmHostContext {
+  getBalance(addr: string): number;
+  credit(addr: string, amount: number): void;
+  debit(addr: string, amount: number): boolean;
+  /** Returns undefined for an unknown parameter name. */
+  getGovParam(name: string): number | undefined;
+  /**
+   * Executes a chain of AMM swaps, one per pool id, starting from `tokenIn`
+   * with `amountIn` already debited from `trader`. Returns the final output
+   * amount, or null if any hop fails (unknown pool / insufficient liquidity) —
+   * in which case nothing is mutated for the failed hop (earlier hops in the
+   * chain, if any succeeded, are NOT rolled back automatically; callers that
+   * need atomicity should pre-validate the whole path).
+   */
+  dexMultiSwap(poolIds: string[], tokenIn: string, amountIn: number, trader: string): number | null;
+}
+
+const MAX_CALL_DEPTH = 4;
+
 export class WasmVM {
   private contracts = new Map<string, ContractRecord>();
   private blockHeight = 0;
   private persistFn?: (contract: ContractRecord) => Promise<void>;
+  private hostCtx?: WasmHostContext;
 
   setBlockHeight(h: number) { this.blockHeight = h; }
+
+  /** Wires chain-level state (ledger, governance, DEX) into the VM's host imports. */
+  setHostContext(ctx: WasmHostContext): void {
+    this.hostCtx = ctx;
+  }
 
   /**
    * Register a persistence callback.  Called after every deploy and after
@@ -129,12 +162,31 @@ export class WasmVM {
     return { address };
   }
 
+  /**
+   * Public entry point — kept `async` for API compatibility with callers
+   * (routes/contracts.ts, admin scripts). The implementation is fully
+   * synchronous under the hood (see `execCall`) so that `call_contract` can
+   * recurse into a nested contract call without needing Asyncify — WASM host
+   * imports must be synchronous, so nothing below this point may `await`.
+   */
   async call(
     address: string,
     methodId: number,
     args: number[],
     gasLimit = 1_000_000,
+    callerAddr = "",
   ): Promise<CallResult> {
+    return this.execCall(address, methodId, args, gasLimit, callerAddr, 0);
+  }
+
+  private execCall(
+    address: string,
+    methodId: number,
+    args: number[],
+    gasLimit: number,
+    callerAddr: string,
+    depth: number,
+  ): CallResult {
     const contract = this.contracts.get(address);
     if (!contract) {
       return { success: false, returnValue: null, gasUsed: 0, logs: [], error: "Contract not found" };
@@ -154,6 +206,9 @@ export class WasmVM {
         error: `Too many args: max ${MAX_CALL_ARGS}`,
       };
     }
+    if (depth > MAX_CALL_DEPTH) {
+      return { success: false, returnValue: null, gasUsed: 0, logs: [], error: "Max call_contract depth exceeded" };
+    }
 
     const logs: string[] = [];
     const storage = contract.storage;
@@ -163,6 +218,7 @@ export class WasmVM {
     // Each call blocks the event loop (execFileSync); more than one per
     // execution would multiply the DoS surface with no legitimate use-case.
     let verifyResidualCallCount = 0;
+    const hostCtx = this.hostCtx;
 
     // Inline helper — throws "Out of gas" if the limit is exceeded during a
     // host import.  Called after every expensive host operation.
@@ -275,6 +331,162 @@ export class WasmVM {
             return 0;
           }
         },
+
+        // Writes the address that invoked THIS call (top-level HTTP caller,
+        // or the calling contract's own address for a nested call_contract)
+        // into memory and returns its length. Empty string if unknown.
+        caller_address: (outPtr: number): number => {
+          gasUsed += 50;
+          writeString(memory, outPtr, callerAddr);
+          return callerAddr.length;
+        },
+
+        // Reads an address's ledger balance (base units). Returns 0n if no
+        // host context is wired (e.g. isolated unit tests).
+        balance: (addrPtr: number, addrLen: number): bigint => {
+          gasUsed += 200;
+          checkGas();
+          if (!hostCtx) return 0n;
+          const addr = readString(memory, addrPtr, addrLen);
+          return BigInt(Math.trunc(hostCtx.getBalance(addr)));
+        },
+
+        // Looks up a governance-controlled parameter by name (see
+        // ChainParameters in governance.ts for the canonical value/units of
+        // each name). Returns -1n for an unknown name or missing host context
+        // — contracts must treat a negative result as "param unavailable"
+        // since every real parameter value is non-negative.
+        gov_param: (namePtr: number, nameLen: number): bigint => {
+          gasUsed += 100;
+          checkGas();
+          if (!hostCtx) return -1n;
+          const name = readString(memory, namePtr, nameLen);
+          const value = hostCtx.getGovParam(name);
+          return value === undefined ? -1n : BigInt(Math.trunc(value));
+        },
+
+        // Escrows `amount` from the calling address (caller_address) into
+        // this contract's own ledger account. Used for stake bonds — e.g.
+        // ModelRegistry.propose() bonds `minimum_bond` from the proposer.
+        // Returns 1 on success, 0 if there's no host context, no caller, or
+        // insufficient balance (fails closed, no partial transfer).
+        bond: (amount: bigint): number => {
+          gasUsed += 1_000;
+          checkGas();
+          if (!hostCtx || !callerAddr) return 0;
+          const amt = Number(amount);
+          if (!Number.isFinite(amt) || amt <= 0) return 0;
+          if (!hostCtx.debit(callerAddr, amt)) return 0;
+          hostCtx.credit(address, amt);
+          return 1;
+        },
+
+        // Pays `amount` out of this contract's own escrowed balance to `to`.
+        // Used for slashing rewards, bond refunds, etc. Returns 1 on success,
+        // 0 if there's no host context or the contract's balance is short.
+        payout: (toPtr: number, toLen: number, amount: bigint): number => {
+          gasUsed += 1_000;
+          checkGas();
+          if (!hostCtx) return 0;
+          const to = readString(memory, toPtr, toLen);
+          const amt = Number(amount);
+          if (!Number.isFinite(amt) || amt <= 0) return 0;
+          if (!hostCtx.debit(address, amt)) return 0;
+          hostCtx.credit(to, amt);
+          return 1;
+        },
+
+        // Executes a chain of AMM swaps (one per pool id) starting from
+        // `tokenIn`, debiting `amountIn` from THIS contract's own escrowed
+        // balance. `poolIdsPtr` points to a comma-separated ASCII list of
+        // pool ids (e.g. "EQU-WBTC,WBTC-USDC"). Returns the final output
+        // amount, or -1n on any failure (unknown pool, insufficient
+        // liquidity, insufficient contract balance).
+        dex_multi_swap: (
+          poolIdsPtr: number, poolIdsLen: number,
+          tokenInPtr: number, tokenInLen: number,
+          amountIn: bigint,
+        ): bigint => {
+          gasUsed += 5_000;
+          checkGas();
+          if (!hostCtx) return -1n;
+          try {
+            const poolIds = readString(memory, poolIdsPtr, poolIdsLen).split(",").map(s => s.trim()).filter(Boolean);
+            const tokenIn = readString(memory, tokenInPtr, tokenInLen);
+            const amt = Number(amountIn);
+            if (poolIds.length === 0 || !Number.isFinite(amt) || amt <= 0) return -1n;
+            const out = hostCtx.dexMultiSwap(poolIds, tokenIn, amt, address);
+            return out === null ? -1n : BigInt(Math.trunc(out));
+          } catch {
+            return -1n;
+          }
+        },
+
+        // Deterministic linear-model inference: reads a JSON payload
+        // `{ "theta": number[], "x": number[] }` (both fixed-point i64
+        // arrays, scaled by 1e9 — same convention as fpEncode in
+        // zk-encoding.ts) from memory, computes sigmoid(dot(theta, x))
+        // fixed-point-scaled by 1e9, writes it (as decimal ASCII) to
+        // outPtr and returns the written length, or -1 on any parse/shape
+        // error. This lets a contract (e.g. Arbitrage) run inference against
+        // a model's committed parameters without shelling out to a process.
+        model_predict: (reqPtr: number, reqLen: number, outPtr: number): number => {
+          gasUsed += 2_000;
+          checkGas();
+          try {
+            const req = JSON.parse(readString(memory, reqPtr, reqLen)) as { theta?: number[]; x?: number[] };
+            const theta = req.theta;
+            const x = req.x;
+            if (!Array.isArray(theta) || !Array.isArray(x) || theta.length !== x.length || theta.length === 0) {
+              return -1;
+            }
+            const SCALE = 1_000_000_000;
+            let dot = 0;
+            for (let i = 0; i < theta.length; i++) {
+              dot += (theta[i]! / SCALE) * (x[i]! / SCALE);
+            }
+            const sigmoid = 1 / (1 + Math.exp(-dot));
+            const scaled = Math.round(sigmoid * SCALE).toString();
+            writeString(memory, outPtr, scaled);
+            return scaled.length;
+          } catch {
+            return -1;
+          }
+        },
+
+        // Synchronous cross-contract call. Reads the target address from
+        // memory, forwards `argWordCount` i32 words already written at
+        // argsPtr (the calling contract is responsible for laying these out
+        // itself — there's no HTTP caller to pre-populate them for a nested
+        // call), and recurses into `execCall` at depth+1. The child's gas
+        // usage is charged to the parent's remaining budget. Returns the
+        // child's i32 return value, or -1 on any failure (unknown contract,
+        // max depth exceeded, out of gas, or the child call itself failing).
+        call_contract: (
+          addrPtr: number, addrLen: number,
+          childMethodId: number,
+          argsPtr: number, argWordCount: number,
+        ): number => {
+          gasUsed += 10_000;
+          checkGas();
+          const remaining = gasLimit - gasUsed;
+          if (remaining <= 0) return -1;
+          try {
+            const targetAddr = readString(memory, addrPtr, addrLen);
+            const childArgs: number[] = [];
+            const view = new DataView(memory.buffer);
+            for (let i = 0; i < argWordCount; i++) {
+              childArgs.push(view.getInt32(argsPtr + i * 4, true));
+            }
+            const childResult = this.execCall(targetAddr, childMethodId, childArgs, remaining, address, depth + 1);
+            gasUsed += childResult.gasUsed;
+            for (const l of childResult.logs) logs.push(`[${targetAddr.slice(0, 8)}] ${l}`);
+            if (!childResult.success || childResult.returnValue === null) return -1;
+            return childResult.returnValue;
+          } catch {
+            return -1;
+          }
+        },
       },
     };
 
@@ -282,8 +494,8 @@ export class WasmVM {
 
     try {
       const bytes = hexToBytes(contract.bytecode);
-      const result = await WebAssembly.instantiate(bytes as Uint8Array<ArrayBuffer>, importObject);
-      const instance = result.instance;
+      const module = new WebAssembly.Module(bytes as Uint8Array<ArrayBuffer>);
+      const instance = new WebAssembly.Instance(module, importObject);
 
       // Wire up memory (may be exported or in imports)
       memory = (instance.exports.memory as WebAssembly.Memory) ??
@@ -325,6 +537,11 @@ export class WasmVM {
 
       contract.callCount++;
       contract.totalGasUsed += gasUsed;
+      if (logs.length > 0) {
+        const events = contract.events ?? (contract.events = []);
+        events.push(...logs);
+        if (events.length > 200) events.splice(0, events.length - 200);
+      }
       this.firePersist(contract);
 
       return { success: true, returnValue, gasUsed, logs };

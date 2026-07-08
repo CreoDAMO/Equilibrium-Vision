@@ -69,6 +69,23 @@ export interface ChainParameters {
   unbondingPeriod: number;  // blocks until stake is returned after unstake
   maxMempoolSize: number;   // max pending tx count
   minValidatorStake: number;// minimum EQU to register as a validator
+
+  // ── ModelRegistry contract parameters ──────────────────────────────────────
+  // (base units follow the same 1 EQU = 1_000_000 base-unit scale as
+  // minValidatorStake/baseReward above)
+  modelRegistryChallengePeriod: number;            // blocks a proposed model can be challenged
+  modelRegistryMinimumBond: number;                // base units required to propose a model
+  modelRegistryChallengeBond: number;               // base units required to challenge a model
+  modelRegistrySlashingFractionBp: number;          // basis points (of 10_000) of proposer bond slashed on a successful challenge
+  modelRegistryChallengerRewardFractionBp: number;  // basis points of the slashed amount paid to the challenger
+  modelRegistryResidualEpsilonScaled: number;       // max |claimed - computed| residual, fixed-point scaled by 1e12
+  modelRegistryMaxModelsPerProposer: number;        // spam guard
+  modelRegistryMaxSupportSetSize: number;           // max support-set entries accepted by verify_residual
+
+  // ── Arbitrage contract safety rails ────────────────────────────────────────
+  arbitrageModelUpdateDelay: number;   // blocks a newly-verified model must wait before arbitrage may use it
+  arbitrageMaxTradeAmount: number;     // base units — cap on value moved per atomic arbitrage execution
+  arbitrageWindowBlocks: number;       // rolling window (blocks) used by the circuit breaker's profit check
 }
 
 export const DEFAULT_PARAMS: ChainParameters = {
@@ -77,6 +94,19 @@ export const DEFAULT_PARAMS: ChainParameters = {
   unbondingPeriod: 10,
   maxMempoolSize: 10_000,
   minValidatorStake: 1_000_000,
+
+  modelRegistryChallengePeriod: 100,
+  modelRegistryMinimumBond: 500_000_000,
+  modelRegistryChallengeBond: 200_000_000,
+  modelRegistrySlashingFractionBp: 2_000,
+  modelRegistryChallengerRewardFractionBp: 2_000,
+  modelRegistryResidualEpsilonScaled: 1_000_000,   // 1e-6 * 1e12
+  modelRegistryMaxModelsPerProposer: 10,
+  modelRegistryMaxSupportSetSize: 2_048,
+
+  arbitrageModelUpdateDelay: 50,
+  arbitrageMaxTradeAmount: 100_000_000_000,
+  arbitrageWindowBlocks: 100,
 };
 
 /**
@@ -91,6 +121,19 @@ const PARAM_BOUNDS: Record<keyof ChainParameters, { min: number; max: number }> 
   unbondingPeriod:   { min: 1,              max: 50_400       }, // 1 block – ~7 days @ 12 s/block
   maxMempoolSize:    { min: 100,            max: 100_000      },
   minValidatorStake: { min: 100_000,        max: 50_000_000   }, // 0.0001 – 50 EQU
+
+  modelRegistryChallengePeriod:           { min: 1,         max: 500 },
+  modelRegistryMinimumBond:               { min: 1_000_000, max: 10_000_000_000 },
+  modelRegistryChallengeBond:             { min: 1_000_000, max: 5_000_000_000 },
+  modelRegistrySlashingFractionBp:        { min: 100,       max: 5_000 },
+  modelRegistryChallengerRewardFractionBp:{ min: 100,       max: 5_000 },
+  modelRegistryResidualEpsilonScaled:     { min: 1_000,     max: 1_000_000_000 },
+  modelRegistryMaxModelsPerProposer:      { min: 1,         max: 50 },
+  modelRegistryMaxSupportSetSize:         { min: 64,        max: 8_192 },
+
+  arbitrageModelUpdateDelay: { min: 1,         max: 1_000 },
+  arbitrageMaxTradeAmount:   { min: 1_000_000, max: 1_000_000_000_000 },
+  arbitrageWindowBlocks:     { min: 10,        max: 1_000 },
 };
 
 /** Quorum: at least 33.4 % of total bonded stake must have voted. */
@@ -145,6 +188,11 @@ export class GovernanceModule {
     if (parameterChange) {
       const allowed: Array<keyof ChainParameters> = [
         "baseReward", "miningThreshold", "unbondingPeriod", "maxMempoolSize", "minValidatorStake",
+        "modelRegistryChallengePeriod", "modelRegistryMinimumBond", "modelRegistryChallengeBond",
+        "modelRegistrySlashingFractionBp", "modelRegistryChallengerRewardFractionBp",
+        "modelRegistryResidualEpsilonScaled", "modelRegistryMaxModelsPerProposer",
+        "modelRegistryMaxSupportSetSize",
+        "arbitrageModelUpdateDelay", "arbitrageMaxTradeAmount", "arbitrageWindowBlocks",
       ];
       if (!allowed.includes(parameterChange.key as keyof ChainParameters)) {
         throw new Error(`Unknown parameter: ${parameterChange.key}`);
