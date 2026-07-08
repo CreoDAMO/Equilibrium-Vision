@@ -840,6 +840,31 @@ export const GetDexPositionsResponse = zod.object({
 
 
 /**
+ * Runs Bellman-Ford negative-cycle detection over the current DEX pool graph, then sizes each profitable cycle via the variational stationary-point solver. Read-only — does not execute any trades.
+ * @summary Scan live DEX pool reserves for profitable arbitrage cycles
+ */
+export const getArbitrageOpportunitiesQueryLimitDefault = 5;
+
+export const GetArbitrageOpportunitiesQueryParams = zod.object({
+  "limit": zod.coerce.number().default(getArbitrageOpportunitiesQueryLimitDefault).describe('Max number of opportunities to return (default 5, capped at 20).')
+})
+
+export const GetArbitrageOpportunitiesResponse = zod.object({
+  "opportunities": zod.array(zod.object({
+  "tokens": zod.array(zod.string()).describe('Cycle tokens including the start token at both ends, e.g. [EQU, WBTC, USDC, EQU].'),
+  "poolIds": zod.array(zod.string()),
+  "hopCount": zod.number(),
+  "rates": zod.array(zod.number()).describe('Effective per-hop exchange rates.'),
+  "profitFactor": zod.number().describe('product(rates) - 1.0; positive means profitable.'),
+  "optimalAmountIn": zod.number().describe('Optimal initial trade amount found by the variational stationary solver.'),
+  "expectedProfit": zod.number().describe('Expected net profit after fees and slippage, denominated in the start token.')
+})),
+  "count": zod.number(),
+  "poolsScanned": zod.number()
+})
+
+
+/**
  * @summary Get a swap quote without executing the trade
  */
 export const GetDexQuoteQueryParams = zod.object({

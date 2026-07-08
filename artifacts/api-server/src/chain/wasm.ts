@@ -2,11 +2,27 @@ import { createHash } from "crypto";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import path from "path";
+import fs from "fs";
 import { ed25519 } from "@noble/curves/ed25519.js";
 
-// Resolve CLI binary once at module load — same relative path used by bridge.ts
+// Resolve CLI binary once at module load — same helper used by bridge.ts.
+//
+// NOTE: import.meta.url is NOT rewritten per-source-file by esbuild when
+// bundling into a single dist file — every module sees the *bundle's* own
+// URL, so a path relative to __dirname assumes the wrong directory depth
+// once bundled (dist/ sits one level shallower than src/chain/ did).
+// Falling back through cwd- and dirname-relative candidates keeps this
+// correct in both `tsx` dev mode and the bundled `dist/index.mjs` runtime.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VAI_CLI_PATH = path.resolve(__dirname, "../../variational-ai-cli");
+function resolveCliBinary(name: string): string {
+  const candidates = [
+    path.resolve(process.cwd(), name),
+    path.resolve(__dirname, "../../", name),
+    path.resolve(__dirname, "../", name),
+  ];
+  return candidates.find(c => fs.existsSync(c)) ?? candidates[0]!;
+}
+const VAI_CLI_PATH = resolveCliBinary("variational-ai-cli");
 
 // ── WASM Smart Contract Execution Environment ──────────────────────────────────
 //

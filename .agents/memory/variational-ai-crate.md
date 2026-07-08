@@ -51,4 +51,14 @@ Release binary is copied to `artifacts/api-server/variational-ai-cli` for the Ty
 
 `arbitrage.rs` implements `CurrencyGraph` (Bellman-Ford negative-cycle detection over -log(rate) edges), `ArbitrageAction` (single-parameter trade-size `Action` impl: S(x) = -(chain_out(x)-x) + λx²), and `compute_trade_signal`. It must be declared in `lib.rs`'s module list — it was written but left unwired once before, which silently excluded its `#[cfg(test)]` tests from `cargo test`.
 
-**Still outstanding from the full spec Gap-3 deliverable** (not yet built): governance safety rails (max_arbitrage_size param, per-block rate limit, negative-P&L circuit breaker) and the atomic multi-hop WASM contract execution path. Only the Rust action/graph math is done.
+Wired into the live API as a read-only `GET /api/arbitrage/opportunities` endpoint via a second CLI binary (`variational-ai-arbitrage-cli`), same stdin/stdout JSON bridge pattern as the residual verifier. Iteratively removes one pool per detected cycle so repeated Bellman-Ford passes surface distinct opportunities instead of rediscovering the same one.
+
+**Still outstanding from the full spec Gap-3 deliverable** (not yet built): governance safety rails (max_arbitrage_size param, per-block rate limit, negative-P&L circuit breaker) and the atomic multi-hop WASM contract execution path. Only detection + read-only sizing is exposed; nothing executes trades automatically.
+
+## esbuild + import.meta.url path resolution (production bug, not just this feature)
+
+Any Node module that computes `__dirname` from `import.meta.url` to build a path to a sibling file (e.g. a copied Rust CLI binary) breaks once esbuild bundles multiple source files into one output file — `import.meta.url` is not rewritten per-source-module, so every module sees the *bundle's own* file URL, changing the effective directory depth vs. unbundled dev mode.
+
+**Why:** `artifacts/api-server`'s `dev`/`start` scripts always run the esbuild-bundled `dist/index.mjs` (there is no unbundled dev mode here), so this bug is live in production, not just a bundler edge case — `bridge.ts` and `wasm.ts` both resolved their CLI binary paths one directory level too shallow and silently failed (`ENOENT`) until fixed.
+
+**How to apply:** when a bundled Node service needs to locate a sibling binary/asset by relative path, resolve through `process.cwd()` first (reliable when the run script's cwd is the package root) and fall back to dirname-relative candidates only as a secondary guess — check `fs.existsSync` across candidates rather than trusting one computed path.

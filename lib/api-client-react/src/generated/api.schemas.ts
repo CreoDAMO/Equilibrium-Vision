@@ -554,6 +554,27 @@ export interface ProviderPositions {
   positions: LiquidityPosition[];
 }
 
+export interface ArbitrageOpportunity {
+  /** Cycle tokens including the start token at both ends, e.g. [EQU, WBTC, USDC, EQU]. */
+  tokens: string[];
+  poolIds: string[];
+  hopCount: number;
+  /** Effective per-hop exchange rates. */
+  rates: number[];
+  /** product(rates) - 1.0; positive means profitable. */
+  profitFactor: number;
+  /** Optimal initial trade amount found by the variational stationary solver. */
+  optimalAmountIn: number;
+  /** Expected net profit after fees and slippage, denominated in the start token. */
+  expectedProfit: number;
+}
+
+export interface ArbitrageOpportunityList {
+  opportunities: ArbitrageOpportunity[];
+  count: number;
+  poolsScanned: number;
+}
+
 export interface SwapQuote {
   poolId: string;
   tokenIn: string;
@@ -589,6 +610,13 @@ limit?: number;
 };
 
 export type ListDexSwapsParams = {
+limit?: number;
+};
+
+export type GetArbitrageOpportunitiesParams = {
+/**
+ * Max number of opportunities to return (default 5, capped at 20).
+ */
 limit?: number;
 };
 

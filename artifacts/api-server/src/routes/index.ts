@@ -16,6 +16,7 @@ import evmRouter from "./evm.js";
 import governanceRouter from "./governance.js";
 import mobileRouter from "./mobile.js";
 import adminRouter from "./admin.js";
+import arbitrageRouter from "./arbitrage.js";
 
 const router: IRouter = Router();
 
@@ -36,5 +37,6 @@ router.use(evmRouter);
 router.use(governanceRouter);
 router.use(mobileRouter);
 router.use(adminRouter);
+router.use(arbitrageRouter);
 
 export default router;

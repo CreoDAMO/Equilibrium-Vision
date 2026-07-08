@@ -30,6 +30,8 @@ tags:
     description: On-chain governance proposals, voting, and chain parameters
   - name: admin
     description: On-chain M-of-N multisig gate for privileged admin actions (e.g. validator slashing)
+  - name: arbitrage
+    description: Bellman-Ford currency-arbitrage detection over live DEX pool reserves
 
 paths:
   /healthz:
@@ -862,6 +864,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProviderPositions"
+
+  /arbitrage/opportunities:
+    get:
+      operationId: getArbitrageOpportunities
+      tags: [arbitrage]
+      summary: Scan live DEX pool reserves for profitable arbitrage cycles
+      description: >
+        Runs Bellman-Ford negative-cycle detection over the current DEX pool
+        graph, then sizes each profitable cycle via the variational
+        stationary-point solver. Read-only — does not execute any trades.
+      parameters:
+        - name: limit
+          in: query
+          description: Max number of opportunities to return (default 5, capped at 20).
+          schema:
+            type: integer
+            default: 5
+      responses:
+        "200":
+          description: Ranked list of arbitrage opportunities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArbitrageOpportunityList"
+        "500":
+          description: Arbitrage scan failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 
   /dex/quote:
     get:
@@ -1984,6 +2016,49 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LiquidityPosition"
+
+    ArbitrageOpportunity:
+      type: object
+      required: [tokens, poolIds, hopCount, rates, profitFactor, optimalAmountIn, expectedProfit]
+      properties:
+        tokens:
+          type: array
+          items:
+            type: string
+          description: Cycle tokens including the start token at both ends, e.g. [EQU, WBTC, USDC, EQU].
+        poolIds:
+          type: array
+          items:
+            type: string
+        hopCount:
+          type: integer
+        rates:
+          type: array
+          items:
+            type: number
+          description: Effective per-hop exchange rates.
+        profitFactor:
+          type: number
+          description: product(rates) - 1.0; positive means profitable.
+        optimalAmountIn:
+          type: number
+          description: Optimal initial trade amount found by the variational stationary solver.
+        expectedProfit:
+          type: number
+          description: Expected net profit after fees and slippage, denominated in the start token.
+
+    ArbitrageOpportunityList:
+      type: object
+      required: [opportunities, count, poolsScanned]
+      properties:
+        opportunities:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArbitrageOpportunity"
+        count:
+          type: integer
+        poolsScanned:
+          type: integer
 
     SwapQuote:
       type: object

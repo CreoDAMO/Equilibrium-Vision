@@ -7,10 +7,12 @@ import {
   useGetDexQuote,
   useDexSwap,
   useAddLiquidity,
+  useGetArbitrageOpportunities,
   getListDexPoolsQueryKey,
   getListDexSwapsQueryKey,
   getGetDexPositionsQueryKey,
   getGetDexQuoteQueryKey,
+  getGetArbitrageOpportunitiesQueryKey,
   type DexPoolList,
 } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -23,7 +25,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { useWallet } from "@/wallet/context";
 import { formatAmount, formatScientific, truncateHash, timeAgo } from "@/lib/format";
-import { ArrowRightLeft, Droplets, TrendingUp, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
+import { ArrowRightLeft, Droplets, TrendingUp, AlertTriangle, CheckCircle2, RefreshCw, Zap } from "lucide-react";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -255,6 +257,75 @@ function MyPositions({ address }: { address: string }) {
   );
 }
 
+// ── Arbitrage tab ─────────────────────────────────────────────────────────────
+
+function ArbitrageCard() {
+  const params = { limit: 5 };
+  const { data, isLoading, isError, refetch, isFetching } = useGetArbitrageOpportunities(params, {
+    query: { queryKey: getGetArbitrageOpportunitiesQueryKey(params), refetchInterval: 15000 },
+  });
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardTitle className="flex items-center gap-2"><Zap className="w-4 h-4" /> Arbitrage Opportunities</CardTitle>
+        <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>
+          <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
+        </Button>
+      </CardHeader>
+      <CardContent className="p-0">
+        {isLoading ? (
+          <p className="p-6 text-center text-muted-foreground">Scanning pools…</p>
+        ) : isError ? (
+          <p className="p-6 text-center text-destructive">Arbitrage scan failed.</p>
+        ) : (
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Cycle</TableHead>
+                  <TableHead className="text-right">Hops</TableHead>
+                  <TableHead className="text-right">Profit factor</TableHead>
+                  <TableHead className="text-right">Optimal amount in</TableHead>
+                  <TableHead className="text-right">Expected profit</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data?.opportunities.map((op, i) => (
+                  <TableRow key={i}>
+                    <TableCell>
+                      <div className="font-medium text-sm">{op.tokens.join(" → ")}</div>
+                      <div className="flex gap-1 mt-1 flex-wrap">
+                        {op.poolIds.map((pid) => <PoolBadge key={pid} poolId={pid} />)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">{op.hopCount}</TableCell>
+                    <TableCell className="text-right font-mono text-sm text-green-600">
+                      +{(op.profitFactor * 100).toFixed(2)}%
+                    </TableCell>
+                    <TableCell className="text-right">{formatAmount(op.optimalAmountIn)} {op.tokens[0]}</TableCell>
+                    <TableCell className="text-right font-medium text-green-600">
+                      +{formatAmount(op.expectedProfit)} {op.tokens[0]}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {(!data || data.opportunities.length === 0) && (
+                  <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                    No profitable cycles detected across {data?.poolsScanned ?? 0} pools.
+                  </TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+            <p className="px-4 py-2 text-xs text-muted-foreground border-t">
+              Bellman-Ford cycle detection over {data?.poolsScanned ?? 0} live pools — read-only, no trades executed.
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function DexPage() {
@@ -322,6 +393,8 @@ export default function DexPage() {
 
         {/* Pools + recent swaps */}
         <div className="lg:col-span-2 space-y-6">
+          <ArbitrageCard />
+
           <Card>
             <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Pools</CardTitle></CardHeader>
             <CardContent className="p-0">

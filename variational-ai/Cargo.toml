@@ -16,6 +16,10 @@ path = "src/bin/cli.rs"
 name = "variational-ai-harness"  # determinism conformance harness
 path = "src/bin/harness.rs"
 
+[[bin]]
+name = "variational-ai-arbitrage-cli"  # DEX arbitrage detector bridge called by the TS API server
+path = "src/bin/arbitrage_cli.rs"
+
 # ── Library (cdylib for Android JNI, rlib for host linking) ──────────────────
 [lib]
 name = "variational_ai"

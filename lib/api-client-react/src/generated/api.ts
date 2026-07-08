@@ -27,6 +27,7 @@ import type {
   AppRelease,
   ApproveInput,
   ApproveResult,
+  ArbitrageOpportunityList,
   Block,
   BlockFees,
   BlockPage,
@@ -40,6 +41,7 @@ import type {
   FaucetDripResponse,
   FaucetRequest,
   FaucetStatus,
+  GetArbitrageOpportunitiesParams,
   GetDexQuoteParams,
   GetMobileVersionParams,
   HealthStatus,
@@ -2958,6 +2960,91 @@ export function useGetDexPositions<TData = Awaited<ReturnType<typeof getDexPosit
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetDexPositionsQueryOptions(provider,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetArbitrageOpportunitiesUrl = (params?: GetArbitrageOpportunitiesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/arbitrage/opportunities?${stringifiedParams}` : `/api/arbitrage/opportunities`
+}
+
+/**
+ * Runs Bellman-Ford negative-cycle detection over the current DEX pool graph, then sizes each profitable cycle via the variational stationary-point solver. Read-only — does not execute any trades.
+ * @summary Scan live DEX pool reserves for profitable arbitrage cycles
+ */
+export const getArbitrageOpportunities = async (params?: GetArbitrageOpportunitiesParams, options?: RequestInit): Promise<ArbitrageOpportunityList> => {
+
+  return customFetch<ArbitrageOpportunityList>(getGetArbitrageOpportunitiesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetArbitrageOpportunitiesQueryKey = (params?: GetArbitrageOpportunitiesParams,) => {
+    return [
+    `/api/arbitrage/opportunities`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetArbitrageOpportunitiesQueryOptions = <TData = Awaited<ReturnType<typeof getArbitrageOpportunities>>, TError = ErrorType<ApiError>>(params?: GetArbitrageOpportunitiesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getArbitrageOpportunities>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetArbitrageOpportunitiesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getArbitrageOpportunities>>> = ({ signal }) => getArbitrageOpportunities(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getArbitrageOpportunities>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetArbitrageOpportunitiesQueryResult = NonNullable<Awaited<ReturnType<typeof getArbitrageOpportunities>>>
+export type GetArbitrageOpportunitiesQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Scan live DEX pool reserves for profitable arbitrage cycles
+ */
+
+export function useGetArbitrageOpportunities<TData = Awaited<ReturnType<typeof getArbitrageOpportunities>>, TError = ErrorType<ApiError>>(
+ params?: GetArbitrageOpportunitiesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getArbitrageOpportunities>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetArbitrageOpportunitiesQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
