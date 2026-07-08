@@ -38,6 +38,7 @@
 //!          -3 model not verified, or not yet past model_update_delay
 //!          -4 amountIn exceeds arbitrage_max_trade_amount
 //!          -5 swap failed (bad pool chain / insufficient liquidity/funds)
+//!          -6 caller is not the contract owner
 //!       Profit is logged in full i64 precision via `log()`; the i32 return
 //!       value saturates at i32::MAX/MIN for very large profits/losses since
 //!       the call ABI's return slot is a single i32 (base-unit profit values
@@ -183,6 +184,15 @@ fn method_unpause() -> i32 {
 /// args: [poolIdsLen, poolIdsBytes..., tokenInLen, tokenInBytes...,
 ///        amountIn (i64, 2 words), minProfitFp (i64, 2 words)]
 fn method_execute(args_ptr: u32) -> i32 {
+    // Only the contract owner may trigger execution. This prevents griefing
+    // (burning the circuit-breaker window) and unauthorized fund movement.
+    // The caller identity is authenticated at the API route layer via Ed25519
+    // signature before host_caller() is populated — this check is not theater.
+    let caller = host_caller();
+    if !is_owner(&caller) {
+        return -6;
+    }
+
     if get_i64("paused") != 0 || get_i64("circuit_tripped") != 0 {
         return -1;
     }

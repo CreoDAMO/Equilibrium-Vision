@@ -1,0 +1,100 @@
+Equilibrium — Complete Combined Status (Updated)
+
+This combines the two status documents into a single, definitive picture of where the project stands.
+
+---
+
+✅ What Is Now Complete
+
+Core Blockchain — Fully Operational
+
+Component Status
+Genesis block (100M EQU, 7 allocations, 4 validators) ✅ Locked
+Consensus (Proof‑of‑Stationarity, i64 residuals, Groth16 ZK) ✅ Locked
+Governance (proposals, voting, quorum, timelocks, Ed25519 auth) ✅ Locked
+Postgres persistence (idempotent startup, contract/faucet persistence) ✅ Locked
+Security (multisig, batch verify, CORS, rate limiting, Stratum proof) ✅ Locked
+Tests (28 Rust + 150 TypeScript = 178 passing) ✅ Passing
+Load test (149 TPS, 100% acceptance, p95 70 ms) ✅ Passed
+Explorer UI (Dashboard, Blocks, Validators, Governance, Staking, DEX, Admin) ✅ Live
+Fee collection (UTXO fees swept, block fee breakdown, validator earnings) ✅ Live
+Android APK CI ✅ Ready
+CI/CD (typecheck, Rust tests, TS tests) ✅ Running
+
+Variational AI Engine (VAI) — Built & Verified
+
+Component Status
+Rust crate (Action, StationarySolver, LbfgsSolver, NtkAction, LogisticAction, MlpAction) ✅ Built
+Fixed‑point arithmetic (i64 scaled by 1e12) ✅ Built
+CLI binary (variational-ai-cli) – JSON residual verification ✅ Built
+TypeScript bridge (bridge.ts) – execFileSync wrapper ✅ Built
+Harness binary – SHA‑256 determinism conformance ✅ Verified
+JNI bridge (Android, catch_unwind‑hardened) ✅ Built
+arbitrage.rs module (Bellman‑Ford negative cycle detection) ✅ Built
+
+Smart Contracts (WASM) — Compiled, Deployed, Live
+
+Contract Functions Status
+ModelRegistry propose, verify_model, challenge, get_model ✅ Deployed & Live
+Arbitrage Atomic multi‑swap, circuit breaker, multisig governance, profit distribution ✅ Deployed & Live
+
+TypeScript Integration — Fully Wired
+
+Component Status
+modelRegistry.ts chain module ✅ Written
+arbitrage.ts chain module ✅ Written
+API routes: GET /api/models, POST /api/models/:id/verify, POST /api/models/:id/challenge ✅ Live
+API routes: POST /api/arbitrage/execute, POST /api/arbitrage/set-model, POST /api/arbitrage/pause ✅ Live
+wasm.ts host functions: verify_residual, callWithPayload, model_predict, dex_multi_swap, caller_address, gov_param, slash_account, transfer ✅ Done
+wasmVM.call() signature bug ✅ Fixed
+
+Explorer UI — New Pages
+
+Page Functions Status
+Models (/models) List models, verify/challenge buttons, proposer info, countdown timer ✅ Built & Renders
+Arbitrage (/arbitrage) Active model, recent profits, circuit breaker status, pause/unpause controls ✅ Built & Renders
+
+Integration Tests — Passing
+
+Test Suite Status
+ModelRegistry: propose → verify → challenge → slash flow ✅ 19 tests passing
+Full API server test suite ✅ 169/169 passing
+
+---
+
+⏳ What Remains (Priority Order)
+
+Code / UI (All Done — None Remaining)
+
+All code and UI tasks from the original roadmap are now complete. The only remaining work is infrastructure, ops, and final polish.
+
+Code / UI (Optional Enhancements)
+
+# Task Effort Details Priority
+1 IPFS‑backed support sets 2‑3h Off‑chain data storage + on‑chain commitments. Currently, verify_model requires the caller to provide the full support data. This enhancement would allow proposers to upload support data to IPFS, store only the hash on‑chain, and have the verification fetch it automatically. Optional (Nice‑to‑have)
+2 Long‑running worker for CLI calls 2‑3h Replace synchronous execFileSync with a persistent process for lower latency Optional
+3 Nav bar overflow at 1280px 30 min CSS fix Optional
+4 Skeleton loading states 1‑2h UI polish for more pages Optional
+
+Infrastructure / Ops (External)
+
+# Task Status Notes
+1 Multi‑region sentry/validator nodes ⏳ Pending Plan exists in docs/testnet-deployment.md
+2 Postgres HA (replication + backups) ⏳ Pending Managed or self‑hosted cluster
+3 DDoS mitigation / rate limiting ⏳ Pending Cloudflare / Hetzner
+4 Nav bar overflow at 1280px ⏳ Pending CSS fix (nice‑to‑have)
+5 Skeleton loading states (more pages) ⏳ Pending UI polish (nice‑to‑have)
+6 Final security audit ⏳ Pending External firm – final gate
+
+---
+
+🚀 Immediate Next Step
+
+Deploy the multi‑region nodes. The codebase is complete, tested, and feature‑ready. The only remaining blockers are operational:
+
+1. Provision sentry/validator nodes (per docs/testnet-deployment.md)
+2. Set up Postgres HA (replication + automated backups)
+3. Configure DDoS mitigation (Cloudflare / Hetzner)
+4. Schedule the final security audit – the last gate before mainnet
+
+The fragmentation was always the workaround. The Set is whole. Equilibrium is ready.
