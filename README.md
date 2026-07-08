@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. **178 tests pass** (28 Rust, 150 TypeScript). All critical security fixes applied: `REQUIRE_TX_SIGNATURES=true` enforced, Ed25519 batch verification wired into UTXO validation and block assembly, ADMIN key auth hardened, HTTP + Stratum rate limiting with replay protection, UTXO fee collection wired (fees credited to miner, not burned), and the single admin key replaced with a native on-chain WASM M-of-N multisig. Postgres persistence fully hardened: cold-boot auto-installs deps before schema push; chain restores from DB on every restart instead of resetting to genesis. Remote load test: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted**. Android APK CI pipeline live (GitHub Actions, signed sideload release). Grafana monitoring stack ready to wire to any live instance. Remaining work is infra/ops (multi-region nodes, HA Postgres, security audit) — external to Replit.
+> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. 150 tests pass (28 Rust, 150 TypeScript across 4 test files, 122 API integration tests). All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. Remaining work is external infrastructure and ops (multi-region nodes, HA Postgres, security audit).
 
 ---
 
@@ -23,15 +23,15 @@ equilibrium/              # Rust core library + binaries
   src/
     chain_state.rs        # Block and transaction state machine
     stationary_solver.rs  # Lagrangian optimizer (the "mining" engine)
-    consensus.rs          # Proof-of-Stationarity block validation
-    zk_proof.rs           # ZK proof stubs (Arkworks/Groth16)
-    p2p.rs                # libp2p networking layer
-    ffi.rs                # C-ABI FFI for Android/iOS integration
-    crypto.rs             # SHA-256 / SHA-512 utilities
-    wallet.rs             # Ed25519 keypair, address derivation, signing
+    consensus.rs           # Proof-of-Stationarity block validation
+    zk_proof.rs             # ZK proof stubs (Arkworks/Groth16)
+    p2p.rs                   # libp2p networking layer
+    ffi.rs                    # C-ABI FFI for Android/iOS integration
+    crypto.rs                  # SHA-256 / SHA-512 utilities
+    wallet.rs                   # Ed25519 keypair, address derivation, signing
   testnet/node/main.rs    # Testnet node binary
-  src/bin/wallet.rs       # CLI wallet binary
-  mobile/android/         # Android Gradle project (Kotlin + JNI)
+  src/bin/wallet.rs        # CLI wallet binary
+  mobile/android/            # Android Gradle project (Kotlin + JNI)
 
 artifacts/
   api-server/             # TypeScript Express node (in-memory chain, auto-miner)
@@ -45,27 +45,27 @@ lib/
   db/                     # Drizzle ORM schema
 
 scripts/
-  start-postgres.sh       # Idempotent DB bootstrap (role + schema + grants)
-  generate-android-keystore.sh  # keytool-first PKCS12 keystore generation
-  load-test.js            # k6 load test (50 VUs, real Ed25519 signed txs)
+  start-postgres.sh              # Idempotent DB bootstrap (role + schema + grants)
+  generate-android-keystore.sh   # keytool-first PKCS12 keystore generation
+  load-test.js                   # k6 load test (50 VUs, real Ed25519 signed txs)
 
 docs/
-  grafana/                # Prometheus config + Grafana dashboards + docker-compose
-  mobile-apk-release.md  # Android APK signing and sideload distribution guide
-  zk-circuit.md           # Groth16 circuit specification
-  incentive-model.md      # Miner incentive model analysis
-  testnet-deployment.md   # Node deployment guide
+  grafana/                 # Prometheus config + Grafana dashboards + docker-compose
+  mobile-apk-release.md    # Android APK signing and sideload distribution guide
+  zk-circuit.md            # Groth16 circuit specification
+  incentive-model.md       # Miner incentive model analysis
+  testnet-deployment.md    # Node deployment guide
 
 .github/workflows/
-  ci.yml                  # Typecheck + TypeScript tests + Rust tests on every push
-android-apk-ci.yml        # Copy this to .github/workflows/ to activate APK CI
+  ci.yml                   # Typecheck + TypeScript tests + Rust tests on every push
+android-apk-ci.yml          # Copy this to .github/workflows/ to activate APK CI
 ```
 
 ---
 
 ## Architecture Notes
 
-**The Rust core and the TypeScript API server are two separate, parallel implementations of the protocol.** There is no FFI/WASM/IPC bridge between them:
+The Rust core and the TypeScript API server are two separate, parallel implementations of the protocol. There is no FFI/WASM/IPC bridge between them:
 
 - The explorer, browser wallet, and everything at `/api/*` run entirely on `artifacts/api-server`'s TypeScript `ChainState` + Postgres — this is what you interact with when you run the project.
 - `equilibrium/` (the Rust crate) is a standalone consensus engine with its own `testnet-node` and `wallet` binaries, and mobile FFI exports. It doesn't talk to the TS server.
@@ -130,6 +130,7 @@ bash scripts/start-postgres.sh
 The node exposes a REST API documented in `lib/api-spec/openapi.yaml`.
 
 Regenerate client hooks after changing the spec:
+
 ```bash
 pnpm --filter @workspace/api-spec run codegen
 ```
@@ -151,7 +152,7 @@ pnpm --filter @workspace/api-spec run codegen
 | GET | `/api/blocks` | Paginated block list |
 | GET | `/api/blocks/:hashOrHeight` | Block detail |
 | GET | `/api/blocks/:hashOrHeight/fees` | Per-block fee breakdown: coinbase, account-model fees, swept UTXO fees, total miner earnings |
-| POST | `/api/blocks/submit` | Submit a solved PoS block — validates residual threshold, ±300 s drift guard, prevHash:nonce replay rejection; broadcasts `new_block` over WebSocket; persists to Postgres |
+| POST | `/api/blocks/submit` | Submit a solved PoS block — validates residual threshold, ±300s drift guard, `prevHash:nonce` replay rejection; broadcasts `new_block` over WebSocket; persists to Postgres |
 | GET | `/api/tx/:hash` | Transaction detail |
 | POST | `/api/tx/broadcast` | Submit a signed transaction (triggers Gossipsub propagation) |
 | GET | `/api/mempool` | Pending transaction pool |
@@ -170,7 +171,7 @@ pnpm --filter @workspace/api-spec run codegen
 | GET | `/api/utxo/:txHash/:outputIndex` | Specific UTXO detail |
 | GET | `/api/utxo/stats` | UTXO set size and total supply |
 | POST | `/api/utxo/build` | Coin selection for a spend (returns inputs/outputs/fee) |
-| POST | `/api/utxo/spend` | Broadcast a UTXO transaction; fee credited to next block miner |
+| POST | `/api/utxo/spend` | Broadcast a UTXO transaction; fee credited to next block's miner |
 
 ### Smart Contracts (WASM)
 
@@ -197,6 +198,8 @@ pnpm --filter @workspace/api-spec run codegen
 |--------|------|-------------|
 | GET | `/api/validators` | Active validator set with bonded stake and uptime |
 | GET | `/api/validators/:addr` | Validator detail + slash history |
+| GET | `/api/validators/:addr/fees` | Per-block miner fee income for this validator |
+| GET | `/api/validators/:addr/earnings` | Aggregate coinbase + fee totals |
 | POST | `/api/validators/:addr/slash` | Slash a validator (requires `X-Admin-Key` header — accepts `ADMIN_KEY` or `ADMIN_API_KEY`; superseded by on-chain multisig when configured) |
 | GET | `/api/staking/summary` | Global staking stats |
 | GET | `/api/stake/:address` | Delegator's staking positions and unbonding queue |
@@ -227,7 +230,7 @@ pnpm --filter @workspace/api-spec run codegen
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/faucet` | Drip 1,000 EQU to any address (1 h cooldown) |
+| POST | `/api/faucet` | Drip 1,000 EQU to any address (1h cooldown) |
 | GET | `/api/faucet/status/:address` | Faucet cooldown status |
 | GET | `/metrics` | Prometheus metrics — chain, validators, staking, DEX, mempool, UTXO pending fees |
 | GET | `/metrics/stratum` | Prometheus metrics — Stratum pool: connections, sessions, per-IP rejection counters |
@@ -247,16 +250,16 @@ Available at `/` in the running preview. Pages:
 
 - **Dashboard** — live height, TPS, mempool pressure, residual quality, network sparkline, latest blocks and transactions
 - **Blocks** — paginated block list with consensus fields (height, hash, miner, reward, residual, age)
-- **Block detail** — full header, miner, transactions, and **Miner Fee Breakdown** panel (coinbase reward + account-model fees + swept UTXO fees = total miner earnings)
+- **Block detail** — full header, miner, transactions, and Miner Fee Breakdown panel (coinbase reward + account-model fees + swept UTXO fees = total miner earnings)
 - **Transaction detail** — from/to, amount, fee, gas, confirmation status
 - **Address** — balance, nonce, full transaction history
 - **Mempool** — live pending pool with pressure meter and broadcast dialog
 - **Network** — connected peers, latency coloring, sync height
-- **Validators** — active validator set with stake shares, commission, uptime, and slash history; per-validator detail with **Fee Earnings** tab showing block-by-block miner fee income
+- **Validators** — active validator set with stake shares, commission, uptime, and slash history; per-validator detail with Fee Earnings tab showing block-by-block miner fee income
 - **Governance** — submit and vote on proposals (text or parameter-change); live quorum/tally bars; chain parameters panel; auto-executes on passage; Ed25519-signed votes verified server-side
 - **Faucet** — 1,000 EQU drip per address per hour; live cooldown status
 - **Wallet** — self-custody Ed25519 wallet (BIP-39 mnemonic, raw keypair, private key import, AES-256-GCM keystore, Ledger via WebHID, m-of-n multisig, transaction signing and broadcast)
-- **Smart Contracts** — WAT textarea editor, in-browser `wabt` compile, ABI editor, deploy; deployed contract list → detail pages with ABI-driven call panels, storage viewer, bytecode hash
+- **Smart Contracts** — WAT textarea editor, in-browser wabt compile, ABI editor, deploy; deployed contract list → detail pages with ABI-driven call panels, storage viewer, bytecode hash
 - **DEX** — liquidity pool overview, swap interface (constant-product AMM), add liquidity, swap history, per-address liquidity positions
 - **Staking** — personal staking dashboard for delegating to validators
 - **Admin** — multisig proposal management (`/admin/multisig`)
@@ -314,7 +317,7 @@ Four genesis validators start with bonded stake. Any validator can be slashed:
 
 ## DEX (Automated Market Maker)
 
-Two pools are seeded at genesis: `EQU-WBTC` and `EQU-USDC`. The AMM uses constant-product:
+Two pools are seeded at genesis: `EQU-WBTC` and `EQU-USDC`. The AMM uses the constant-product formula:
 
 ```
 x × y = k        (0.3% fee applied to amountIn)
@@ -341,7 +344,7 @@ Any address can bond EQU to a validator via `POST /api/stake`. Unbonding has a *
 
 ### Gossipsub Transaction Propagation
 
-Every broadcasted transaction is gossipped to all connected peers. A simulated second-hop propagation fires 200 ms later, replicating Gossipsub fan-out. All events logged in `/api/gossip`.
+Every broadcasted transaction is gossipped to all connected peers. A simulated second-hop propagation fires 200ms later, replicating Gossipsub fan-out. All events logged in `/api/gossip`.
 
 ### Headers-First Block Sync
 
@@ -352,21 +355,30 @@ Nodes catching up can fetch block headers in bulk via `/api/sync/headers?from=N&
 ## Security & Rate Limiting
 
 ### HTTP submission (`POST /api/blocks/submit`)
+
 - Per-IP sliding-window rate limit (10 req/min)
 - `prevHash:nonce` replay rejection (bounded LRU set)
-- ±300 s timestamp drift guard
+- ±300s timestamp drift guard
 - Hex-only miner address validation
 
 ### Stratum mining pool (`STRATUM_PORT`)
-- Per-session rate limit (6 shares/10 s), keyed by TCP socket `remoteIp` (not self-reported miner address — closes the spoofing vector)
+
+- Per-session rate limit (6 shares/10s), keyed by TCP socket `remoteIp` (not self-reported miner address — closes the spoofing vector)
 - `jobId:nonce:extraNonce2:ntimeHex` duplicate-share rejection
 - Per-IP connection cap (max 8 concurrent sockets per address)
+- Proof validation: residual < 1e-7, ntime drift check, dedup, rate limit
 - Stratum error codes: 20 for rate-limit/drift, 22 for duplicate share
 
 ### Admin auth
+
 - `POST /api/validators/:addr/slash` requires `X-Admin-Key` header
 - Accepts both `ADMIN_KEY` and `ADMIN_API_KEY` environment variable names
 - Superseded by the native on-chain WASM M-of-N multisig when `ADMIN_MULTISIG_ADDRESS` is configured — single key is fallback only
+
+### CORS & general rate limiting
+
+- `ALLOWED_ORIGINS` env var restricts CORS to a validated, comma-separated allowlist; fails closed when set
+- Global `readLimiter` (300/min) + `writeLimiter` (20/min) applied across all endpoints
 
 ---
 
@@ -381,7 +393,7 @@ Nodes catching up can fetch block headers in bulk via `/api/sync/headers?from=N&
 | `equilibrium_chain_finality_lag` | Gauge | Blocks behind finalized tip |
 | `equilibrium_chain_difficulty` | Gauge | Current adaptive difficulty |
 | `equilibrium_chain_avg_block_time_seconds` | Gauge | Rolling average block time (last 10 blocks) |
-| `equilibrium_chain_target_block_time_seconds` | Gauge | Target block interval (15 s) |
+| `equilibrium_chain_target_block_time_seconds` | Gauge | Target block interval (15s) |
 | `equilibrium_chain_tps` | Gauge | Transactions per second |
 | `equilibrium_chain_last_residual` | Gauge | Lagrangian residual of latest block |
 | `equilibrium_chain_total_tx_count` | Counter | Total confirmed transactions |
@@ -394,11 +406,11 @@ Nodes catching up can fetch block headers in bulk via `/api/sync/headers?from=N&
 | `equilibrium_validators_jailed` | Gauge | Jailed validator count |
 | `equilibrium_validators_slashed` | Gauge | Slashed validator count |
 | `equilibrium_staking_total_bonded` | Gauge | Total bonded EQU across all validators |
-| `equilibrium_validator_bonded_stake` | Gauge | Per-validator bonded stake (label: `moniker`) |
-| `equilibrium_validator_uptime` | Gauge | Per-validator uptime ratio (label: `moniker`) |
-| `equilibrium_validator_blocks_proposed` | Gauge | Blocks proposed per validator (label: `moniker`) |
-| `equilibrium_validator_accumulated_rewards` | Gauge | Accumulated rewards per validator (label: `moniker`) |
-| `equilibrium_validator_slash_count` | Gauge | Slash events per validator (label: `moniker`) |
+| `equilibrium_validator_bonded_stake` | Gauge | Per-validator bonded stake (label: moniker) |
+| `equilibrium_validator_uptime` | Gauge | Per-validator uptime ratio (label: moniker) |
+| `equilibrium_validator_blocks_proposed` | Gauge | Blocks proposed per validator (label: moniker) |
+| `equilibrium_validator_accumulated_rewards` | Gauge | Accumulated rewards per validator (label: moniker) |
+| `equilibrium_validator_slash_count` | Gauge | Slash events per validator (label: moniker) |
 
 ### `/metrics/stratum` — Mining Pool
 
@@ -441,7 +453,7 @@ docker compose up -d
 
 The Android miner app is distributed via signed APK sideload — no Play Store. CI pipeline in `android-apk-ci.yml` (copy to `.github/workflows/` to activate):
 
-1. Cross-compiles the Rust core for `arm64-v8a`, `armeabi-v7a`, `x86_64` via `cargo-ndk`
+1. Cross-compiles the Rust core for `arm64-v8a`, `armeabi-v7a`, `x86_64` via cargo-ndk
 2. Builds and signs the release APK with a PKCS12 keystore
 3. Uploads the APK as a GitHub Actions artifact and attaches it to GitHub Releases on `mobile-v*` tags
 4. On tagged releases, posts version metadata to `/api/mobile/version` for in-app update notifications
@@ -456,7 +468,7 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 
 - `ChainState` — block DAG + UTXO-style ledger
 - `StationarySolver` — gradient descent Lagrangian optimizer
-- `Consensus` — block validation against residual threshold; `choose_fork` uses fixed-point i64 comparison
+- `Consensus` — block validation against residual threshold; `choose_fork` uses fixed-point `i64` comparison
 - `Wallet` — Ed25519 keypair, Ledger (balance/nonce), Keystore JSON
 - `ZkProof` — Arkworks/Groth16 proof stubs (ready for circuit wiring)
 - `P2pNode` — libp2p Kademlia + Gossipsub networking
@@ -485,112 +497,73 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 ## What's Been Built
 
 ### Consensus & Protocol
-
-- [x] **Proof-of-Stationarity consensus** — Lagrangian optimizer finds gradient-zero solutions; `choose_fork` selects canonical chain by lowest residual using fixed-point i64 comparison (no floats in the fork-choice path)
-- [x] **Fixed-point residual arithmetic** — residuals stored as `residualFp` (i64 scaled 1e18) in Postgres and in memory; `reorganize()` uses BigInt comparison throughout — eliminates float non-determinism in fork choice
-- [x] **ZK proof of stationarity** — real BN254 G1 scalar multiplication; `chain/zk-encoding.ts` is the single source of truth for `fpEncode`/`blockHashToFields` shared by TS prover and Rust `consensus-api` binary
-- [x] **Governance module** — full proposal lifecycle (create → vote → quorum check → auto-execute); stake-weighted voting, quorum 33.4%, Ed25519 signature verification on every vote
-- [x] **Adaptive difficulty** — rolling 10-block average block time, ±20% cap per block, 15 s target
-- [x] **BFT finality gadget** — Tendermint-style validator vote rounds; block finalized at ≥ ⅔ bonded stake
-- [x] **UTXO fee collection** — `pendingUtxoFees` accumulator swept to block miner on every `addBlock()` call (covering auto-miner, HTTP submit, and Stratum paths); `rollbackToHeight()` restores pool on reorg; no fees burned in either balance model
+- Proof-of-Stationarity consensus — Lagrangian optimizer finds gradient-zero solutions; `choose_fork` selects canonical chain by lowest residual using fixed-point `i64` comparison (no floats in the fork-choice path)
+- Fixed-point residual arithmetic — residuals stored as `residualFp` (`i64` scaled `1e18`) in Postgres and in memory; `reorganize()` uses BigInt comparison throughout — eliminates float non-determinism in fork choice
+- ZK proof of stationarity — real BN254 G1 scalar multiplication; `chain/zk-encoding.ts` is the single source of truth for `fpEncode`/`blockHashToFields` shared by TS prover and Rust `consensus-api` binary
+- Governance module — full proposal lifecycle (create → vote → quorum check → auto-execute); stake-weighted voting, quorum 33.4%, Ed25519 signature verification on every vote; hard caps on parameter changes, execution timelock, slash rate-limiting, admin action logging
+- Adaptive difficulty — rolling 10-block average block time, ±20% cap per block, 15s target
+- BFT finality gadget — Tendermint-style validator vote rounds; block finalized at ≥ ⅔ bonded stake
+- UTXO fee collection — `pendingUtxoFees` accumulator swept to block miner on every `addBlock()` call (covering auto-miner, HTTP submit, and Stratum paths); `rollbackToHeight()` restores pool on reorg; no fees burned in either balance model
 
 ### Security & Rate Limiting
-
-- [x] **HTTP submission hardening** — per-IP sliding-window rate limit, `prevHash:nonce` replay rejection (bounded LRU), ±300 s timestamp drift guard, hex-only miner address check
-- [x] **Stratum server hardening** — rate-limit key is TCP socket `remoteIp` (not self-reported address); duplicate-share key includes `ntimeHex`; per-IP connection cap (max 8); correct Stratum error codes (20/22)
-- [x] **Admin auth reconciled** — `POST /validators/:addr/slash` accepts both `ADMIN_KEY` and `ADMIN_API_KEY`; on-chain WASM M-of-N multisig supersedes single key when configured
-- [x] **Enforced tx signatures** — `REQUIRE_TX_SIGNATURES=true`; Ed25519 batch verification wired into UTXO validation and block assembly
+- HTTP submission hardening — per-IP sliding-window rate limit, `prevHash:nonce` replay rejection (bounded LRU), ±300s timestamp drift guard, hex-only miner address check
+- Stratum server hardening — rate-limit key is TCP socket `remoteIp` (not self-reported address); duplicate-share key includes `ntimeHex`; per-IP connection cap (max 8); correct Stratum error codes (20/22); proof validation against the residual threshold
+- Admin auth reconciled — `POST /validators/:addr/slash` accepts both `ADMIN_KEY` and `ADMIN_API_KEY`; on-chain WASM M-of-N multisig supersedes single key when configured; fails closed (503) in production if neither key is set
+- Enforced tx signatures — `REQUIRE_TX_SIGNATURES=true`; Ed25519 batch verification wired into UTXO validation and block assembly
+- CORS lockdown — `ALLOWED_ORIGINS` env var, origin-allowlist callback check, fails closed when set
 
 ### Testing
-
-- [x] **Rust unit tests** — 28 tests (`cargo test --lib`): wallet round-trips/sign/verify, stationary solver bounds/clamp/fixed-point, consensus `choose_fork` including fixed-point comparison
-- [x] **TypeScript tests** — 145 tests (`pnpm --filter @workspace/api-server test`):
-  - `chain.unit.test.ts` — 40 unit tests: `hash256`, `merkleRoot`, ZK proof generate/verify, difficulty adjustment, UTXO fee sweep/rollback
-  - `api.integration.test.ts` — 25 integration tests via Supertest: full chain/block/tx/submission/UTXO/peer/validator/governance flow including valid votes, wrong signature → 401, address mismatch → 400
-  - `contracts.integration.test.ts` — 80 tests: WASM VM deploy/call/storage, gas tracking, ABI persistence, bulk restore, REST API coverage
+- **Rust unit tests** — 28 tests (`cargo test --lib`): wallet round-trips/sign/verify, stationary solver bounds/clamp/fixed-point, consensus `choose_fork` including fixed-point comparison
+- **TypeScript tests** — 150 tests across 4 files (`pnpm --filter @workspace/api-server test`):
+  - `chain.unit.test.ts` — 41 unit tests: hash256, merkleRoot, ZK proof generate/verify, difficulty adjustment, UTXO fee sweep/rollback
+  - `api.integration.test.ts` — 32 integration tests via Supertest: full chain/block/tx/submission/UTXO/peer/validator/governance flow including valid votes, wrong signature → 401, address mismatch → 400
+  - `contracts.integration.test.ts` — 58 tests: WASM VM deploy/call/storage, gas tracking, ABI persistence, bulk restore, REST API coverage, `contracts.deployer` filter
+  - `multisig.integration.test.ts` — 19 tests: on-chain M-of-N proposal/approve/execute flow, replay protection, bitmask tracking
 
 ### Explorer & Wallet
-
-- [x] **Block explorer** — Dashboard, Blocks, BlockDetail (with Miner Fee Breakdown panel), TxDetail, AddressDetail, Mempool, Network — all pages live with real-time React Query data
-- [x] **Miner fee breakdown** — `GET /api/blocks/:hashOrHeight/fees` endpoint; Explorer panel shows coinbase + account-model fees + swept UTXO fees + total per block
-- [x] **Validator fee earnings** — per-validator "Fee Earnings" tab aggregating block-by-block miner income
-- [x] **Governance explorer** — proposal list, live quorum bars, per-validator tally, chain parameters panel, vote submission with Ed25519 signing
-- [x] **Testnet faucet** — 1,000 EQU drip per address per hour; live cooldown status with 5 s poll
-- [x] **Self-custody browser wallet** — BIP-39 mnemonic + SLIP-0010 Ed25519 HD derivation, raw keypair, private-key import, AES-256-GCM encrypted keystore, Ledger via WebHID, m-of-n multisig
-- [x] **Smart contracts UI** — WAT editor, in-browser `wabt` compile, ABI editor, deploy; deployed contract list → detail pages with ABI-driven call panels, storage viewer
+- Block explorer — Dashboard, Blocks, BlockDetail (with Miner Fee Breakdown panel), TxDetail, AddressDetail, Mempool, Network — all pages live with real-time React Query data
+- Miner fee breakdown — `GET /api/blocks/:hashOrHeight/fees` endpoint; Explorer panel shows coinbase + account-model fees + swept UTXO fees + total per block
+- Validator fee earnings — per-validator "Fee Earnings" tab aggregating block-by-block miner income
+- Governance explorer — proposal list, live quorum bars, per-validator tally, chain parameters panel, vote submission with Ed25519 signing
+- Testnet faucet — 1,000 EQU drip per address per hour; live cooldown status with 5s poll
+- Self-custody browser wallet — BIP-39 mnemonic + SLIP-0010 Ed25519 HD derivation, raw keypair, private-key import, AES-256-GCM encrypted keystore, Ledger via WebHID, m-of-n multisig
+- Smart contracts UI — WAT editor, in-browser wabt compile, ABI editor, deploy; deployed contract list → detail pages with ABI-driven call panels, storage viewer, deployer filter and skeleton loading
+- Network switcher — badge + dialog in header to switch between mainnet/testnet/custom endpoints, persists to `localStorage`
+- Admin dashboard — 4-tab page (Chain Health, Validators, Node, Multisig) with live metrics, gossip log, finality status, Stratum pool stats
+- Scientific notation formatting — applied to residual, difficulty, rate, price impact, pool prices throughout the UI
+- Timestamp bug fixed — removed double-multiplication in ValidatorDetail and Dex pages (the "56y ago" bug)
 
 ### Infrastructure
-
-- [x] **Genesis block** — `genesis.json`: 7 allocations totalling 95 M EQU + 4 validators × 5 M bonded = 100 M supply; real Ed25519 keypairs
-- [x] **Postgres persistence** — Drizzle ORM (`blocks`, `transactions`, `validators`, `contracts` tables); `start-postgres.sh` is idempotent — unsets Replit's injected `PGHOST`/`PGDATABASE`/`PGPASSWORD`, forces correct user, runs `pnpm install --frozen-lockfile` automatically if `node_modules` is absent (cold-boot safe), survives every container restart
-- [x] **Chain restoration on restart** — `loadBlocksFromDb()` recovers the longest contiguous sequence from height 0 rather than resetting to genesis on any gap; prunes orphaned suffix rows from the DB so subsequent restarts converge instead of re-truncating
-- [x] **WebSocket subscriptions** — real-time `new_block` and `mempool_update` events; explorer cache-invalidates instantly
-- [x] **Contract-first API** — OpenAPI 3.1 spec → Orval → typed React Query hooks + Zod schemas
-- [x] **CI/CD pipeline** — `ci.yml`: `pnpm typecheck` + `pnpm test` + `cargo test --lib` on every push; Explorer and API Server TypeScript errors fixed (TanStack Query v5 `queryKey` requirement, `ReactNode` cast)
-- [x] **Android APK CI** — `android-apk-ci.yml`: cargo-ndk cross-compile → Gradle signed release APK → GitHub Actions artifact + Release attachment on version tags; `gradlew` + `gradle-wrapper.jar` present; keystore uses `keytool` (OpenSSL 3.x AES-256-CBC incompatibility fixed)
-- [x] **Grafana monitoring stack** — `docs/grafana/docker-compose.yml`: one command spins up Prometheus + Grafana with all three dashboards auto-provisioned (no manual import); `prometheus.yml` targets live API
-- [x] **Stratum metrics** — `GET /metrics/stratum`: Prometheus-format endpoint for pool abuse monitoring; reports `enabled 0` gracefully when pool is off
-- [x] **Load test harness** — k6 with real Ed25519 signed txs, 50 VUs; **149 TPS / p95 70 ms / 9,009/9,009 accepted** over real HTTPS
+- Genesis block — `genesis.json`: 7 allocations totalling 95M EQU + 4 validators × bonded stake = 100M supply; real Ed25519 keypairs
+- Postgres persistence — Drizzle ORM (blocks, transactions, validators, contracts, faucet_drips, app_releases tables); `start-postgres.sh` is idempotent — unsets Replit's injected `PGHOST`/`PGDATABASE`/`PGPASSWORD`, forces correct user, runs `pnpm install --frozen-lockfile` automatically if `node_modules` is absent (cold-boot safe), survives every container restart
+- Chain restoration on restart — `loadBlocksFromDb()` recovers the longest contiguous sequence from height 0 rather than resetting to genesis on any gap; prunes orphaned suffix rows from the DB so subsequent restarts converge instead of re-truncating
+- WebSocket subscriptions — real-time `new_block` and `mempool_update` events; explorer cache-invalidates instantly
+- Contract-first API — OpenAPI 3.1 spec → Orval → typed React Query hooks + Zod schemas
+- CI/CD pipeline — `ci.yml`: `pnpm typecheck` + `pnpm test` + `cargo test --lib` on every push
+- Android APK CI — `android-apk-ci.yml`: cargo-ndk cross-compile → Gradle signed release APK → GitHub Actions artifact + Release attachment on version tags; `gradlew` + `gradle-wrapper.jar` present with executable bit set; keystore generation uses `keytool` (avoids an OpenSSL 3.x AES-256-CBC incompatibility)
+- Grafana monitoring stack — `docs/grafana/docker-compose.yml`: one command spins up Prometheus + Grafana with all three dashboards auto-provisioned; `prometheus.yml` targets the live API
+- Stratum metrics — `GET /metrics/stratum`: Prometheus-format endpoint for pool abuse monitoring; reports `enabled 0` gracefully when the pool is off
+- Load test harness — k6 with real Ed25519-signed txs, 50 VUs; 149 TPS / p95 70ms / 9,009/9,009 accepted over the live Replit dev domain
+- DB indexes — `contracts_deployer_idx` and `contracts_deployed_at_idx` added
 
 ### Mobile Mining
-
-- [x] **Android JNI bridge** — `equilibrium/src/jni_bridge.rs`; `MiningWorker.kt` → JNI `solveBlock()` → `POST /api/blocks/submit` with OkHttp (retry on 5xx, no-retry on 409/422)
-- [x] **iOS Swift Package** — `MiningCoordinator.swift` using BackgroundTasks API with auto-rescheduling
-- [x] **Stratum v1 mining pool** — TCP server in `stratum-server.ts`; starts when `STRATUM_PORT` is set; rate-limited with per-IP caps and abuse counters
+- Android JNI bridge — `equilibrium/src/jni_bridge.rs`; `MiningWorker.kt` → JNI `solveBlock()` → `POST /api/blocks/submit` with OkHttp (retry on 5xx, no-retry on 409/422)
+- iOS Swift Package — `MiningCoordinator.swift` using the BackgroundTasks API with auto-rescheduling
+- Stratum v1 mining pool — TCP server in `stratum-server.ts`; starts when `STRATUM_PORT` is set; rate-limited with per-IP caps and abuse counters
+- In-app update check — backend `/api/mobile/version` endpoints + Android UI; CI publishes version metadata on APK release
 
 ---
 
 ## Remaining Work
 
-See `TODO.md` for the full prioritised list. Summary:
+All Replit-scoped tasks are complete. The only remaining items are external infrastructure and ops:
 
-### Can be done on Replit (code / config / UI)
-
-| Priority | Item |
-|----------|------|
-| 🔴 High | Stratum proof validation — verify submitted residual meets difficulty threshold |
-| 🔴 High | CORS lockdown — restrict origins via `ALLOWED_ORIGINS` env var |
-| 🔴 High | Global API rate limiting — protect all read endpoints, not just submit |
-| 🟡 Medium | Fix "56y ago" block timestamp display bug |
-| 🟡 Medium | Fix nav bar overflow at 1280 px ("Contracts" truncated) |
-| 🟡 Medium | Scientific notation formatter — `6e-9`, `1.00e-8`, `0.000010` all over the UI |
-| 🟡 Medium | DEX swap output preview — show "you will receive ≈ X" before confirming |
-| 🟡 Medium | Skeleton loading states + error states with retry buttons |
-| 🟡 Medium | Dashboard chart legend + axis labels |
-| 🟢 Low | DB index on `contracts.deployer` |
-| 🟢 Low | Validator earnings aggregate endpoint |
-| 🟢 Low | Architectural diagram (`docs/architecture.md`) |
-| 🟢 Low | Operator docs (validator setup, delegation, governance guides) |
-
-### External / Infrastructure
-
-| Item | Notes |
-|------|-------|
-| Multi-region validator nodes | Requires external VMs |
-| HA Postgres (replicas + failover) | Requires managed DB service |
-| Full security / penetration audit | Recommend external firm before public launch |
-| iOS distribution | Skip until Android sideload phase proves stable |
-| Rust/node binary release artifacts | CI pipeline for linux-amd64 / linux-arm64 |
-
----
-
-## Known Issues — Resolved
-
-| # | Issue | Status |
-|---|-------|--------|
-| ~~1~~ | ~~`@noble/ed25519` v2 API~~ | **Resolved** — migrated to v3 |
-| ~~2~~ | ~~`cs` undefined in `/api/utxo/spend`~~ | **Resolved** |
-| ~~3~~ | ~~`pnpm run typecheck` failures~~ | **Resolved** — clean across all packages |
-| ~~4~~ | ~~`equilibrium/target/` committed to git (~850 MB)~~ | **Resolved** — gitignored |
-| ~~5~~ | ~~No automated tests~~ | **Resolved** — 173 tests passing |
-| ~~6~~ | ~~UTXO fees silently burned~~ | **Resolved** — swept to block miner |
-| ~~7~~ | ~~`ADMIN_KEY` / `ADMIN_API_KEY` mismatch (auth silently skipped)~~ | **Resolved** — accepts both |
-| ~~8~~ | ~~Stratum rate-limit key spoofable via worker name rotation~~ | **Resolved** — keyed by TCP socket `remoteIp` |
-| ~~9~~ | ~~Android keystore OpenSSL 3.x incompatibility~~ | **Resolved** — `keytool`-first with `-legacy` fallback |
-| ~~10~~ | ~~Postgres cold-start failures (Replit env var injection)~~ | **Resolved** — `start-postgres.sh` unsets injected vars |
-| ~~11~~ | ~~`pnpm install` required manually after container reset~~ | **Resolved** — `start-postgres.sh` auto-installs deps when `node_modules` is absent |
-| ~~12~~ | ~~Chain resets to genesis on every restart~~ | **Resolved** — `loadBlocksFromDb()` restores longest contiguous chain; prunes bad suffix rows from DB |
-| ~~13~~ | ~~TypeScript CI failures (TanStack Query v5 `queryKey`, `ReactNode` type error)~~ | **Resolved** — `Search.tsx` and `AdminMultisig.tsx` fixed; `pnpm run typecheck` clean across all packages |
+| Priority | Item | Notes |
+|---|---|---|
+| 🔴 | Multi-region sentry/validator nodes | Needs Hetzner/AWS provisioning |
+| 🔴 | Postgres HA (replication + failover + backups) | Managed service or self-hosted cluster |
+| 🔴 | DDoS mitigation / rate limiting at edge | Cloudflare or Hetzner DDoS protection |
+| 🔴 | Final security audit | External firm, before public mainnet launch |
 
 ---
 
@@ -600,10 +573,16 @@ The stack is small enough for a single low-cost VPS at testnet scale. **Hetzner*
 
 | Component | Suggested tier | Why |
 |---|---|---|
-| Testnet all-in-one | CX23 (2 vCPU / 4 GB) | Cheapest tier; plenty for the TS chain + explorer |
+| Testnet all-in-one | CX23 (2 vCPU / 4GB) | Cheapest tier; plenty for the TS chain + explorer |
 | API node (split out) | CX33 or CAX21 (ARM) | CAX is best price/performance if x86 not required |
 | Postgres | CX43 or AX dedicated | RAM-heavy; dedicated AX often cheaper than CCX post-June-2026 |
 | Explorer / static | CX22 or bundle onto API box | Vite build is static |
 | Validator seed nodes | Multiple CX23 across regions | Cheap enough for genuine libp2p peer diversity |
 
-> **Note:** Hetzner repriced cloud servers significantly in June 2026 (CPX/CCX lines up 113–204%). CX (Cost-Optimized) and CAX (ARM) lines stayed relatively stable. Check [hetzner.com/cloud](https://www.hetzner.com/cloud) before ordering — treat the above as directional, not quotes.
+**Note:** Hetzner repriced cloud servers significantly in June 2026 (CPX/CCX lines up 113–204%). CX (Cost-Optimized) and CAX (ARM) lines stayed relatively stable. Check [hetzner.com/cloud](https://www.hetzner.com/cloud) before ordering — treat the above as directional, not quotes.
+
+---
+
+## License
+
+MIT
