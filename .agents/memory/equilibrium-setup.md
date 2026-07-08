@@ -101,6 +101,11 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 - UTXO-model transactions settle instantly at submission time, outside block assembly — so anything that should happen "per block" (like fee crediting) must be accrued in a counter on submit and swept into a block on `addBlock()`, mirroring the existing coinbase-UTXO pattern. Don't assume all value-transfer logic funnels through block assembly just because the account model does.
 - Per-block fee auditing (`GET /api/blocks/:hashOrHeight/fees`, Explorer's "Miner Fee Breakdown" panel on BlockDetail) reads account fees from `block.transactions` and the swept UTXO fee via the deterministic `hash256('utxo-fees-${height}-${hash}')` UTXO lookup — reuse that same derivation anywhere else you need to find a block's swept fee UTXO.
 
+## WasmVM.call() signature — caller must be the 5th arg, not the 4th
+- `WasmVM.call()` in `wasm.ts` is `(address, methodId, args, gasLimit = 1_000_000, callerAddr = "")` — gasLimit comes BEFORE callerAddr.
+- New contract wrapper modules (e.g. `arbitrage.ts`, `modelRegistry.ts`) have repeatedly been written passing the caller string as the 4th positional arg (matching an older 4-arg signature), which TS catches as "string not assignable to number" on the gasLimit slot.
+- Fix pattern: `wasmVM.call(address, METHOD.X, args, undefined, caller)` — `undefined` correctly falls back to the gasLimit default; never pass `null` (becomes 0 → instant "Out of gas").
+
 ## Smart Contracts — UI (Contracts page)
 - Route: `/contracts` (deploy + list tabs) and `/contracts/:address` (detail + call + storage)
 - Files: `artifacts/explorer/src/pages/Contracts.tsx`, `artifacts/explorer/src/pages/ContractDetail.tsx`

@@ -1,0 +1,33 @@
+Run pnpm run typecheck
+  pnpm run typecheck
+  shell: /usr/bin/bash -e {0}
+  env:
+    PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+
+> workspace@0.0.0 typecheck /home/runner/work/Equilibrium-Vision/Equilibrium-Vision
+> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+
+
+> workspace@0.0.0 typecheck:libs /home/runner/work/Equilibrium-Vision/Equilibrium-Vision
+> tsc --build
+
+Scope: 4 of 11 workspace projects
+artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/explorer typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+scripts typecheck$ tsc -p tsconfig.json --noEmit
+scripts typecheck: Done
+Error: artifacts/api-server typecheck: src/chain/arbitrage.ts(86,82): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+Error: artifacts/api-server typecheck: src/chain/arbitrage.ts(102,66): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+Error: artifacts/api-server typecheck: src/chain/arbitrage.ts(113,60): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+Error: artifacts/api-server typecheck: src/chain/arbitrage.ts(121,62): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+Error: artifacts/api-server typecheck: src/chain/arbitrage.ts(146,64): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+Error: artifacts/api-server typecheck: src/chain/modelRegistry.ts(142,64): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+Error: artifacts/api-server typecheck: src/chain/modelRegistry.ts(159,74): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+Error: artifacts/api-server typecheck: src/chain/modelRegistry.ts(213,66): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+artifacts/api-server typecheck: Failed
+/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 typecheck: `tsc -p tsconfig.json --noEmit`
+Exit status 2
+ ELIFECYCLE  Command failed with exit code 2.
+Error: Process completed with exit code 2.

@@ -83,7 +83,7 @@ export async function deployArbitrageIfNeeded(wasmVM: WasmVM, deployer: string, 
     logger.error({ error }, "Failed to deploy Arbitrage contract");
     return undefined;
   }
-  const initRes = await wasmVM.call(address, METHOD.INIT, addressToWords(owner), deployer);
+  const initRes = await wasmVM.call(address, METHOD.INIT, addressToWords(owner), undefined, deployer);
   if (!initRes.success || initRes.returnValue !== 1) {
     logger.error({ initRes }, "Arbitrage contract did not initialize correctly");
     return undefined;
@@ -99,7 +99,7 @@ export async function setArbitrageModel(wasmVM: WasmVM, caller: string, registry
   const address = getArbitrageAddress();
   if (!address) return { success: false, error: "Arbitrage not configured" };
   const args = [...addressToWords(registryAddress), modelId];
-  const res = await wasmVM.call(address, METHOD.SET_MODEL, args, caller);
+  const res = await wasmVM.call(address, METHOD.SET_MODEL, args, undefined, caller);
   if (!res.success || res.returnValue !== 1) {
     const messages: Record<number, string> = { [-1]: "Caller is not the owner", [-2]: "Contract not initialized" };
     return { success: false, error: res.error ?? messages[res.returnValue ?? -1] ?? `set_model() returned ${res.returnValue}` };
@@ -110,7 +110,7 @@ export async function setArbitrageModel(wasmVM: WasmVM, caller: string, registry
 export async function pauseArbitrage(wasmVM: WasmVM, caller: string): Promise<SimpleResult> {
   const address = getArbitrageAddress();
   if (!address) return { success: false, error: "Arbitrage not configured" };
-  const res = await wasmVM.call(address, METHOD.PAUSE, [], caller);
+  const res = await wasmVM.call(address, METHOD.PAUSE, [], undefined, caller);
   if (!res.success || res.returnValue !== 1) return { success: false, error: res.error ?? "Caller is not the owner" };
   return { success: true };
 }
@@ -118,7 +118,7 @@ export async function pauseArbitrage(wasmVM: WasmVM, caller: string): Promise<Si
 export async function unpauseArbitrage(wasmVM: WasmVM, caller: string): Promise<SimpleResult> {
   const address = getArbitrageAddress();
   if (!address) return { success: false, error: "Arbitrage not configured" };
-  const res = await wasmVM.call(address, METHOD.UNPAUSE, [], caller);
+  const res = await wasmVM.call(address, METHOD.UNPAUSE, [], undefined, caller);
   if (!res.success || res.returnValue !== 1) return { success: false, error: res.error ?? "Caller is not the owner" };
   return { success: true };
 }
@@ -143,7 +143,7 @@ export async function executeArbitrage(wasmVM: WasmVM, caller: string, p: Execut
     ...i64ToWords(BigInt(Math.round(p.minProfit))),
   ];
 
-  const res = await wasmVM.call(address, METHOD.EXECUTE, args, caller);
+  const res = await wasmVM.call(address, METHOD.EXECUTE, args, undefined, caller);
   if (!res.success || res.returnValue === null) return { success: false, error: res.error ?? "call failed" };
   const messages: Record<number, string> = {
     [-1]: "Paused or circuit breaker tripped",

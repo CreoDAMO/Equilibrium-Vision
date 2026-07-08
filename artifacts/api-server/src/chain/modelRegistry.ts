@@ -139,7 +139,7 @@ export async function proposeModel(wasmVM: WasmVM, caller: string, p: ProposeMod
     return { success: false, error: (e as Error).message };
   }
 
-  const res = await wasmVM.call(address, METHOD.PROPOSE, args, caller);
+  const res = await wasmVM.call(address, METHOD.PROPOSE, args, undefined, caller);
   if (!res.success || res.returnValue === null || res.returnValue < 0) {
     const messages: Record<number, string> = {
       [-1]: "Insufficient balance for minimum bond",
@@ -156,7 +156,7 @@ export interface VerifyModelResult { success: boolean; status?: "verified" | "al
 export async function verifyModel(wasmVM: WasmVM, caller: string, modelId: number): Promise<VerifyModelResult> {
   const address = getModelRegistryAddress();
   if (!address) return { success: false, error: "ModelRegistry not configured" };
-  const res = await wasmVM.call(address, METHOD.VERIFY_MODEL, [modelId], caller);
+  const res = await wasmVM.call(address, METHOD.VERIFY_MODEL, [modelId], undefined, caller);
   if (!res.success || res.returnValue === null) return { success: false, error: res.error ?? "call failed" };
   const messages: Record<number, string> = { [-1]: "Unknown model", [-2]: "Challenge window still open" };
   if (res.returnValue < 0) return { success: false, error: messages[res.returnValue] ?? `verify_model() returned ${res.returnValue}` };
@@ -210,7 +210,7 @@ export async function challengeModel(wasmVM: WasmVM, caller: string, p: Challeng
     return { success: false, error: `Support set too large: ${args.length} words exceeds the 1024-word call-arg limit` };
   }
 
-  const res = await wasmVM.call(address, METHOD.CHALLENGE, args, caller);
+  const res = await wasmVM.call(address, METHOD.CHALLENGE, args, undefined, caller);
   if (!res.success || res.returnValue === null) return { success: false, error: res.error ?? "call failed" };
   const messages: Record<number, string> = {
     [-1]: "Unknown model",
