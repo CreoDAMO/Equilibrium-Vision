@@ -1,0 +1,109 @@
+What's been done so far
+Component
+Status
+variational-ai Rust crate (all solver types)
+✅ built + compiled
+Fixed-point arithmetic (FIXED_SCALE = 1e12)
+✅ in deterministic.rs
+variational-ai-cli (stdin→JSON residual verify)
+✅ compiled, in artifacts/api-server/
+variational-ai-harness (SHA-256 determinism check)
+✅ two-run hash equality confirmed
+JNI bridge (jni_bridge.rs) for Android
+✅ catch_unwind-hardened
+TypeScript bridge (bridge.ts)
+✅ computeResidual / verifyResidual
+README + .replit updated
+✅
+
+
+Everything remaining from the spec — doable in this dev environment
+1. verifyResidual host function in wasm.ts · ~30 min
+The WASM VM's importObject.env needs a synchronous verify_residual entry that WASM contracts can call. The critical detail: WASM host imports must be synchronous, but bridge.ts is async. The fix is execFileSync from child_process instead of spawn. The binary is already at artifacts/api-server/variational-ai-cli.
+The host function reads the support set from contract storage (keyed by model ID), calls the CLI synchronously, and returns 1 (valid) or 0 (invalid) as i32.
+Touches: artifacts/api-server/src/chain/wasm.ts only.
+
+2. contracts/model_registry/ — ModelRegistry WASM contract · ~2–3 h
+A Rust no_std WASM contract with four entry points, compiled to wasm32-unknown-unknown. The spec has the full source. Five functions:
+Export
+Description
+propose(commitment, residual_fp, metadata_uri)
+Bond EQU, store pending model, emit ModelProposed
+verify_model(model_id, commitment_hash)
+Calls verify_residual host fn; marks model verified if it passes
+challenge(model_id, commitment_hash)
+During challenge period: re-runs solver, slashes proposer if residual mismatch
+slash(model_id)
+Executes stake slash after successful challenge
+get_model(model_id)
+Returns serialized ModelInfo
+
+Governance parameters (challenge period, min bond, epsilon, max models per proposer) are stored in contract storage and updatable via the existing governance module.
+Touches: new contracts/model_registry/Cargo.toml + src/lib.rs, plus a deploy script and integration test.
+Build: cargo build --target wasm32-unknown-unknown --release, then hex-encode for deployment via POST /api/contracts/deploy.
+
+3. variational-ai/src/arbitrage.rs — Arbitrage action module · ~1–2 h
+A new module inside the existing variational-ai crate. No new binary needed. Implements:
+CurrencyGraph — builds a directed graph of DEX pool exchange rates
+find_arbitrage_path(graph) → ArbitragePath — Bellman-Ford negative cycle detection (log-transformed rates so a negative cycle = profit opportunity)
+ArbitrageAction implementing the Action trait — objective is negative expected profit, regularized by slippage risk; stationary point = optimal position sizes along the cycle
+compute_trade_signal(pool_state, alpha) → TradeSignal — maps solver output to concrete swap amounts
+Touches: variational-ai/src/arbitrage.rs + one-line addition to src/lib.rs.
+
+4. contracts/arbitrage/ — Arbitrage WASM contract · ~2–3 h
+The on-chain contract that uses the registry's verified model to execute atomic swaps. Safety rails from the spec:
+Safety rail
+Mechanism
+Max trade size
+Governance param arbitrage_max_trade; checked before every swap
+One execution per block
+last_execution storage key vs block_number() host fn
+Circuit breaker
+Sliding-window ring buffer of P&L (last 100 blocks); pauses if cumulative < threshold
+Multisig gate
+Only multisig can call set_model, pause, unpause
+Minimum profit
+Reject paths where expected_profit < governance floor
+Atomic execution
+Single dex_multi_swap host fn call — all swaps or nothing
+
+This also requires two new host functions in wasm.ts:
+model_predict(model_id, state_ptr, state_len, out_ptr, out_len) — calls the CLI with pool state, returns an ArbitragePath JSON
+dex_multi_swap(path_ptr, path_len, profit_out, status_out) — calls the existing DEX swap logic atomically, reverts state on any failure
+Touches: contracts/arbitrage/ (new), wasm.ts (two new host fns).
+
+5. Explorer "Models" page · ~1–2 h
+New route /models in the React explorer:
+Lists all models registered in the ModelRegistry contract (queried via a new GET /api/models API endpoint)
+Per-model card: model ID, truncated commitment hash, residual (scientific notation), verified badge, challenge period countdown, proposer address
+"Verify" button — calls POST /api/contracts/:address/call with method verify_model
+"Challenge" button — visible during challenge window
+Also add a GET /api/models route to the API server that reads the ModelRegistry contract's storage and returns a typed model list.
+Touches: artifacts/explorer/src/ (new page + nav link), artifacts/api-server/src/routes/ (one new route file).
+
+What's not doable here (needs external infrastructure)
+Item
+Why
+Cross-arch ARM determinism verification
+No ARM runner in this environment; harness can be built for aarch64 via cargo cross, but can't execute
+Real MNIST download
+No outbound internet to MNIST servers; synthetic data works for all current tests
+Groth16 pairing verification
+Full ark-groth16 circuit compilation requires a separate proving setup step; current ZK path uses BN254 scalar mul only
+Live DEX price feeds for real arbitrage
+Needs oracle integration or external price data
+Multi-region node deployment / HA Postgres
+External infra
+External security audit
+External
+
+
+Suggested order
+The natural dependency order is:
+1. verifyResidual host fn (wasm.ts) ← unlocks everything below
+2. ModelRegistry contract ← foundation for on-chain AI
+3. arbitrage.rs module (variational-ai) ← standalone, can run in parallel with 2
+4. Arbitrage contract ← depends on 1 + 2 + 3
+5. Explorer Models page + /api/models route ← depends on 2
+Items 2 and 3 can be worked in parallel. Item 1 is a short-fuse blocker (~30 min) worth doing first since it unblocks the contract tests immediately. Want to start there?
+

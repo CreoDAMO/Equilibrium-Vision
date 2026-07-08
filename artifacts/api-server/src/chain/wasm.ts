@@ -1,5 +1,12 @@
 import { createHash } from "crypto";
+import { execFileSync } from "child_process";
+import { fileURLToPath } from "url";
+import path from "path";
 import { ed25519 } from "@noble/curves/ed25519.js";
+
+// Resolve CLI binary once at module load — same relative path used by bridge.ts
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const VAI_CLI_PATH = path.resolve(__dirname, "../../variational-ai-cli");
 
 // ── WASM Smart Contract Execution Environment ──────────────────────────────────
 //
@@ -136,12 +143,23 @@ export class WasmVM {
     const storage = contract.storage;
     let gasUsed = 0;
     const gasPerInstruction = 1;
+    // verify_residual is capped at 1 invocation per contract call.
+    // Each call blocks the event loop (execFileSync); more than one per
+    // execution would multiply the DoS surface with no legitimate use-case.
+    let verifyResidualCallCount = 0;
+
+    // Inline helper — throws "Out of gas" if the limit is exceeded during a
+    // host import.  Called after every expensive host operation.
+    const checkGas = () => {
+      if (gasUsed > gasLimit) throw new Error("Out of gas");
+    };
 
     // Host import object — the contract's view of the outside world
     const importObject: WebAssembly.Imports = {
       env: {
         storage_get: (keyPtr: number, keyLen: number, resultPtr: number): number => {
           gasUsed += 200;
+          checkGas();
           const key = readString(memory, keyPtr, keyLen);
           const value = storage[key] ?? "";
           writeString(memory, resultPtr, value);
@@ -149,6 +167,7 @@ export class WasmVM {
         },
         storage_set: (keyPtr: number, keyLen: number, valPtr: number, valLen: number): void => {
           gasUsed += 500;
+          checkGas();
           const key = readString(memory, keyPtr, keyLen);
           const val = readString(memory, valPtr, valLen);
           storage[key] = val;
@@ -177,6 +196,7 @@ export class WasmVM {
           addrPtr: number, addrLen: number,
         ): number => {
           gasUsed += 3000;
+          checkGas();
           try {
             const msg = new Uint8Array(memory.buffer, msgPtr, msgLen).slice();
             const sig = new Uint8Array(memory.buffer, sigPtr, sigLen).slice();
@@ -196,6 +216,48 @@ export class WasmVM {
           gasUsed += 50;
           writeString(memory, outPtr, address);
           return address.length;
+        },
+
+        // Synchronous residual verifier — calls the variational-ai-cli binary
+        // via execFileSync so it can be used as a WASM host import (which must
+        // be synchronous; async/await is not allowed here).
+        //
+        // The contract writes a JSON-encoded VerifyResidualRequest into its
+        // WASM memory and passes the pointer + length.  Returns:
+        //   1  — residual is valid (within epsilon)
+        //   0  — residual mismatch or any error (fail-closed)
+        //
+        // Safety: capped at 1 call per contract invocation to bound event-loop
+        // blocking.  Gas is checked immediately so an over-budget call halts
+        // before the subprocess is spawned.  Timeout is 10 s (hard kill).
+        verify_residual: (reqPtr: number, reqLen: number): number => {
+          gasUsed += 50_000;
+          checkGas(); // halt before blocking the event loop if already over budget
+          if (++verifyResidualCallCount > 1) {
+            throw new Error("verify_residual may only be called once per contract invocation");
+          }
+          try {
+            const reqJson = readString(memory, reqPtr, reqLen);
+            // Validate it parses before shelling out
+            JSON.parse(reqJson);
+            const output = execFileSync(VAI_CLI_PATH, [], {
+              input: reqJson,
+              timeout: 10_000,   // 10 s hard limit — kills with SIGKILL on expiry
+              encoding: "utf8",
+              killSignal: "SIGKILL",
+            });
+            const result = JSON.parse(output.trim()) as unknown;
+            // Strict type guard — must be exactly a boolean true to succeed
+            if (
+              typeof result !== "object" || result === null ||
+              !("valid" in result) ||
+              typeof (result as Record<string, unknown>).valid !== "boolean"
+            ) return 0;
+            return (result as { valid: boolean }).valid === true ? 1 : 0;
+          } catch {
+            // Any error (bad JSON, CLI crash, timeout, parse failure) → invalid
+            return 0;
+          }
         },
       },
     };

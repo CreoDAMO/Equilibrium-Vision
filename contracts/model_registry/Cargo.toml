@@ -1,0 +1,25 @@
+[package]
+name = "model_registry"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# ── WASM build profile ────────────────────────────────────────────────────────
+[profile.release]
+opt-level = "z"        # minimise binary size
+lto = true
+panic = "abort"        # required for no_std WASM
+
+[dependencies]
+# Allocator for no_std WASM
+wee_alloc  = "0.4"
+
+# JSON (alloc feature = no_std compatible)
+serde      = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+# SHA-256 (no_std compatible)
+sha2       = { version = "0.10", default-features = false }
+hex        = { version = "0.4", default-features = false, features = ["alloc"] }
