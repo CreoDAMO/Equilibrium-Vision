@@ -31,7 +31,7 @@ const RESIDUAL_SCALE = 1_000_000_000_000; // 1e12
 const FIELD_SCALE = 1_000_000; // 1e6 (lambda, support data/labels, tol)
 
 function loadModelRegistryWasmHex(): string {
-  const hexPath = join(__dirname, "..", "..", "..", "..", "contracts", "model_registry", "model_registry.hex");
+  const hexPath = join(__dirname, "..", "..", "..", "contracts", "model_registry", "model_registry.hex");
   return readFileSync(hexPath, "utf-8").trim();
 }
 

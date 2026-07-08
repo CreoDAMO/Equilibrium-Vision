@@ -17,6 +17,7 @@ import governanceRouter from "./governance.js";
 import mobileRouter from "./mobile.js";
 import adminRouter from "./admin.js";
 import arbitrageRouter from "./arbitrage.js";
+import modelsRouter from "./models.js";
 
 const router: IRouter = Router();
 
@@ -38,5 +39,6 @@ router.use(governanceRouter);
 router.use(mobileRouter);
 router.use(adminRouter);
 router.use(arbitrageRouter);
+router.use(modelsRouter);
 
 export default router;

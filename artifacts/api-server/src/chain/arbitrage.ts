@@ -16,7 +16,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const METHOD = { INIT: 0, SET_MODEL: 1, PAUSE: 2, UNPAUSE: 3, EXECUTE: 4 } as const;
 
 function loadArbitrageWasmHex(): string {
-  const hexPath = join(__dirname, "..", "..", "..", "..", "contracts", "arbitrage", "arbitrage.hex");
+  const hexPath = join(__dirname, "..", "..", "..", "contracts", "arbitrage", "arbitrage.hex");
   return readFileSync(hexPath, "utf-8").trim();
 }
 

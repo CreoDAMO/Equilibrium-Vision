@@ -9,6 +9,8 @@ import { logger } from "../lib/logger.js";
 import { broadcast } from "../lib/ws-server.js";
 import { loadBlocksFromDb, persistBlock, persistBlocks } from "./persistence.js";
 import { deployAdminMultisigIfConfigured } from "./multisig.js";
+import { deployModelRegistryIfNeeded } from "./modelRegistry.js";
+import { deployArbitrageIfNeeded } from "./arbitrage.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
 // address, but overridden by initChain() to the first genesis.json validator
@@ -165,6 +167,19 @@ export async function initChain(): Promise<void> {
     await deployAdminMultisigIfConfigured(chainState.wasmVM, minerAddress);
   } catch (err) {
     logger.warn({ err }, "Admin multisig deployment check failed — continuing without it");
+  }
+
+  // ModelRegistry + Arbitrage — same "deploy once, then pin via env var"
+  // pattern as the admin multisig above. Arbitrage's model is deliberately
+  // NOT auto-configured here: setArbitrageModel(registry, modelId) needs a
+  // real modelId, and no model exists yet at genesis boot. An admin wires
+  // them together later via POST /api/arbitrage/set-model once a model has
+  // been proposed (and, for execute() to succeed, verified) in ModelRegistry.
+  try {
+    await deployModelRegistryIfNeeded(chainState.wasmVM, minerAddress);
+    await deployArbitrageIfNeeded(chainState.wasmVM, minerAddress, minerAddress);
+  } catch (err) {
+    logger.warn({ err }, "ModelRegistry/Arbitrage deployment check failed — continuing without them");
   }
 }
 
