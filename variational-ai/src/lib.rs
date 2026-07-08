@@ -1,4 +1,5 @@
 pub mod action;
+pub mod arbitrage;
 pub mod deterministic;
 pub mod logistic;
 pub mod mlp;
