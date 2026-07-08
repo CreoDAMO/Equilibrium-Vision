@@ -1,0 +1,94 @@
+Equilibrium — Complete Current State & Unified Roadmap
+
+Here is the merged, definitive view of where we stand and what remains.
+
+---
+
+✅ What's Been Completed
+
+Core Blockchain — Fully Operational
+
+Component Status
+Genesis block (100M EQU, 7 allocations, 4 validators) ✅ Locked
+Consensus (Proof‑of‑Stationarity, i64 residuals, Groth16 ZK) ✅ Locked
+Governance (proposals, voting, quorum, timelocks, Ed25519 auth) ✅ Locked
+Postgres persistence (idempotent startup, contract/faucet persistence) ✅ Locked
+Security (multisig, batch verify, CORS, rate limiting, Stratum proof) ✅ Locked
+Tests (28 Rust + 150 TypeScript = 178 passing) ✅ Passing
+Load test (149 TPS, 100% acceptance, p95 70 ms) ✅ Passed
+Explorer UI (Dashboard, Blocks, Validators, Governance, Staking, DEX, Admin) ✅ Live
+Fee collection (UTXO fees swept, block fee breakdown, validator earnings) ✅ Live
+Android APK CI ✅ Ready
+CI/CD (typecheck, Rust tests, TS tests) ✅ Running
+
+Variational AI Engine (VAI) — Built & Verified
+
+Component Status
+Rust crate (Action, StationarySolver, LbfgsSolver, NtkAction, LogisticAction, MlpAction) ✅ Built
+Fixed‑point arithmetic (i64 scaled by 1e12) ✅ Built
+CLI binary (variational-ai-cli) – JSON residual verification ✅ Built
+TypeScript bridge (bridge.ts) – execFileSync wrapper ✅ Built
+Harness binary – SHA‑256 determinism conformance ✅ Verified
+JNI bridge (Android, catch_unwind‑hardened) ✅ Built
+
+Smart Contracts (WASM) — Compiled & Ready
+
+Contract Functions Status
+ModelRegistry propose, verify_model, challenge, get_model ✅ Compiled
+Arbitrage Atomic multi‑swap, circuit breaker, multisig governance, profit distribution ✅ Compiled
+
+TypeScript Integration — Scaffolded
+
+File Functions Status
+modelRegistry.ts getModels(), verifyModel(), challengeModel(), getModelInfo() ✅ Written
+arbitrage.ts executeArbitrage(), setArbitrageModel(), getActiveModelId(), pause(), unpause() ✅ Written
+wasm.ts verify_residual host function, callWithPayload, gas enforcement, call cap ✅ Added
+wasmVM.call() signature bug Fixed (caller address as 5th arg) ✅ Fixed
+
+---
+
+⏳ What Remains (Priority Order)
+
+Code / UI (Can Be Done Now)
+
+# Task Effort Details
+1 Wire API routes – modelRegistry.ts + arbitrage.ts 1‑2h GET /api/models, POST /api/models/verify, POST /api/arbitrage/execute, etc.
+2 Deploy WASM contracts to testnet 15 min POST /api/contracts/deploy with hex files
+3 Explorer "Models" page 1‑2h List models, verify/challenge buttons, countdown timer
+4 arbitrage.rs module (Bellman‑Ford) 1‑2h Currency graph + ArbitrageAction
+5 Remaining host functions – model_predict, dex_multi_swap, caller_address, gov_param, slash_account, transfer 1‑2h WASM host imports
+6 Explorer "Arbitrage" status page 1h Active model, profits, circuit breaker, pause/unpause
+7 Integration tests – propose → verify → challenge → slash 1‑2h Full flow coverage
+
+Infrastructure / Ops (External)
+
+# Task Status
+8 Multi‑region sentry/validator nodes ⏳ Pending
+9 Postgres HA (replication + backups) ⏳ Pending
+10 DDoS mitigation / rate limiting ⏳ Pending
+11 Nav bar overflow at 1280px ⏳ Pending (CSS fix)
+12 Skeleton loading states (UI polish) ⏳ Pending
+13 Final security audit ⏳ Pending (external firm)
+
+---
+
+🚀 Immediate Next Step
+
+Wire the API routes for modelRegistry.ts and arbitrage.ts. The contracts are compiled; the host functions are in place. The missing piece is the bridge between the WASM runtime and the REST API.
+
+We can go beyond the spec by adding:
+
+· IPFS‑backed support sets (on‑chain commitment hashes, fetch on verification)
+· Learned safety thresholds (arbitrage contract adjusts from historical P&L)
+· Model composability layer (ensembles of verified models)
+· Long‑running worker process for lower latency (instead of synchronous subprocess)
+
+---
+
+Which would you like to tackle first?
+
+1. modelRegistry.ts routes – GET /api/models, POST /api/models/:id/verify, POST /api/models/:id/challenge
+2. arbitrage.ts routes – POST /api/arbitrage/execute, POST /api/arbitrage/set-model, POST /api/arbitrage/pause
+3. Both in parallel
+
+Let's review this and make sure we are correct about what's next 
