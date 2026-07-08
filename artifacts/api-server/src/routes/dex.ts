@@ -97,6 +97,35 @@ router.post("/dex/liquidity/add", (req, res) => {
   res.json({ success: true, poolId, provider, amountA, amountB, ...result });
 });
 
+/**
+ * Dev/demo-only: seed a synthetic, deliberately mispriced WBTC-USDC pool so
+ * the arbitrage detector has a real negative cycle to find (EQU-WBTC and
+ * EQU-USDC alone can never form a triangle). Disabled in production.
+ * Idempotent — a second call reports the pool already exists.
+ */
+router.post("/dex/pools/seed-arbitrage-demo", (_req, res) => {
+  if (process.env["NODE_ENV"] === "production") {
+    res.status(403).json({ error: "Demo seeding is disabled in production" });
+    return;
+  }
+
+  // Fair WBTC price implied by the two real pools: 1 WBTC = 100,000 EQU =
+  // 100,000 USDC. Price this pool at 1 WBTC = 80,000 USDC (20% cheap) so a
+  // profitable cycle survives the 0.3%-per-hop DEX fee across all 3 hops.
+  const result = chainState.createPool("WBTC-USDC", "WBTC", "USDC", 100, 8_000_000);
+
+  if (typeof result === "string") {
+    res.status(409).json({ error: result, poolId: "WBTC-USDC" });
+    return;
+  }
+
+  res.json({
+    success: true,
+    poolId: "WBTC-USDC",
+    message: "Seeded mispriced WBTC-USDC pool (1 WBTC = 80,000 USDC vs. fair 100,000) for arbitrage demo",
+  });
+});
+
 router.get("/dex/swaps", (req, res) => {
   const limit = Math.min(Number(req.query["limit"] ?? 50), 200);
   res.json({ count: chainState.swapHistory.length, swaps: chainState.swapHistory.slice(0, limit) });

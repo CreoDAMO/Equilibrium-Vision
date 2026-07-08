@@ -818,6 +818,40 @@ export class ChainState {
     return { liquidity };
   }
 
+  /**
+   * Create a brand-new pool. Used only by the dev/demo seeding route
+   * (`POST /dex/pools/seed-arbitrage-demo`) to stand up a synthetic
+   * mispriced pool for exercising the arbitrage detector end-to-end.
+   * Not part of normal chain operation — pools are otherwise only created
+   * at genesis (`seedDexPools` / `buildGenesisChainFromDoc`).
+   */
+  createPool(
+    id: string,
+    tokenA: string,
+    tokenB: string,
+    reserveA: number,
+    reserveB: number,
+    fee: number = DEX_FEE,
+  ): { created: true } | string {
+    if (this.dexPools.has(id)) return "pool already exists";
+    if (reserveA <= 0 || reserveB <= 0) return "reserves must be positive";
+
+    this.dexPools.set(id, {
+      id,
+      tokenA,
+      tokenB,
+      reserveA,
+      reserveB,
+      totalLiquidity: Math.floor(Math.sqrt(reserveA * reserveB)),
+      fee,
+      volumeA: 0,
+      volumeB: 0,
+      txCount: 0,
+      createdAt: Math.floor(Date.now() / 1000),
+    });
+    return { created: true };
+  }
+
   // ── Gossip ───────────────────────────────────────────────────────────────────
 
   gossipTx(txHash: string): void {

@@ -6,6 +6,7 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "generate-genesis": "tsx ./src/generate-genesis.ts",
+    "seed-arbitrage-demo": "tsx ./src/seed-arbitrage-demo.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
