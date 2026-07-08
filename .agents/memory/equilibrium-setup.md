@@ -41,6 +41,11 @@ description: Run commands, ports, key architecture rules, and gotchas for the Eq
 ## Workflow names (exact, for WorkflowsRestart)
 - `API Server`, `Explorer`, `Postgres` — NOT "artifacts/api-server: API Server" etc.
 
+## Postgres workflow port detection — FIXED
+- Postgres was binding `127.0.0.1` so Replit's workflow runner couldn't detect port 5432 → `DIDNT_OPEN_A_PORT` timeout on every restart
+- Fix: set `listen_addresses = '0.0.0.0'` in both `scripts/start-postgres.sh` (new-init path) AND `.pgdata/replit.conf` (existing data dir)
+- After this change, `WorkflowsRestart("Postgres")` completes cleanly
+
 ## Postgres role/permission — ROOT CAUSE (fixed)
 - Replit injects `PGDATABASE=heliumdb`, `PGHOST=helium`, `PGUSER=postgres` env vars for its managed DB integration
 - Any `psql` call without explicit `-d` and `-h 127.0.0.1` silently connects to the wrong host/db (helium/heliumdb) → role creation and grants fail with `2>/dev/null` hiding the error

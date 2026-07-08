@@ -35,7 +35,7 @@ if [ ! -f "$PGDATA/PG_VERSION" ]; then
   # Write runtime overrides to a separate included file (idempotent)
   cat > "$CUSTOM_CONF" <<EOF
 port                    = $PGPORT
-listen_addresses        = '127.0.0.1'
+listen_addresses        = '0.0.0.0'
 unix_socket_directories = '$PGDATA'
 EOF
   # Include it from the main config
