@@ -1,0 +1,5 @@
+# Pin the target CPU to generic and disable FMA so that floating-point
+# computations produce identical bit patterns on x86-64 and aarch64.
+# This is load-bearing for cross-device determinism of solver residuals.
+[build]
+rustflags = ["-C", "target-cpu=generic", "-C", "target-feature=-fma"]

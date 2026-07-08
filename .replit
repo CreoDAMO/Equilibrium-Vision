@@ -52,6 +52,8 @@ waitForPort = 5432
 # TypeScript Express node: in-memory chain + Postgres persistence, auto-miner,
 # Stratum pool, WebSocket push, Prometheus metrics. Restores persisted chain
 # from DB on every start instead of resetting to genesis.
+# variational-ai-cli binary is co-located in this directory for the TypeScript
+# bridge (artifacts/api-server/src/variational-ai/bridge.ts).
 [[workflows.workflow]]
 name = "API Server"
 author = "agent"
@@ -77,6 +79,35 @@ outputType = "webview"
 task = "shell.exec"
 args = "PORT=5000 BASE_PATH=/ pnpm --filter @workspace/explorer run dev"
 waitForPort = 5000
+
+# ── variational-ai: determinism harness ───────────────────────────────────────
+# Trains logistic + MLP + NTK on synthetic MNIST, hashes all intermediate
+# vectors with SHA-256, and prints the hashes. Run on two architectures and
+# diff the output to confirm cross-arch determinism.
+[[workflows.workflow]]
+name = "VAI Harness"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd variational-ai && cargo run --release --bin variational-ai-harness"
+
+# ── variational-ai: benchmark suite ───────────────────────────────────────────
+# Runs all three solver benchmarks (logistic / MLP / NTK) on synthetic MNIST
+# and prints accuracy, residual, and wall-clock time for each.
+[[workflows.workflow]]
+name = "VAI Benchmarks"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd variational-ai && cargo run --release --bin variational-ai"
 
 # ── Agent / environment ───────────────────────────────────────────────────────
 [agent]

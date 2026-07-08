@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. 150 tests pass (28 Rust, 150 TypeScript across 4 test files, 122 API integration tests). All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. Remaining work is external infrastructure and ops (multi-region nodes, HA Postgres, security audit).
+> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. 150 tests pass (28 Rust, 150 TypeScript across 4 test files, 122 API integration tests). All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. Remaining work: `verifyResidual` host function in the WASM VM, ModelRegistry + Arbitrage WASM contracts, explorer AI pages.
 
 ---
 
@@ -19,6 +19,25 @@ Proof-of-Stationarity replaces energy-wasting hashing with a **Lagrangian optimi
 ## Repository Layout
 
 ```
+variational-ai/           # AI solver crate (Rust)
+  Cargo.toml              # Three binaries: variational-ai, variational-ai-cli, variational-ai-harness
+  .cargo/config.toml      # Determinism flags: target-cpu=generic, -C target-feature=-fma
+  src/
+    lib.rs                # Module declarations
+    action.rs             # Action trait (evaluate, gradient, hessian_vec_prod)
+    deterministic.rs      # f64 helpers + i64 fixed-point arithmetic (FIXED_SCALE = 1e12)
+    logistic.rs           # LogisticAction — binary logistic regression (Newton-CG)
+    mlp.rs                # MlpAction — two-layer ReLU MLP (L-BFGS)
+    ntk.rs                # NtkAction, solve_ntk (CG), compute_empirical_ntk_mlp
+    solver.rs             # StationarySolver (Newton-CG), LbfgsSolver (two-loop L-BFGS)
+    mnist.rs              # load_synthetic_mnist() + load_real_mnist() (IDX reader)
+    benchmarks.rs         # run_logistic_variational, run_mlp_variational, run_ntk_benchmark
+    jni_bridge.rs         # JNI exports for Android (feature-gated: jni-bridge)
+    main.rs               # Benchmark runner — tries real MNIST, falls back to synthetic
+    bin/
+      cli.rs              # variational-ai-cli: stdin JSON → NTK residual verify → stdout JSON
+      harness.rs          # variational-ai-harness: SHA-256 determinism conformance harness
+
 equilibrium/              # Rust core library + binaries
   src/
     chain_state.rs        # Block and transaction state machine
@@ -462,6 +481,55 @@ See `docs/mobile-apk-release.md` for keystore generation, secret setup, and dist
 
 ---
 
+## variational-ai Engine
+
+The `variational-ai` crate is the AI solver and on-chain verification engine. It ships three compiled binaries and a TypeScript bridge so the API server can call into deterministic Rust without embedding any native code in Node.
+
+### Binaries
+
+| Binary | Purpose |
+|--------|---------|
+| `variational-ai` | Benchmark runner — trains logistic, MLP, and NTK models on MNIST; prints accuracy, residual, and time |
+| `variational-ai-cli` | **Verification binary** — reads a JSON request from stdin, re-runs the deterministic NTK solver on the support set, and returns `{computed_residual_fp, computed_residual_f64, valid}` to stdout |
+| `variational-ai-harness` | Determinism conformance — trains all three model types, hashes every intermediate vector with SHA-256, and prints the hashes. Run on two architectures and diff the output. |
+
+### Building
+
+```bash
+cd variational-ai
+cargo build --release
+# Binaries land in target/release/
+```
+
+The harness is the canonical cross-arch verification tool:
+
+```bash
+./target/release/variational-ai-harness
+# LOGISTIC_THETA=<sha256>  MLP_THETA=<sha256>  NTK_ALPHA_FP=<sha256>  ALL_PASS=true
+```
+
+### TypeScript Bridge
+
+`artifacts/api-server/src/variational-ai/bridge.ts` exposes `computeResidual(req)` and `verifyResidual(req)` — async wrappers that spawn `variational-ai-cli` as a subprocess, pipe JSON via stdin, and parse the response. The CLI binary is copied to `artifacts/api-server/variational-ai-cli` at build time.
+
+### Determinism Guarantees
+
+- `.cargo/config.toml` pins `target-cpu=generic` and `-C target-feature=-fma` to prevent FMA instruction differences across CPUs.
+- Fixed-point arithmetic (`FIXED_SCALE = 1_000_000_000_000`) is used for on-chain residual comparison — integer subtraction, no floats in the consensus path.
+- Two-run SHA-256 hash equality is verified in CI.
+
+### Models
+
+| Model | Solver | Notes |
+|-------|--------|-------|
+| `LogisticAction` | Newton-CG | Binary classification; `Parameter = Vec<f64>` |
+| `MlpAction` | L-BFGS (m=10) | Two-layer ReLU MLP; forward-pass cached |
+| `NtkAction` | CG kernel solve | Empirical NTK; `solve_ntk` solves `(K + λI)α = y`; gradient norm is near-zero at exact solution |
+
+MNIST data: auto-detects IDX files in `variational-ai/data/`; falls back to synthetic Gaussian blobs if not present.
+
+---
+
 ## Rust Crate
 
 The `equilibrium-core` crate (not connected to the TS server — see Architecture Notes):
@@ -480,6 +548,7 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 
 | Layer | Technology |
 |-------|-----------|
+| AI solver | Rust, `nalgebra`, `rand_chacha`, `libm`, fixed-point i64 arithmetic |
 | Consensus core | Rust, `ed25519-dalek`, `libp2p`, `ark-snark` |
 | Node RPC | TypeScript, Express 5, in-memory chain state + Postgres |
 | Persistence | Drizzle ORM, PostgreSQL 16 |
@@ -532,6 +601,17 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 - Admin dashboard — 4-tab page (Chain Health, Validators, Node, Multisig) with live metrics, gossip log, finality status, Stratum pool stats
 - Scientific notation formatting — applied to residual, difficulty, rate, price impact, pool prices throughout the UI
 - Timestamp bug fixed — removed double-multiplication in ValidatorDetail and Dex pages (the "56y ago" bug)
+
+### variational-ai Engine
+- **Rust crate built and compiled** — all three solver types (LogisticAction/Newton-CG, MlpAction/L-BFGS, NtkAction/CG kernel solve) compile and run on synthetic MNIST; real IDX files supported if placed in `variational-ai/data/`
+- **Deterministic math layer** — f64 helpers (`sigmoid`, `softplus`, `dot`, `axpy`, `norm2` via `libm`) + full i64 fixed-point path (`FIXED_SCALE = 1e12`: `to_fixed`, `from_fixed`, `mul_fixed`, `dot_fixed`, `norm2_fixed`, `sigmoid_fixed`, `softplus_fixed`) for bit-exact on-chain verification
+- **`variational-ai-cli` binary** — stdin→JSON→NTK residual verify→stdout JSON; exit 0=valid, 1=invalid, 2=error; deployed to `artifacts/api-server/variational-ai-cli`
+- **`variational-ai-harness` binary** — SHA-256 hashes every intermediate vector and final parameter set; two-run hash equality verified (determinism confirmed)
+- **TypeScript bridge** (`artifacts/api-server/src/variational-ai/bridge.ts`) — `computeResidual()` and `verifyResidual()` async wrappers that spawn the CLI via child_process, pipe JSON stdin, parse JSON stdout
+- **NTK math consistency fixed** — `evaluate`/`gradient`/`hessian_vec_prod`/`solve_ntk` are internally consistent: stationarity condition of `S(α) = ½‖Kα−y‖² + (λ/2)αᵀKα` gives `(K+λI)α = y`, so ‖∇S(α*)‖ is machine-epsilon at the exact solution
+- **JNI bridge** (`src/jni_bridge.rs`) — `trainLogistic` and `trainNtk` exports for Android, feature-gated behind `jni-bridge`, each wrapped in `catch_unwind`
+- **Cargo determinism pins** — `.cargo/config.toml` sets `target-cpu=generic -C target-feature=-fma` for cross-arch bit-exact results
+- **L-BFGS descent guard** — two-loop produces non-descent direction? falls back to steepest descent before Armijo line search
 
 ### Infrastructure
 - Genesis block — `genesis.json`: 7 allocations totalling 95M EQU + 4 validators × bonded stake = 100M supply; real Ed25519 keypairs
