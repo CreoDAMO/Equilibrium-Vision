@@ -1,8 +1,8 @@
 # Equilibrium
 
-A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile mining, ZK proofs, libp2p P2P networking, and a full TypeScript node stack with a real-time block explorer, self-custody browser wallet, and WASM smart contracts.
+A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile mining, ZK proofs, libp2p P2P networking, and a full TypeScript node stack with a real-time block explorer, self-custody browser wallet, WASM smart contracts, and a native DEX arbitrage detector.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete in Replit. **173 tests pass** (28 Rust, 145 TypeScript). All critical security fixes applied: `REQUIRE_TX_SIGNATURES=true` enforced, Ed25519 batch verification wired into UTXO validation and block assembly, ADMIN_KEY/ADMIN_API_KEY mismatch fixed, HTTP + Stratum rate limiting with replay protection complete, UTXO fee collection wired (fees credited to miner, not burned), single `ADMIN_KEY` replaced with on-chain WASM M-of-N multisig. Remote load test: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted**. Android sideload APK CI live (GitHub Actions, signed, no Play Store). Grafana monitoring stack ready (`docs/grafana/`). Remaining Replit-actionable work is listed in the **What Needs To Be Done** section below.
+> **Status (July 8, 2026):** Mainnet-readiness hardening complete in Replit. **150 TypeScript + 28 Rust tests pass**. All critical security fixes applied: `REQUIRE_TX_SIGNATURES=true` enforced, Ed25519 batch verification wired into UTXO validation and block assembly, ADMIN_KEY/ADMIN_API_KEY mismatch fixed, HTTP + Stratum rate limiting with replay protection complete, UTXO fee collection wired (fees credited to miner, not burned), single `ADMIN_KEY` replaced with on-chain WASM M-of-N multisig. Remote load test: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted**. Android sideload APK CI live (GitHub Actions, signed, no Play Store). Grafana monitoring stack ready (`docs/grafana/`). New this session: read-only DEX arbitrage detector (`GET /api/arbitrage/opportunities`) using the Rust Bellman-Ford `arbitrage.rs` module, surfaced live in the Explorer's Dex page. **This file, `README.md`, and `TODO.md` were reconciled against the actual running code on 2026-07-08** — a prior session's docs had drifted significantly (most items previously marked "open" were already fixed but never checked off). Remaining Replit-actionable work is listed in **What Needs To Be Done** below; it is now the accurate list, not the stale one.
 
 ---
 
@@ -13,11 +13,12 @@ A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile min
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/api-server run test` — run 145 TypeScript tests
+- `pnpm --filter @workspace/api-server run test` — run 150 TypeScript tests
 - `cd equilibrium && cargo test --lib` — run 28 Rust tests
 - Rust testnet: `cd equilibrium && cargo run --bin testnet-node`
 - Rust wallet CLI: `cd equilibrium && cargo run --bin wallet`
 - `pnpm --filter @workspace/coinomics run generate-genesis [outputPath]` — write a fresh `genesis.json`
+- `pnpm --filter @workspace/scripts run seed-arbitrage-demo` — seed a synthetic mispriced pool so the arbitrage panel has a real cycle to show (dev-only, in-memory, resets on next restart)
 
 ### After a container reset (recurring gotcha)
 
@@ -34,46 +35,31 @@ bash scripts/start-postgres.sh   # then restart API Server + Explorer workflows
 
 ## What Needs To Be Done
 
-Everything below is actionable directly in Replit. See `TODO.md` for full detail, file paths, and notes.
-
-### 🔴 Critical — correctness / security (do these first)
-
-| # | Item | File |
-|---|------|------|
-| 1 | ~~**Stratum proof validation**~~ — ✅ Done. `onSubmit` validates: finite positive residual, residual < `RESIDUAL_THRESHOLD` (1e-7), ntime drift ≤ 2 h, 40-char hex miner address, duplicate-share detection, per-IP rate limit — all before block assembly. Matches the HTTP `/blocks/submit` threshold exactly. | `artifacts/api-server/src/lib/stratum-server.ts` |
-| 2 | ~~**CORS lockdown**~~ — ✅ Done. `ALLOWED_ORIGINS` env var (comma-separated valid http/https URLs). Unrecognised origins → 403. Server-to-server (no Origin header) always allowed. `credentials: true` only when ≥1 origin is configured. | `artifacts/api-server/src/app.ts` |
-| 3 | ~~**Global API rate limiting**~~ — ✅ Done. `express-rate-limit`: read tier 300 req/min, write tier 20 req/min (auto-skips GET/HEAD/OPTIONS). | `artifacts/api-server/src/app.ts` |
-| 4 | ~~**`contracts.deployer` DB index**~~ — ✅ Done. Both `contracts_deployer_idx` (btree on deployer) and `contracts_deployed_at_idx` (btree on deployed_at) added and pushed to DB. Route also supports `?deployer=` filter + newest-first sort. | `lib/db/src/schema/contracts.ts` |
-
-### 🟡 UI bugs — visible in the live Explorer right now
-
-| # | Item | File |
-|---|------|------|
-| 5 | **"56y ago" on every block** — age formatter miscalculates block timestamps. Audit the relative-time helper. | Explorer timestamp utility |
-| 6 | **Nav overflow at 1280 px** — "Contracts" truncates to "Con…". Add overflow menu or shorten labels. | Explorer nav component |
-| 7 | **Scientific notation everywhere** — residual shows `6e-9` on dashboard, governance shows `1.00e-8`, DEX price shows `0.000010`. Add a shared `formatScientific()` utility. | Dashboard, Governance, Dex pages |
-| 8 | **Dashboard chart has no legend** — dual Y-axis (mempool + residual) with no labels. Rename chart and add axis labels. | `artifacts/explorer/src/pages/Dashboard.tsx` |
-| 9 | **DEX swap shows no output preview** — no "you will receive ≈ X" before the user confirms. Compute live from constant-product formula. | `artifacts/explorer/src/pages/Dex.tsx` |
+Everything below is actionable directly in Replit. See `TODO.md` for full detail, file paths, and priority order. This list was verified directly against the running code on 2026-07-08 — anything not listed here is done.
 
 ### 🟡 UI polish
 
-| # | Item |
-|---|------|
-| 10 | **Skeleton loading states** — raw "Loading…" text on blocks list, dashboard stats, validators, address detail. |
-| 11 | **Error states with retry** — network failures leave the UI blank; add `<ErrorBoundary>` + retry button. |
-| 12 | **Wallet landing page guidance** — no explanation of what Ed25519 / a private key means for first-time users. |
-| 13 | **Validator Fee Earnings empty state** — tab exists but appears broken when no blocks have been proposed yet. |
-| 14 | **Refactor `ContractDetail.tsx` / `AdminMultisig.tsx`** — both are 500+ line monoliths using raw `fetch()` instead of generated React Query hooks. |
+| # | Item | File |
+|---|------|------|
+| 1 | **`ContractDetail.tsx` / `AdminMultisig.tsx` are still monolithic** — 427 and 836 lines, both still use raw `fetch()` (10–11 call sites each) instead of generated React Query hooks. | `artifacts/explorer/src/pages/ContractDetail.tsx`, `AdminMultisig.tsx` |
+| 2 | **Wallet landing guidance is minimal** — only a one-line description; no explanation of Ed25519/private keys/mnemonics for first-time users. | `artifacts/explorer/src/pages/wallet/WalletHome.tsx` |
+| 3 | **Block reward format is inconsistent** — `Blocks.tsx` uses `formatCompact()` ("50M EQU"), `BlockDetail.tsx` uses `formatAmount()` ("50,000,000 EQU") in two places. Pick one convention. | `Blocks.tsx`, `BlockDetail.tsx` |
+| 4 | **A few isolated raw "Loading…" strings remain** — Dashboard chart area, ValidatorDetail delegators table, Dex pools table still show plain text instead of the skeleton pattern used elsewhere. | `Dashboard.tsx`, `ValidatorDetail.tsx`, `Dex.tsx` |
 
-### 🟢 Enhancements
+### 🟢 Docs & ops enhancements
 
 | # | Item | File |
 |---|------|------|
-| 15 | **Validator earnings aggregate endpoint** — `GET /api/validators/:addr/earnings` summing coinbase + fee sweeps; the UI tab exists but has no aggregate backend. | `artifacts/api-server/src/routes/validators.ts` |
-| 16 | **`pnpm install` auto-check on reset** — add startup check in `start-postgres.sh` or `.replit` so a fresh container doesn't silently break. | `scripts/start-postgres.sh` |
-| 17 | **Architectural diagram** — `docs/architecture.md` with a Mermaid diagram showing Rust core ↔ TS API ↔ Explorer ↔ Mobile ↔ Stratum ↔ ZK pipeline. | New file |
-| 18 | **Operator docs** — `docs/validator-setup.md` and `docs/delegator-guide.md` for external contributors. | New files |
-| 19 | **Block reward denomination** — confirm `50,000,000 EQU` per block is the right unit (not raw integer pre-scaling) and apply consistent formatting (`50M EQU`) everywhere. | Explorer block display |
+| 5 | **Architectural diagram** — `docs/architecture.md` with a Mermaid diagram showing Rust core ↔ TS API ↔ Explorer ↔ Mobile ↔ Stratum ↔ ZK ↔ arbitrage pipeline. | New file |
+| 6 | **Operator docs** — `docs/validator-setup.md` and `docs/delegator-guide.md` for external contributors. | New files |
+| 7 | **Automated CD** — `ci.yml` runs tests/build only; no workflow auto-deploys the API server or Explorer on `main` push. | New workflow file |
+| 8 | **Rust/node binary release pipeline** — Android APK has a release pipeline; the Rust validator/testnet-node binary does not (no linux-amd64/arm64 GitHub Release artifacts). | New workflow file |
+
+### 🟢 Arbitrage follow-on (only needed if moving toward autonomous execution)
+
+| # | Item | Notes |
+|---|------|-------|
+| 9 | **Governance safety rails + execution path** — detector is intentionally read-only/display-only today (this task's scope). Autonomous execution would need a governance-controlled `max_arbitrage_size` param, a per-block rate limit, a negative-P&L circuit breaker, and the atomic multi-hop WASM execution path itself. No trades are ever placed automatically right now. | `variational-ai/src/arbitrage.rs`, new WASM contract |
 
 ### 🔵 External / out of Replit scope
 
@@ -83,8 +69,7 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 | HA Postgres (replicas + failover) | Requires managed DB service |
 | Full security / penetration audit | External firm before public launch |
 | iOS distribution | Skip until Android sideload proves stable |
-| Rust/node binary release pipeline | CI for linux-amd64 / linux-arm64 release artifacts |
-| Automated CD for API + Explorer | Deploy to Replit production on `main` push |
+| DDoS mitigation at the edge | Cloudflare or Hetzner DDoS protection, outside Replit |
 
 ---
 
@@ -99,25 +84,29 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 - WASM VM: Node built-in `WebAssembly` — deploy, call, storage get/set, gas accounting
 - Monitoring: Prometheus exposition format, Grafana 11, `docs/grafana/docker-compose.yml`
 - Mobile: Kotlin + JNI (Android APK CI via `android-apk-ci.yml`), Swift Package (iOS)
+- Arbitrage detection: Rust Bellman-Ford negative-cycle detector (`variational-ai/src/arbitrage.rs`) spawned as a CLI subprocess from the API server, same pattern as the residual verifier
 
 ---
 
 ## Where Things Live
 
 - `equilibrium/` — Rust core library + testnet binary + wallet CLI + Android JNI bridge
+- `variational-ai/` — Rust crate: NTK/logistic/MLP solvers, determinism harness, and `arbitrage.rs` (Bellman-Ford currency-arbitrage detector); binaries `variational-ai-cli` (residual verify) and `variational-ai-arbitrage-cli` (opportunity scan) are copied into `artifacts/api-server/` for the TS bridge
 - `genesis.json` — finalised mainnet genesis: 7 allocations, 95M EQU + 4 validators × 5M bonded = 100M total supply
 - `scripts/start-postgres.sh` — idempotent DB bootstrap (unsets Replit env vars, creates role, pushes schema, grants access)
 - `scripts/src/generate-genesis.ts` — generates real Ed25519 keypairs → writes `genesis.json` + `validator-keys.json`
+- `scripts/src/seed-arbitrage-demo.ts` — dev-only script that seeds a synthetic mispriced WBTC-USDC pool via `POST /api/dex/pools/seed-arbitrage-demo` so the arbitrage panel has a real cycle to display
 - `scripts/generate-android-keystore.sh` — keytool-first PKCS12 keystore (OpenSSL 3.x `-legacy` fallback)
-- `artifacts/api-server/src/chain/` — TypeScript chain engine: `state.ts`, `crypto.ts`, `index.ts` (auto-miner), `governance.ts`, `wasm.ts`, `persistence.ts`, `zkproof.ts`, `zk-encoding.ts`
+- `artifacts/api-server/src/chain/` — TypeScript chain engine: `state.ts` (includes `createPool()` for the arbitrage demo seed), `crypto.ts`, `index.ts` (auto-miner), `governance.ts`, `wasm.ts`, `persistence.ts`, `zkproof.ts`, `zk-encoding.ts`
+- `artifacts/api-server/src/variational-ai/bridge.ts` — spawns the Rust CLI binaries; resolves binary paths via `process.cwd()` first with `fs.existsSync` fallbacks (see Architecture Decisions — esbuild bundling bug)
 - `artifacts/api-server/src/lib/stratum-server.ts` — Stratum v1 TCP mining pool + metrics + per-IP rate limiting
 - `artifacts/api-server/src/lib/submission-guard.ts` — `RateLimiter` (sliding window) + `ReplaySet` (bounded LRU) for HTTP + Stratum
-- `artifacts/api-server/src/routes/` — Express route handlers (blocks, tx, validators, staking, dex, governance, contracts, evm, faucet, metrics, stratum-metrics, mobile)
-- `artifacts/api-server/src/__tests__/` — test suite: `chain.unit.test.ts` (40), `api.integration.test.ts` (25), `contracts.integration.test.ts` (80)
-- `artifacts/explorer/src/pages/` — Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail, Governance, Faucet, Contracts, ContractDetail, Dex, Staking, AdminMultisig
+- `artifacts/api-server/src/routes/` — Express route handlers (blocks, tx, validators, staking, dex, arbitrage, governance, contracts, evm, faucet, metrics, stratum-metrics, mobile)
+- `artifacts/api-server/src/__tests__/` — test suite: `chain.unit.test.ts`, `api.integration.test.ts`, `contracts.integration.test.ts`, `multisig.integration.test.ts` (150 tests total)
+- `artifacts/explorer/src/pages/` — Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail, Governance, Faucet, Contracts, ContractDetail, Dex (includes the Arbitrage Opportunities panel), Staking, AdminMultisig
 - `artifacts/explorer/src/wallet/` — browser wallet (context.tsx state manager, crypto.ts key ops)
-- `lib/api-spec/openapi.yaml` — source-of-truth API contract
-- `lib/api-client-react/src/generated/` — generated React Query hooks (do not edit manually)
+- `lib/api-spec/openapi.yaml` — source-of-truth API contract, includes the `arbitrage` tag / `ArbitrageOpportunity` schema
+- `lib/api-client-react/src/generated/` — generated React Query hooks (do not edit manually), includes `useGetArbitrageOpportunities`
 - `lib/coinomics/src/` — mainnet coinomics: `reward.ts`, `genesis.ts`, `staking.ts`, `slashing.ts`
 - `docs/grafana/` — `docker-compose.yml` + `prometheus.yml` + 3 dashboard JSONs + Grafana provisioning YAML — one `docker compose up -d` spins up the full monitoring stack
 - `docs/mobile-apk-release.md` — Android APK signing, CI, and sideload distribution guide
@@ -139,6 +128,8 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 - **Admin auth** — `POST /validators/:addr/slash` accepts both `ADMIN_KEY` and `ADMIN_API_KEY` env var names. On-chain WASM M-of-N multisig supersedes the single key when `ADMIN_MULTISIG_ADDRESS` is set.
 - **Stratum security** — rate-limit keyed by TCP socket `remoteIp` (not self-reported miner address); duplicate-share key includes `ntimeHex`; per-IP connection cap 8; error codes 20 (rate-limit/drift) and 22 (duplicate).
 - **Android keystore** — `scripts/generate-android-keystore.sh` uses `keytool` first (Java-native PKCS12, always AGP-compatible); falls back to `openssl pkcs12 -legacy` (forces 3DES/RC2 — OpenSSL 3.x default AES-256-CBC is not readable by Android Gradle Plugin).
+- **Arbitrage detection is read-only** — `GET /api/arbitrage/opportunities` scans live DEX pool reserves through the Rust Bellman-Ford detector and reports cycles + optimal sizing; it never executes a trade. Any move toward autonomous execution needs the governance/rate-limit/circuit-breaker work tracked in `TODO.md`.
+- **esbuild + `import.meta.url` bundling bug** — any module resolving a sibling binary path via `__dirname` from `import.meta.url` breaks once esbuild bundles multiple source files into one output file, because every module then sees the *bundle's own* URL (not its original source path), shifting the effective directory depth. This silently broke both CLI-binary path lookups in `bridge.ts`/`wasm.ts` in production (the `dev`/`start` scripts always run the bundled `dist/index.mjs`, so it was a live bug, not just a dev/prod discrepancy). Fixed by resolving through `process.cwd()` first with `fs.existsSync` fallbacks — apply the same pattern to any future CLI-bridge module.
 
 ---
 
@@ -163,7 +154,7 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 | 15 | Stratum server hardening (socket IP, ntimeHex, connection cap, error codes) | ✅ Done |
 | 16 | UTXO fee collection wired (credited to miner, not burned) | ✅ Done |
 | 17 | Miner fee breakdown endpoint + Explorer panel | ✅ Done |
-| 18 | Validator fee earnings tab | ✅ Done |
+| 18 | Validator fee earnings tab + aggregate endpoint | ✅ Done |
 | 19 | Stratum metrics endpoint (`/metrics/stratum`) | ✅ Done |
 | 20 | Grafana dashboards + docker-compose monitoring stack | ✅ Done — `docs/grafana/` |
 | 21 | Android APK CI (signed, sideload, in-app update check) | ✅ Done — `android-apk-ci.yml` |
@@ -173,8 +164,11 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 | 25 | CORS lockdown (`ALLOWED_ORIGINS` env var) | ✅ Done |
 | 26 | Global API rate limiting (read + write tiers) | ✅ Done |
 | 27 | `contracts.deployer` DB index | ✅ Done |
-| 28 | Multi-region nodes, HA Postgres, security audit | ⏳ External |
-| 29 | Operator docs, iOS release | ⏳ External |
+| 28 | Read-only DEX arbitrage detector + Explorer panel | ✅ Done — see `TODO.md` #9 for the (out-of-scope) execution path |
+| 29 | `ContractDetail.tsx` / `AdminMultisig.tsx` refactor onto generated hooks | ⏳ Open — see `TODO.md` #1 |
+| 30 | Architecture diagram, operator docs | ⏳ Open — see `TODO.md` #5–6 |
+| 31 | Automated CD, Rust binary release pipeline | ⏳ Open — see `TODO.md` #7–8 |
+| 32 | Multi-region nodes, HA Postgres, security audit | ⏳ External |
 
 ---
 
@@ -185,8 +179,8 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 - **Faucet** at `/faucet`: drip 1,000 EQU to any address, 1 h cooldown per address, live cooldown status
 - **Browser wallet** at `/wallet`: self-custody Ed25519, BIP-39 mnemonic, raw keypair, private key import, AES-256-GCM keystore, Ledger via WebHID, m-of-n multisig, transaction signing and broadcast
 - **Smart contracts** at `/contracts`: WAT editor with in-browser `wabt` compile, ABI JSON editor, deploy; deployed contract list → detail pages with ABI-driven call panels, storage key/value viewer, bytecode hash
-- **DEX** at `/dex`: constant-product AMM (0.3% fee), swap, add liquidity, price quotes, swap history, per-address positions
-- **Rust core**: Proof-of-Stationarity consensus, Lagrangian optimizer miner, Ed25519 wallet, ZK proof (Groth16/BN254), libp2p P2P, mobile FFI exports; 28 unit tests passing
+- **DEX** at `/dex`: constant-product AMM (0.3% fee), swap, add liquidity, price quotes, swap history, per-address positions, **live arbitrage opportunity panel** (read-only Bellman-Ford cycle detection over live pool reserves, 15s refresh)
+- **Rust core**: Proof-of-Stationarity consensus, Lagrangian optimizer miner, Ed25519 wallet, ZK proof (Groth16/BN254), libp2p P2P, mobile FFI exports, Bellman-Ford arbitrage detector; 28 unit tests passing
 
 ---
 
@@ -206,6 +200,8 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 - Android keystore: always generate with `scripts/generate-android-keystore.sh` (uses `keytool` first). Never use raw `openssl pkcs12 -export` without `-legacy` — OpenSSL 3.x defaults to AES-256-CBC which Android Gradle Plugin cannot decrypt ("Given final block not properly padded").
 - The `Explorer` workflow (port 5000) may conflict with `artifacts/explorer: web` if both are started. The authoritative one is `artifacts/explorer: web` — the top-level `Explorer` workflow is the duplicate that fails. Ignore its failure in logs.
 - Similarly, `artifacts/api-server: API Server` will fail with EADDRINUSE if the main `API Server` workflow is already running on port 8080. The main `API Server` workflow (with `DATABASE_URL` set) is the authoritative one.
+- Any Node module that resolves a sibling binary path via `__dirname` from `import.meta.url` will resolve incorrectly once esbuild bundles it — see Architecture Decisions above. Always resolve through `process.cwd()` first with an `fs.existsSync` fallback chain.
+- New DEX pools created outside of `genesis.json` (e.g. via `createPool()` / the arbitrage demo seed route) are in-memory only and do not survive a server restart — pools are always rebuilt from `genesis.json`'s `dex_pools` array on boot, not from Postgres.
 
 ---
 
@@ -224,3 +220,4 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 - iOS store submission is deliberately skipped for now — Android sideload first, gather contributors, fix bugs, then revisit store submission later
 - Mobile store release via sideload only (no Play Store / App Store fees during private testing phase)
 - CI workflow files are authored at repo root (`android-apk-ci.yml`) because Replit cannot push directly to `.github/workflows/` — user copies them manually to GitHub
+- Keep `replit.md`, `README.md`, and `TODO.md` reconciled against actual running code, not just carried forward from a prior session's notes — verify claims with a quick grep/read before trusting a "done"/"open" status from an existing doc

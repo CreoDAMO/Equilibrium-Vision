@@ -344,6 +344,12 @@ x × y = k        (0.3% fee applied to amountIn)
 
 Features: swap, add liquidity, price quotes with impact calculation, swap history, and per-provider liquidity positions.
 
+### Arbitrage Detection (read-only)
+
+`GET /api/arbitrage/opportunities` scans live DEX pool reserves for negative-weight cycles using a Rust Bellman-Ford detector (`variational-ai/src/arbitrage.rs`, exposed as the `variational-ai-arbitrage-cli` binary and invoked from the API server exactly like the residual-verification CLI). Each opportunity reports the token cycle, implied profit factor, and an optimal trade size computed via `StationarySolver`. The Explorer's Dex page shows a live "Arbitrage Opportunities" panel refreshing every 15s.
+
+This is **detection and sizing only — no trade is ever executed automatically**. `pnpm --filter @workspace/scripts run seed-arbitrage-demo` seeds a synthetic mispriced WBTC-USDC pool (dev-only, in-memory) so the panel has a real cycle to display without waiting for genuine market drift. Moving toward autonomous execution would require governance-controlled sizing limits, a per-block rate limit, a circuit breaker, and an atomic multi-hop WASM execution contract — none of which exist yet (see `TODO.md`).
+
 ---
 
 ## Staking
@@ -601,6 +607,7 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 - Admin dashboard — 4-tab page (Chain Health, Validators, Node, Multisig) with live metrics, gossip log, finality status, Stratum pool stats
 - Scientific notation formatting — applied to residual, difficulty, rate, price impact, pool prices throughout the UI
 - Timestamp bug fixed — removed double-multiplication in ValidatorDetail and Dex pages (the "56y ago" bug)
+- Live arbitrage opportunity panel — Dex page shows Bellman-Ford-detected cycles (token path, profit factor, optimal size) with a 15s refresh; read-only, no auto-execution
 
 ### variational-ai Engine
 - **Rust crate built and compiled** — all three solver types (LogisticAction/Newton-CG, MlpAction/L-BFGS, NtkAction/CG kernel solve) compile and run on synthetic MNIST; real IDX files supported if placed in `variational-ai/data/`
@@ -636,7 +643,23 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 
 ## Remaining Work
 
-All Replit-scoped tasks are complete. The only remaining items are external infrastructure and ops:
+_Reconciled against the running code on 2026-07-08 — see `TODO.md` for full detail and file pointers._
+
+### Actionable in Replit
+
+| Priority | Item | Notes |
+|---|---|---|
+| 🟡 | `ContractDetail.tsx` / `AdminMultisig.tsx` refactor | Still monolithic (427 / 836 lines), still use raw `fetch()` instead of generated React Query hooks |
+| 🟡 | Wallet landing page guidance | Only a one-line description today — no first-time-user explanation of Ed25519 keys/mnemonics |
+| 🟡 | Block reward format consistency | `Blocks.tsx` shows "50M EQU" (`formatCompact`), `BlockDetail.tsx` shows "50,000,000 EQU" (`formatAmount`) — pick one |
+| 🟡 | A few residual "Loading…" text spots | Dashboard chart, ValidatorDetail delegators table, Dex pools table — most other pages already use skeletons |
+| 🟢 | Architecture diagram | `docs/architecture.md` with a Mermaid diagram of the full pipeline |
+| 🟢 | Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md` |
+| 🟢 | Automated CD | `ci.yml` only runs tests/build today — no auto-deploy on `main` push |
+| 🟢 | Rust/node binary release pipeline | Android APK has one; the validator/testnet-node binary does not |
+| 🟢 | Arbitrage governance safety rails | Only needed if moving toward autonomous execution — detector is intentionally read-only today |
+
+### External infrastructure and ops
 
 | Priority | Item | Notes |
 |---|---|---|
