@@ -1,17 +1,17 @@
-/// Export trained variational-AI model weights as ONNX protobuf files.
-///
-/// ONNX is a standard interchange format understood by ONNX Runtime, TensorFlow,
-/// PyTorch, and Qualcomm's AI Hub SDK. This binary trains the logistic and MLP
-/// solvers on synthetic MNIST data, then serialises the resulting weights as valid
-/// ONNX protobuf files that can be:
-///
-///   1. Validated with `python3 -c "import onnx; onnx.checker.check_model('model.onnx')"`
-///   2. Optimised for Qualcomm Hexagon NPU via `scripts/convert_to_hexagon.py`
-///   3. Deployed on-device via ONNX Runtime Mobile
-///
-/// Usage:
-///   cargo build --release --bin variational-ai-export-onnx
-///   ./target/release/variational-ai-export-onnx ./models/onnx
+//! Export trained variational-AI model weights as ONNX protobuf files.
+//!
+//! ONNX is a standard interchange format understood by ONNX Runtime, TensorFlow,
+//! PyTorch, and Qualcomm's AI Hub SDK. This binary trains the logistic and MLP
+//! solvers on synthetic MNIST data, then serialises the resulting weights as valid
+//! ONNX protobuf files that can be:
+//!
+//!   1. Validated with `python3 -c "import onnx; onnx.checker.check_model('model.onnx')"`
+//!   2. Optimised for Qualcomm Hexagon NPU via `scripts/convert_to_hexagon.py`
+//!   3. Deployed on-device via ONNX Runtime Mobile
+//!
+//! Usage:
+//!   cargo build --release --bin variational-ai-export-onnx
+//!   ./target/release/variational-ai-export-onnx ./models/onnx
 
 use std::fs;
 use prost::Message;                   // .encode_to_vec()
@@ -184,10 +184,10 @@ fn write_model(path: &str, graph_name: &str, graph: GraphProto) {
         graph: Some(GraphProto { name: graph_name.into(), ..graph }),
     };
     fs::write(path, model.encode_to_vec()).unwrap_or_else(|e| {
-        eprintln!("❌  Failed to write {}: {}", path, e);
+        eprintln!("❌  Failed to write {path}: {e}");
         std::process::exit(1);
     });
-    println!("✅  Exported: {}", path);
+    println!("✅  Exported: {path}");
 }
 
 // ── Logistic regression export ────────────────────────────────────────────────
@@ -305,17 +305,17 @@ fn main() {
     }
     let dir = &args[1];
     fs::create_dir_all(dir).unwrap_or_else(|e| {
-        eprintln!("❌  Cannot create output dir {}: {}", dir, e);
+        eprintln!("❌  Cannot create output dir {dir}: {e}");
         std::process::exit(1);
     });
 
     println!("Training logistic solver...");
-    export_logistic(&format!("{}/logistic.onnx", dir));
+    export_logistic(&format!("{dir}/logistic.onnx"));
 
     println!("Training MLP solver...");
-    export_mlp(&format!("{}/mlp.onnx", dir));
+    export_mlp(&format!("{dir}/mlp.onnx"));
 
-    println!("\n🎉  Both models exported to {}/", dir);
+    println!("\n🎉  Both models exported to {dir}/");
     println!("    Validate:  python3 -c \"import onnx; [onnx.checker.check_model(f) for f in ['logistic.onnx','mlp.onnx']]\"");
     println!("    Convert:   python3 scripts/convert_to_hexagon.py --logistic {dir}/logistic.onnx --mlp {dir}/mlp.onnx");
 }
