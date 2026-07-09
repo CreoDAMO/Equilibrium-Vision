@@ -8,7 +8,7 @@ A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile min
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — API node (port 8080, auto-mines every 15 s)
+- `DATABASE_URL=postgresql://runner@127.0.0.1:5432/equilibrium PORT=8080 pnpm --filter @workspace/api-server run dev` — API node (port 8080, auto-mines every 15 s; omitting `DATABASE_URL` runs in-memory mode — no persistence)
 - `pnpm --filter @workspace/explorer run dev` — block explorer + wallet (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
