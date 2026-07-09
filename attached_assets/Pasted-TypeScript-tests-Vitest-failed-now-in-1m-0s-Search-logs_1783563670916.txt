@@ -1,0 +1,429 @@
+TypeScript tests (Vitest)
+failed now in 1m 0s
+Search logs
+1s
+23s
+5s
+1s
+9s
+3s
+6s
+1s
+6s
+Run pnpm --filter @workspace/api-server run test
+  pnpm --filter @workspace/api-server run test
+  shell: /usr/bin/bash -e {0}
+  env:
+    PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+    DATABASE_URL: postgresql://runner@localhost:5432/equilibrium
+
+> @workspace/api-server@0.0.0 test /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server
+> vitest run
+
+ DEPRECATED  `test.poolOptions` was removed in Vitest 4. All previous `poolOptions` are now top-level options. Please, refer to the migration guide: https://vitest.dev/guide/migration#pool-rework
+
+ RUN  v4.1.9 /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server
+
+ ✓ src/__tests__/chain.unit.test.ts (41 tests) 76ms
+stderr | src/__tests__/contracts.integration.test.ts > WasmVM — persist callback > does not throw if the persist callback rejects
+[WasmVM] contract persist failed: Error: DB down
+    at WasmVM.persistFn (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/__tests__/contracts.integration.test.ts:424:48)
+    at WasmVM.firePersist (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/chain/wasm.ts:122:12)
+    at WasmVM.deploy (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/chain/wasm.ts:161:10)
+    at /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/__tests__/contracts.integration.test.ts:427:5
+    at file:///home/runner/work/Equilibrium-Vision/Equilibrium-Vision/node_modules/.pnpm/@vitest+runner@4.1.9/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+ ✓ src/__tests__/api.integration.test.ts (32 tests) 325ms
+ ✓ src/__tests__/contracts.integration.test.ts (58 tests) 447ms
+ ✓ src/__tests__/multisig.integration.test.ts (19 tests) 477ms
+ ❯ src/__tests__/arbitrage.integration.test.ts (24 tests | 4 failed) 254ms
+     × returns 200 with the expected shape 48ms
+     × honours the ?limit query param (capped at 20) 10ms
+     × clamps an oversized limit to 20 8ms
+     × each opportunity has the required fields when present 7ms
+     ✓ returns 200 with a valid contract address once initChain has deployed it 3ms
+     ✓ reports circuitTripped=false on a fresh deployment 2ms
+     ✓ reports an owner address (40 hex chars) 2ms
+     ✓ reports a numeric execCount 3ms
+     ✓ pause returns success when called by the contract owner 16ms
+     ✓ GET /api/arbitrage/status reflects paused=true 3ms
+     ✓ unpause restores paused=false 8ms
+     ✓ a non-owner cannot pause the contract 5ms
+     ✓ pause requires a caller field 3ms
+     ✓ unpause requires a caller field 3ms
+     ✓ rejects a request missing caller / registryAddress / modelId 3ms
+     ✓ rejects a non-owner caller 7ms
+     ✓ rejects a request missing required fields 3ms
+     ✓ rejects poolIds that is not an array 3ms
+     ✓ returns a well-formed error or success response shape 5ms
+     ✓ pause returns 403 when X-Admin-Key header is absent 2ms
+     ✓ pause returns 403 when X-Admin-Key header has the wrong value 2ms
+     ✓ pause succeeds when the correct X-Admin-Key header is sent 5ms
+     ✓ unpause succeeds with the correct key 5ms
+     ✓ set-model returns 403 without the header 4ms
+[02:20:13.580] INFO (3187): Postgres persistence enabled
+    url: "postgresql:***@127.0.0.1:5432/equilibrium"
+[02:20:13.604] INFO (3187): Restoring chain from Postgres
+    blockCount: 2
+[02:20:13.605] INFO (3187): Loaded genesis.json
+    path: "/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/genesis.json"
+    chainId: "equilibrium-1"
+[02:20:13.605] INFO (3187): Mining as first genesis validator
+    minerAddress: "6ea341f4f8d62cd427434c89d35d3fc6340a8bb1"
+[02:20:13.607] INFO (3187): Chain restored from doc genesis
+    height: 1
+    chainId: "equilibrium-1"
+[02:20:13.607] INFO (3187): Chain restored
+    height: 1
+[02:20:13.614] INFO (3187): Contracts loaded from DB
+    count: 14
+[02:20:13.625] INFO (3187): ModelRegistry deployed — set MODEL_REGISTRY_ADDRESS to this value to keep it stable across restarts
+    address: "8a9146d93554ceb8b65a9c2eeea4b2ad5ac97868"
+[02:20:13.639] INFO (3187): Arbitrage deployed — set ARBITRAGE_ADDRESS to this value to keep it stable across restarts
+    address: "e94fffb58b7de0c8e7695466c93ea5b907869b8c"
+    owner: "6ea341f4f8d62cd427434c89d35d3fc6340a8bb1"
+[02:20:13.701] INFO (3187): request completed
+    req: {
+      "id": 1,
+      "method": "POST",
+      "url": "/api/models/propose"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 37
+[02:20:13.718] INFO (3187): request completed
+    req: {
+      "id": 2,
+      "method": "GET",
+      "url": "/api/models/0"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 7
+[02:20:13.723] INFO (3187): request completed
+    req: {
+      "id": 3,
+      "method": "GET",
+      "url": "/api/models"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 1
+[02:20:13.734] INFO (3187): request completed
+    req: {
+      "id": 4,
+      "method": "POST",
+      "url": "/api/models/0/verify"
+    }
+    res: {
+      "statusCode": 400
+    }
+    responseTime: 8
+[02:20:14.048] INFO (3187): request completed
+    req: {
+      "id": 5,
+      "method": "POST",
+      "url": "/api/models/0/verify"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 5
+[02:20:14.055] INFO (3187): request completed
+    req: {
+      "id": 6,
+      "method": "GET",
+      "url": "/api/models/0"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 5
+[02:20:14.062] INFO (3187): request completed
+    req: {
+      "id": 7,
+      "method": "POST",
+      "url": "/api/models/0/verify"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 5
+[02:20:14.074] INFO (3187): request completed
+    req: {
+      "id": 8,
+      "method": "POST",
+      "url": "/api/models/propose"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 8
+[02:20:14.083] INFO (3187): request completed
+    req: {
+      "id": 9,
+      "method": "POST",
+      "url": "/api/models/1/challenge"
+    }
+    res: {
+      "statusCode": 400
+    }
+    responseTime: 6
+[02:20:14.090] INFO (3187): request completed
+    req: {
+      "id": 10,
+      "method": "GET",
+      "url": "/api/models/1"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 4
+[02:20:14.098] INFO (3187): request completed
+    req: {
+      "id": 11,
+      "method": "POST",
+      "url": "/api/models/propose"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 5
+[02:20:14.111] INFO (3187): request completed
+    req: {
+      "id": 12,
+      "method": "POST",
+      "url": "/api/models/2/challenge"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 10
+[02:20:14.118] INFO (3187): request completed
+    req: {
+      "id": 13,
+      "method": "GET",
+      "url": "/api/models/2"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 5
+[02:20:14.121] INFO (3187): request completed
+    req: {
+      "id": 14,
+      "method": "GET",
+      "url": "/api/models"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 1
+[02:20:14.355] INFO (3187): request completed
+    req: {
+      "id": 15,
+      "method": "POST",
+      "url": "/api/models/2/verify"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 5
+[02:20:14.358] INFO (3187): request completed
+    req: {
+      "id": 16,
+      "method": "POST",
+      "url": "/api/models/propose"
+    }
+    res: {
+      "statusCode": 400
+    }
+    responseTime: 1
+[02:20:14.361] INFO (3187): request completed
+    req: {
+      "id": 17,
+      "method": "POST",
+      "url": "/api/models/propose"
+    }
+    res: {
+      "statusCode": 400
+    }
+    responseTime: 1
+[02:20:14.367] INFO (3187): request completed
+    req: {
+      "id": 18,
+      "method": "GET",
+      "url": "/api/models/999999"
+    }
+    res: {
+      "statusCode": 404
+    }
+    responseTime: 5
+[02:20:14.369] INFO (3187): request completed
+    req: {
+      "id": 19,
+      "method": "GET",
+      "url": "/api/models/not-a-number"
+    }
+    res: {
+      "statusCode": 400
+    }
+    responseTime: 0
+[02:20:14.375] INFO (3187): request completed
+    req: {
+      "id": 20,
+      "method": "POST",
+      "url": "/api/models/propose"
+    }
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 4
+[02:20:14.378] INFO (3187): request completed
+    req: {
+      "id": 21,
+      "method": "POST",
+      "url": "/api/models/3/challenge"
+    }
+    res: {
+      "statusCode": 400
+    }
+    responseTime: 1
+[02:20:14.386] INFO (3187): request completed
+    req: {
+      "id": 22,
+      "method": "POST",
+      "url": "/api/models/propose"
+    }
+    res: {
+      "statusCode": 400
+    }
+    responseTime: 5
+ ✓ src/__tests__/models.integration.test.ts (19 tests) 811ms
+     ✓ verify succeeds once the challenge window has elapsed, flipping status to verified  320ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > returns 200 with the expected shape
+AssertionError: expected 500 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 500
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:51:24
+     49|   it("returns 200 with the expected shape", async () => {
+     50|     const res = await api.get("/api/arbitrage/opportunities");
+     51|     expect(res.status).toBe(200);
+       |                        ^
+     52|     expect(typeof res.body.count).toBe("number");
+     53|     expect(Array.isArray(res.body.opportunities)).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > honours the ?limit query param (capped at 20)
+AssertionError: expected 500 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 500
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:59:24
+     57|   it("honours the ?limit query param (capped at 20)", async () => {
+     58|     const res = await api.get("/api/arbitrage/opportunities?limit=2");
+     59|     expect(res.status).toBe(200);
+       |                        ^
+     60|     expect(res.body.opportunities.length).toBeLessThanOrEqual(2);
+     61|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > clamps an oversized limit to 20
+AssertionError: expected 500 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 500
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:65:24
+     63|   it("clamps an oversized limit to 20", async () => {
+     64|     const res = await api.get("/api/arbitrage/opportunities?limit=999"…
+     65|     expect(res.status).toBe(200);
+       |                        ^
+     66|     expect(res.body.opportunities.length).toBeLessThanOrEqual(20);
+     67|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > each opportunity has the required fields when present
+TypeError: res.body.opportunities is not iterable
+ ❯ src/__tests__/arbitrage.integration.test.ts:71:32
+     69|   it("each opportunity has the required fields when present", async ()…
+     70|     const res = await api.get("/api/arbitrage/opportunities");
+     71|     for (const opp of res.body.opportunities as unknown[]) {
+       |                                ^
+     72|       const o = opp as Record<string, unknown>;
+     73|       expect(Array.isArray(o["path"])).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed | 5 passed (6)
+      Tests  4 failed | 189 passed (193)
+   Start at  02:20:09
+   Duration  4.80s (transform 2.28s, setup 0ms, import 8.48s, tests 2.39s, environment 1ms)
+
+
+Error: AssertionError: expected 500 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 500
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:51:24
+
+
+
+Error: AssertionError: expected 500 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 500
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:59:24
+
+
+
+Error: AssertionError: expected 500 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 500
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:65:24
+
+
+
+Error: TypeError: res.body.opportunities is not iterable
+ ❯ src/__tests__/arbitrage.integration.test.ts:71:32
+
+
+/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 test: `vitest run`
+Exit status 1
+Error: Process completed with exit code 1.

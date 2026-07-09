@@ -119,6 +119,23 @@ jobs:
           node-version: "20"
           cache: pnpm
 
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts (variational-ai)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: variational-ai -> target
+
+      - name: Build variational-ai CLI binaries
+        working-directory: variational-ai
+        run: cargo build --release --bin variational-ai-cli --bin variational-ai-arbitrage-cli
+
+      - name: Copy CLI binaries to api-server directory
+        run: |
+          cp variational-ai/target/release/variational-ai-cli artifacts/api-server/
+          cp variational-ai/target/release/variational-ai-arbitrage-cli artifacts/api-server/
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
