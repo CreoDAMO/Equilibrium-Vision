@@ -15,5 +15,6 @@ pub trait Action {
     fn hessian_vec_prod(&self, theta: &Self::Parameter, v: &[f64]) -> Vec<f64>;
 
     /// Dimensionality of the parameter space.
+    #[allow(dead_code)]
     fn dim(&self) -> usize;
 }

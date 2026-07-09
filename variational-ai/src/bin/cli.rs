@@ -1,36 +1,36 @@
-/// variational-ai-cli — residual verification binary
-///
-/// Reads a JSON request from stdin, runs the deterministic NTK solver on
-/// the provided support set, and writes the computed residual to stdout.
-///
-/// Used by the TypeScript bridge (artifacts/api-server/src/variational-ai/bridge.ts)
-/// to verify on-chain model residual claims without embedding Rust in Node.
-///
-/// Input JSON schema:
-/// ```json
-/// {
-///   "support_data":    [f64, ...],   // n_support × input_dim, row-major
-///   "support_labels":  [f64, ...],   // n_support binary targets
-///   "input_dim":       usize,
-///   "hidden_dim":      usize,
-///   "lambda":          f64,
-///   "seed":            u64,
-///   "claimed_residual": i64,         // fixed-point (scaled ×1e12)
-///   "epsilon":         i64,          // acceptance tolerance (fixed-point)
-///   "tol":             f64,          // CG convergence tolerance (optional, default 1e-6)
-///   "max_iter":        usize         // max CG iterations (optional, default 100)
-/// }
-/// ```
-///
-/// Output JSON:
-/// ```json
-/// {
-///   "computed_residual_fp": i64,
-///   "computed_residual_f64": f64,
-///   "valid": bool,
-///   "epsilon": i64
-/// }
-/// ```
+//! variational-ai-cli — residual verification binary
+//!
+//! Reads a JSON request from stdin, runs the deterministic NTK solver on
+//! the provided support set, and writes the computed residual to stdout.
+//!
+//! Used by the TypeScript bridge (artifacts/api-server/src/variational-ai/bridge.ts)
+//! to verify on-chain model residual claims without embedding Rust in Node.
+//!
+//! Input JSON schema:
+//! ```json
+//! {
+//!   "support_data":    [f64, ...],   // n_support × input_dim, row-major
+//!   "support_labels":  [f64, ...],   // n_support binary targets
+//!   "input_dim":       usize,
+//!   "hidden_dim":      usize,
+//!   "lambda":          f64,
+//!   "seed":            u64,
+//!   "claimed_residual": i64,         // fixed-point (scaled ×1e12)
+//!   "epsilon":         i64,          // acceptance tolerance (fixed-point)
+//!   "tol":             f64,          // CG convergence tolerance (optional, default 1e-6)
+//!   "max_iter":        usize         // max CG iterations (optional, default 100)
+//! }
+//! ```
+//!
+//! Output JSON:
+//! ```json
+//! {
+//!   "computed_residual_fp": i64,
+//!   "computed_residual_f64": f64,
+//!   "valid": bool,
+//!   "epsilon": i64
+//! }
+//! ```
 
 use std::io::{self, BufRead, Read, Write};
 use serde::{Deserialize, Serialize};
@@ -162,7 +162,7 @@ fn main() {
             if !valid { std::process::exit(1); }
         }
         Err(err_json) => {
-            println!("{}", err_json);
+            println!("{err_json}");
             std::process::exit(2);
         }
     }

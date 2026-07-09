@@ -1,39 +1,39 @@
-/// variational-ai-arbitrage-cli — DEX arbitrage detection binary
-///
-/// Reads a JSON snapshot of live DEX pool reserves from stdin, runs
-/// Bellman-Ford negative-cycle detection over the currency graph, sizes
-/// each profitable cycle via the variational stationary solver, and
-/// writes the ranked list of opportunities to stdout.
-///
-/// Used by the TypeScript bridge (artifacts/api-server/src/variational-ai/bridge.ts)
-/// to power `GET /api/arbitrage/opportunities` without embedding Rust in Node.
-///
-/// Input JSON schema:
-/// ```json
-/// {
-///   "pools": [
-///     { "pool_id": "equ-wbtc", "token_a": "EQU", "token_b": "WBTC",
-///       "reserve_a": 10000.0, "reserve_b": 1000.0, "fee": 0.003 },
-///     ...
-///   ],
-///   "lambda": 1e-6,            // optional, L2 trade-size regularisation (default 1e-6)
-///   "max_opportunities": 5     // optional, cap on cycles returned (default 5)
-/// }
-/// ```
-///
-/// Output JSON:
-/// ```json
-/// {
-///   "opportunities": [
-///     { "tokens": ["EQU","WBTC","USDC","EQU"], "poolIds": [...], "hopCount": 3,
-///       "rates": [...], "profitFactor": 0.012, "optimalAmountIn": 42.1,
-///       "expectedProfit": 0.51 }
-///   ],
-///   "count": 1
-/// }
-/// ```
-///
-/// Exit code: 0 = success (even with zero opportunities), 2 = error (bad input).
+//! variational-ai-arbitrage-cli — DEX arbitrage detection binary
+//!
+//! Reads a JSON snapshot of live DEX pool reserves from stdin, runs
+//! Bellman-Ford negative-cycle detection over the currency graph, sizes
+//! each profitable cycle via the variational stationary solver, and
+//! writes the ranked list of opportunities to stdout.
+//!
+//! Used by the TypeScript bridge (artifacts/api-server/src/variational-ai/bridge.ts)
+//! to power `GET /api/arbitrage/opportunities` without embedding Rust in Node.
+//!
+//! Input JSON schema:
+//! ```json
+//! {
+//!   "pools": [
+//!     { "pool_id": "equ-wbtc", "token_a": "EQU", "token_b": "WBTC",
+//!       "reserve_a": 10000.0, "reserve_b": 1000.0, "fee": 0.003 },
+//!     ...
+//!   ],
+//!   "lambda": 1e-6,            // optional, L2 trade-size regularisation (default 1e-6)
+//!   "max_opportunities": 5     // optional, cap on cycles returned (default 5)
+//! }
+//! ```
+//!
+//! Output JSON:
+//! ```json
+//! {
+//!   "opportunities": [
+//!     { "tokens": ["EQU","WBTC","USDC","EQU"], "poolIds": [...], "hopCount": 3,
+//!       "rates": [...], "profitFactor": 0.012, "optimalAmountIn": 42.1,
+//!       "expectedProfit": 0.51 }
+//!   ],
+//!   "count": 1
+//! }
+//! ```
+//!
+//! Exit code: 0 = success (even with zero opportunities), 2 = error (bad input).
 
 use std::io::{self, BufRead, Read, Write};
 use serde::{Deserialize, Serialize};
@@ -190,7 +190,7 @@ fn main() {
             io::stdout().write_all(b"\n").expect("write failed");
         }
         Err(err_json) => {
-            println!("{}", err_json);
+            println!("{err_json}");
             std::process::exit(2);
         }
     }

@@ -1,0 +1,912 @@
+3s
+Run cargo clippy --all-targets -- -D warnings
+
+
+   Checking variational-ai v0.1.0 (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/variational-ai)
+
+
+error: method `dim` is never used
+
+
+ --> src/action.rs:18:8
+
+
+  |
+
+
+5 | pub trait Action {
+
+
+  |           ------ method in this trait
+
+
+...
+
+
+18 |     fn dim(&self) -> usize;
+
+
+  |        ^^^
+
+
+  |
+
+
+  = note: `-D dead-code` implied by `-D warnings`
+
+
+  = help: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+
+
+
+
+
+error: function `from_fixed` is never used
+
+
+ --> src/deterministic.rs:54:8
+
+
+  |
+
+
+54 | pub fn from_fixed(x: i64) -> f64 {
+
+
+  |        ^^^^^^^^^^
+
+
+
+
+
+
+error: function `mul_fixed` is never used
+
+
+ --> src/deterministic.rs:61:8
+
+
+  |
+
+
+61 | pub fn mul_fixed(a: i64, b: i64) -> i64 {
+
+
+  |        ^^^^^^^^^
+
+
+
+
+
+
+error: function `dot_fixed` is never used
+
+
+ --> src/deterministic.rs:71:8
+
+
+  |
+
+
+71 | pub fn dot_fixed(a: &[i64], b: &[i64]) -> i64 {
+
+
+  |        ^^^^^^^^^
+
+
+
+
+
+
+error: function `norm2_fixed` is never used
+
+
+ --> src/deterministic.rs:80:8
+
+
+  |
+
+
+80 | pub fn norm2_fixed(v: &[i64]) -> i64 {
+
+
+  |        ^^^^^^^^^^^
+
+
+
+
+
+
+error: function `sigmoid_fixed` is never used
+
+
+ --> src/deterministic.rs:91:8
+
+
+  |
+
+
+91 | pub fn sigmoid_fixed(x: i64) -> i64 {
+
+
+  |        ^^^^^^^^^^^^^
+
+
+
+
+
+
+error: function `softplus_fixed` is never used
+
+
+  --> src/deterministic.rs:116:8
+
+
+   |
+
+
+116 | pub fn softplus_fixed(x: i64) -> i64 {
+
+
+   |        ^^^^^^^^^^^^^^
+
+
+
+
+
+
+error: function `verify_ntk_residual` is never used
+
+
+  --> src/ntk.rs:163:8
+
+
+   |
+
+
+163 | pub fn verify_ntk_residual(
+
+
+   |        ^^^^^^^^^^^^^^^^^^^
+
+
+
+
+
+
+error: empty line after doc comment
+
+
+ --> src/bin/cli.rs:33:1
+
+
+  |
+
+
+33 | / /// ```
+
+
+34 | |
+
+
+  | |_^
+
+
+35 |   use std::io::{self, BufRead, Read, Write};
+
+
+  |   - the comment documents this `use` import
+
+
+  |
+
+
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#empty_line_after_doc_comments
+
+
+  = note: `-D clippy::empty-line-after-doc-comments` implied by `-D warnings`
+
+
+  = help: to override `-D warnings` add `#[allow(clippy::empty_line_after_doc_comments)]`
+
+
+  = help: if the empty line is unintentional, remove it
+
+
+help: if the comment should document the crate use an inner doc comment
+
+
+  |
+
+
+1 ~ //! variational-ai-cli — residual verification binary
+
+
+2 ~ //!
+
+
+3 ~ //! Reads a JSON request from stdin, runs the deterministic NTK solver on
+
+
+4 ~ //! the provided support set, and writes the computed residual to stdout.
+
+
+5 ~ //!
+
+
+6 ~ //! Used by the TypeScript bridge (artifacts/api-server/src/variational-ai/bridge.ts)
+
+
+7 ~ //! to verify on-chain model residual claims without embedding Rust in Node.
+
+
+8 ~ //!
+
+
+9 ~ //! Input JSON schema:
+
+
+10 ~ //! ```json
+
+
+11 ~ //! {
+
+
+12 ~ //!   "support_data":    [f64, ...],   // n_support × input_dim, row-major
+
+
+13 ~ //!   "support_labels":  [f64, ...],   // n_support binary targets
+
+
+14 ~ //!   "input_dim":       usize,
+
+
+15 ~ //!   "hidden_dim":      usize,
+
+
+16 ~ //!   "lambda":          f64,
+
+
+17 ~ //!   "seed":            u64,
+
+
+18 ~ //!   "claimed_residual": i64,         // fixed-point (scaled ×1e12)
+
+
+19 ~ //!   "epsilon":         i64,          // acceptance tolerance (fixed-point)
+
+
+20 ~ //!   "tol":             f64,          // CG convergence tolerance (optional, default 1e-6)
+
+
+21 ~ //!   "max_iter":        usize         // max CG iterations (optional, default 100)
+
+
+22 ~ //! }
+
+
+23 ~ //! ```
+
+
+24 ~ //!
+
+
+25 ~ //! Output JSON:
+
+
+26 ~ //! ```json
+
+
+27 ~ //! {
+
+
+28 ~ //!   "computed_residual_fp": i64,
+
+
+29 ~ //!   "computed_residual_f64": f64,
+
+
+30 ~ //!   "valid": bool,
+
+
+31 ~ //!   "epsilon": i64
+
+
+32 ~ //! }
+
+
+33 ~ //! ```
+
+
+  |
+
+
+
+
+
+
+error: empty line after doc comment
+
+
+ --> src/bin/arbitrage_cli.rs:36:1
+
+
+  |
+
+
+36 | / /// Exit code: 0 = success (even with zero opportunities), 2 = error (bad input).
+
+
+37 | |
+
+
+  | |_^
+
+
+38 |   use std::io::{self, BufRead, Read, Write};
+
+
+  |   - the comment documents this `use` import
+
+
+  |
+
+
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#empty_line_after_doc_comments
+
+
+  = note: `-D clippy::empty-line-after-doc-comments` implied by `-D warnings`
+
+
+  = help: to override `-D warnings` add `#[allow(clippy::empty_line_after_doc_comments)]`
+
+
+  = help: if the empty line is unintentional, remove it
+
+
+help: if the comment should document the crate use an inner doc comment
+
+
+  |
+
+
+1 ~ //! variational-ai-arbitrage-cli — DEX arbitrage detection binary
+
+
+2 ~ //!
+
+
+3 ~ //! Reads a JSON snapshot of live DEX pool reserves from stdin, runs
+
+
+4 ~ //! Bellman-Ford negative-cycle detection over the currency graph, sizes
+
+
+5 ~ //! each profitable cycle via the variational stationary solver, and
+
+
+6 ~ //! writes the ranked list of opportunities to stdout.
+
+
+7 ~ //!
+
+
+8 ~ //! Used by the TypeScript bridge (artifacts/api-server/src/variational-ai/bridge.ts)
+
+
+9 ~ //! to power `GET /api/arbitrage/opportunities` without embedding Rust in Node.
+
+
+10 ~ //!
+
+
+11 ~ //! Input JSON schema:
+
+
+12 ~ //! ```json
+
+
+13 ~ //! {
+
+
+14 ~ //!   "pools": [
+
+
+15 ~ //!     { "pool_id": "equ-wbtc", "token_a": "EQU", "token_b": "WBTC",
+
+
+16 ~ //!       "reserve_a": 10000.0, "reserve_b": 1000.0, "fee": 0.003 },
+
+
+17 ~ //!     ...
+
+
+18 ~ //!   ],
+
+
+19 ~ //!   "lambda": 1e-6,            // optional, L2 trade-size regularisation (default 1e-6)
+
+
+20 ~ //!   "max_opportunities": 5     // optional, cap on cycles returned (default 5)
+
+
+21 ~ //! }
+
+
+22 ~ //! ```
+
+
+23 ~ //!
+
+
+24 ~ //! Output JSON:
+
+
+25 ~ //! ```json
+
+
+26 ~ //! {
+
+
+27 ~ //!   "opportunities": [
+
+
+28 ~ //!     { "tokens": ["EQU","WBTC","USDC","EQU"], "poolIds": [...], "hopCount": 3,
+
+
+29 ~ //!       "rates": [...], "profitFactor": 0.012, "optimalAmountIn": 42.1,
+
+
+30 ~ //!       "expectedProfit": 0.51 }
+
+
+31 ~ //!   ],
+
+
+32 ~ //!   "count": 1
+
+
+33 ~ //! }
+
+
+34 ~ //! ```
+
+
+35 ~ //!
+
+
+36 ~ //! Exit code: 0 = success (even with zero opportunities), 2 = error (bad input).
+
+
+  |
+
+
+
+
+
+
+error: could not compile `variational-ai` (bin "variational-ai-arbitrage-cli") due to 1 previous error
+
+
+warning: build failed, waiting for other jobs to finish...
+
+
+error: could not compile `variational-ai` (bin "variational-ai" test) due to 8 previous errors
+
+
+error: could not compile `variational-ai` (bin "variational-ai-cli" test) due to 1 previous error
+
+
+error: could not compile `variational-ai` (bin "variational-ai") due to 8 previous errors
+
+
+Error: Process completed with exit code 101.
+
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+
+
+
+
+
+FAIL src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > returns 200 with the expected shape
+
+
+AssertionError: expected 500 to be 200 // Object.is equality
+
+
+
+
+
+
+- Expected
+
+
++ Received
+
+
+
+
+
+
+- 200
+
+
++ 500
+
+
+
+
+
+
+❯ src/__tests__/arbitrage.integration.test.ts:51:24
+
+
+   49|   it("returns 200 with the expected shape", async () => {
+
+
+   50|     const res = await api.get("/api/arbitrage/opportunities");
+
+
+
+
+
+
+Test Files 1 failed | 5 passed (6)
+
+
+     Tests 4 failed | 189 passed (193)
+
+
+  Start at 01:54:34
+
+
+  Duration 4.70s (transform 1.92s, setup 0ms, import 7.88s, tests 2.62s, environment 3ms)
+
+
+
+
+
+
+
+
+
+
+Error: AssertionError: expected 500 to be 200 // Object.is equality
+
+
+
+
+
+
+- Expected
+
+
++ Received
+
+
+
+
+
+
+- 200
+
+
++ 500
+
+
+
+
+
+
+❯ src/__tests__/arbitrage.integration.test.ts:51:24
+
+
+
+
+
+
+
+
+
+
+   51|     expect(res.status).toBe(200);
+
+
+     |                        ^
+
+
+   52|     expect(typeof res.body.count).toBe("number");
+
+
+   53|     expect(Array.isArray(res.body.opportunities)).toBe(true);
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+
+
+
+
+FAIL src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > honours the ?limit query param (capped at 20)
+
+
+AssertionError: expected 500 to be 200 // Object.is equality
+
+
+
+
+
+
+- Expected
+
+
++ Received
+
+
+
+
+
+
+- 200
+
+
++ 500
+
+
+
+
+
+
+❯ src/__tests__/arbitrage.integration.test.ts:59:24
+
+
+   57|   it("honours the ?limit query param (capped at 20)", async () => {
+
+
+   58|     const res = await api.get("/api/arbitrage/opportunities?limit=2");
+
+
+   59|     expect(res.status).toBe(200);
+
+
+     |                        ^
+
+
+   60|     expect(res.body.opportunities.length).toBeLessThanOrEqual(2);
+
+
+   61|   });
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+
+
+
+
+
+FAIL src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > clamps an oversized limit to 20
+
+
+AssertionError: expected 500 to be 200 // Object.is equality
+
+
+
+
+
+
+- Expected
+
+
++ Received
+
+
+
+
+
+
+- 200
+
+
++ 500
+
+
+
+
+
+
+❯ src/__tests__/arbitrage.integration.test.ts:65:24
+
+
+   63|   it("clamps an oversized limit to 20", async () => {
+
+
+   64|     const res = await api.get("/api/arbitrage/opportunities?limit=999"…
+
+
+   65|     expect(res.status).toBe(200);
+
+
+     |                        ^
+
+
+   66|     expect(res.body.opportunities.length).toBeLessThanOrEqual(20);
+
+
+   67|   });
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+
+
+
+
+
+FAIL src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > each opportunity has the required fields when present
+
+
+TypeError: res.body.opportunities is not iterable
+
+
+❯ src/__tests__/arbitrage.integration.test.ts:71:32
+
+
+   69|   it("each opportunity has the required fields when present", async ()…
+
+
+   70|     const res = await api.get("/api/arbitrage/opportunities");
+
+
+   71|     for (const opp of res.body.opportunities as unknown[]) {
+
+
+     |                                ^
+
+
+   72|       const o = opp as Record<string, unknown>;
+
+
+   73|       expect(Array.isArray(o["path"])).toBe(true);
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+
+
+
+
+
+
+
+
+Error: AssertionError: expected 500 to be 200 // Object.is equality
+
+
+
+
+
+
+- Expected
+
+
++ Received
+
+
+
+
+
+
+- 200
+
+
++ 500
+
+
+
+
+
+
+❯ src/__tests__/arbitrage.integration.test.ts:59:24
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: AssertionError: expected 500 to be 200 // Object.is equality
+
+
+
+
+
+
+- Expected
+
+
++ Received
+
+
+
+
+
+
+- 200
+
+
++ 500
+
+
+
+
+
+
+❯ src/__tests__/arbitrage.integration.test.ts:65:24
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: TypeError: res.body.opportunities is not iterable
+
+
+❯ src/__tests__/arbitrage.integration.test.ts:71:32
+
+
+
+
+
+
+
+
+
+
+/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server:
+
+
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 test: `vitest run`
+
+
+Exit status 1
+
+
+Error: Process completed with exit code 1.

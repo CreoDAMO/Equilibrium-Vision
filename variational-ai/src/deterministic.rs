@@ -50,6 +50,7 @@ pub fn to_fixed(x: f64) -> i64 {
 }
 
 /// Convert fixed-point i64 back to f64.
+#[allow(dead_code)]
 #[inline]
 pub fn from_fixed(x: i64) -> f64 {
     x as f64 / FIXED_SCALE_F64
@@ -57,6 +58,7 @@ pub fn from_fixed(x: i64) -> f64 {
 
 /// Saturating fixed-point multiplication: (a * b) / SCALE.
 /// Saturates to i64::MIN/MAX on overflow instead of wrapping.
+#[allow(dead_code)]
 #[inline]
 pub fn mul_fixed(a: i64, b: i64) -> i64 {
     // Use i128 intermediate to avoid overflow before the division.
@@ -68,6 +70,7 @@ pub fn mul_fixed(a: i64, b: i64) -> i64 {
 /// Fixed-point dot product: Σ (a[i] * b[i]) / SCALE.
 /// Elements are processed in sorted order (by absolute product) to match
 /// the f64 deterministic dot but in integer arithmetic.
+#[allow(dead_code)]
 pub fn dot_fixed(a: &[i64], b: &[i64]) -> i64 {
     let mut prods: Vec<i64> = a.iter().zip(b.iter()).map(|(&x, &y)| mul_fixed(x, y)).collect();
     prods.sort_by_key(|v| v.unsigned_abs());
@@ -77,6 +80,7 @@ pub fn dot_fixed(a: &[i64], b: &[i64]) -> i64 {
 
 /// Fixed-point L2 norm: sqrt(Σ x[i]^2 / SCALE^2) * SCALE
 /// Returns a fixed-point value.
+#[allow(dead_code)]
 pub fn norm2_fixed(v: &[i64]) -> i64 {
     let sum_sq: i128 = v.iter().map(|&x| (x as i128) * (x as i128)).sum();
     // sqrt(sum_sq) is in units of SCALE; divide by SCALE to get fixed-point result
@@ -88,6 +92,7 @@ pub fn norm2_fixed(v: &[i64]) -> i64 {
 /// Uses a degree-5 minimax polynomial on [-8, 8]; clamps outside that range.
 /// Maximum error vs. true sigmoid: < 0.0003 on the domain.
 /// No floating-point operations — fully deterministic across architectures.
+#[allow(dead_code)]
 pub fn sigmoid_fixed(x: i64) -> i64 {
     const CLAMP: i64 = 8 * FIXED_SCALE; // 8.0 in fixed-point
     if x <= -CLAMP { return 0; }
@@ -113,6 +118,7 @@ pub fn sigmoid_fixed(x: i64) -> i64 {
 }
 
 /// Fixed-point softplus: max(0, x) + polynomial correction near 0.
+#[allow(dead_code)]
 pub fn softplus_fixed(x: i64) -> i64 {
     const CLAMP: i64 = 20 * FIXED_SCALE;
     if x >= CLAMP { return x; }

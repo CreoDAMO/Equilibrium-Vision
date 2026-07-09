@@ -1,24 +1,24 @@
-/// variational-ai-harness — determinism conformance harness
-///
-/// Trains all three model types (logistic, MLP, NTK) on synthetic data,
-/// hashes every intermediate vector and final parameter set with SHA-256,
-/// and prints a machine-readable report.
-///
-/// Run this binary on two different architectures (x86-64, aarch64) or
-/// compiler versions and diff the output — any divergence indicates a
-/// non-determinism bug.
-///
-/// Usage:
-///   cargo run --release --bin variational-ai-harness
-///
-/// Output (one key=hex per line):
-///   LOGISTIC_THETA=<sha256>
-///   LOGISTIC_GRAD_NORM_FP=<i64>
-///   MLP_THETA=<sha256>
-///   MLP_GRAD_NORM_FP=<i64>
-///   NTK_ALPHA=<sha256>
-///   NTK_GRAD_NORM_FP=<i64>
-///   ALL_PASS=true
+//! variational-ai-harness — determinism conformance harness
+//!
+//! Trains all three model types (logistic, MLP, NTK) on synthetic data,
+//! hashes every intermediate vector and final parameter set with SHA-256,
+//! and prints a machine-readable report.
+//!
+//! Run this binary on two different architectures (x86-64, aarch64) or
+//! compiler versions and diff the output — any divergence indicates a
+//! non-determinism bug.
+//!
+//! Usage:
+//!   cargo run --release --bin variational-ai-harness
+//!
+//! Output (one key=hex per line):
+//!   LOGISTIC_THETA=<sha256>
+//!   LOGISTIC_GRAD_NORM_FP=<i64>
+//!   MLP_THETA=<sha256>
+//!   MLP_GRAD_NORM_FP=<i64>
+//!   NTK_ALPHA=<sha256>
+//!   NTK_GRAD_NORM_FP=<i64>
+//!   ALL_PASS=true
 
 use sha2::{Sha256, Digest};
 
@@ -52,6 +52,7 @@ fn main() {
 
     println!("# variational-ai determinism harness");
     println!("# n_train={} n_test={} dim={}", data.train_count, data.test_count, data.dim);
+
     println!();
 
     // ── 1. Logistic Regression (Newton-CG) ───────────────────────────────────
@@ -79,8 +80,8 @@ fn main() {
     }
 
     println!("LOGISTIC_THETA={}", sha256_of_f64_slice(&log_theta));
-    println!("LOGISTIC_GRAD_NORM_FP={}", log_fp);
-    for h in &iter_hashes { println!("{}", h); }
+    println!("LOGISTIC_GRAD_NORM_FP={log_fp}");
+    for h in &iter_hashes { println!("{h}"); }
     println!();
 
     // ── 2. MLP (L-BFGS) ──────────────────────────────────────────────────────
@@ -95,7 +96,7 @@ fn main() {
     let mlp_fp     = to_fixed(norm2(&mlp_grad));
 
     println!("MLP_THETA={}", sha256_of_f64_slice(&mlp_theta));
-    println!("MLP_GRAD_NORM_FP={}", mlp_fp);
+    println!("MLP_GRAD_NORM_FP={mlp_fp}");
     println!();
 
     // ── 3. NTK (CG kernel solve) ──────────────────────────────────────────────
@@ -135,7 +136,7 @@ fn main() {
 
     println!("NTK_ALPHA_FP={}", sha256_of_i64_slice(&alpha_fp));
     println!("NTK_KERNEL={}", sha256_of_f64_slice(&kernel_flat));
-    println!("NTK_GRAD_NORM_FP={}", ntk_fp);
+    println!("NTK_GRAD_NORM_FP={ntk_fp}");
     println!();
 
     // ── Summary ───────────────────────────────────────────────────────────────
@@ -143,5 +144,5 @@ fn main() {
     let all_pass = log_fp.abs() < 1_000_000_000_000
         && mlp_fp.abs() < 1_000_000_000_000
         && ntk_fp.abs() < 1_000_000_000_000;
-    println!("ALL_PASS={}", all_pass);
+    println!("ALL_PASS={all_pass}");
 }
