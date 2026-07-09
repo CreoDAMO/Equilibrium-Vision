@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. **221 tests pass (28 Rust + 193 TypeScript across 6 test files)**. All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. **ModelRegistry + Arbitrage WASM contracts deployed and live** — permissionless optimistic-oracle lifecycle, on-chain challenge/slash, read-only Bellman-Ford arbitrage detection. See `LIMITATIONS.md` for known design constraints.
+> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. **224 tests (31 Rust + 193 TypeScript across 6 test files)**. All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. **ModelRegistry + Arbitrage WASM contracts deployed and live** — permissionless optimistic-oracle lifecycle, on-chain challenge/slash, Bellman-Ford arbitrage detection, and a real on-chain execution path gated by governance-controlled caps and a rolling circuit breaker. See `LIMITATIONS.md` for known design constraints.
 
 ---
 
@@ -200,8 +200,28 @@ pnpm --filter @workspace/api-spec run codegen
 | GET | `/api/contracts/examples` | Example contract bytecode/ABI |
 | GET | `/api/contracts/:address` | Contract detail |
 | GET | `/api/contracts/:address/storage` | Contract storage dump |
+| GET | `/api/contracts/:address/events` | Rolling event log (last 200 `log()` calls) |
 | POST | `/api/contracts/deploy` | Deploy WASM bytecode |
-| POST | `/api/contracts/:address/call` | Call a contract method |
+| POST | `/api/contracts/:address/call` | Call a contract method. When `caller` is set, `publicKey` + `signature` (Ed25519 over `"contract-call:{address}:{methodId}:{caller}"`) are required — prevents impersonation of fund-holding addresses |
+
+### Arbitrage Contract
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/arbitrage/opportunities` | Bellman-Ford scan of live DEX pools; cached 4s |
+| GET | `/api/arbitrage/status` | Contract address, active model, paused/circuit-tripped state |
+| POST | `/api/arbitrage/set-model` | Bind a ModelRegistry model (requires `X-Admin-Key`) |
+| POST | `/api/arbitrage/pause` | Pause execution (requires `X-Admin-Key`) |
+| POST | `/api/arbitrage/unpause` | Resume + clear circuit breaker (requires `X-Admin-Key`) |
+| POST | `/api/arbitrage/execute` | Trigger on-chain arbitrage trade (owner-only at contract level; circuit breaker + hard cap apply) |
+
+### Models (ModelRegistry)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/models` | List all proposed/verified/challenged models |
+| POST | `/api/models/:id/verify` | Verify a model after its challenge window (re-runs NTK residual via CLI) |
+| POST | `/api/models/:id/challenge` | Challenge a model with competing support data; slashes bond on success |
 
 ### EVM Compatibility
 
@@ -346,11 +366,23 @@ x × y = k        (0.3% fee applied to amountIn)
 
 Features: swap, add liquidity, price quotes with impact calculation, swap history, and per-provider liquidity positions.
 
-### Arbitrage Detection (read-only)
+### Arbitrage Detection
 
 `GET /api/arbitrage/opportunities` scans live DEX pool reserves for negative-weight cycles using a Rust Bellman-Ford detector (`variational-ai/src/arbitrage.rs`, exposed as the `variational-ai-arbitrage-cli` binary and invoked from the API server exactly like the residual-verification CLI). Each opportunity reports the token cycle, implied profit factor, and an optimal trade size computed via `StationarySolver`. The Explorer's Dex page shows a live "Arbitrage Opportunities" panel refreshing every 15s.
 
-This is **detection and sizing only — no trade is ever executed automatically**. `pnpm --filter @workspace/scripts run seed-arbitrage-demo` seeds a synthetic mispriced WBTC-USDC pool (dev-only, in-memory) so the panel has a real cycle to display without waiting for genuine market drift. Moving toward autonomous execution would require governance-controlled sizing limits, a per-block rate limit, a circuit breaker, and an atomic multi-hop WASM execution contract — none of which exist yet (see `TODO.md`).
+`pnpm --filter @workspace/scripts run seed-arbitrage-demo` seeds a synthetic mispriced WBTC-USDC pool (dev-only, in-memory, resets on restart) so the panel has a real cycle to display without waiting for genuine market drift.
+
+### Arbitrage Execution (contract-gated)
+
+`POST /api/arbitrage/execute` triggers a real on-chain arbitrage trade via the `Arbitrage` WASM contract. The contract's safety rails are the load-bearing defense:
+
+- **Hard trade cap** — `arbitrageMaxTradeAmount` (governance-controlled, bounded 1M–1T base units); exceeded amounts are rejected before any swap occurs
+- **Rolling circuit breaker** — max 5 executions per `arbitrageWindow` block window; the contract auto-pauses if the limit is hit and requires owner unpause to resume
+- **Live model check** — the configured ModelRegistry model must be `Verified` and past the `arbitrage_model_update_delay` maturity period; a slash takes effect immediately (non-cached)
+- **Owner restriction** — `execute_arbitrage` is owner-only; the contract checks `is_owner()` as the first gate so the caller must be authenticated and match the stored owner address
+- **Atomic settlement** — trade is a single `dex_multi_swap` host call; there is no reentrancy window between quoting and settling
+
+Admin routes (`set-model`, `pause`, `unpause`) additionally require the `X-Admin-Key` header (same `ADMIN_KEY`/`ADMIN_API_KEY` pattern as validator slashing). See `LIMITATIONS.md` for the known no-rollback behavior when a swap clears but undershoots the caller's minimum-profit target.
 
 ---
 
@@ -396,9 +428,17 @@ Nodes catching up can fetch block headers in bulk via `/api/sync/headers?from=N&
 - Proof validation: residual < 1e-7, ntime drift check, dedup, rate limit
 - Stratum error codes: 20 for rate-limit/drift, 22 for duplicate share
 
+### Contract call caller authentication
+
+- `POST /api/contracts/:address/call` requires an Ed25519 signature whenever `caller` is set in the request body
+- Request must include `publicKey` (64 hex chars, raw Ed25519) and `signature` (128 hex chars) over the canonical message `"contract-call:{address}:{methodId}:{caller}"`
+- Route verifies that the public key hashes to the claimed caller address and that the signature is valid before passing `callerAddr` to the WASM VM — prevents impersonation attacks where an attacker names a victim address to debit their bond or bypass owner gates
+- Calls without a `caller` field (read-only queries, stateless methods) proceed without a signature
+
 ### Admin auth
 
 - `POST /api/validators/:addr/slash` requires `X-Admin-Key` header
+- `POST /api/arbitrage/set-model`, `/pause`, `/unpause` also require `X-Admin-Key`
 - Accepts both `ADMIN_KEY` and `ADMIN_API_KEY` environment variable names
 - Superseded by the native on-chain WASM M-of-N multisig when `ADMIN_MULTISIG_ADDRESS` is configured — single key is fallback only
 
@@ -586,16 +626,19 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 - HTTP submission hardening — per-IP sliding-window rate limit, `prevHash:nonce` replay rejection (bounded LRU), ±300s timestamp drift guard, hex-only miner address check
 - Stratum server hardening — rate-limit key is TCP socket `remoteIp` (not self-reported address); duplicate-share key includes `ntimeHex`; per-IP connection cap (max 8); correct Stratum error codes (20/22); proof validation against the residual threshold
 - Admin auth reconciled — `POST /validators/:addr/slash` accepts both `ADMIN_KEY` and `ADMIN_API_KEY`; on-chain WASM M-of-N multisig supersedes single key when configured; fails closed (503) in production if neither key is set
+- Contract call caller authentication — `POST /api/contracts/:address/call` requires Ed25519 signature over `"contract-call:{address}:{methodId}:{caller}"` whenever `caller` is set; closes bond-theft (unauthenticated `bond()` debit) and owner-gate bypass on both ModelRegistry and Arbitrage contracts
 - Enforced tx signatures — `REQUIRE_TX_SIGNATURES=true`; Ed25519 batch verification wired into UTXO validation and block assembly
 - CORS lockdown — `ALLOWED_ORIGINS` env var, origin-allowlist callback check, fails closed when set
 
 ### Testing
-- **Rust unit tests** — 28 tests (`cargo test --lib`): wallet round-trips/sign/verify, stationary solver bounds/clamp/fixed-point, consensus `choose_fork` including fixed-point comparison
-- **TypeScript tests** — 150 tests across 4 files (`pnpm --filter @workspace/api-server test`):
+- **Rust unit tests** — 31 tests (28 in `equilibrium-core` via `cargo test --lib` + 3 in `variational-ai/src/arbitrage.rs`): wallet round-trips/sign/verify, stationary solver bounds/clamp/fixed-point, consensus `choose_fork` including fixed-point comparison, Bellman-Ford negative-cycle detection
+- **TypeScript tests** — 193 tests across 6 files (`pnpm --filter @workspace/api-server test`):
   - `chain.unit.test.ts` — 41 unit tests: hash256, merkleRoot, ZK proof generate/verify, difficulty adjustment, UTXO fee sweep/rollback
   - `api.integration.test.ts` — 32 integration tests via Supertest: full chain/block/tx/submission/UTXO/peer/validator/governance flow including valid votes, wrong signature → 401, address mismatch → 400
-  - `contracts.integration.test.ts` — 58 tests: WASM VM deploy/call/storage, gas tracking, ABI persistence, bulk restore, REST API coverage, `contracts.deployer` filter
+  - `contracts.integration.test.ts` — 58 tests: WASM VM deploy/call/storage, gas tracking, ABI persistence, bulk restore, REST API coverage, `contracts.deployer` filter; includes caller-auth signature verification tests
   - `multisig.integration.test.ts` — 19 tests: on-chain M-of-N proposal/approve/execute flow, replay protection, bitmask tracking
+  - `models.integration.test.ts` — 19 tests: ModelRegistry propose → verify → challenge → slash flow, challenge window enforcement, bond mechanics
+  - `arbitrage.integration.test.ts` — 24 tests: Arbitrage contract set-model/pause/unpause/execute flows, circuit breaker trip and reset, governance cap enforcement, model-verification gate
 
 ### Explorer & Wallet
 - Block explorer — Dashboard, Blocks, BlockDetail (with Miner Fee Breakdown panel), TxDetail, AddressDetail, Mempool, Network — all pages live with real-time React Query data
@@ -609,7 +652,9 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 - Admin dashboard — 4-tab page (Chain Health, Validators, Node, Multisig) with live metrics, gossip log, finality status, Stratum pool stats
 - Scientific notation formatting — applied to residual, difficulty, rate, price impact, pool prices throughout the UI
 - Timestamp bug fixed — removed double-multiplication in ValidatorDetail and Dex pages (the "56y ago" bug)
-- Live arbitrage opportunity panel — Dex page shows Bellman-Ford-detected cycles (token path, profit factor, optimal size) with a 15s refresh; read-only, no auto-execution
+- Live arbitrage opportunity panel — Dex page shows Bellman-Ford-detected cycles (token path, profit factor, optimal size) with a 15s refresh
+- Arbitrage execution page (`/arbitrage`) — active model binding, recent profit history, circuit-breaker status, owner pause/unpause controls; backed by the live `Arbitrage` WASM contract
+- Wallet landing page guidance — first-time-user explanation of Ed25519 keys, BIP-39 mnemonics, and self-custody model; import paths clearly documented
 
 ### variational-ai Engine
 - **Rust crate built and compiled** — all three solver types (LogisticAction/Newton-CG, MlpAction/L-BFGS, NtkAction/CG kernel solve) compile and run on synthetic MNIST; real IDX files supported if placed in `variational-ai/data/`
@@ -645,21 +690,20 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 
 ## Remaining Work
 
-_Reconciled against the running code on 2026-07-08 — see `TODO.md` for full detail and file pointers._
+_Reconciled against the running code on 2026-07-09 — see `TODO.md` for full detail and file pointers._
 
 ### Actionable in Replit
 
 | Priority | Item | Notes |
 |---|---|---|
-| 🟡 | `ContractDetail.tsx` / `AdminMultisig.tsx` refactor | Still monolithic (427 / 836 lines), still use raw `fetch()` instead of generated React Query hooks |
-| 🟡 | Wallet landing page guidance | Only a one-line description today — no first-time-user explanation of Ed25519 keys/mnemonics |
+| 🟡 | `ContractDetail.tsx` / `AdminMultisig.tsx` refactor | Still monolithic, still use raw `fetch()` instead of generated React Query hooks |
 | 🟡 | Block reward format consistency | `Blocks.tsx` shows "50M EQU" (`formatCompact`), `BlockDetail.tsx` shows "50,000,000 EQU" (`formatAmount`) — pick one |
 | 🟡 | A few residual "Loading…" text spots | Dashboard chart, ValidatorDetail delegators table, Dex pools table — most other pages already use skeletons |
 | 🟢 | Architecture diagram | `docs/architecture.md` with a Mermaid diagram of the full pipeline |
 | 🟢 | Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md` |
 | 🟢 | Automated CD | `ci.yml` only runs tests/build today — no auto-deploy on `main` push |
 | 🟢 | Rust/node binary release pipeline | Android APK has one; the validator/testnet-node binary does not |
-| 🟢 | Arbitrage governance safety rails | Only needed if moving toward autonomous execution — detector is intentionally read-only today |
+| 🟢 | Per-caller rate limit on arbitrage execute | Circuit breaker is global (shared 5-execution window); a per-caller limit would prevent a single caller burning the whole window |
 
 ### External infrastructure and ops
 
