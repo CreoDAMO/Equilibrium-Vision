@@ -1,0 +1,98 @@
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > returns 200 with the expected shape
+AssertionError: expected 500 to be 200 // Object.is equality
+- Expected
++ Received
+- 200
++ 500
+ ❯ src/__tests__/arbitrage.integration.test.ts:51:24
+     49|   it("returns 200 with the expected shape", async () => {
+     50|     const res = await api.get("/api/arbitrage/opportunities");
+     51|     expect(res.status).toBe(200);
+       |                        ^
+     52|     expect(typeof res.body.count).toBe("number");
+     53|     expect(Array.isArray(res.body.opportunities)).toBe(true);
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+ FAIL  src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > honours the ?limit query param (capped at 20)
+AssertionError: expected 500 to be 200 // Object.is equality
+- Expected
++ Received
+- 200
++ 500
+ ❯ src/__tests__/arbitrage.integration.test.ts:59:24
+     57|   it("honours the ?limit query param (capped at 20)", async () => {
+     58|     const res = await api.get("/api/arbitrage/opportunities?limit=2");
+     59|     expect(res.status).toBe(200);
+       |                        ^
+     60|     expect(res.body.opportunities.length).toBeLessThanOrEqual(2);
+     61|   });
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+ FAIL  src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > clamps an oversized limit to 20
+AssertionError: expected 500 to be 200 // Object.is equality
+- Expected
++ Received
+- 200
++ 500
+ ❯ src/__tests__/arbitrage.integration.test.ts:65:24
+     63|   it("clamps an oversized limit to 20", async () => {
+     64|     const res = await api.get("/api/arbitrage/opportunities?limit=999"…
+     65|     expect(res.status).toBe(200);
+       |                        ^
+     66|     expect(res.body.opportunities.length).toBeLessThanOrEqual(20);
+     67|   });
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+ FAIL  src/__tests__/arbitrage.integration.test.ts > GET /api/arbitrage/opportunities > each opportunity has the required fields when present
+TypeError: res.body.opportunities is not iterable
+ ❯ src/__tests__/arbitrage.integration.test.ts:71:32
+     69|   it("each opportunity has the required fields when present", async ()…
+     70|     const res = await api.get("/api/arbitrage/opportunities");
+     71|     for (const opp of res.body.opportunities as unknown[]) {
+       |                                ^
+     72|       const o = opp as Record<string, unknown>;
+     73|       expect(Array.isArray(o["path"])).toBe(true);
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+ Test Files  1 failed | 5 passed (6)
+      Tests  4 failed | 189 passed (193)
+   Start at  02:26:40
+   Duration  4.29s (transform 1.90s, setup 0ms, import 7.30s, tests 2.41s, environment 1ms)
+Error: AssertionError: expected 500 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 500
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:51:24
+
+
+Error: AssertionError: expected 500 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 500
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:59:24
+
+
+Error: AssertionError: expected 500 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 500
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:65:24
+
+
+Error: TypeError: res.body.opportunities is not iterable
+ ❯ src/__tests__/arbitrage.integration.test.ts:71:32
+
+
+/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 test: `vitest run`
+Exit status 1
+Error: Process completed with exit code 1.

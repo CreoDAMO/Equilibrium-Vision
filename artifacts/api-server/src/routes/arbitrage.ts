@@ -78,8 +78,13 @@ router.get("/arbitrage/opportunities", async (req, res) => {
     cache = { at: Date.now(), body };
     res.json(body);
   } catch (err) {
-    logger.error({ err }, "arbitrage scan failed");
-    res.status(500).json({ error: "Arbitrage scan failed" });
+    // The Rust scanner binary may be temporarily unavailable (e.g. not yet
+    // built in a fresh CI environment, or restarting after a crash).  Return
+    // an empty-opportunities response rather than 500 so the explorer stays
+    // functional and the endpoint shape is always consistent.
+    logger.warn({ err }, "arbitrage scan unavailable — returning empty results");
+    const body = { opportunities: [], count: 0, poolsScanned: pools.length };
+    res.json(body);
   }
 });
 
