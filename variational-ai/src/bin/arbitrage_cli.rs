@@ -35,7 +35,7 @@
 ///
 /// Exit code: 0 = success (even with zero opportunities), 2 = error (bad input).
 
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, Read, Write};
 use serde::{Deserialize, Serialize};
 
 use variational_ai::arbitrage::{
@@ -87,24 +87,12 @@ struct Response {
     count:         usize,
 }
 
-fn main() {
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input).expect("failed to read stdin");
-
-    let req: Request = match serde_json::from_str(&input) {
-        Ok(r) => r,
-        Err(e) => {
-            let err = serde_json::json!({ "error": format!("JSON parse error: {}", e) });
-            println!("{}", err);
-            std::process::exit(2);
-        }
-    };
+fn process(input: &str) -> Result<Response, String> {
+    let req: Request = serde_json::from_str(input)
+        .map_err(|e| serde_json::json!({ "error": format!("JSON parse error: {}", e) }).to_string())?;
 
     if req.pools.is_empty() {
-        let out = serde_json::to_string(&Response { opportunities: vec![], count: 0 })
-            .expect("JSON serialisation failed");
-        println!("{}", out);
-        return;
+        return Ok(Response { opportunities: vec![], count: 0 });
     }
 
     let mut working_pools: Vec<PoolSnapshot> = req.pools.iter().map(|p| PoolSnapshot {
@@ -148,17 +136,62 @@ fn main() {
             }
         }
 
-        // Remove the first pool of this cycle so Bellman-Ford surfaces a new one.
         let before = working_pools.len();
         working_pools.retain(|p| p.pool_id != first_pool_id);
         if working_pools.len() == before {
-            break; // safety: pool wasn't found, avoid infinite loop
+            break;
         }
     }
 
     let count = opportunities.len();
-    let response = Response { opportunities, count };
-    let out = serde_json::to_string(&response).expect("JSON serialisation failed");
-    io::stdout().write_all(out.as_bytes()).expect("write failed");
-    io::stdout().write_all(b"\n").expect("write failed");
+    Ok(Response { opportunities, count })
+}
+
+/// Daemon mode: persistent line-by-line JSON processing.
+fn run_daemon() {
+    let stdin  = io::stdin();
+    let stdout = io::stdout();
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        let line = line.trim();
+        if line.is_empty() { continue; }
+
+        let json_out = match process(line) {
+            Ok(resp) => serde_json::to_string(&resp).expect("serialise"),
+            Err(err_json) => err_json,
+        };
+
+        let mut out = stdout.lock();
+        out.write_all(json_out.as_bytes()).expect("write");
+        out.write_all(b"\n").expect("write");
+        out.flush().expect("flush");
+    }
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--daemon") {
+        run_daemon();
+        return;
+    }
+
+    // One-shot legacy mode.
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input).expect("failed to read stdin");
+
+    match process(&input) {
+        Ok(response) => {
+            let out = serde_json::to_string(&response).expect("JSON serialisation failed");
+            io::stdout().write_all(out.as_bytes()).expect("write failed");
+            io::stdout().write_all(b"\n").expect("write failed");
+        }
+        Err(err_json) => {
+            println!("{}", err_json);
+            std::process::exit(2);
+        }
+    }
 }

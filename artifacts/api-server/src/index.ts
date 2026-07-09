@@ -4,6 +4,7 @@ import { logger } from "./lib/logger.js";
 import { initChain, startMining, chainState } from "./chain/index.js";
 import { createWsServer } from "./lib/ws-server.js";
 import { StratumServer } from "./lib/stratum-server.js";
+import { closeWorkers } from "./variational-ai/bridge.js";
 
 const rawPort = process.env["PORT"];
 
@@ -44,6 +45,14 @@ if (Number.isNaN(port) || port <= 0) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
   });
+
+  // Graceful shutdown — close long-lived Rust worker processes cleanly.
+  const shutdown = () => {
+    closeWorkers();
+    server.close(() => process.exit(0));
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT",  shutdown);
 })().catch((err) => {
   // Ensure fatal init errors are visible and crash the process cleanly.
   console.error("Fatal startup error:", err);

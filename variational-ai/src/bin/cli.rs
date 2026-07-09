@@ -32,7 +32,7 @@
 /// }
 /// ```
 
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, Read, Write};
 use serde::{Deserialize, Serialize};
 
 // Pull in the library modules directly (binary is in the same crate).
@@ -69,36 +69,22 @@ struct Response {
     epsilon:               i64,
 }
 
-fn main() {
-    // Read all of stdin.
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input).expect("failed to read stdin");
+/// Process one JSON request string → JSON response string.
+/// Returns Err with an error JSON string on bad input.
+fn process(input: &str) -> Result<(Response, bool), String> {
+    let req: Request = serde_json::from_str(input)
+        .map_err(|e| serde_json::json!({ "error": format!("JSON parse error: {}", e) }).to_string())?;
 
-    let req: Request = match serde_json::from_str(&input) {
-        Ok(r) => r,
-        Err(e) => {
-            // Exit 2 = unrecoverable input error (bridge checks this).
-            let err = serde_json::json!({ "error": format!("JSON parse error: {}", e) });
-            println!("{}", err);
-            std::process::exit(2);
-        }
-    };
-
-    // Validate inputs.
     let n_support = req.support_labels.len();
     if req.support_data.len() != n_support * req.input_dim {
-        let err = serde_json::json!({
+        return Err(serde_json::json!({
             "error": format!(
                 "support_data length {} ≠ n_support({}) × input_dim({})",
                 req.support_data.len(), n_support, req.input_dim
             )
-        });
-        // Exit 2 = unrecoverable validation error.
-        println!("{}", err);
-        std::process::exit(2);
+        }).to_string());
     }
 
-    // Run the deterministic NTK solve.
     let ntk_action = compute_empirical_ntk_mlp(
         &req.support_data,
         &req.support_labels,
@@ -115,23 +101,69 @@ fn main() {
         req.max_iter,
     );
 
-    // Gradient norm at the solution.
     let grad              = ntk_action.gradient(&alpha);
     let residual_f64      = norm2(&grad);
     let computed_residual = to_fixed(residual_f64);
     let valid             = (req.claimed_residual - computed_residual).abs() <= req.epsilon;
 
-    let response = Response {
+    Ok((Response {
         computed_residual_fp:  computed_residual,
         computed_residual_f64: residual_f64,
         valid,
         epsilon: req.epsilon,
-    };
+    }, valid))
+}
 
-    let out = serde_json::to_string(&response).expect("JSON serialisation failed");
-    io::stdout().write_all(out.as_bytes()).expect("write failed");
-    io::stdout().write_all(b"\n").expect("write failed");
+/// Daemon mode: read one JSON request per line, write one JSON response per
+/// line, flush stdout after each response. Keeps the process alive for the
+/// lifetime of the TypeScript worker that owns it.
+fn run_daemon() {
+    let stdin  = io::stdin();
+    let stdout = io::stdout();
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        let line = line.trim();
+        if line.is_empty() { continue; }
 
-    // Exit 0 = valid, 1 = residual mismatch (not an error), 2 = error.
-    if !valid { std::process::exit(1); }
+        let json_out = match process(line) {
+            Ok((resp, _valid)) => serde_json::to_string(&resp).expect("serialise"),
+            Err(err_json) => err_json,
+        };
+
+        let mut out = stdout.lock();
+        out.write_all(json_out.as_bytes()).expect("write");
+        out.write_all(b"\n").expect("write");
+        out.flush().expect("flush");
+    }
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    // --daemon: persistent line-by-line mode for the TypeScript CliWorker.
+    if args.iter().any(|a| a == "--daemon") {
+        run_daemon();
+        return;
+    }
+
+    // Default (one-shot): read all of stdin, process, exit with the same
+    // legacy exit codes the bridge relied on before the worker was added.
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input).expect("failed to read stdin");
+
+    match process(&input) {
+        Ok((response, valid)) => {
+            let out = serde_json::to_string(&response).expect("JSON serialisation failed");
+            io::stdout().write_all(out.as_bytes()).expect("write failed");
+            io::stdout().write_all(b"\n").expect("write failed");
+            if !valid { std::process::exit(1); }
+        }
+        Err(err_json) => {
+            println!("{}", err_json);
+            std::process::exit(2);
+        }
+    }
 }
