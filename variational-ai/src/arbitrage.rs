@@ -1,13 +1,12 @@
-/// Arbitrage action module for Equilibrium.
-///
-/// Implements:
-///   - `CurrencyGraph` — directed graph of DEX exchange rates
-///   - `find_arbitrage_path` — Bellman-Ford negative-cycle detection (log-rates)
-///   - `ArbitrageAction` — `Action` trait for variational solver (maximize profit)
-///   - `compute_trade_signal` — maps solver output to concrete swap amounts
+//! Arbitrage action module for Equilibrium.
+//!
+//! Implements:
+//!   - `CurrencyGraph` — directed graph of DEX exchange rates
+//!   - `find_arbitrage_path` — Bellman-Ford negative-cycle detection (log-rates)
+//!   - `ArbitrageAction` — `Action` trait for variational solver (maximize profit)
+//!   - `compute_trade_signal` — maps solver output to concrete swap amounts
 
 use crate::action::Action;
-use crate::deterministic;
 use libm::log;
 
 // ── Pool snapshot ─────────────────────────────────────────────────────────────
@@ -93,6 +92,7 @@ struct ArbEdge {
     /// -log(effective_rate) for Bellman-Ford (negative cycle = profit).
     weight:  f64,
     /// token name at `from`
+    #[allow(dead_code)]
     from_token: String,
 }
 
@@ -100,6 +100,7 @@ struct ArbEdge {
 pub struct CurrencyGraph {
     tokens: Vec<String>,
     edges:  Vec<ArbEdge>,
+    #[allow(dead_code)]
     pools:  Vec<PoolSnapshot>,
 }
 
@@ -404,6 +405,7 @@ pub fn compute_trade_signal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deterministic;
     use crate::solver::StationarySolver;
 
     fn make_pools() -> Vec<PoolSnapshot> {
@@ -460,7 +462,7 @@ mod tests {
                 let g = action.gradient(&vec![1.0]);
                 // At the stationary point the gradient should be ~0
                 let solver = StationarySolver::new(1e-6, 50);
-                let opt = solver.solve_newton_cg(&action, &vec![1.0]);
+                let opt = solver.solve_newton_cg(&action, &[1.0]);
                 let g_opt = action.gradient(&opt);
                 assert!(
                     deterministic::norm2(&g_opt) < 1e-4,

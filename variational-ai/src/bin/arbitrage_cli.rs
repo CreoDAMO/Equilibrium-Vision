@@ -120,7 +120,7 @@ fn process(input: &str) -> Result<Response, String> {
         let first_pool_id = path.pool_ids[0].clone();
 
         if let Some(action) = ArbitrageAction::new(path.clone(), &working_pools, req.lambda) {
-            let opt = solver.solve_newton_cg(&action, &vec![1.0]);
+            let opt = solver.solve_newton_cg(&action, &[1.0]);
             let signal = compute_trade_signal(&path, &action.pools, &opt);
 
             if signal.expected_profit > 0.0 {

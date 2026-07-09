@@ -57,16 +57,16 @@ impl Action for LogisticAction {
     fn gradient(&self, theta: &Self::Parameter) -> Vec<f64> {
         let probs = self.probabilities(theta);
         let mut grad = vec![0.0; self.dim];
-        for i in 0..self.n {
-            let err   = probs[i] - self.labels[i];
+        for (i, &prob) in probs.iter().enumerate().take(self.n) {
+            let err   = prob - self.labels[i];
             let start = i * self.dim;
-            for j in 0..self.dim {
-                grad[j] += err * self.data[start + j];
+            for (j, g) in grad.iter_mut().enumerate().take(self.dim) {
+                *g += err * self.data[start + j];
             }
         }
         let n = self.n as f64;
-        for j in 0..self.dim {
-            grad[j] = grad[j] / n + self.lambda * theta[j];
+        for (j, g) in grad.iter_mut().enumerate().take(self.dim) {
+            *g = *g / n + self.lambda * theta[j];
         }
         grad
     }
@@ -74,17 +74,17 @@ impl Action for LogisticAction {
     fn hessian_vec_prod(&self, theta: &Self::Parameter, v: &[f64]) -> Vec<f64> {
         let probs = self.probabilities(theta);
         let mut hv = vec![0.0; self.dim];
-        for i in 0..self.n {
-            let w   = probs[i] * (1.0 - probs[i]);
+        for (i, &prob) in probs.iter().enumerate().take(self.n) {
+            let w   = prob * (1.0 - prob);
             let d   = deterministic::dot(&self.data[i * self.dim..(i + 1) * self.dim], v);
             let start = i * self.dim;
-            for j in 0..self.dim {
-                hv[j] += w * d * self.data[start + j];
+            for (j, h) in hv.iter_mut().enumerate().take(self.dim) {
+                *h += w * d * self.data[start + j];
             }
         }
         let n = self.n as f64;
-        for j in 0..self.dim {
-            hv[j] = hv[j] / n + self.lambda * v[j];
+        for (j, h) in hv.iter_mut().enumerate().take(self.dim) {
+            *h = *h / n + self.lambda * v[j];
         }
         hv
     }

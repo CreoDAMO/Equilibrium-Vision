@@ -98,10 +98,9 @@ pub fn load_real_mnist() -> MnistData {
     fn read_idx_images(path: &str) -> (Vec<Vec<u8>>, usize, usize) {
         let bytes = std::fs::read(path).unwrap_or_else(|e| {
             panic!(
-                "Cannot open MNIST image file '{}': {}\n\
+                "Cannot open MNIST image file '{path}': {e}\n\
                  Download MNIST from http://yann.lecun.com/exdb/mnist/ \
-                 and decompress into variational-ai/data/",
-                path, e
+                 and decompress into variational-ai/data/"
             )
         });
         let n    = u32::from_be_bytes(bytes[4..8].try_into().unwrap()) as usize;
@@ -115,10 +114,9 @@ pub fn load_real_mnist() -> MnistData {
     fn read_idx_labels(path: &str) -> Vec<u8> {
         let bytes = std::fs::read(path).unwrap_or_else(|e| {
             panic!(
-                "Cannot open MNIST label file '{}': {}\n\
+                "Cannot open MNIST label file '{path}': {e}\n\
                  Download MNIST from http://yann.lecun.com/exdb/mnist/ \
-                 and decompress into variational-ai/data/",
-                path, e
+                 and decompress into variational-ai/data/"
             )
         });
         let n = u32::from_be_bytes(bytes[4..8].try_into().unwrap()) as usize;

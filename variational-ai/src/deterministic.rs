@@ -80,8 +80,7 @@ pub fn dot_fixed(a: &[i64], b: &[i64]) -> i64 {
 pub fn norm2_fixed(v: &[i64]) -> i64 {
     let sum_sq: i128 = v.iter().map(|&x| (x as i128) * (x as i128)).sum();
     // sqrt(sum_sq) is in units of SCALE; divide by SCALE to get fixed-point result
-    let norm_scaled = (sum_sq as f64).sqrt() as i64;
-    norm_scaled
+    (sum_sq as f64).sqrt() as i64
 }
 
 /// Polynomial sigmoid approximation in fixed-point.

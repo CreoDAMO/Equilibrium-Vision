@@ -19,11 +19,11 @@ impl StationarySolver {
     }
 
     /// Run Newton-CG on any `Action<Parameter = Vec<f64>>`.
-    pub fn solve_newton_cg<A>(&self, action: &A, initial: &Vec<f64>) -> Vec<f64>
+    pub fn solve_newton_cg<A>(&self, action: &A, initial: &[f64]) -> Vec<f64>
     where
         A: Action<Parameter = Vec<f64>>,
     {
-        let mut theta = initial.clone();
+        let mut theta = initial.to_owned();
         for _ in 0..self.max_iter {
             let grad      = action.gradient(&theta);
             let grad_norm = deterministic::norm2(&grad);
@@ -145,11 +145,11 @@ impl LbfgsSolver {
     }
 
     /// Run L-BFGS on any `Action<Parameter = Vec<f64>>`.
-    pub fn solve<A>(&self, action: &A, initial: &Vec<f64>) -> Vec<f64>
+    pub fn solve<A>(&self, action: &A, initial: &[f64]) -> Vec<f64>
     where
         A: Action<Parameter = Vec<f64>>,
     {
-        let mut theta     = initial.clone();
+        let mut theta     = initial.to_owned();
         let mut grad      = action.gradient(&theta);
         let mut grad_norm = deterministic::norm2(&grad);
 

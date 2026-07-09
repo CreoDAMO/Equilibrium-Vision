@@ -1,0 +1,189 @@
+Run cargo clippy --all-targets -- -D warnings
+  cargo clippy --all-targets -- -D warnings
+  shell: /usr/bin/bash -e {0}
+  env:
+    CARGO_HOME: /home/runner/.cargo
+    CARGO_INCREMENTAL: 0
+    CARGO_TERM_COLOR: always
+    CACHE_ON_FAILURE: false
+    Checking variational-ai v0.1.0 (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/variational-ai)
+error: empty line after doc comment
+ --> src/arbitrage.rs:7:1
+  |
+7 | / ///   - `compute_trade_signal` — maps solver output to concrete swap amounts
+8 | |
+  | |_^
+9 |   use crate::action::Action;
+  |   - the comment documents this `use` import
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#empty_line_after_doc_comments
+  = note: `-D clippy::empty-line-after-doc-comments` implied by `-D warnings`
+  = help: to override `-D warnings` add `#[allow(clippy::empty_line_after_doc_comments)]`
+  = help: if the empty line is unintentional, remove it
+help: if the comment should document the parent module use an inner doc comment
+  |
+1 ~ //! Arbitrage action module for Equilibrium.
+2 ~ //!
+3 ~ //! Implements:
+4 ~ //!   - `CurrencyGraph` — directed graph of DEX exchange rates
+5 ~ //!   - `find_arbitrage_path` — Bellman-Ford negative-cycle detection (log-rates)
+6 ~ //!   - `ArbitrageAction` — `Action` trait for variational solver (maximize profit)
+7 ~ //!   - `compute_trade_signal` — maps solver output to concrete swap amounts
+  |
+
+error: unused import: `crate::deterministic`
+  --> src/arbitrage.rs:10:5
+   |
+10 | use crate::deterministic;
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `-D unused-imports` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(unused_imports)]`
+
+error: field `from_token` is never read
+  --> src/arbitrage.rs:96:5
+   |
+89 | struct ArbEdge {
+   |        ------- field in this struct
+...
+96 |     from_token: String,
+   |     ^^^^^^^^^^
+   |
+   = note: `ArbEdge` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+   = note: `-D dead-code` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+error: field `pools` is never read
+   --> src/arbitrage.rs:103:5
+    |
+100 | pub struct CurrencyGraph {
+    |            ------------- field in this struct
+...
+103 |     pools:  Vec<PoolSnapshot>,
+    |     ^^^^^
+
+error: returning the result of a `let` binding from a block
+  --> src/deterministic.rs:84:5
+   |
+83 |     let norm_scaled = (sum_sq as f64).sqrt() as i64;
+   |     ------------------------------------------------ unnecessary `let` binding
+84 |     norm_scaled
+   |     ^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#let_and_return
+   = note: `-D clippy::let-and-return` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::let_and_return)]`
+help: return the expression directly
+   |
+83 ~     
+84 ~     (sum_sq as f64).sqrt() as i64
+   |
+
+error: the loop variable `i` is used to index `probs`
+  --> src/logistic.rs:60:18
+   |
+60 |         for i in 0..self.n {
+   |                  ^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_range_loop
+   = note: `-D clippy::needless-range-loop` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::needless_range_loop)]`
+help: consider using an iterator and enumerate()
+   |
+60 -         for i in 0..self.n {
+60 +         for (i, <item>) in probs.iter().enumerate().take(self.n) {
+   |
+
+error: the loop variable `j` is used to index `grad`
+  --> src/logistic.rs:63:22
+   |
+63 |             for j in 0..self.dim {
+   |                      ^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_range_loop
+help: consider using an iterator and enumerate()
+   |
+63 -             for j in 0..self.dim {
+63 +             for (j, <item>) in grad.iter_mut().enumerate().take(self.dim) {
+   |
+
+error: the loop variable `i` is used to index `probs`
+  --> src/logistic.rs:77:18
+   |
+77 |         for i in 0..self.n {
+   |                  ^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_range_loop
+help: consider using an iterator and enumerate()
+   |
+77 -         for i in 0..self.n {
+77 +         for (i, <item>) in probs.iter().enumerate().take(self.n) {
+   |
+
+error: the loop variable `j` is used to index `hv`
+  --> src/logistic.rs:81:22
+   |
+81 |             for j in 0..self.dim {
+   |                      ^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_range_loop
+help: consider using an iterator and enumerate()
+   |
+81 -             for j in 0..self.dim {
+81 +             for (j, <item>) in hv.iter_mut().enumerate().take(self.dim) {
+   |
+
+error: this function has too many arguments (10/7)
+   --> src/ntk.rs:162:1
+    |
+162 | / pub fn verify_ntk_residual(
+163 | |     support_data:    &[f64],
+164 | |     support_labels:  &[f64],
+165 | |     input_dim:       usize,
+...   |
+172 | |     epsilon:         i64,
+173 | | ) -> (i64, bool) {
+    | |________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#too_many_arguments
+    = note: `-D clippy::too-many-arguments` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::too_many_arguments)]`
+
+error: writing `&Vec` instead of `&[_]` involves a new object where a slice will do
+  --> src/solver.rs:22:59
+   |
+22 |     pub fn solve_newton_cg<A>(&self, action: &A, initial: &Vec<f64>) -> Vec<f64>
+   |                                                           ^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#ptr_arg
+   = note: `-D clippy::ptr-arg` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::ptr_arg)]`
+help: change this to
+   |
+22 ~     pub fn solve_newton_cg<A>(&self, action: &A, initial: &[f64]) -> Vec<f64>
+23 |     where
+24 |         A: Action<Parameter = Vec<f64>>,
+25 |     {
+26 ~         let mut theta = initial.to_owned();
+   |
+
+error: writing `&Vec` instead of `&[_]` involves a new object where a slice will do
+   --> src/solver.rs:148:49
+    |
+148 |     pub fn solve<A>(&self, action: &A, initial: &Vec<f64>) -> Vec<f64>
+    |                                                 ^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#ptr_arg
+help: change this to
+    |
+148 ~     pub fn solve<A>(&self, action: &A, initial: &[f64]) -> Vec<f64>
+149 |     where
+150 |         A: Action<Parameter = Vec<f64>>,
+151 |     {
+152 ~         let mut theta     = initial.to_owned();
+    |
+
+error: could not compile `variational-ai` (lib) due to 12 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `variational-ai` (lib test) due to 11 previous errors
+Error: Process completed with exit code 101.

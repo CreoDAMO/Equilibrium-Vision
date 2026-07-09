@@ -159,6 +159,7 @@ pub fn compute_empirical_ntk_mlp(
 ///
 /// This is the logic wrapped by `variational-ai-cli` and called from
 /// the TypeScript bridge.
+#[allow(clippy::too_many_arguments)]
 pub fn verify_ntk_residual(
     support_data:    &[f64],
     support_labels:  &[f64],
