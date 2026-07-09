@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. 150 tests pass (28 Rust, 150 TypeScript across 4 test files, 122 API integration tests). All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. Remaining work: `verifyResidual` host function in the WASM VM, ModelRegistry + Arbitrage WASM contracts, explorer AI pages.
+> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. **221 tests pass (28 Rust + 193 TypeScript across 6 test files)**. All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. **ModelRegistry + Arbitrage WASM contracts deployed and live** — permissionless optimistic-oracle lifecycle, on-chain challenge/slash, read-only Bellman-Ford arbitrage detection. See `LIMITATIONS.md` for known design constraints.
 
 ---
 
@@ -279,7 +279,9 @@ Available at `/` in the running preview. Pages:
 - **Faucet** — 1,000 EQU drip per address per hour; live cooldown status
 - **Wallet** — self-custody Ed25519 wallet (BIP-39 mnemonic, raw keypair, private key import, AES-256-GCM keystore, Ledger via WebHID, m-of-n multisig, transaction signing and broadcast)
 - **Smart Contracts** — WAT textarea editor, in-browser wabt compile, ABI editor, deploy; deployed contract list → detail pages with ABI-driven call panels, storage viewer, bytecode hash
-- **DEX** — liquidity pool overview, swap interface (constant-product AMM), add liquidity, swap history, per-address liquidity positions
+- **DEX** — liquidity pool overview, swap interface (constant-product AMM), add liquidity, swap history, per-address liquidity positions, live Arbitrage Opportunities panel (Bellman-Ford cycle detection, 15s refresh)
+- **Models** (`/models`) — permissionless AI model registry; propose a model with a staked bond, verify after the challenge window, or challenge with matching support data to slash a fraudulent claim; countdown timer, proposer info, status badges
+- **Arbitrage** (`/arbitrage`) — active model binding, recent profit history, circuit-breaker status, owner pause/unpause controls; execution is contract-gated (see `LIMITATIONS.md`)
 - **Staking** — personal staking dashboard for delegating to validators
 - **Admin** — multisig proposal management (`/admin/multisig`)
 

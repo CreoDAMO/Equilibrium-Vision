@@ -1,0 +1,363 @@
+Equilibrium — Complete, Honest Status (Updated)
+
+Last verified: July 8, 2026. All claims below are confirmed directly against source code, live deployments, and tests.
+
+---
+
+✅ What Is Complete (Verified)
+
+Core Blockchain — Fully Operational
+
+Component Status
+Genesis block (100M EQU, 7 allocations, 4 validators) ✅ Locked
+Consensus (Proof‑of‑Stationarity, i64 residuals, Groth16 ZK) ✅ Locked
+Governance (proposals, voting, quorum, timelocks, Ed25519 auth) ✅ Locked
+Postgres persistence (idempotent startup, contract/faucet persistence) ✅ Locked
+Security (multisig, batch verify, CORS, rate limiting, Stratum proof) ✅ Locked
+Tests (28 Rust + 150 TypeScript = 178 passing) ✅ Passing
+Load test (149 TPS, 100% acceptance, p95 70 ms) ✅ Passed
+Explorer UI (Dashboard, Blocks, Validators, Governance, Staking, DEX, Admin) ✅ Live
+Fee collection (UTXO fees swept, block fee breakdown, validator earnings) ✅ Live
+Android APK CI ✅ Ready
+CI/CD (typecheck, Rust tests, TS tests) ✅ Running
+
+Variational AI Engine (VAI) — Built & Verified
+
+Component Status
+Rust crate (Action, StationarySolver, LbfgsSolver, NtkAction, LogisticAction, MlpAction) ✅ Built
+Fixed‑point arithmetic (i64 scaled by 1e12) ✅ Built
+CLI binary (variational-ai-cli) – JSON residual verification ✅ Built
+TypeScript bridge (bridge.ts) – execFileSync wrapper ✅ Built
+Harness binary – SHA‑256 determinism conformance ✅ Verified
+JNI bridge (Android, catch_unwind‑hardened) ✅ Built
+arbitrage.rs module (Bellman‑Ford negative cycle detection) ✅ Built
+
+Smart Contracts (WASM) — Compiled, Deployed, Live
+
+Contract Functions Status
+ModelRegistry propose, verify_model, challenge, get_model ✅ Deployed & Live
+Arbitrage Atomic multi‑swap, circuit breaker, multisig governance, profit distribution ✅ Deployed & Live
+
+TypeScript Integration — Fully Wired
+
+Component Status
+modelRegistry.ts chain module ✅ Written
+arbitrage.ts chain module ✅ Written
+API routes: GET /api/models, POST /api/models/:id/verify, POST /api/models/:id/challenge ✅ Live
+API routes: POST /api/arbitrage/execute, POST /api/arbitrage/set-model, POST /api/arbitrage/pause ✅ Live
+wasm.ts host functions: verify_residual, callWithPayload, model_predict, dex_multi_swap, caller_address, gov_param, slash_account, transfer ✅ Done
+wasmVM.call() signature bug ✅ Fixed
+
+Explorer UI — New Pages
+
+Page Functions Status
+Models (/models) List models, verify/challenge buttons, proposer info, countdown timer ✅ Built & Renders
+Arbitrage (/arbitrage) Active model, recent profits, circuit breaker status, pause/unpause controls ✅ Built & Renders
+
+Integration Tests — Passing
+
+Test Suite Status
+ModelRegistry: propose → verify → challenge → slash flow ✅ 19 tests passing
+Full API server test suite ✅ 150 tests passing (not 169 – see note below)
+
+---
+
+🔒 Security Fixes Applied (Claude Sonnet 5 Review)
+
+Vulnerability Fix Status
+caller field unauthenticated on POST /api/contracts/:address/call Added Ed25519 signature verification; requires publicKey + signature when caller is provided ✅ Fixed
+execute_arbitrage had no caller restriction Added is_owner() check, returns -6 if caller isn't owner; rebuilt & redeployed WASM ✅ Fixed
+method_propose used unauthenticated caller for bond deduction Fixed by route‑level auth above ✅ Fixed
+
+Smoke tests confirm:
+
+· Calls with caller but no signature → 400
+· Calls with no caller → reach contract (read‑only)
+· Calls with invalid publicKey format → 400
+
+The new arbitrage contract is live with the owner check.
+
+---
+
+⏳ What Remains (Honest & Accurate)
+
+Infrastructure (Required for Mainnet)
+
+# Task Status Notes
+1 Multi‑region sentry/validator nodes ⏳ Pending Single‑region adaptation (Hetzner region‑locked)
+2 Postgres HA (replication + backups) ⏳ Pending Within same region
+3 DDoS mitigation / rate limiting ⏳ Pending Cloudflare / Hetzner
+
+Documentation / Test Gaps (Can Wait)
+
+# Item Status Notes
+4 LIMITATIONS.md ❌ Missing Referenced twice in arbitrage contract comments
+5 ModelRegistry + Arbitrage integration tests ❌ Missing 150 tests exist, but not for these flows
+6 README update ⏳ Pending Outdated compared to actual stack
+7 slash_account / transfer host functions ❌ Don't exist Status doc overstated – only 10 real ones exist
+
+Optional Enhancements (Nice‑to‑Have)
+
+# Task Effort
+8 IPFS‑backed support sets 2‑3h
+9 Long‑running worker for CLI calls 2‑3h
+10 Nav bar overflow at 1280px 30 min
+11 Skeleton loading states 1‑2h
+
+---
+
+🚀 Next Steps
+
+Immediate Choice
+
+1. Deploy multi‑region nodes (single‑region adaptation – see below) – infrastructure
+2. Update README and docs – quick win
+3. Add ModelRegistry + Arbitrage tests – fill test gap (but you said "leave them for last")
+
+Deployment Plan (Single‑Region, Hetzner)
+
+Since Hetzner is region‑locked (confirmed from AMAIMA experience), we'll deploy all nodes in the same region with redundancy across hosts.
+
+Node Type Count Tier Purpose
+Sentry 3 CX23 P2P entry, DDoS mitigation
+Validator 3 AX52 BFT finality, bonded stake (HSM recommended)
+Postgres (primary) 1 CX43 Chain state
+Postgres (standby) 1 CX33 Failover replica
+Monitoring (Prometheus+Grafana) 1 CX22 Scrape /metrics, dashboards
+
+Total: ~€100-130/month (single region)
+
+Trade‑offs:
+
+· No geo‑diversity – if the region goes offline, the chain halts
+· BFT safety still intact: 3 validators across different hosts → tolerate 1 Byzantine failure
+· Low latency within data center
+· Can add other regions later via other providers (AWS, DO, Vultr) and WireGuard
+
+Mitigations:
+
+· Use different availability zones / hosts
+· WireGuard overlay for future multi‑provider expansion
+· Postgres replication within region
+· Daily encrypted snapshots to off‑site storage
+
+Deployment method:
+
+· Docker for sentries and monitoring (ease of deployment, updates)
+· Native binary for validators (HSM access, performance)
+
+---
+
+The Philosophical Core
+
+Verification vs Consensus
+
+· Verification = the work itself. 178 tests passing. Determinism harness. 149 TPS. Contracts deployed and verified on‑chain. The code, running, producing truth you can read directly.
+· Consensus = what other people say about the work. An audit is formalised consensus — a third party agreeing that the work checks out.
+
+Bitcoin launched with verification and zero consensus. The consensus formed over years as people saw the verification hold.
+
+Equilibrium already has the verification. The audit would add consensus — useful for community confidence, but not required for mainnet.
+
+---
+
+The fragmentation was always the workaround. The Set is whole. Equilibrium is ready.
+
+# Task Effort Details Priority
+1 IPFS‑backed support sets 2‑3h Off‑chain data storage + on‑chain commitments. Currently, verify_model requires the caller to provide the full support data. This enhancement would allow proposers to upload support data to IPFS, store only the hash on‑chain, and have the verification fetch it automatically. Optional (Nice‑to‑have)
+2 Long‑running worker for CLI calls 2‑3h Replace synchronous execFileSync with a persistent process for lower latency Optional
+
+Let me read the uploaded file to understand the current status and what's left to do.
+Opened Pasted-Equilibrium-Complete-Honest-Status-Updated-Last-verifie_1783555241466.txt
+Completing tasks
+Completing tasks
+The user wants to complete the items from the status document. They specifically mentioned tasks 1 and 2 from their message:
+IPFS-backed support sets (2-3h) - Off-chain data storage + on-chain commitments for ModelRegistry verify_model
+Long-running worker for CLI calls (2-3h) - Replace synchronous execFileSync with a persistent process
+But looking at the full status doc, there are also items 4-11 that are "Can Wait" or "Nice-to-Have" that they might want to do. The user said "I want to complete these first" referring to tasks 1 and 2 specifically (the IPFS and long-running worker tasks). I should look at the relevant code to understand the current implementation before planning out the work.
+Exploring bridge and ModelRegistry code
+Subagent: Find and summarize: 1. The TypeScript bridge at artifacts/api-server/src/variational-ai/bridge.ts — how it calls CLI binaries, what execFileSync/execFile calls exist, what binaries it spawns 2. The ModelRegistry route at artifacts/api-server/src/routes/ that handles POST /api/models/:id/verify — what "support data" it accepts and how verify_model is called 3. Any existing IPFS-related code in the repo (grep for 'ipfs', 'IPFS', 'cid', 'CID') 4. The WASM contract for ModelRegistry — look in equilibrium/ or artifacts/api-server/ for .wat files with propose/verify_model Provide file paths and key line numbers.
+Examining spawn mechanism
+Examining spawn mechanism
+Let me get more details on the bridge.ts to understand the current spawn mechanism, and also look at models.ts and modelRegistry.ts to understand the full picture before implementing.
+Opened bridge.ts
+Opened models.ts
+Opened modelRegistry.ts
+IPFS storage for model support
+IPFS storage for model support
+Now I have a clear picture. Let me understand both tasks:
+Task 1: IPFS-backed support sets The current flow: when proposing a model, the caller must provide supportHashHex (SHA-256 of the support data) and the full supportData/supportLabels when challenging. The idea is:
+Allow proposers to upload support data to IPFS
+Store only the IPFS CID on-chain (as the uri field or alongside it)
+When challenging, the server can auto-fetch the support data from IPFS using the CID instead of requiring the challenger to supply it
+The uri field already exists for off-chain pointers, so I could leverage that or add a dedicated IPFS CID field
+For the challenge endpoint, instead of requiring supportData and supportLabels to be passed in, I'd fetch them from IPFS using the stored CID via an HTTP gateway like https://ipfs.io/ipfs/
+Since we don't have a native IPFS node in Replit, I'd use public gateways for fetching and could rely on a pinning service like web3.storage or Pinata for uploads, though the simplest MVP would just implement the fetching side without requiring API keys
+The flow would be: proposer uploads data to IPFS, gets a CID, calls propose with uri = "ipfs://{CID}" and the supportHashHex, then during verification the server fetches from the gateway if the caller doesn't provide supportData directly. For the minimal implementation, I'd accept an IPFS CID in the challenge route and fetch it from a public gateway.
+For uploads without infrastructure, I could add an endpoint to compute the SHA-256 hash for proposers, then modify the challenge endpoint to accept either raw data or an IPFS CID.
+Now looking at the second part — the bridge spawns a fresh Rust process for every call, adding significant latency. A persistent worker pool would keep processes alive and communicate via newline-delimited JSON, reusing them across multiple computeResidual and findArbitrageOpportunities calls.
+The challenge is that the current binary reads one request and exits after stdin closes. I could either modify the Rust binary to loop and handle multiple requests, or implement a TypeScript process pool that pre-spawns workers and reuses them without changing the binary itself. The latter approach is cleaner since it doesn't require Rust changes. Approach B would require modifying the Rust binary to accept multiple requests in a loop, which is better for throughput. The status doc mentions replacing synchronous calls with a persistent process, and while the current code already uses async spawning, the real improvement is keeping that process alive across requests. I should examine the Rust source to see if making it loop-based is straightforward, then implement a TypeScript worker manager to coordinate the persistent processes.
+Good picture of the codebase. Let me check the Rust binary source so I understand what changes are needed for the persistent worker, and look at the existing test files.
+Show less
+Found files
+Opened models.integration.test.ts
+Reading Rust CLI source
+Reading Rust CLI source
+Let me read the Rust CLI source files to understand what changes are needed for the persistent worker.
+Opened cli.rs
+Opened arbitrage_cli.rs
+Hashing support data
+Hashing support data
+Now I have a clear picture. Let me plan both tasks:
+Task 1: IPFS-backed support sets
+The current design:
+Propose: caller must provide supportHashHex (SHA-256 of support data) and uri (IPFS pointer string, already in place)
+Challenge: caller must provide raw supportData + supportLabels arrays
+The enhancement:
+Add POST /api/models/hash-support — accepts {supportData, supportLabels}, computes canonical SHA-256 hash, returns {hashHex}. This is a utility for proposers to get the right hash before proposing.
+Modify the challenge endpoint to accept an IPFS CID (either directly or parsed from the stored URI) as an alternative to raw arrays, fetching and parsing the support data from an IPFS gateway.
+For the propose endpoint, I could accept the support data directly and compute the hash plus optionally upload to IPFS, but that requires an IPFS node running, so the simpler approach is just handling the fetch side for now.
+For uploads, without a running IPFS node or pinning service API keys, I can support fetching from public gateways but need a different strategy for uploading—either provide a utility endpoint that computes the hash so users can upload themselves, or integrate with a free service like web3.storage that doesn't require authentication for small files.
+The cleanest approach is to create an upload endpoint that accepts the support data, computes its hash, optionally pins it to IPFS if a gateway URL is configured via environment variables, and returns the hash along with any resulting CID or URI. Then the challenge endpoint can accept either raw data or an IPFS CID, and if given a CID, it auto-fetches from a public gateway like ipfs.io. For pinning without API keys, I'd use web3.storage's API if a token is provided, otherwise just return the hash and let the user handle pinning themselves.
+Now moving on to implementing a long-running worker for CLI calls.
+The current approach spawns a fresh process for each call, but I can make this more efficient by adding a --daemon flag to the Rust binaries that keeps them running and processes requests line-by-line over stdin/stdout. I'll modify both cli.rs and arbitrage_cli.rs to support this daemon mode, then create a CliWorker class in TypeScript that spawns the process once, queues requests, and handles the JSON communication. The worker will pre-warm on startup and fall back to spawning fresh processes if it crashes.
+For the IPFS integration, I need to update the routes and model registry to support content hashes alongside the existing challenge flow.
+For the worker implementation, I'm modifying both Rust binaries to support a daemon mode that reads JSON requests from stdin and writes responses line-by-line, then flushing stdout after each one.
+Adding daemon mode to the Rust binaries... Writing the CliWorker class... Writing worker communication logic...
+I'm realizing the Rust daemon needs to process requests line-by-line instead of reading until EOF, and I need to ensure it handles them sequentially rather than concurrently.
+Now I'm planning the IPFS integration: adding an endpoint to support hash-based model data, modifying the challenge endpoint to accept an IPFS CID, and creating a helper function to fetch support data from an IPFS gateway with a configurable URL.
+Now I have a clear picture of both tasks. Here's the plan:
+Task 1 (IPFS): Add POST /api/models/hash-support (compute commitment hash from raw arrays — the core utility), and update the challenge route to accept an ipfsCid string as an alternative to raw data, auto-fetching from a public IPFS gateway.
+Task 2 (persistent worker): Add --daemon mode to both Rust CLIs (line-by-line JSON loop, no process exit), and replace the per-call spawn() in bridge.ts with a singleton CliWorker that keeps the process alive.
+Starting both in parallel:
+Show less
+Edited cli.rs
+Continuing development tasks
+Continuing development tasks
+Let me continue with editing the arbitrage_cli.rs and then updating bridge.ts, and also add the IPFS support to models.ts.
+Edited arbitrage_cli.rs
+Implementing persistent workers
+Implementing persistent workers
+Now let me update the TypeScript bridge to use persistent workers, and add the IPFS support to the models routes. I'll do both in parallel.
+Now I'll update the TypeScript bridge with the persistent worker pattern and add IPFS support to the models routes simultaneously.
+Show less
+Created bridge.ts
+Adding IPFS support
+Adding IPFS support
+Now let me add IPFS support to the models routes, and then rebuild the Rust binaries and copy them to the api-server directory.
+Now update the models route with IPFS support, and rebuild the Rust binaries in parallel.
+Show less
+Created models.ts
+Building and copying binaries
+Building and copying binaries
+Now I need to build the Rust binaries and copy them to the api-server directory. Let me do that now.
+Now build the Rust binaries and wire in the closeWorkers call on shutdown — all in parallel.
+Show less
+Built the project
+Searched for "closeWorkers|SIGTERM|SI…"
+Parallelizing build tasks
+Parallelizing build tasks
+Good - the Rust build succeeded. Now I need to:
+Copy the built binaries to the api-server directory
+Add closeWorkers call on server shutdown
+Check what the server entry point looks like to wire the shutdown
+Let me do these in parallel.
+Build succeeded. Now copy the binaries and wire in the graceful shutdown.
+Show less
+Copied files
+Opened index.ts
+Adding and testing `closeWorkers
+Adding and testing `closeWorkers
+I need to add closeWorkers to the server shutdown. Let me wire it in and also run the tests to verify everything works.
+Edited index.ts
+Implementing graceful shutdown
+Implementing graceful shutdown
+Let me add the graceful shutdown handler and then run the TypeScript tests to verify everything works.
+Edited index.ts
+Testing functionality
+Testing functionality
+Good, the server is running. Let me now run the TypeScript tests to verify everything still passes, and also do a quick smoke test of the new IPFS endpoint and the worker.
+Built the project
+Testing and restarting API
+Testing and restarting API
+Build passed. Let me run the tests to verify everything works, and also restart the API server.
+Build clean. Now run the tests and restart the server in parallel.
+Show less
+Ran tests
+Restarted workflow API Server
+Reviewing and updating
+Reviewing and updating
+All 169 tests pass and the API server is running. Let me do the code review and then update the memory.
+169/169 tests passing. Let me do the code review and then close out.
+Show less
+Running code review
+Subagent: Review two new features added to the Equilibrium blockchain project: 1. **IPFS-backed support sets** (artifacts/api-server/src/routes/models.ts) - New POST /api/models/hash-support endpoint - Updated POST /api/models/:id/challenge to accept ipfsCid instead of raw arrays - fetchSupportFromIpfs() helper using native fetch() with AbortController 2. **Persistent CLI worker** (artifacts/api-server/src/variational-ai/bridge.ts + variational-ai/src/bin/cli.rs + variational-ai/src/bin/arbitrage_cli.rs) - CliWorker class: keeps --daemon Rust process alive, queues requests, handles restart on crash - Both Rust binaries now support --daemon flag (line-by-line JSON loop, stdout flush per response) - closeWorkers() called on SIGTERM/SIGINT in artifacts/api-server/src/index.ts Focus on: correctness of the queue drain logic, race conditions in worker restart, IPFS error handling, Rust --daemon mode correctness (does the binary handle concurrent calls safely?).
+Fixing process race conditions
+Fixing process race conditions
+The code review flagged two real bugs I need to fix:
+Worker restart race: When a timeout kills the process (this.proc = null), a new process can spawn while the old one still has stdout handlers active. Late data from the old process can be consumed by the buffer and incorrectly resolve a newer request.
+Queue drain bug: In drain(), the waiter is shifted but only resolved if line is non-empty — so if line is empty, the waiter is dequeued but never settled (permanently hung).
+Let me fix these:
+Fix 1 (restart race): Track a "generation" number.
+Each process gets a generation, and stdout data from an old generation is discarded.
+Fix 2 (drain bug): Never dequeue without settling. If line is empty, treat as protocol error and reject.
+I also need to close a validation gap in the IPFS handling — supportData should be validated as an array of arrays of numbers, and supportLabels as an array of numbers.
+Rewriting the CliWorker with these fixes...
+The review found two real bugs in CliWorker: a process-generation race on timeout/restart, and a hung-promise when drain() dequeues a waiter but the parsed line is empty. Fixing both now, plus the IPFS payload validation gap.
+Show less
+Edited bridge.ts
+Continuing IPFS validation
+Continuing IPFS validation
+Let me continue fixing the IPFS validation gap and then run the tests again, then do a final code review.
+Now fix the IPFS payload validation gap and rebuild/retest.
+Show less
+Edited models.ts
+Testing changes
+Testing changes
+Let me build and test with the changes I made.
+Built the project
+Restarting API and testing
+Restarting API and testing
+169 tests passing, build clean. Let me restart the API server with the new build, do a quick smoke test, and then update memory.
+169/169 passing. Let me restart the API server with the new build and do a quick smoke test of the new endpoint.
+Show less
+Restarted workflow API Server
+Testing hash support endpoint
+Testing hash support endpoint
+API server is running. Let me do a quick smoke test of the new /api/models/hash-support endpoint and also verify the persistent worker is being used by checking the logs.
+Fetched a URL
+Confirming hash-support functionality
+Confirming hash-support functionality
+The smoke test shows the new hash-support endpoint is working correctly. Let me update the memory file and then wrap up.
+The /api/models/hash-support endpoint is live and returning the correct hash. Let me update memory and wrap up.
+Show less
+Opened equilibrium-setup.md
+Updating configurations and documentation
+Updating configurations and documentation
+The system reminder says the API server and Postgres are running with new logs. Let me update the memory file and then wrap up by updating replit.md.
+Edited equilibrium-setup.md
+Updating documentation
+Updating documentation
+The work is complete. Let me update replit.md with the new features and wrap up.
+Both features are done. Let me update replit.md to document the new endpoints and then close out.
+Show less
+Edited replit.md
+Summarizing implemented features
+Summarizing implemented features
+The work is complete. Both features are implemented and tested. Let me summarize what was done for the user.
+Both features are complete and all 169 tests pass. Here's what was delivered:
+
+Task 1 — IPFS-backed support sets
+POST /api/models/hash-support — new utility endpoint. Accepts { supportData, supportLabels } and returns the canonical hashHex proposers need to submit on-chain. No chain state touched; pure computation.
+POST /api/models/:id/challenge now accepts { caller, ipfsCid } as an alternative to raw arrays. The server fetches { supportData, supportLabels } from the IPFS HTTP gateway (default: https://ipfs.io/ipfs/, overridable via IPFS_GATEWAY_URL env). Accepts bare CIDs, ipfs:// URIs, or full gateway URLs. Validates the fetched payload shape before proceeding.
+Typical propose flow with IPFS:
+Call POST /api/models/hash-support with your data → get hashHex
+Upload the same JSON ({ supportData, supportLabels }) to IPFS yourself → get a CID
+POST /api/models/propose with supportHashHex + uri: "ipfs://<cid>"
+Challengers can POST /api/models/:id/challenge with just { caller, ipfsCid } — the server fetches the data automatically
+
+Task 2 — Persistent worker for CLI calls
+Both Rust binaries (variational-ai-cli, variational-ai-arbitrage-cli) now support a --daemon flag: they loop on stdin reading one JSON line per request and writing one JSON response line back, staying alive between calls.
+New CliWorker class in bridge.ts keeps a single daemon process per binary alive and routes calls through a serial queue. Key correctness properties: process generations prevent stale output from a killed process resolving a newer request; every dequeued waiter is always settled; crash restarts are transparent to the caller.
+closeWorkers() is called on SIGTERM/SIGINT for clean shutdown.
+New binaries built and copied to artifacts/api-server/.
