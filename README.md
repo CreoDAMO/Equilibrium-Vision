@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. 197 tests pass (28 Rust, 197 TypeScript across 5 test files). All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, persistent daemon worker, and SHA-256 determinism harness. **ModelRegistry + Arbitrage contracts live** — full optimistic-oracle lifecycle (propose → challenge → slash / verify), IPFS-backed support sets, Arbitrage WASM executor with circuit breaker and model-maturity gate. `LIMITATIONS.md` documents the gap between the design brief and what is actually implemented.
+> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. 150 tests pass (28 Rust, 150 TypeScript across 4 test files, 122 API integration tests). All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. Remaining work: `verifyResidual` host function in the WASM VM, ModelRegistry + Arbitrage WASM contracts, explorer AI pages.
 
 ---
 
@@ -589,13 +589,11 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 
 ### Testing
 - **Rust unit tests** — 28 tests (`cargo test --lib`): wallet round-trips/sign/verify, stationary solver bounds/clamp/fixed-point, consensus `choose_fork` including fixed-point comparison
-- **TypeScript tests** — 197 tests across 5 files (`pnpm --filter @workspace/api-server test`):
+- **TypeScript tests** — 150 tests across 4 files (`pnpm --filter @workspace/api-server test`):
   - `chain.unit.test.ts` — 41 unit tests: hash256, merkleRoot, ZK proof generate/verify, difficulty adjustment, UTXO fee sweep/rollback
   - `api.integration.test.ts` — 32 integration tests via Supertest: full chain/block/tx/submission/UTXO/peer/validator/governance flow including valid votes, wrong signature → 401, address mismatch → 400
   - `contracts.integration.test.ts` — 58 tests: WASM VM deploy/call/storage, gas tracking, ABI persistence, bulk restore, REST API coverage, `contracts.deployer` filter
   - `multisig.integration.test.ts` — 19 tests: on-chain M-of-N proposal/approve/execute flow, replay protection, bitmask tracking
-  - `models.integration.test.ts` — 19 tests: ModelRegistry propose → verify (undisputed) and propose → challenge → slash flows, IPFS CID validation, bond/reward accounting
-  - `arbitrage.integration.test.ts` — 28 tests: arbitrage opportunities endpoint, contract status, admin-gated pause/unpause/set-model, execute validation and contract error codes (-1 paused, -2 no model), full ModelRegistry → Arbitrage integration lifecycle
 
 ### Explorer & Wallet
 - Block explorer — Dashboard, Blocks, BlockDetail (with Miner Fee Breakdown panel), TxDetail, AddressDetail, Mempool, Network — all pages live with real-time React Query data
@@ -645,7 +643,7 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 
 ## Remaining Work
 
-_Reconciled against the running code on 2026-07-09 — see `TODO.md` for full detail and file pointers._
+_Reconciled against the running code on 2026-07-08 — see `TODO.md` for full detail and file pointers._
 
 ### Actionable in Replit
 
@@ -659,7 +657,7 @@ _Reconciled against the running code on 2026-07-09 — see `TODO.md` for full de
 | 🟢 | Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md` |
 | 🟢 | Automated CD | `ci.yml` only runs tests/build today — no auto-deploy on `main` push |
 | 🟢 | Rust/node binary release pipeline | Android APK has one; the validator/testnet-node binary does not |
-| 🟢 | Arbitrage autonomous execution safety rails | See `LIMITATIONS.md §4` — governance-controlled sizing, per-block rate limit, and formal audit needed before enabling |
+| 🟢 | Arbitrage governance safety rails | Only needed if moving toward autonomous execution — detector is intentionally read-only today |
 
 ### External infrastructure and ops
 
