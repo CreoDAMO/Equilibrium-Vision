@@ -41,7 +41,10 @@ function resolveContractArtifact(...segments: string[]): string {
 //     for model inputs/labels; keeps word counts small for large support
 //     sets within the 1024-word call-arg limit)
 
-const METHOD = { PROPOSE: 0, VERIFY_MODEL: 1, CHALLENGE: 2, GET_STATUS: 3, GET_VERIFIED_AT: 4 } as const;
+const METHOD = {
+  PROPOSE: 0, VERIFY_MODEL: 1, CHALLENGE: 2, GET_STATUS: 3, GET_VERIFIED_AT: 4,
+  SUBMIT_INFERENCE_ATTESTATION: 5, GET_INFERENCE_STATUS: 6, GET_CAPABILITIES: 7,
+} as const;
 
 const RESIDUAL_SCALE = 1_000_000_000_000; // 1e12
 const FIELD_SCALE = 1_000_000; // 1e6 (lambda, support data/labels, tol)
@@ -87,6 +90,20 @@ function hexToWords32(hex: string): number[] {
   return words;
 }
 
+function hexToWordsN(hex: string, byteLen: number): number[] {
+  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+  if (clean.length !== byteLen * 2) throw new Error(`Expected ${byteLen}-byte hex (${byteLen * 2} chars), got ${clean.length}`);
+  const bytes = new Uint8Array(byteLen);
+  for (let i = 0; i < byteLen; i++) bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  const words: number[] = [];
+  for (let i = 0; i < byteLen; i += 4) {
+    let w = 0;
+    for (let b = 0; b < 4; b++) w |= (bytes[i + b] ?? 0) << (b * 8);
+    words.push(w);
+  }
+  return words;
+}
+
 let cachedAddress: string | undefined;
 
 export function getModelRegistryAddress(): string | undefined {
@@ -112,6 +129,9 @@ export async function deployModelRegistryIfNeeded(wasmVM: WasmVM, deployer: stri
       { name: "challenge", methodId: METHOD.CHALLENGE, inputs: [], outputs: ["i32"] },
       { name: "getStatus", methodId: METHOD.GET_STATUS, inputs: ["i32"], outputs: ["i32"] },
       { name: "getVerifiedAt", methodId: METHOD.GET_VERIFIED_AT, inputs: ["i32"], outputs: ["i32"] },
+      { name: "submitInferenceAttestation", methodId: METHOD.SUBMIT_INFERENCE_ATTESTATION, inputs: ["i32"], outputs: ["i32"] },
+      { name: "getInferenceStatus", methodId: METHOD.GET_INFERENCE_STATUS, inputs: ["i32"], outputs: ["i32"] },
+      { name: "getCapabilities", methodId: METHOD.GET_CAPABILITIES, inputs: [], outputs: ["i32"] },
     ],
   });
   if (error || !address) {
@@ -245,6 +265,66 @@ export async function getModelStatus(wasmVM: WasmVM, modelId: number): Promise<"
   const res = await wasmVM.call(address, METHOD.GET_STATUS, [modelId]);
   if (!res.success || res.returnValue === null) return "unknown";
   return res.returnValue === 0 ? "proposed" : res.returnValue === 1 ? "verified" : res.returnValue === 2 ? "slashed" : "unknown";
+}
+
+export interface SubmitInferenceAttestationParams {
+  modelId: number;
+  inputHashHex: string; // sha256 hex of the model input, 64 hex chars
+  outputHashHex: string; // sha256 hex of the model output, 64 hex chars
+  signatureHex: string; // 128 hex chars — Ed25519 sig over inputHash||outputHash||modelId (i32 LE)
+  pubkeyHex: string; // 64 hex chars — raw Ed25519 public key bytes
+  attestorAddress: string; // 40-hex-char address, sha256(pubkeyBytes)[..20] — must derive from pubkeyHex
+}
+
+export interface SubmitInferenceAttestationResult { success: boolean; error?: string }
+
+/**
+ * Records an Ed25519-signed inference receipt for a model — NOT a
+ * zero-knowledge proof of correct computation (see the module doc comment
+ * on method 5 in contracts/model_registry/src/lib.rs for the full
+ * rationale). Reuses the same verify_owner_sig host import the on-chain
+ * multisig contract relies on, so no new crypto is introduced.
+ */
+export async function submitInferenceAttestation(wasmVM: WasmVM, caller: string, p: SubmitInferenceAttestationParams): Promise<SubmitInferenceAttestationResult> {
+  const address = getModelRegistryAddress();
+  if (!address) return { success: false, error: "ModelRegistry not configured" };
+  if (!/^[0-9a-f]{40}$/.test(p.attestorAddress)) {
+    return { success: false, error: "attestorAddress must be a 40-hex-char address" };
+  }
+
+  let args: number[];
+  try {
+    args = [
+      p.modelId,
+      ...hexToWords32(p.inputHashHex),
+      ...hexToWords32(p.outputHashHex),
+      ...hexToWordsN(p.signatureHex, 64),
+      ...hexToWords32(p.pubkeyHex),
+      p.attestorAddress.length,
+      ...stringToWords(p.attestorAddress, 40),
+    ];
+  } catch (e) {
+    return { success: false, error: (e as Error).message };
+  }
+
+  const res = await wasmVM.call(address, METHOD.SUBMIT_INFERENCE_ATTESTATION, args, undefined, caller);
+  if (!res.success || res.returnValue === null || res.returnValue < 0) {
+    const messages: Record<number, string> = {
+      [-1]: "Unknown model",
+      [-2]: "Invalid attestor signature",
+      [-3]: "Invalid attestor address length",
+    };
+    return { success: false, error: res.error ?? messages[res.returnValue ?? -1] ?? `submit_inference_attestation() returned ${res.returnValue}` };
+  }
+  return { success: true };
+}
+
+export async function getInferenceStatus(wasmVM: WasmVM, modelId: number): Promise<"none" | "attested" | "unknown"> {
+  const address = getModelRegistryAddress();
+  if (!address) return "unknown";
+  const res = await wasmVM.call(address, METHOD.GET_INFERENCE_STATUS, [modelId]);
+  if (!res.success || res.returnValue === null) return "unknown";
+  return res.returnValue === 1 ? "attested" : res.returnValue === 0 ? "none" : "unknown";
 }
 
 export function getModelDetails(wasmVM: WasmVM, modelId: number): Record<string, string> {

@@ -30,6 +30,7 @@ _Last updated: 2026-07-08 (session 3) — reconciled against actual code, not pr
 | **CI** | `ci.yml` runs typecheck + TS tests + Rust `cargo check`/clippy on every push/PR |
 | **Android APK CI** | `android-apk.yml` (copied from `android-apk-ci.yml`) builds a signed sideload APK via GitHub Actions |
 | **Grafana stack** | `docs/grafana/docker-compose.yml` — one command spins up Prometheus + Grafana with all 3 dashboards auto-provisioned |
+| **Inference attestation (new)** | `ModelRegistry` gained an Ed25519-signed inference receipt: `submit_inference_attestation`/`get_inference_status`/`get_capabilities` in `contracts/model_registry/src/lib.rs`, wired through `chain/modelRegistry.ts` to `POST /api/models/:id/inference-proof` + `GET /api/models/:id/inference-status`. Deliberately scoped as attribution ("who signed this input→output claim"), not a zkML correctness proof — see `LIMITATIONS.md` §1b. 4 new integration tests (197 total TS tests) |
 
 ---
 

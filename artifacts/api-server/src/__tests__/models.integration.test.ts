@@ -7,8 +7,9 @@
  * modelRegistry.ts for the wire encoding.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { randomBytes } from "crypto";
+import { randomBytes, createHash } from "crypto";
 import supertest from "supertest";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import app from "../app.js";
 import { initChain, stopMining, chainState, minerAddress } from "../chain/index.js";
 import { mineNextBlock } from "../chain/state.js";
@@ -267,5 +268,87 @@ describe("Models API — validation errors", () => {
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
     expect(res.body.error).toMatch(/insufficient balance/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Models API — inference attestation (method 5/6)", () => {
+  let modelId: number;
+
+  function addressFromPubkey(pubkey: Uint8Array): string {
+    return createHash("sha256").update(Buffer.from(pubkey)).digest("hex").slice(0, 40);
+  }
+
+  function signAttestation(priv: Uint8Array, inputHash: Buffer, outputHash: Buffer, id: number) {
+    const idBuf = Buffer.alloc(4);
+    idBuf.writeInt32LE(id, 0);
+    const msg = Buffer.concat([inputHash, outputHash, idBuf]);
+    return ed25519.sign(msg, priv);
+  }
+
+  beforeAll(async () => {
+    const proposer = randomAddress();
+    fund(proposer, PROPOSER_FUNDS);
+    const res = await api.post("/api/models/propose").send({
+      caller: proposer, claimedResidual: 0, supportHashHex: "dd".repeat(32),
+      inputDim: 2, hiddenDim: 4, lambda: 0.1, seed: 4, uri: "ipfs://inference-model",
+    });
+    modelId = res.body.modelId;
+  });
+
+  it("GET inference-status is 'none' before any attestation", async () => {
+    const res = await api.get(`/api/models/${modelId}/inference-status`);
+    expect(res.status).toBe(200);
+    expect(res.body.inferenceStatus).toBe("none");
+  });
+
+  it("accepts a validly-signed inference attestation and reflects it in status", async () => {
+    const priv = ed25519.utils.randomSecretKey();
+    const pub = ed25519.getPublicKey(priv);
+    const attestorAddress = addressFromPubkey(pub);
+    const inputHash = createHash("sha256").update("model-input").digest();
+    const outputHash = createHash("sha256").update("model-output").digest();
+    const sig = signAttestation(priv, inputHash, outputHash, modelId);
+
+    const res = await api.post(`/api/models/${modelId}/inference-proof`).send({
+      caller: randomAddress(),
+      inputHashHex: inputHash.toString("hex"),
+      outputHashHex: outputHash.toString("hex"),
+      signatureHex: Buffer.from(sig).toString("hex"),
+      pubkeyHex: Buffer.from(pub).toString("hex"),
+      attestorAddress,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    const statusRes = await api.get(`/api/models/${modelId}/inference-status`);
+    expect(statusRes.body.inferenceStatus).toBe("attested");
+  });
+
+  it("rejects an attestation whose signature does not match the claimed attestor", async () => {
+    const priv = ed25519.utils.randomSecretKey();
+    const pub = ed25519.getPublicKey(priv);
+    const wrongAttestor = randomAddress(); // does not match pub's derived address
+    const inputHash = createHash("sha256").update("bad-input").digest();
+    const outputHash = createHash("sha256").update("bad-output").digest();
+    const sig = signAttestation(priv, inputHash, outputHash, modelId);
+
+    const res = await api.post(`/api/models/${modelId}/inference-proof`).send({
+      caller: randomAddress(),
+      inputHashHex: inputHash.toString("hex"),
+      outputHashHex: outputHash.toString("hex"),
+      signatureHex: Buffer.from(sig).toString("hex"),
+      pubkeyHex: Buffer.from(pub).toString("hex"),
+      attestorAddress: wrongAttestor,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error).toMatch(/invalid attestor signature/i);
+  });
+
+  it("returns 404 for inference-status on an unknown model id", async () => {
+    const res = await api.get("/api/models/999999/inference-status");
+    expect(res.status).toBe(404);
   });
 });

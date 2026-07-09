@@ -55,6 +55,35 @@
 //!       -> block height verified at (>= 0), -1 unknown model, -2 not verified
 //!          (used by other contracts via call_contract, e.g. Arbitrage's
 //!          model_update_delay maturity check)
+//!   5 = submit_inference_attestation(modelId: i32, inputHash: [u8;32],
+//!                 outputHash: [u8;32], sig: [u8;64], pubkey: [u8;32],
+//!                 attestorAddrLen: i32 /* must be 40 */, attestorAddr: [u8;40])
+//!       -> 1 attestation recorded, -1 unknown model, -2 invalid signature,
+//!          -3 attestorAddrLen != 40
+//!
+//!       This is deliberately an Ed25519-attested inference *receipt*, not a
+//!       zero-knowledge proof of correct computation. It verifies (via the
+//!       same `verify_owner_sig` host import the multisig contract uses —
+//!       no new crypto primitive) that whoever holds the attestor keypair
+//!       signed this exact (input_hash, output_hash, model_id) triple. It
+//!       does NOT prove the output was actually produced by running the
+//!       registered model. A real zkML verifier (Groth16 over a per-model
+//!       inference circuit, à la the original ERC-7992 / DeepProve draft)
+//!       would need a witness generator per model architecture, which is a
+//!       substantial separate effort with no existing circuit in this repo
+//!       — see LIMITATIONS.md. This method instead extends the registry's
+//!       existing optimistic-oracle philosophy (bond-and-challenge for
+//!       training claims) to inference claims: an attestation is evidence a
+//!       disputer or off-chain reputation system can act on, not an
+//!       unconditional cryptographic guarantee.
+//!   6 = get_inference_status(modelId: i32)
+//!       -> 1 attested, 0 no attestation yet, -1 unknown model
+//!   7 = get_capabilities(_unused: i32)
+//!       -> bitmask: bit0 (1) = training oracle (propose/verify/challenge),
+//!          bit1 (2) = inference attestation. A numeric capability bitmask
+//!          fits this contract's flat method-id ABI far better than porting
+//!          Solidity's EIP-165 `supportsInterface(bytes4)` string-hash
+//!          scheme, which has no natural equivalent here.
 //!
 //! Full model fields are readable off-chain via the flat KV storage exposed
 //! by GET /api/contracts/:address/storage — see `model_*` keys below —
@@ -97,6 +126,12 @@ extern "C" {
     fn payout(to_ptr: *const u8, to_len: u32, amount: i64) -> i32;
     fn gov_param(name_ptr: *const u8, name_len: u32) -> i64;
     fn verify_residual(req_ptr: *const u8, req_len: u32) -> i32;
+    fn verify_owner_sig(
+        msg_ptr: *const u8, msg_len: u32,
+        sig_ptr: *const u8, sig_len: u32,
+        pubkey_ptr: *const u8, pubkey_len: u32,
+        addr_ptr: *const u8, addr_len: u32,
+    ) -> i32;
 }
 
 // Generous scratch buffer for storage_get reads — every value this contract
@@ -405,6 +440,89 @@ fn method_get_status(args_ptr: u32) -> i32 {
     }
 }
 
+const CAP_TRAINING_ORACLE: i32 = 1;
+const CAP_INFERENCE_ATTESTATION: i32 = 2;
+
+/// args: [modelId, inputHash x8 words (32 bytes), outputHash x8 words
+///        (32 bytes), sig x16 words (64 bytes), pubkey x8 words (32 bytes),
+///        attestorAddrLen, attestorAddrBytes x 10 words (40 ASCII chars)]
+///
+/// See the module doc comment (method 5) for what this does and does not
+/// prove. The signed message is inputHash || outputHash || modelId (i32 LE)
+/// — binding the attestation to a specific model prevents replaying the
+/// same signed receipt against a different modelId.
+fn method_submit_inference_attestation(args_ptr: u32) -> i32 {
+    let id = read_i32_word(args_ptr, 0) as i64;
+    if storage_read(&key("model_status", id)).is_none() {
+        return -1;
+    }
+
+    let mut input_hash = [0u8; 32];
+    for i in 0..8u32 {
+        let w = read_i32_word(args_ptr, 1 + i);
+        input_hash[(i * 4) as usize..(i * 4 + 4) as usize].copy_from_slice(&w.to_le_bytes());
+    }
+    let mut output_hash = [0u8; 32];
+    for i in 0..8u32 {
+        let w = read_i32_word(args_ptr, 9 + i);
+        output_hash[(i * 4) as usize..(i * 4 + 4) as usize].copy_from_slice(&w.to_le_bytes());
+    }
+    let mut sig = [0u8; 64];
+    for i in 0..16u32 {
+        let w = read_i32_word(args_ptr, 17 + i);
+        sig[(i * 4) as usize..(i * 4 + 4) as usize].copy_from_slice(&w.to_le_bytes());
+    }
+    let mut pubkey = [0u8; 32];
+    for i in 0..8u32 {
+        let w = read_i32_word(args_ptr, 33 + i);
+        pubkey[(i * 4) as usize..(i * 4 + 4) as usize].copy_from_slice(&w.to_le_bytes());
+    }
+    let addr_len = read_i32_word(args_ptr, 41) as u32;
+    if addr_len != 40 {
+        return -3;
+    }
+    let attestor_addr = unsafe { read_mem_str(args_ptr + 42 * 4, addr_len) };
+
+    let mut msg = [0u8; 68];
+    msg[0..32].copy_from_slice(&input_hash);
+    msg[32..64].copy_from_slice(&output_hash);
+    msg[64..68].copy_from_slice(&(id as i32).to_le_bytes());
+
+    let valid = unsafe {
+        verify_owner_sig(
+            msg.as_ptr(), msg.len() as u32,
+            sig.as_ptr(), sig.len() as u32,
+            pubkey.as_ptr(), pubkey.len() as u32,
+            attestor_addr.as_ptr(), attestor_addr.len() as u32,
+        )
+    } == 1;
+    if !valid {
+        return -2;
+    }
+
+    storage_write(&key("model_inference_input", id), &hex_encode(&input_hash));
+    storage_write(&key("model_inference_output", id), &hex_encode(&output_hash));
+    storage_write(&key("model_inference_attestor", id), &attestor_addr);
+    set_i64(&key("model_inference_at", id), unsafe { block_number() } as i64);
+    host_log(&format!("InferenceAttested id={} attestor={}", id, attestor_addr));
+    1
+}
+
+fn method_get_inference_status(args_ptr: u32) -> i32 {
+    let id = read_i32_word(args_ptr, 0) as i64;
+    if storage_read(&key("model_status", id)).is_none() {
+        return -1;
+    }
+    match storage_read(&key("model_inference_attestor", id)) {
+        Some(_) => 1,
+        None => 0,
+    }
+}
+
+fn method_get_capabilities(_args_ptr: u32) -> i32 {
+    CAP_TRAINING_ORACLE | CAP_INFERENCE_ATTESTATION
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut s = String::with_capacity(bytes.len() * 2);
@@ -435,6 +553,9 @@ pub extern "C" fn call(method_id: i32, args_ptr: u32, _args_len: u32) -> i32 {
         2 => method_challenge(args_ptr),
         3 => method_get_status(args_ptr),
         4 => method_get_verified_at(args_ptr),
+        5 => method_submit_inference_attestation(args_ptr),
+        6 => method_get_inference_status(args_ptr),
+        7 => method_get_capabilities(args_ptr),
         _ => -99,
     }
 }

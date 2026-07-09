@@ -27,6 +27,8 @@ import {
   getModelStatus,
   getModelDetails,
   encodeSupportCommitment,
+  submitInferenceAttestation,
+  getInferenceStatus,
 } from "../chain/modelRegistry.js";
 import { logger } from "../lib/logger.js";
 
@@ -269,6 +271,49 @@ router.post("/models/:id/challenge", async (req, res) => {
   const result = await challengeModel(chainState.wasmVM, caller, { modelId: id, supportData, supportLabels, tol, maxIter });
   if (!result.success) return res.status(400).json(result);
   return res.json(result);
+});
+
+// POST /api/models/:id/inference-proof
+// Body: { caller, inputHashHex, outputHashHex, signatureHex, pubkeyHex, attestorAddress }
+// Records an Ed25519-signed inference receipt (NOT a zero-knowledge proof —
+// see contracts/model_registry/src/lib.rs method 5 for the honest scope of
+// what this verifies). `caller` is just the tx submitter and may differ
+// from `attestorAddress`, the keyholder who actually signed the receipt.
+router.post("/models/:id/inference-proof", async (req, res) => {
+  const id = Number(req.params["id"]);
+  if (!Number.isInteger(id) || id < 0) return res.status(400).json({ error: "Invalid model id" });
+  const caller = requireCaller(req, res);
+  if (!caller) return;
+
+  const { inputHashHex, outputHashHex, signatureHex, pubkeyHex, attestorAddress } = req.body ?? {};
+  if (
+    typeof inputHashHex !== "string" ||
+    typeof outputHashHex !== "string" ||
+    typeof signatureHex !== "string" ||
+    typeof pubkeyHex !== "string" ||
+    typeof attestorAddress !== "string"
+  ) {
+    return res.status(400).json({ error: "inputHashHex, outputHashHex, signatureHex, pubkeyHex, attestorAddress are required" });
+  }
+
+  chainState.wasmVM.setBlockHeight(chainState.height);
+  const result = await submitInferenceAttestation(chainState.wasmVM, caller, {
+    modelId: id, inputHashHex, outputHashHex, signatureHex, pubkeyHex, attestorAddress,
+  });
+  if (!result.success) return res.status(400).json(result);
+  return res.json(result);
+});
+
+// GET /api/models/:id/inference-status
+router.get("/models/:id/inference-status", async (req, res) => {
+  const id = Number(req.params["id"]);
+  if (!Number.isInteger(id) || id < 0) return res.status(400).json({ error: "Invalid model id" });
+  const address = getModelRegistryAddress();
+  if (!address) return res.status(503).json({ error: "ModelRegistry not deployed" });
+
+  const status = await getInferenceStatus(chainState.wasmVM, id);
+  if (status === "unknown") return res.status(404).json({ error: "Model not found" });
+  return res.json({ id, inferenceStatus: status });
 });
 
 export default router;

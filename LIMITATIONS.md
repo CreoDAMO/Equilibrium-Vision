@@ -22,6 +22,24 @@ Use the read-only Bellman-Ford scan (`GET /api/arbitrage/opportunities`) to esti
 
 ---
 
+## 1b. Inference attestation is an Ed25519 receipt, not a zkML proof
+
+**Affected code:**
+- `contracts/model_registry/src/lib.rs` — `submit_inference_attestation()`, `get_inference_status()`, `get_capabilities()`
+- `artifacts/api-server/src/chain/modelRegistry.ts` — `submitInferenceAttestation()`, `getInferenceStatus()`
+- `artifacts/api-server/src/routes/models.ts` — `POST /api/models/:id/inference-proof`, `GET /api/models/:id/inference-status`
+
+**Behaviour:**
+`POST /api/models/:id/inference-proof` records that a named keyholder (`attestorAddress`) cryptographically signed a claim of the form "running model `id` on some input hashing to `inputHash` produced an output hashing to `outputHash`". The contract verifies the Ed25519 signature via the same `verify_owner_sig` host import the multisig contract uses, and stores the hashes + attestor address on-chain. `get_capabilities()` reports a bitmask (`1` = training oracle, `2` = inference attestation) so callers can introspect what a given ModelRegistry deployment supports, in the spirit of the draft's `supportsInterface` idea — but as a simple on-chain bitmask read, not an EIP-165-style Solidity interface check.
+
+**What this is NOT:** a zero-knowledge proof that the model actually produced that output from that input. There is no witness generator, no arithmetic circuit over the model's weights, and no verifier that checks computational correctness — only that a specific keyholder attested to a specific (input, output) hash pair for a specific model.
+
+**Why:** Real zkML (à la the draft's ERC-7992/DeepProve sketch) requires a per-model witness generator and a SNARK circuit describing the model's arithmetic — a substantial, model-architecture-specific undertaking, and a meaningfully different engineering investment than the rest of this codebase's optimistic-oracle pattern (propose/verify/challenge, already used for training claims). The attestation scheme reuses proven primitives (Ed25519 verification already live in the multisig contract) to get a genuinely useful "who claims this output for this input" record now, while being explicit that stronger correctness guarantees are future work requiring dedicated cryptographic engineering, not a quick add-on.
+
+**Workaround:** For workloads that need actual correctness guarantees (not just attribution), pair this with an off-chain challenge process, similar to the existing training-claim `challengeModel` flow, or wait for a dedicated zkML circuit implementation.
+
+---
+
 ## 2. DEX pool state is in-memory only (no Postgres persistence)
 
 **Affected code:**  

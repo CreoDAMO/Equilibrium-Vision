@@ -1,3 +1,4 @@
 - [Equilibrium setup](equilibrium-setup.md) — run cmds, ports (API 8080 console / Explorer 5000 webview), ZK encoding rules, mining loop pattern
 - [variational-ai crate](variational-ai-crate.md) — build gotchas, NTK math fix, CLI exit-code contract, determinism pinning
 - [Rust→wasm32 toolchain](rust-wasm-toolchain.md) — rustup setup, GLIBC_TUNABLES TLS crash fix, wasm_import_module/log-name gotchas for hand-written no_std contracts
+- [ModelRegistry inference attestation](model-registry-inference-attestation.md) — why it's an Ed25519 signed receipt, not a zkML proof; scope boundary if revisited
