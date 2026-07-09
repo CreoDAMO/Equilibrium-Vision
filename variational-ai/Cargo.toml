@@ -20,6 +20,10 @@ path = "src/bin/harness.rs"
 name = "variational-ai-arbitrage-cli"  # DEX arbitrage detector bridge called by the TS API server
 path = "src/bin/arbitrage_cli.rs"
 
+[[bin]]
+name = "variational-ai-export-onnx"   # Export trained model weights as ONNX protobuf files
+path = "src/bin/export_onnx.rs"
+
 # ── Library (cdylib for Android JNI, rlib for host linking) ──────────────────
 [lib]
 name = "variational_ai"
@@ -35,6 +39,7 @@ serde       = { version = "1.0", features = ["derive"] }
 serde_json  = "1.0"
 sha2        = "0.10"         # SHA-256 for determinism harness
 hex         = "0.4"          # hex encoding for harness output
+prost       = { version = "0.12", features = ["derive"] }  # ONNX protobuf encoding
 
 # ── Optional features ────────────────────────────────────────────────────────
 [dependencies.jni]

@@ -9,6 +9,6 @@ cargo:rustc-cfg=optimizations_enabled
 cargo:rustc-check-cfg=cfg(x86_no_sse)
 cargo:rustc-env=CFG_CARGO_FEATURES=["arch", "default"]
 cargo:rustc-env=CFG_OPT_LEVEL=3
-cargo:rustc-env=CFG_TARGET_FEATURES=["sse", "sse2"]
+cargo:rustc-env=CFG_TARGET_FEATURES=["sse", "sse2", "x87"]
 cargo:rustc-check-cfg=cfg(f16_enabled)
 cargo:rustc-check-cfg=cfg(f128_enabled)

@@ -89,6 +89,67 @@ jobs:
         working-directory: equilibrium/mobile/android
         run: ./build-jni.sh release
 
+      # ── ONNX model export ────────────────────────────────────────────────
+      #
+      # Trains the logistic and MLP variational-AI solvers on synthetic MNIST
+      # and serialises the resulting weights as standard ONNX protobuf files.
+      # The ONNX files are bundled into the APK as raw assets so the app can
+      # run inference via ONNX Runtime Mobile, independent of the JNI solver.
+      #
+      # The variational-ai-export-onnx binary is compiled for the CI host
+      # (x86-64 Linux), not for Android — this is an offline export step, not
+      # an Android binary.
+
+      - name: Set up Python for ONNX validation
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install onnx package (model validation)
+        run: pip install onnx
+
+      - name: Build ONNX export binary
+        working-directory: ${{ github.workspace }}/variational-ai
+        run: cargo build --release --bin variational-ai-export-onnx
+
+      - name: Export trained models to ONNX
+        working-directory: ${{ github.workspace }}/variational-ai
+        run: |
+          ./target/release/variational-ai-export-onnx ../models/onnx
+          echo "Exported ONNX models:"
+          ls -lh ../models/onnx/
+
+      - name: Validate exported ONNX models
+        run: |
+          python3 -c "
+          import onnx, glob, sys
+          files = glob.glob('models/onnx/*.onnx')
+          if not files:
+              print('No ONNX files found — export step may have failed')
+              sys.exit(1)
+          for f in files:
+              model = onnx.load(f)
+              onnx.checker.check_model(model)
+              print(f'✅  {f} — valid (IR v{model.ir_version}, opset {model.opset_import[0].version})')
+          "
+
+      - name: Bundle ONNX models as APK assets
+        run: |
+          mkdir -p equilibrium/mobile/android/app/src/main/assets
+          cp models/onnx/*.onnx equilibrium/mobile/android/app/src/main/assets/
+          echo "Assets directory:"
+          ls -lh equilibrium/mobile/android/app/src/main/assets/
+
+      # NOTE: Hexagon NPU conversion (scripts/convert_to_hexagon.py) is a
+      # manual step — it requires a Qualcomm AI Hub account and the ai-hub SDK.
+      # Run it locally after CI exports the ONNX files:
+      #   pip install ai-hub && ai-hub-cli login
+      #   python3 scripts/convert_to_hexagon.py \
+      #       --logistic models/onnx/logistic.onnx \
+      #       --mlp      models/onnx/mlp.onnx \
+      #       --output-dir models/hexagon
+      #   cp models/hexagon/*.dlc equilibrium/mobile/android/app/src/main/assets/
+
       # ── Decode signing keystore from secrets ────────────────────────────
       # `-i`/`--ignore-garbage` discards any non-base64-alphabet byte during
       # decode (a stray BOM, quote, or copy/paste artifact), not just
