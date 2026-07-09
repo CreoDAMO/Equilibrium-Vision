@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -246,35 +247,30 @@ export default function ContractDetail() {
   const params = useParams<{ address: string }>();
   const address = params.address ?? "";
 
-  const [contract, setContract] = useState<ContractDetail | null>(null);
-  const [storage, setStorage] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: contract, isLoading, error: contractError } = useQuery<ContractDetail>({
+    queryKey: ["contract", address],
+    queryFn: () =>
+      fetch(`/api/contracts/${address}`)
+        .then((r) => r.json())
+        .then((d) => { if (d.error) throw new Error(d.error); return d; }),
+    enabled: !!address,
+  });
 
-  const load = useCallback(() => {
-    if (!address) return;
-    setLoading(true);
-    setError(null);
-    setContract(null);
-    Promise.all([
-      fetch(`/api/contracts/${address}`).then((r) => r.json()),
-      fetch(`/api/contracts/${address}/storage`).then((r) => r.json()),
-    ])
-      .then(([detail, stor]) => {
-        if (detail.error) throw new Error(detail.error);
-        setContract(detail);
-        setStorage(stor.storage ?? {});
-        setLoading(false);
-      })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : "Failed to load contract");
-        setLoading(false);
-      });
-  }, [address]);
+  const {
+    data: storageData,
+    isLoading: storageLoading,
+    error: storageError,
+    refetch: refetchStorage,
+  } = useQuery<{ storage: Record<string, string> }>({
+    queryKey: ["contract-storage", address],
+    queryFn: () => fetch(`/api/contracts/${address}/storage`).then((r) => r.json()),
+    enabled: !!address,
+  });
 
-  useEffect(() => { load(); }, [load]);
+  const storage = storageData?.storage ?? {};
+  const error = contractError ? (contractError as Error).message : null;
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20 text-muted-foreground gap-2">
         <Loader2 className="w-5 h-5 animate-spin" /> Loading contract…
@@ -380,12 +376,27 @@ export default function ContractDetail() {
             <CardTitle className="flex items-center gap-2">
               <Database className="w-5 h-5" /> Storage
             </CardTitle>
-            <Button variant="ghost" size="sm" onClick={load}>Refresh</Button>
+            <Button variant="ghost" size="sm" onClick={() => refetchStorage()} disabled={storageLoading}>
+              {storageLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Refresh"}
+            </Button>
           </div>
-          <CardDescription>{Object.keys(storage).length} key{Object.keys(storage).length !== 1 ? "s" : ""}</CardDescription>
+          {!storageError && (
+            <CardDescription>{Object.keys(storage).length} key{Object.keys(storage).length !== 1 ? "s" : ""}</CardDescription>
+          )}
         </CardHeader>
         <CardContent>
-          {Object.keys(storage).length === 0 ? (
+          {storageError ? (
+            <div className="flex items-center gap-2 text-sm text-destructive py-4">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              Failed to load storage: {(storageError as Error).message}
+            </div>
+          ) : storageLoading ? (
+            <div className="space-y-2">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="h-4 bg-muted rounded animate-pulse" />
+              ))}
+            </div>
+          ) : Object.keys(storage).length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center border border-dashed rounded-lg">
               Storage is empty.
             </p>

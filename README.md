@@ -696,8 +696,6 @@ _Reconciled against the running code on 2026-07-09 — see `TODO.md` for full de
 
 | Priority | Item | Notes |
 |---|---|---|
-| 🟡 | `ContractDetail.tsx` / `AdminMultisig.tsx` refactor | Still monolithic, still use raw `fetch()` instead of generated React Query hooks |
-| 🟡 | Block reward format consistency | `Blocks.tsx` shows "50M EQU" (`formatCompact`), `BlockDetail.tsx` shows "50,000,000 EQU" (`formatAmount`) — pick one |
 | 🟡 | A few residual "Loading…" text spots | Dashboard chart, ValidatorDetail delegators table, Dex pools table — most other pages already use skeletons |
 | 🟢 | Architecture diagram | `docs/architecture.md` with a Mermaid diagram of the full pipeline |
 | 🟢 | Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md` |

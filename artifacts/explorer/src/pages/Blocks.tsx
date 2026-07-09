@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
-import { truncateHash, timeAgo, formatAmount, formatScientific, formatCompact } from "@/lib/format";
+import { truncateHash, timeAgo, formatAmount, formatScientific } from "@/lib/format";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 export default function Blocks() {
@@ -58,7 +58,7 @@ export default function Blocks() {
                     </Link>
                   </TableCell>
                   <TableCell className="text-right">{block.txCount}</TableCell>
-                  <TableCell className="text-right font-medium">{formatCompact(block.coinbaseReward)} EQU</TableCell>
+                  <TableCell className="text-right font-medium">{formatAmount(block.coinbaseReward)} EQU</TableCell>
                   <TableCell className="text-right text-muted-foreground font-mono text-xs">{formatScientific(block.residual, 3)}</TableCell>
                   <TableCell className="text-right text-muted-foreground whitespace-nowrap">{timeAgo(block.timestamp)}</TableCell>
                 </TableRow>
