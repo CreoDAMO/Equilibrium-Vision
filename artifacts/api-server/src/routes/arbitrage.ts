@@ -55,7 +55,8 @@ router.get("/arbitrage/opportunities", async (req, res) => {
     return;
   }
 
-  const maxOpportunities = Math.min(Number(req.query["limit"] ?? 5) || 5, 20);
+  const rawLimit = Number(req.query["limit"] ?? 5);
+  const maxOpportunities = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 5, 1), 20);
 
   try {
     const result = await findArbitrageOpportunities({
@@ -84,6 +85,7 @@ router.get("/arbitrage/opportunities", async (req, res) => {
     // functional and the endpoint shape is always consistent.
     logger.warn({ err }, "arbitrage scan unavailable — returning empty results");
     const body = { opportunities: [], count: 0, poolsScanned: pools.length };
+    cache = { at: Date.now(), body };
     res.json(body);
   }
 });

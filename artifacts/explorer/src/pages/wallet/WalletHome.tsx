@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/CopyButton";
 import { truncateHash, formatAmount, timeAgo } from "@/lib/format";
-import { AlertTriangle, Plus, Download, Send, Trash2, ArrowRight, ArrowLeft } from "lucide-react";
+import { AlertTriangle, Plus, Download, Send, Trash2, ArrowRight, ArrowLeft, KeyRound, BookOpen, ShieldCheck, Info } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,15 +34,70 @@ export default function WalletHome() {
 
   if (!wallet) {
     return (
-      <div className="max-w-2xl mx-auto mt-12 flex flex-col items-center justify-center space-y-8">
-        <div className="text-center space-y-4">
+      <div className="max-w-2xl mx-auto mt-10 flex flex-col items-center justify-center space-y-8">
+        <div className="text-center space-y-3">
           <h1 className="text-3xl font-bold tracking-tight">Equilibrium Wallet</h1>
           <p className="text-muted-foreground">Self-custody, browser-side Ed25519 wallet. Keys never leave your browser.</p>
         </div>
-        
+
+        {/* First-time-user primer */}
+        <div className="w-full space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground px-1">How it works</p>
+
+          <div className="grid grid-cols-1 gap-3">
+            <div className="flex gap-4 p-4 rounded-lg border bg-card">
+              <div className="mt-0.5 shrink-0 p-2 bg-primary/10 rounded-md">
+                <KeyRound className="w-4 h-4 text-primary" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-semibold">Your address is a public key</p>
+                <p className="text-sm text-muted-foreground">
+                  Equilibrium uses <span className="font-medium text-foreground">Ed25519</span> cryptography. When you create a wallet, two mathematically linked values are generated: a <span className="font-medium text-foreground">public key</span> (your address — safe to share) and a <span className="font-medium text-foreground">private key</span> (your signing secret — never share this). Anyone can send EQU to your address; only the private key can authorise spending it.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-4 p-4 rounded-lg border bg-card">
+              <div className="mt-0.5 shrink-0 p-2 bg-primary/10 rounded-md">
+                <BookOpen className="w-4 h-4 text-primary" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-semibold">Your recovery phrase is your backup</p>
+                <p className="text-sm text-muted-foreground">
+                  The wallet can generate a <span className="font-medium text-foreground">12-word mnemonic phrase</span> (e.g. <span className="font-mono text-xs bg-muted px-1 py-0.5 rounded">valley river oak…</span>). These words encode your private key in a human-readable form you can write down. If you lose access to this browser, those 12 words are the only way to recover your funds — guard them like cash.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-4 p-4 rounded-lg border bg-card">
+              <div className="mt-0.5 shrink-0 p-2 bg-primary/10 rounded-md">
+                <ShieldCheck className="w-4 h-4 text-primary" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-semibold">Everything stays in your browser</p>
+                <p className="text-sm text-muted-foreground">
+                  Keys are generated and stored locally using the <span className="font-medium text-foreground">Web Crypto API</span> — they are never sent to any server. Signing a transaction happens in your browser; only the signed bytes travel to the network. Clearing your browser data removes the wallet, so back up your phrase first.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-2 items-start p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+            <Info className="w-4 h-4 mt-0.5 shrink-0" />
+            <p className="text-xs leading-relaxed">
+              <span className="font-semibold">Before you start:</span> write your recovery phrase on paper the moment it appears and store it somewhere safe. There is no "forgot my key" reset — if the phrase is lost, so are the funds.
+            </p>
+          </div>
+        </div>
+
+        {/* Action cards — rendered as buttons for full keyboard + screen-reader support */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
-          <Card className="hover:border-primary/50 transition-colors cursor-pointer" onClick={() => setLocation("/wallet/create")}>
-            <CardContent className="pt-6 flex flex-col items-center justify-center space-y-4 text-center">
+          <button
+            type="button"
+            onClick={() => setLocation("/wallet/create")}
+            className="text-left rounded-lg border bg-card hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors"
+          >
+            <div className="pt-6 pb-6 px-6 flex flex-col items-center justify-center space-y-4 text-center">
               <div className="p-3 bg-primary/10 rounded-full">
                 <Plus className="w-6 h-6 text-primary" />
               </div>
@@ -50,20 +105,24 @@ export default function WalletHome() {
                 <h3 className="font-semibold">Create New Wallet</h3>
                 <p className="text-sm text-muted-foreground mt-1">Generate a new keypair locally</p>
               </div>
-            </CardContent>
-          </Card>
-          
-          <Card className="hover:border-primary/50 transition-colors cursor-pointer" onClick={() => setLocation("/wallet/import")}>
-            <CardContent className="pt-6 flex flex-col items-center justify-center space-y-4 text-center">
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setLocation("/wallet/import")}
+            className="text-left rounded-lg border bg-card hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors"
+          >
+            <div className="pt-6 pb-6 px-6 flex flex-col items-center justify-center space-y-4 text-center">
               <div className="p-3 bg-primary/10 rounded-full">
                 <Download className="w-6 h-6 text-primary" />
               </div>
               <div>
                 <h3 className="font-semibold">Import Wallet</h3>
-                <p className="text-sm text-muted-foreground mt-1">Import an existing private key</p>
+                <p className="text-sm text-muted-foreground mt-1">Restore from phrase or private key</p>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </button>
         </div>
       </div>
     );
