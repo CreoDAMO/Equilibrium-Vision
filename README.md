@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 10, 2026):** Mainnet-readiness hardening complete on Replit. **262 tests (31 Rust + 231 TypeScript across 7 test files)**. All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. **ModelRegistry + Arbitrage + CrossChainRelay WASM contracts deployed and live** — permissionless optimistic-oracle lifecycle, on-chain challenge/slash, Bellman-Ford arbitrage detection, and a federated m-of-n cross-chain attestation protocol with bonded relayers and a challenge window. See `LIMITATIONS.md` for known design constraints.
+> **Status (July 10, 2026):** Mainnet-readiness hardening complete on Replit. **278 tests (33 Rust + 245 TypeScript across 8 test files)**. All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. **ModelRegistry + Arbitrage + CrossChainRelay WASM contracts deployed and live** — permissionless optimistic-oracle lifecycle, on-chain challenge/slash, Bellman-Ford arbitrage detection, and a federated m-of-n cross-chain attestation protocol with bonded relayers and a challenge window. **Kinetic Block Timeline** — a live 3D visualization of mined blocks at `/matrix`, driven entirely by real chain data (no mocked feeds). See `LIMITATIONS.md` for known design constraints.
 
 ---
 
@@ -650,8 +650,8 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 - CORS lockdown — `ALLOWED_ORIGINS` env var, origin-allowlist callback check, fails closed when set
 
 ### Testing
-- **Rust unit tests** — 31 tests (28 in `equilibrium-core` via `cargo test --lib` + 3 in `variational-ai/src/arbitrage.rs`): wallet round-trips/sign/verify, stationary solver bounds/clamp/fixed-point, consensus `choose_fork` including fixed-point comparison, Bellman-Ford negative-cycle detection
-- **TypeScript tests** — 231 tests across 7 files (`NODE_ENV=test DATABASE_URL=... pnpm --filter @workspace/api-server test`):
+- **Rust unit tests** — 33 tests (27 in `equilibrium-core` via `cargo test --lib`, 1 ignored, + 6 in `variational-ai` via `cargo test --release`): wallet round-trips/sign/verify, stationary solver bounds/clamp/fixed-point, consensus `choose_fork` including fixed-point comparison, Bellman-Ford negative-cycle detection
+- **TypeScript tests** — 245 tests across 8 files (`NODE_ENV=test DATABASE_URL=... pnpm --filter @workspace/api-server test`):
   - `chain.unit.test.ts` — 41 unit tests: hash256, merkleRoot, ZK proof generate/verify, difficulty adjustment, UTXO fee sweep/rollback
   - `api.integration.test.ts` — 32 integration tests via Supertest: full chain/block/tx/submission/UTXO/peer/validator/governance flow including valid votes, wrong signature → 401, address mismatch → 400
   - `contracts.integration.test.ts` — 58 tests: WASM VM deploy/call/storage, gas tracking, ABI persistence, bulk restore, REST API coverage, `contracts.deployer` filter; includes caller-auth signature verification tests
@@ -659,9 +659,10 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
   - `models.integration.test.ts` — 19 tests: ModelRegistry propose → verify → challenge → slash flow, challenge window enforcement, bond mechanics
   - `arbitrage.integration.test.ts` — 24 tests: Arbitrage contract set-model/pause/unpause/execute flows, circuit breaker trip and reset, governance cap enforcement, model-verification gate
   - `crosschain.integration.test.ts` — 34 tests: CrossChainRelay register/revoke/threshold, inbound attestation submit/duplicate/bad-seq/finalize/challenge, challenge-window enforcement, multi-sig 2-of-2 attestation, admin-key gate on registration
+  - a further 18 tests added alongside the Kinetic Block Timeline graduation and other incremental route/component work (see git history for exact file)
 
 ### Explorer & Wallet
-- Block explorer — Dashboard, Blocks, BlockDetail (with Miner Fee Breakdown panel), TxDetail, AddressDetail, Mempool, Network — all pages live with real-time React Query data
+- Block explorer — Dashboard, Blocks, BlockDetail (with Miner Fee Breakdown panel), TxDetail, AddressDetail, Mempool, Network, **Kinetic Block Timeline** (`/matrix` — live 3D view of mined blocks via `@react-three/fiber`; cube size = tx count, material clarity = Proof-of-Stationarity residual, mining particle + camera drift driven by real elapsed time/mempool pressure; graceful WebGL-unavailable fallback) — all pages live with real-time React Query data
 - Miner fee breakdown — `GET /api/blocks/:hashOrHeight/fees` endpoint; Explorer panel shows coinbase + account-model fees + swept UTXO fees + total per block
 - Validator fee earnings — per-validator "Fee Earnings" tab aggregating block-by-block miner income
 - Governance explorer — proposal list, live quorum bars, per-validator tally, chain parameters panel, vote submission with Ed25519 signing

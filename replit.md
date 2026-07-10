@@ -2,6 +2,8 @@
 
 A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile mining, ZK proofs, libp2p P2P networking, and a full TypeScript node stack with a real-time block explorer, self-custody browser wallet, WASM smart contracts, and a native DEX arbitrage detector.
 
+> **Status (July 10, 2026, later):** Graduated the approved Canvas mockup into a production Explorer page — **Kinetic Block Timeline** at `/matrix` (`artifacts/explorer/src/components/matrix/BlockChain3D.tsx` + `src/pages/Matrix.tsx`), a live 3D view of mined blocks using `@react-three/fiber`/`@react-three/drei`/`three`. Uses only real data via the existing generated hooks (`useListBlocks`, `useGetMempool`) and the app-wide `useChainWebSocket()` query-invalidation pipeline — no separate WebSocket connection, no mocked data. Includes a `hasWebGL()` guard with a graceful fallback message for GPU-less environments. **245 TypeScript + 33 Rust tests pass** (8 TS test files, incl. crosschain; 27 Rust `equilibrium-core` + 6 `variational-ai`). Verified against running code on 2026-07-10.
+>
 > **Status (July 10, 2026):** CrossChainRelay WASM contract added and all tests passing. **231 TypeScript + 28 Rust tests pass** (7 test files: chain.unit, api.integration, contracts.integration, multisig.integration, models.integration, arbitrage.integration, crosschain.integration). CrossChainRelay fixes applied: rate-limiter bypassed in test mode, duplicate-attestation error ordering corrected, `POST /relay/register` made admin-only (bond-theft security fix), WASM `block_number()` kept in sync with chain tip via `addBlock()`. See `contracts/cross_chain_relay/` for the Rust WASM contract and `artifacts/api-server/src/chain/crossChainRelay.ts` + `src/routes/crossChainRelay.ts` for the TypeScript layer.
 >
 > **Status (July 9, 2026):** Mainnet-readiness hardening complete in Replit. **197 TypeScript + 28 Rust tests pass** (6 test files: chain.unit, api.integration, contracts.integration, multisig.integration, models.integration, arbitrage.integration). All critical security fixes applied: `REQUIRE_TX_SIGNATURES=true` enforced, Ed25519 batch verification wired into UTXO validation and block assembly, ADMIN_KEY/ADMIN_API_KEY mismatch fixed, HTTP + Stratum rate limiting with replay protection complete, UTXO fee collection wired (fees credited to miner, not burned), single `ADMIN_KEY` replaced with on-chain WASM M-of-N multisig. Remote load test: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted**. Android sideload APK CI live (GitHub Actions, signed, no Play Store). Grafana monitoring stack ready (`docs/grafana/`). ModelRegistry + Arbitrage WASM contracts deployed and live. `LIMITATIONS.md` created. `ci.yml` updated to include variational-ai Rust tests and all 6 TS test files. See `LIMITATIONS.md` for known design constraints (minProfit advisory, in-memory DEX pools, missing slash_account/transfer host functions, inference attestation scope). **Verified against running code on 2026-07-09.**
@@ -19,8 +21,8 @@ A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile min
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `NODE_ENV=test DATABASE_URL=postgresql://runner@127.0.0.1:5432/equilibrium pnpm --filter @workspace/api-server run test` — run 231 TypeScript tests (7 suites)
-- `cd equilibrium && cargo test --lib` — run 28 Rust tests
+- `NODE_ENV=test DATABASE_URL=postgresql://runner@127.0.0.1:5432/equilibrium pnpm --filter @workspace/api-server run test` — run 245 TypeScript tests (8 suites)
+- `cd equilibrium && cargo test --lib` — run 27 Rust tests (+1 ignored); `cd variational-ai && cargo test --release` — run 6 more
 - Rust testnet: `cd equilibrium && cargo run --bin testnet-node`
 - Rust wallet CLI: `cd equilibrium && cargo run --bin wallet`
 - `pnpm --filter @workspace/coinomics run generate-genesis [outputPath]` — write a fresh `genesis.json`
@@ -108,8 +110,9 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 - `artifacts/api-server/src/lib/stratum-server.ts` — Stratum v1 TCP mining pool + metrics + per-IP rate limiting
 - `artifacts/api-server/src/lib/submission-guard.ts` — `RateLimiter` (sliding window) + `ReplaySet` (bounded LRU) for HTTP + Stratum
 - `artifacts/api-server/src/routes/` — Express route handlers (blocks, tx, validators, staking, dex, arbitrage, governance, contracts, evm, faucet, metrics, stratum-metrics, mobile)
-- `artifacts/api-server/src/__tests__/` — test suite: `chain.unit.test.ts`, `api.integration.test.ts`, `contracts.integration.test.ts`, `multisig.integration.test.ts`, `models.integration.test.ts`, `arbitrage.integration.test.ts` (193 tests total)
-- `artifacts/explorer/src/pages/` — Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail, Governance, Faucet, Contracts, ContractDetail, Dex (includes the Arbitrage Opportunities panel), Staking, AdminMultisig
+- `artifacts/api-server/src/__tests__/` — test suite: `chain.unit.test.ts`, `api.integration.test.ts`, `contracts.integration.test.ts`, `multisig.integration.test.ts`, `models.integration.test.ts`, `arbitrage.integration.test.ts`, `crosschain.integration.test.ts` (245 tests total across 8 files)
+- `artifacts/explorer/src/pages/` — Dashboard, Blocks, BlockDetail, TxDetail, AddressDetail, Mempool, Network, Validators, ValidatorDetail, Governance, Faucet, Contracts, ContractDetail, Dex (includes the Arbitrage Opportunities panel), Staking, AdminMultisig, Matrix (Kinetic Block Timeline, live 3D block view)
+- `artifacts/explorer/src/components/matrix/BlockChain3D.tsx` — the 3D renderer behind `/matrix`: `@react-three/fiber` scene driven by `useListBlocks`/`useGetMempool`, no separate WebSocket connection; `hasWebGL()` guard for GPU-less environments
 - `artifacts/explorer/src/wallet/` — browser wallet (context.tsx state manager, crypto.ts key ops)
 - `lib/api-spec/openapi.yaml` — source-of-truth API contract, includes the `arbitrage` tag / `ArbitrageOpportunity` schema
 - `lib/api-client-react/src/generated/` — generated React Query hooks (do not edit manually), includes `useGetArbitrageOpportunities`
@@ -181,12 +184,13 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 ## Product
 
 - **Block explorer** at `/`: real-time chain dashboard, block/tx/address drill-down, mempool monitor, peer network view, validator set + delegators, governance proposals, **miner fee breakdown per block**
+- **Kinetic Block Timeline** at `/matrix`: live 3D view of mined blocks (cube size = tx count, material clarity = Proof-of-Stationarity residual, mining particle + camera drift from real elapsed time/mempool pressure); graceful fallback when WebGL is unavailable
 - **Governance** at `/governance`: submit and vote on proposals (text or parameter-change), live quorum/tally bars, chain parameters panel, auto-executes on passage; votes are Ed25519-signed and server-verified
 - **Faucet** at `/faucet`: drip 1,000 EQU to any address, 1 h cooldown per address, live cooldown status
 - **Browser wallet** at `/wallet`: self-custody Ed25519, BIP-39 mnemonic, raw keypair, private key import, AES-256-GCM keystore, Ledger via WebHID, m-of-n multisig, transaction signing and broadcast
 - **Smart contracts** at `/contracts`: WAT editor with in-browser `wabt` compile, ABI JSON editor, deploy; deployed contract list → detail pages with ABI-driven call panels, storage key/value viewer, bytecode hash
 - **DEX** at `/dex`: constant-product AMM (0.3% fee), swap, add liquidity, price quotes, swap history, per-address positions, **live arbitrage opportunity panel** (read-only Bellman-Ford cycle detection over live pool reserves, 15s refresh)
-- **Rust core**: Proof-of-Stationarity consensus, Lagrangian optimizer miner, Ed25519 wallet, ZK proof (Groth16/BN254), libp2p P2P, mobile FFI exports, Bellman-Ford arbitrage detector; 28 unit tests passing
+- **Rust core**: Proof-of-Stationarity consensus, Lagrangian optimizer miner, Ed25519 wallet, ZK proof (Groth16/BN254), libp2p P2P, mobile FFI exports, Bellman-Ford arbitrage detector; 33 unit tests passing (27 `equilibrium-core` + 6 `variational-ai`)
 
 ---
 
@@ -197,7 +201,7 @@ Everything below is actionable directly in Replit. See `TODO.md` for full detail
 - The Rust crate includes `libp2p` with `features = ["full"]` which downloads 470+ crates on first build — expect `cargo build` to take several minutes on a cold cache.
 - After editing `lib/api-spec/openapi.yaml`, always run codegen before touching client code: `pnpm --filter @workspace/api-spec run codegen`.
 - Governance paths in openapi.yaml must go inside the `paths:` section (before `components:`), not appended to the end of the file.
-- Rust unit tests: `cd equilibrium && cargo test --lib` (28 tests: wallet + stationary_solver + consensus).
+- Rust unit tests: `cd equilibrium && cargo test --lib` (27 passed + 1 ignored: wallet + stationary_solver + consensus); `cd variational-ai && cargo test --release` (6 tests, incl. Bellman-Ford arbitrage).
 - Load test: `k6 run scripts/load-test.js -e BASE_URL=https://<your-repl>.replit.dev` — k6 binary must be re-downloaded after each container reset (not in PATH by default).
 - `WebAssembly.compile()` throws on invalid WASM; `WebAssembly.validate()` only returns a boolean and never throws — always use `compile()` for fail-fast rejection.
 - Every container reset loses `node_modules`. Run `pnpm install` if needed, then restart all three workflows (Postgres → API Server → Explorer) in that order.
