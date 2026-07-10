@@ -5,9 +5,6 @@ on:
     branches: ["main", "master"]
   pull_request:
 
-permissions:
-  contents: read
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -90,7 +87,7 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
-  # ── TypeScript tests (Vitest) — all 5 test files, 169+ tests ───────────────
+  # ── TypeScript tests (Vitest) — all 7 test files, 231 tests ────────────────
   ts-test:
     name: TypeScript tests (Vitest)
     runs-on: ubuntu-latest
@@ -122,6 +119,23 @@ jobs:
           node-version: "20"
           cache: pnpm
 
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts (variational-ai)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: variational-ai -> target
+
+      - name: Build variational-ai CLI binaries
+        working-directory: variational-ai
+        run: cargo build --release --bin variational-ai-cli --bin variational-ai-arbitrage-cli
+
+      - name: Copy CLI binaries to api-server directory
+        run: |
+          cp variational-ai/target/release/variational-ai-cli artifacts/api-server/
+          cp variational-ai/target/release/variational-ai-arbitrage-cli artifacts/api-server/
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -131,7 +145,7 @@ jobs:
       - name: Push DB schema
         run: DATABASE_URL="postgresql://runner@localhost:5432/equilibrium" pnpm --filter @workspace/db run push --config ./drizzle.config.ts
 
-      - name: Run all Vitest tests (chain.unit, api.integration, contracts.integration, multisig.integration, models.integration, arbitrage.integration)
+      - name: Run all Vitest tests (chain.unit, api.integration, contracts.integration, multisig.integration, models.integration, arbitrage.integration, crosschain.integration, arbitrage.stress)
         run: pnpm --filter @workspace/api-server run test
         env:
           DATABASE_URL: postgresql://runner@localhost:5432/equilibrium
