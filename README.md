@@ -736,8 +736,9 @@ _Updated 2026-07-10 — see below for what's now resolved._
 | Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md` |
 | Rust/node binary release pipeline | Root-level `release-node.yml` (same "copy into `.github/workflows/`" pattern as `android-apk-ci.yml`) cross-builds `testnet-node`/`wallet` for linux-amd64/arm64 and attaches them to GitHub Releases on `node-v*` tags |
 | Per-caller rate limit on arbitrage execute | `POST /api/arbitrage/execute` now enforces a 2-calls-per-15s sliding window per caller address, independent of the contract's shared 5-execution circuit breaker |
+|  | Automated CD | `ci.yml` |
 |---|---|---|
-|  | Automated CD | `ci.yml` (root, and its committed copy in `.github/workflows/`) still only runs tests/build — no auto-deploy on `main` push. Deploys to this environment go through Replit's own Deploy flow, which is inherently a manual/user-triggered action, not something a GitHub Actions push can drive. Left open by design. |
+
 
 
 ### External infrastructure and ops
