@@ -430,6 +430,18 @@ describe("POST /api/governance/proposals/:id/vote — signature verification", (
 // ── Mobile app update check ─────────────────────────────────────────────────
 
 describe("GET/POST /api/mobile/version", () => {
+  let savedAdminKey: string | undefined;
+
+  beforeAll(() => {
+    savedAdminKey = process.env["ADMIN_KEY"];
+    delete process.env["ADMIN_KEY"];
+  });
+
+  afterAll(() => {
+    if (savedAdminKey !== undefined) process.env["ADMIN_KEY"] = savedAdminKey;
+    else delete process.env["ADMIN_KEY"];
+  });
+
   it("GET returns 400 without a platform query parameter", async () => {
     const res = await api.get("/api/mobile/version");
     expect(res.status).toBe(400);

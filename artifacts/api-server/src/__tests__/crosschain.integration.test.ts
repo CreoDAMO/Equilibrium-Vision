@@ -118,20 +118,20 @@ describe("CrossChainRelay — relayer registration", () => {
   it("rejects registration below min bond", async () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
-    const res = await api.post("/api/relay/register").send({
-      caller: relayer.address,
-      amount: "0",
-    });
+    const res = await api
+      .post("/api/relay/register")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ caller: relayer.address, amount: "0" });
     expect(res.status).toBe(400);
   });
 
   it("registers a relayer with sufficient bond", async () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
-    const res = await api.post("/api/relay/register").send({
-      caller: relayer.address,
-      amount: BOND.toString(),
-    });
+    const res = await api
+      .post("/api/relay/register")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ caller: relayer.address, amount: BOND.toString() });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
@@ -140,10 +140,10 @@ describe("CrossChainRelay — relayer registration", () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
     fund(relayer.address, RELAYER_BALANCE);
-    const res = await api.post("/api/relay/register").send({
-      caller: relayer.address,
-      amount: BOND.toString(),
-    });
+    const res = await api
+      .post("/api/relay/register")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ caller: relayer.address, amount: BOND.toString() });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/already/i);
   });
@@ -195,10 +195,10 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     relayer = makeRelayerKey();
     fund(relayer.address, RELAYER_BALANCE);
     // Register relayer (threshold was set to 1 in previous describe)
-    await api.post("/api/relay/register").send({
-      caller: relayer.address,
-      amount: BOND.toString(),
-    });
+    await api
+      .post("/api/relay/register")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ caller: relayer.address, amount: BOND.toString() });
   });
 
   it("rejects attestation with missing chainId", async () => {
@@ -315,10 +315,10 @@ describe("CrossChainRelay — inbound finalization after challenge window", () =
     if (!contractAddr) return;
     relayer = makeRelayerKey();
     fund(relayer.address, RELAYER_BALANCE);
-    await api.post("/api/relay/register").send({
-      caller: relayer.address,
-      amount: BOND.toString(),
-    });
+    await api
+      .post("/api/relay/register")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ caller: relayer.address, amount: BOND.toString() });
     const msg = buildAttestationMessage(chainId, seq, commitment);
     const sig = signAttestation(relayer.privKey, msg);
     await api.post("/api/relay/attest/inbound").send({
@@ -383,10 +383,10 @@ describe("CrossChainRelay — admin challenge + slashing", () => {
     if (!contractAddr) return;
     relayer = makeRelayerKey();
     fund(relayer.address, RELAYER_BALANCE);
-    await api.post("/api/relay/register").send({
-      caller: relayer.address,
-      amount: BOND.toString(),
-    });
+    await api
+      .post("/api/relay/register")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ caller: relayer.address, amount: BOND.toString() });
     const msg = buildAttestationMessage(chainId, seq, commitment);
     const sig = signAttestation(relayer.privKey, msg);
     await api.post("/api/relay/attest/inbound").send({
@@ -522,8 +522,8 @@ describe("CrossChainRelay — multi-sig attestation (2-of-2)", () => {
     fund(relayerA.address, RELAYER_BALANCE);
     fund(relayerB.address, RELAYER_BALANCE);
     // Register both relayers
-    await api.post("/api/relay/register").send({ caller: relayerA.address, amount: BOND.toString() });
-    await api.post("/api/relay/register").send({ caller: relayerB.address, amount: BOND.toString() });
+    await api.post("/api/relay/register").set("x-admin-key", ADMIN_KEY).send({ caller: relayerA.address, amount: BOND.toString() });
+    await api.post("/api/relay/register").set("x-admin-key", ADMIN_KEY).send({ caller: relayerB.address, amount: BOND.toString() });
     // Set threshold to 2
     await api
       .patch("/api/relay/threshold")
@@ -607,10 +607,10 @@ describe("CrossChainRelay — admin relayer revocation", () => {
     if (!contractAddr) return;
     relayer = makeRelayerKey();
     fund(relayer.address, RELAYER_BALANCE);
-    await api.post("/api/relay/register").send({
-      caller: relayer.address,
-      amount: BOND.toString(),
-    });
+    await api
+      .post("/api/relay/register")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ caller: relayer.address, amount: BOND.toString() });
   });
 
   it("rejects revocation without admin key", async () => {

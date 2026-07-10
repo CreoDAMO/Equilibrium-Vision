@@ -369,12 +369,13 @@ fn method_submit_inbound(args_ptr: u32) -> i32 {
     let n_sigs = read_i32_word(args_ptr, off + 10) as u32;
     if n_sigs == 0 { return -3; }
 
+    // Reject duplicate attestation first (before the sequence check so the
+    // caller gets a precise "already exists" error rather than "bad seq").
+    if get_att_field(&chain_id, seq, "commitment").is_some() { return -5; }
+
     // Sequence must advance by exactly 1
     let last_seq = get_inbound_seq(&chain_id);
     if seq != last_seq + 1 { return -4; }
-
-    // Reject duplicate attestation
-    if get_att_field(&chain_id, seq, "commitment").is_some() { return -5; }
 
     let relayers = get_relayer_set();
     if relayers.is_empty() { return -6; }

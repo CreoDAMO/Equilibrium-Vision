@@ -107,6 +107,18 @@ describe("GET /api/arbitrage/status", () => {
 // ── POST /api/arbitrage/pause + unpause (no ADMIN_KEY set → dev convenience) ─
 
 describe("POST /api/arbitrage/pause + unpause (dev mode — no ADMIN_KEY)", () => {
+  let savedAdminKey: string | undefined;
+
+  beforeAll(() => {
+    savedAdminKey = process.env["ADMIN_KEY"];
+    delete process.env["ADMIN_KEY"];
+  });
+
+  afterAll(() => {
+    if (savedAdminKey !== undefined) process.env["ADMIN_KEY"] = savedAdminKey;
+    else delete process.env["ADMIN_KEY"];
+  });
+
   it("pause returns success when called by the contract owner", async () => {
     const res = await api.post("/api/arbitrage/pause").send({ caller: contractOwner });
     expect(res.status).toBe(200);
@@ -148,6 +160,18 @@ describe("POST /api/arbitrage/pause + unpause (dev mode — no ADMIN_KEY)", () =
 // ── POST /api/arbitrage/set-model ─────────────────────────────────────────────
 
 describe("POST /api/arbitrage/set-model (dev mode — no ADMIN_KEY)", () => {
+  let savedAdminKey: string | undefined;
+
+  beforeAll(() => {
+    savedAdminKey = process.env["ADMIN_KEY"];
+    delete process.env["ADMIN_KEY"];
+  });
+
+  afterAll(() => {
+    if (savedAdminKey !== undefined) process.env["ADMIN_KEY"] = savedAdminKey;
+    else delete process.env["ADMIN_KEY"];
+  });
+
   it("rejects a request missing caller / registryAddress / modelId", async () => {
     const res = await api.post("/api/arbitrage/set-model").send({ caller: contractOwner });
     expect(res.status).toBe(400);

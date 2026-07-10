@@ -49,6 +49,10 @@ app.use(
 );
 
 // ── Global rate limits ────────────────────────────────────────────────────────
+// Rate limiting is bypassed entirely in the test environment so integration
+// tests (which issue many requests from a single IP) are not throttled.
+const isTestEnv = process.env.NODE_ENV === "test";
+
 // Public read endpoints: 300 req/min per IP (generous for explorers/dashboards).
 const readLimiter = rateLimit({
   windowMs: 60_000,
@@ -56,6 +60,7 @@ const readLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests — try again in a minute." },
+  skip: () => isTestEnv,
 });
 
 // Write endpoints: tighter budget applied to all state-mutating methods.
@@ -68,7 +73,10 @@ const writeLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Too many write requests — try again in a minute." },
   skip: (req) =>
-    req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS",
+    isTestEnv ||
+    req.method === "GET" ||
+    req.method === "HEAD" ||
+    req.method === "OPTIONS",
 });
 
 app.use(

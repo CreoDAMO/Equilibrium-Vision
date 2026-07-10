@@ -2,6 +2,8 @@
 
 A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile mining, ZK proofs, libp2p P2P networking, and a full TypeScript node stack with a real-time block explorer, self-custody browser wallet, WASM smart contracts, and a native DEX arbitrage detector.
 
+> **Status (July 10, 2026):** CrossChainRelay WASM contract added and all tests passing. **231 TypeScript + 28 Rust tests pass** (7 test files: chain.unit, api.integration, contracts.integration, multisig.integration, models.integration, arbitrage.integration, crosschain.integration). CrossChainRelay fixes applied: rate-limiter bypassed in test mode, duplicate-attestation error ordering corrected, `POST /relay/register` made admin-only (bond-theft security fix), WASM `block_number()` kept in sync with chain tip via `addBlock()`. See `contracts/cross_chain_relay/` for the Rust WASM contract and `artifacts/api-server/src/chain/crossChainRelay.ts` + `src/routes/crossChainRelay.ts` for the TypeScript layer.
+>
 > **Status (July 9, 2026):** Mainnet-readiness hardening complete in Replit. **197 TypeScript + 28 Rust tests pass** (6 test files: chain.unit, api.integration, contracts.integration, multisig.integration, models.integration, arbitrage.integration). All critical security fixes applied: `REQUIRE_TX_SIGNATURES=true` enforced, Ed25519 batch verification wired into UTXO validation and block assembly, ADMIN_KEY/ADMIN_API_KEY mismatch fixed, HTTP + Stratum rate limiting with replay protection complete, UTXO fee collection wired (fees credited to miner, not burned), single `ADMIN_KEY` replaced with on-chain WASM M-of-N multisig. Remote load test: **149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted**. Android sideload APK CI live (GitHub Actions, signed, no Play Store). Grafana monitoring stack ready (`docs/grafana/`). ModelRegistry + Arbitrage WASM contracts deployed and live. `LIMITATIONS.md` created. `ci.yml` updated to include variational-ai Rust tests and all 6 TS test files. See `LIMITATIONS.md` for known design constraints (minProfit advisory, in-memory DEX pools, missing slash_account/transfer host functions, inference attestation scope). **Verified against running code on 2026-07-09.**
 >
 > **CI fix (July 9, 2026):** `variational-ai-export-onnx` (the real, non-stub ONNX exporter using `prost`), the `solveBlock` JNI bridge, `VariationalAI.kt`/`ThermalGuard.kt`, and `scripts/convert_to_hexagon.py` from the mobile AI-mining draft were already implemented in this repo — confirmed by direct inspection, not just docs. The GitHub Actions `cargo clippy --all-targets -- -D warnings` failure was two unrelated clippy lints in `export_onnx.rs` (an empty line after a doc comment, and several `uninlined_format_args`), now fixed; `cargo clippy --all-targets -- -D warnings` passes clean in `variational-ai/`.
@@ -17,7 +19,7 @@ A Rust-based Layer-1 blockchain with Proof-of-Stationarity consensus, mobile min
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/api-server run test` — run 169 TypeScript tests
+- `NODE_ENV=test DATABASE_URL=postgresql://runner@127.0.0.1:5432/equilibrium pnpm --filter @workspace/api-server run test` — run 231 TypeScript tests (7 suites)
 - `cd equilibrium && cargo test --lib` — run 28 Rust tests
 - Rust testnet: `cd equilibrium && cargo run --bin testnet-node`
 - Rust wallet CLI: `cd equilibrium && cargo run --bin wallet`

@@ -351,6 +351,9 @@ export class ChainState {
     this.processUnbonding(block.height);
     this.distributeBlockReward(block);
     this.governance.processBlock(block.timestamp, this.totalBondedStake);
+
+    // Keep the WASM VM's block_number() host import in sync with the chain tip.
+    this.wasmVM.setBlockHeight(block.height);
   }
 
   // ── Chain reorganization ─────────────────────────────────────────────────────

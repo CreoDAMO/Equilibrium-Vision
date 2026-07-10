@@ -70,10 +70,13 @@ function parseSeq(raw: string): bigint | null {
 }
 
 // ── POST /api/relay/register ─────────────────────────────────────────────────
-// Relayer self-registration: caller bonds `amount` EQU and joins the set.
-// The bond is escrowed inside the contract (host `bond()` import).
+// Admin-only: register a relayer, bonding `amount` EQU into contract escrow.
+// Requires x-admin-key to prevent unauthenticated bond-theft griefing attacks
+// (an attacker could otherwise drain any victim's balance by forging their
+// address as the `caller`).
 
 router.post("/relay/register", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
   const caller = requireCaller(req, res);
   if (!caller) return;
 
