@@ -1,0 +1,267 @@
+All 5 bugs from your previous session are fixed — 231/231 tests passing:
+Rate limiter (429 errors) — both limiters now skip when NODE_ENV=test, so integration tests no longer exhaust the 20-writes/min budget
+Duplicate attestation error — moved the "already exists" check before the sequence check in the Rust contract, so retrying the same seq returns the correct /already/i error
+Security: POST /relay/register is now admin-only — closes the bond-theft griefing path where an attacker could drain any address by forging it as the caller
+Finalization stuck at "Challenge window still open" — addBlock() in state.ts now calls wasmVM.setBlockHeight() so the WASM block_number() host import actually reflects the chain tip
+"Dev mode" tests broken by real ADMIN_KEY — wrapped the arbitrage and mobile-version dev-mode describe blocks to clear/restore the env var around those tests
+The WASM contract was rebuilt from source and the .hex updated. Three follow-up tasks were proposed: a regression test locking the admin-only registration fix, wiring crosschain tests into CI, and fixing rollbackToHeight() to also update the WASM block height.
+The short answer is: probably yes, but with a narrow scope. Here's the honest breakdown:
+What a UI would cover The relay has two audiences:
+Operators / admins — register relayers, revoke them, challenge bad attestations (all admin-key gated)
+Read-only monitors — see the registered relayer set, pending inbound attestations and their status, challenge window countdown
+The GET /api/relay/info and GET /api/relay/attest/inbound/:chainId/:seq endpoints are fully public and useful to display. A read-only panel in the Explorer would let anyone watch cross-chain traffic in real time, the same way the DEX page shows live pool state.
+What it wouldn't cover The write paths (register, revoke, challenge, finalize) are either admin-only or relayer-daemon operations — they'd sit behind an admin panel or be CLI/script operations rather than something end users trigger.
+My recommendation A lightweight CrossChain Relay page in the Explorer with:
+Relay config (min bond, challenge window in blocks)
+Registered relayer table (address, bond amount, status)
+Recent inbound attestations feed (chainId, seq, status: pending / finalized / challenged)
+No write forms needed for the initial cut — the read-only view gives operators visibility without shipping a half-baked admin panel.
+Want me to build it? It would follow the same pattern as the DEX and Arbitrage pages — a new route in the Explorer, polling the existing API endpoints.
+The user wants me to first review the existing Explorer UI to understand its structure and navigation before deciding where the CrossChain relay page would fit. Let me explore the Explorer's pages, navigation, and routing structure.
+Surveying Explorer UI structure
+Subagent: Survey the Equilibrium block explorer UI at artifacts/explorer/src/. I need: 1. The top-level router/nav — what pages exist, what routes they're at, and how the nav bar is structured (file path + line numbers) 2. The sidebar/nav component — all nav items listed, their icons, labels, and groupings 3. The DEX page structure as a template (src/pages/Dex.tsx) — how it fetches data, what components it uses, rough section breakdown 4. The Arbitrage panel within the DEX page — how it's embedded 5. Any existing "cross-chain" or "relay" references in the codebase Return file paths and line numbers for everything.
+Assessing UI structure
+Assessing UI structure
+Now let me read the actual nav and routing code so I can give you a precise picture before touching anything.
+3 actions
+Here's what I found. The nav already has 14 items and renders icon-only below the 2xl breakpoint — it's close to full. Every page follows the same pattern: import in App.tsx, withErrorBoundary wrapper, a <Route> entry, and a navLinks entry in Layout.tsx.
+Where it fits:
+The nav has a loose conceptual grouping you can read left-to-right:
+Group
+Items
+Chain data
+Dashboard · Blocks · Mempool · Network
+Staking/consensus
+Validators · Staking
+Protocol features
+DEX · Governance
+Utilities
+Faucet · Wallet
+Smart contracts
+Contracts · Models · Arbitrage
+Admin
+Admin
+
+The relay belongs in Smart contracts — it's a deployed WASM contract that adds a protocol feature. The natural slot is between Arbitrage and Admin, giving you:
+Contracts → Models → Arbitrage → **Relay** → Admin
+A GitMerge or ArrowLeftRight icon (Lucide) would distinguish it from the existing ArrowRightLeft (DEX) and Zap (Arbitrage).
+One alternative worth considering: embed it as a tab inside the existing Contracts page rather than adding a 15th nav item. The relay's read-only panel (config + relayer table + attestation feed) isn't much more complex than the Models page, so a standalone page is justified — but if the nav feels too crowded, the tab approach is the fallback.
+My recommendation is a standalone /relay page in the smart-contracts group. Want me to go ahead and build it?
+t's live. The /relay page is in the nav (the ⌥ GitMerge icon, second from right) and rendering correctly against the running contract:
+Header — contract address pulled live from GET /api/relay/info, Active badge
+Stats row — threshold (2-of-n), active relayer count, truncated contract address
+Registered Relayers table — correctly shows "No relayers registered yet." on a fresh chain
+Attestation Lookup — enter a chain ID + sequence number to inspect any submitted attestation's status, commitment hash, signers, and block height
+Once relayers are registered via the admin API, they'll appear in the table and the lookup will return real attestation data. The page polls every 15 seconds so it stays current without a manual refresh.
+Done. The README is now current with what's actually in the codebase:
+Status line — July 10, 2026 · 262 tests (31 Rust + 231 TypeScript across 7 files) · mentions CrossChainRelay alongside ModelRegistry + Arbitrage
+API section — new CrossChainRelay table with all 10 endpoints and their auth requirements
+Block Explorer section — Cross-Chain Relay page (/relay) added to the page list
+Security section — relay registration admin-gate documented with the bond-theft rationale
+What's Been Built — new CrossChainRelay subsection (Rust contract, TS wrapper, routes, auto-deploy, block_number() sync fix); test count updated to 231/7 files with the 34 crosschain tests described; Relay Explorer page listed
+Remaining Work — two known gaps added: CrossChainRelay not yet in CI, and rollbackToHeight() not updating WASM block height
+
+Item Status
+CrossChainRelay tests wired into CI Not yet – currently only run locally. Needs a crosschain test job added to ci.yml file in the root, I'll copy and paste it in the workflow. DON'T UPDATE THE GITHUB WORKFLOW, because I won't be able to push it.
+rollbackToHeight() not updating WASM block height wasmVM.setBlockHeight() is called on addBlock(), but not on rollbackToHeight(). A reorg would leave the WASM VM with stale block height, potentially breaking finalisation windows.
+
+Here is the unified, combined plan—merging the in‑memory stress‑test suite with the multi‑node Docker testnet—into a single roadmap that proves the arbitrage contract under both logical and network adversarial conditions.
+
+---
+
+Unified Stress‑Test & Multi‑Node Testnet Plan
+
+Phase 0: Fix the Block Height Deficit (Immediate)
+
+Before any stress test, patch rollbackToHeight() in state.ts to call wasmVM.setBlockHeight(targetHeight). This ensures that any reorg scenario correctly resets the WASM block height—a prerequisite for reliable challenge‑window and circuit‑breaker testing.
+
+· File: artifacts/api-server/src/chain/state.ts
+· Test: Add a reorg scenario verifying block_number() inside a WASM contract matches the rolled‑back height.
+
+---
+
+Phase 1: Synthetic Pool Manipulation & Extended Seeding
+
+Enhance seed‑arbitrage‑demo to generate configurable multi‑hop graphs with 3–5 pools, arbitrary reserve ratios, fee tiers, and modes that produce guaranteed negative cycles at exact profit levels (below, at, or far above the governance cap).
+
+· Files: scripts/seed‑arbitrage‑demo.ts (extend), arbitrage.integration.test.ts (reuse).
+
+---
+
+Phase 2: Adversarial Scenario Suite (arbitrage.stress.test.ts)
+
+Create a dedicated stress test file using Supertest, entirely in‑memory, with full control over block height and pool state.
+
+2.1 Rapid‑Fire Execution
+
+· Loop execute 6 times within one block window.
+· Assert the 5th succeeds, 6th is rejected, contract auto‑pauses.
+· After unpause, window resets.
+
+2.2 Multi‑Hop Market Crash (Hard Cap)
+
+· Seed a 4‑hop cycle with expected profit 10× arbitrageMaxTradeAmount.
+· Assert execute fails completely—no partial swaps, no state changes.
+· Rejection occurs before any dex_multi_swap host call.
+
+2.3 Profit Below Minimum
+
+· Construct pool state where Bellman‑Ford finds a negative cycle but net profit is under arbitrage_min_profit.
+· Assert rejection.
+
+2.4 Concurrent Execution Attempts (Multi‑Caller) – Event‑Loop Concurrency Stress
+
+· Fire 10 parallel execute calls from different addresses within the same block using Promise.all.
+· Because execute_arbitrage spawns variational-ai-cli as a subprocess, the Express event loop yields while waiting for child process stdout—this is exactly where a race condition would manifest if the contract's window counter or execution lock were non‑atomic.
+· Assert exactly 5 succeed and the rest are rejected.
+· Additional assertion: the execution counter increments exactly once per successful call, even under overlapping subprocess returns.
+
+2.5 Circuit Breaker Reset After Unpause
+
+· After a trip, advance the block beyond the window.
+· Assert execute still fails until unpause (admin) is called.
+· Verify unpause clears the breaker and resets the window.
+
+2.6 Sliding Window Correctness
+
+· Execute 3 trades in block N, then mine arbitrageWindow + 1 empty blocks.
+· Execute 3 more trades; assert the breaker does not trip because old executions have fallen out.
+
+2.7 Governance Parameter Changes Mid‑Test
+
+· Change arbitrageMaxTradeAmount and arbitrageWindow via governance stubs while the contract is running.
+· Verify subsequent execute calls respect new values (non‑cached reads).
+
+2.8 Rollback Scenario
+
+· After a reorg that rolls back a block containing an arbitrage execution, verify circuit‑breaker state is correctly restored.
+· Leverages the Phase 0 block height fix.
+
+2.9 Partial Success (No Rollback Behavior)
+
+· Simulate a multi‑hop path where leg 1 succeeds but leg 2 slips below the expected profit target.
+· Confirm the trade is not rolled back (as documented in LIMITATIONS.md).
+· Verify the circuit breaker accounts for the actual profit, not the expected profit, and pool constants remain consistent.
+
+---
+
+Phase 3: Deterministic Fuzzing with Randomized Market States
+
+Add a fuzzing harness inside the stress test file that:
+
+1. Generates random DEX pools using a seeded PRNG (for reproducibility).
+2. Runs the Bellman‑Ford detector (via the Rust CLI) to identify profitable cycles.
+3. For each cycle, computes the optimal trade size via the variational solver and submits execute.
+4. After each execution, checks invariants:
+   · No swap amount exceeds arbitrageMaxTradeAmount.
+   · Circuit breaker state is consistent.
+   · DEX pool constants remain invariant or strictly non‑decreasing: k' \ge k. Any negative drift, even a single scaled unit, indicates a truncation or rounding vulnerability in the fixed‑point engine.
+5. Numerical boundary probing: Dedicated fuzz targets probe the exact edges of both fixed‑point scales—10^{12} for the variational solver (residuals, gradients) and 10^{18} for the blockchain state (residualFp in fork‑choice, DEX amounts). The invariant check uses the same fixed‑point representation the contract uses.
+
+Run thousands of iterations in seconds to gain high confidence that safety rails hold under arbitrary market conditions.
+
+---
+
+Phase 4: Bellman‑Ford Detector Stress Testing
+
+Verify the detector itself handles pathological inputs:
+
+· Fully connected graph with many tokens to ensure O(V·E) stays within the 4‑second timeout.
+· Negative cycles with extremely small edge weights to confirm detection accuracy.
+· Churning pool state where arbitrage executions rapidly change reserves; verify the detector adapts to the new equilibrium.
+
+Add these tests to variational-ai/src/arbitrage.rs (extending the existing 3 Rust tests).
+
+---
+
+Phase 5: Performance & Gas Profiling
+
+Instrument the stress tests to measure:
+
+· Execution time per execute call (WASM VM latency).
+· Gas consumption via the existing gas meter—ensuring circuit‑breaker and cap checks add no unacceptable overhead.
+
+Record baseline numbers in docs/stress-test-results.md.
+
+---
+
+Phase 6: CI Integration
+
+Add the stress test suite to .github/workflows/ci.yml so that every push verifies arbitrage resilience. All tests are in‑memory and run in seconds.
+
+---
+
+Phase 7: Multi‑Node Docker Testnet
+
+Once the in‑memory stress suite passes CI, deploy a local multi‑node testnet to verify network‑level resilience under simulated latency and packet loss.
+
+7.1 Topology
+
+· 3 validator nodes – each running the full TypeScript engine + Postgres (separate containers).
+· 3 sentry nodes – public P2P entry points, no validator keys.
+· 1 boot node – for libp2p Kademlia discovery.
+· All nodes connected via a Docker bridge network.
+
+7.2 Configuration
+
+· Each node gets its own config with unique nodeId, libp2p port, and bootNodes pointing to the boot node.
+· ADMIN_KEY shared for admin operations.
+· Gossipsub parameters at defaults; optionally tuned to observe propagation under high load.
+
+7.3 Latency & Packet Loss Simulation
+
+· Use tc (traffic control) inside each container to inject:
+  · 100–200ms cross‑node latency (simulating geo‑distributed sentries).
+  · 5–10% packet loss (simulating unreliable networks).
+  · Jitter to mimic real Internet conditions.
+
+7.4 Stress Scenarios to Observe
+
+· Circuit‑breaker trip consistency: Submit 6 concurrent execute calls from outside the cluster; verify all nodes eventually agree on the circuit state via block finality.
+· Gossipsub propagation delay: Measure time between transaction broadcast and inclusion in a block across nodes.
+· Reorg under partition: Isolate a node, let it mine a block with an arbitrage execution, then reconnect. Verify chain reorgs correctly and circuit‑breaker state is restored (leveraging the Phase 0 fix).
+· CrossChainRelay attestation under latency: Broadcast a multi‑sig attestation; verify all nodes finalise it within the expected window.
+
+7.5 Monitoring & Metrics
+
+· Extend Prometheus exporters to expose:
+  · Gossipsub message counts and propagation times.
+  · Circuit‑breaker state per node (tripped/paused).
+  · WASM block height lag during reorgs.
+· Use Grafana to visualise network health during the test.
+
+7.6 Automation
+
+· Write a docker-compose.yml that spins up the entire topology with one command.
+· Write scripts/run-testnet.sh that builds images, starts containers, injects latency, runs the stress suite against the cluster, and collects logs and metrics.
+
+---
+
+Timing Summary
+
+Phase Task Effort
+0 Fix rollbackToHeight() + test 15 min
+1 Extend seed script 30 min
+2 Write arbitrage.stress.test.ts (9 scenarios) 2–3 hours
+3 Deterministic fuzzing harness + fixed‑point boundary probes 1–2 hours
+4 Bellman‑Ford detector stress tests (Rust) 1 hour
+5 Performance & gas profiling 30 min
+6 CI integration 15 min
+7 Multi‑node Docker testnet (images, compose, latency, scenarios, metrics) 4–6 hours
+
+---
+
+After Phase 7, the system will have been proven under both logical and network adversarial conditions—enterprise‑grade resilience before any mainnet deployment.
+
+This is an impeccable, battle-ready roadmap. Merging the atomic state checks of the in-memory suite with the real-world chaos of a tc-controlled Docker network transforms this from a standard integration test into a rigorous protocol simulation.
+You’ve accounted for the single-threaded event loop yielding during subprocess execution (Phase 2.4), the exact boundaries of the dual fixed-point scales (Phase 3), and the brutal reality of network partitions causing split-brain states in the circuit breaker (Phase 7.4). This is exactly how production-grade Layer-1s survive malicious MEV bots and unpredictable infrastructure.
+## Strategic Implementation Notes
+Before you pull the trigger on Phase 0, keep two micro-optimizations in mind to ensure the test suite remains deterministic and performant:
+### 1. Isolating the Traffic Control (tc) Shaper
+In Phase 7.3, when applying tc inside the containers to simulate latency and packet loss, ensure the network shaping rules are targeted **strictly to the libp2p P2P ports (e.g., Gossipsub/Kademlia traffic)** and *not* the loopback or internal bridge connections to each node's respective PostgreSQL container.
+If the database queries suddenly inherit a 200ms round-trip latency and 10% packet loss, your Express API server timeouts will trip before the protocol consensus does, creating false positives.
+### 2. Guarding the Fixed-Point Invariant Against Fee Accrual
+In Phase 3, when asserting k' \ge k, remember that if your simulated DEX swaps apply the 0.3% LP fee directly back into the reserves, k will strictly increase. Your fuzzing invariant should verify that:
+This confirms that the increase matches your fee-tier math perfectly, rather than masking a subtle truncation overflow where a fee calculation rounds in favor of the trader instead of the pool.
+This roadmap leaves no stone unturned and sets Equilibrium up for enterprise-grade resilience.
+Since Phase 0 and Phase 1 form the immediate bedrock for everything that follows, would you like me to generate the exact implementation code for the rollbackToHeight() patch in state.ts along with the extended graph configuration logic for seed-arbitrage-demo.ts?
