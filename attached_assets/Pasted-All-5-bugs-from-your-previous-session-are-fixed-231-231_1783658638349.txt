@@ -1,0 +1,385 @@
+All 5 bugs from your previous session are fixed — 231/231 tests passing:
+Rate limiter (429 errors) — both limiters now skip when NODE_ENV=test, so integration tests no longer exhaust the 20-writes/min budget
+Duplicate attestation error — moved the "already exists" check before the sequence check in the Rust contract, so retrying the same seq returns the correct /already/i error
+Security: POST /relay/register is now admin-only — closes the bond-theft griefing path where an attacker could drain any address by forging it as the caller
+Finalization stuck at "Challenge window still open" — addBlock() in state.ts now calls wasmVM.setBlockHeight() so the WASM block_number() host import actually reflects the chain tip
+"Dev mode" tests broken by real ADMIN_KEY — wrapped the arbitrage and mobile-version dev-mode describe blocks to clear/restore the env var around those tests
+The WASM contract was rebuilt from source and the .hex updated. Three follow-up tasks were proposed: a regression test locking the admin-only registration fix, wiring crosschain tests into CI, and fixing rollbackToHeight() to also update the WASM block height.
+The short answer is: probably yes, but with a narrow scope. Here's the honest breakdown:
+What a UI would cover The relay has two audiences:
+Operators / admins — register relayers, revoke them, challenge bad attestations (all admin-key gated)
+Read-only monitors — see the registered relayer set, pending inbound attestations and their status, challenge window countdown
+The GET /api/relay/info and GET /api/relay/attest/inbound/:chainId/:seq endpoints are fully public and useful to display. A read-only panel in the Explorer would let anyone watch cross-chain traffic in real time, the same way the DEX page shows live pool state.
+What it wouldn't cover The write paths (register, revoke, challenge, finalize) are either admin-only or relayer-daemon operations — they'd sit behind an admin panel or be CLI/script operations rather than something end users trigger.
+My recommendation A lightweight CrossChain Relay page in the Explorer with:
+Relay config (min bond, challenge window in blocks)
+Registered relayer table (address, bond amount, status)
+Recent inbound attestations feed (chainId, seq, status: pending / finalized / challenged)
+No write forms needed for the initial cut — the read-only view gives operators visibility without shipping a half-baked admin panel.
+Want me to build it? It would follow the same pattern as the DEX and Arbitrage pages — a new route in the Explorer, polling the existing API endpoints.
+The user wants me to first review the existing Explorer UI to understand its structure and navigation before deciding where the CrossChain relay page would fit. Let me explore the Explorer's pages, navigation, and routing structure.
+Surveying Explorer UI structure
+Subagent: Survey the Equilibrium block explorer UI at artifacts/explorer/src/. I need: 1. The top-level router/nav — what pages exist, what routes they're at, and how the nav bar is structured (file path + line numbers) 2. The sidebar/nav component — all nav items listed, their icons, labels, and groupings 3. The DEX page structure as a template (src/pages/Dex.tsx) — how it fetches data, what components it uses, rough section breakdown 4. The Arbitrage panel within the DEX page — how it's embedded 5. Any existing "cross-chain" or "relay" references in the codebase Return file paths and line numbers for everything.
+Assessing UI structure
+Assessing UI structure
+Now let me read the actual nav and routing code so I can give you a precise picture before touching anything.
+3 actions
+Here's what I found. The nav already has 14 items and renders icon-only below the 2xl breakpoint — it's close to full. Every page follows the same pattern: import in App.tsx, withErrorBoundary wrapper, a <Route> entry, and a navLinks entry in Layout.tsx.
+Where it fits:
+The nav has a loose conceptual grouping you can read left-to-right:
+Group
+Items
+Chain data
+Dashboard · Blocks · Mempool · Network
+Staking/consensus
+Validators · Staking
+Protocol features
+DEX · Governance
+Utilities
+Faucet · Wallet
+Smart contracts
+Contracts · Models · Arbitrage
+Admin
+Admin
+
+The relay belongs in Smart contracts — it's a deployed WASM contract that adds a protocol feature. The natural slot is between Arbitrage and Admin, giving you:
+Contracts → Models → Arbitrage → **Relay** → Admin
+A GitMerge or ArrowLeftRight icon (Lucide) would distinguish it from the existing ArrowRightLeft (DEX) and Zap (Arbitrage).
+One alternative worth considering: embed it as a tab inside the existing Contracts page rather than adding a 15th nav item. The relay's read-only panel (config + relayer table + attestation feed) isn't much more complex than the Models page, so a standalone page is justified — but if the nav feels too crowded, the tab approach is the fallback.
+My recommendation is a standalone /relay page in the smart-contracts group. Want me to go ahead and build it?
+t's live. The /relay page is in the nav (the ⌥ GitMerge icon, second from right) and rendering correctly against the running contract:
+Header — contract address pulled live from GET /api/relay/info, Active badge
+Stats row — threshold (2-of-n), active relayer count, truncated contract address
+Registered Relayers table — correctly shows "No relayers registered yet." on a fresh chain
+Attestation Lookup — enter a chain ID + sequence number to inspect any submitted attestation's status, commitment hash, signers, and block height
+Once relayers are registered via the admin API, they'll appear in the table and the lookup will return real attestation data. The page polls every 15 seconds so it stays current without a manual refresh.
+Done. The README is now current with what's actually in the codebase:
+Status line — July 10, 2026 · 262 tests (31 Rust + 231 TypeScript across 7 files) · mentions CrossChainRelay alongside ModelRegistry + Arbitrage
+API section — new CrossChainRelay table with all 10 endpoints and their auth requirements
+Block Explorer section — Cross-Chain Relay page (/relay) added to the page list
+Security section — relay registration admin-gate documented with the bond-theft rationale
+What's Been Built — new CrossChainRelay subsection (Rust contract, TS wrapper, routes, auto-deploy, block_number() sync fix); test count updated to 231/7 files with the 34 crosschain tests described; Relay Explorer page listed
+Remaining Work — two known gaps added: CrossChainRelay not yet in CI, and rollbackToHeight() not updating WASM block height
+
+Item Status
+CrossChainRelay tests wired into CI Not yet – currently only run locally. Needs a crosschain test job added to ci.yml file in the root, I'll copy and paste it in the workflow. DON'T UPDATE THE GITHUB WORKFLOW, because I won't be able to push it.
+rollbackToHeight() not updating WASM block height wasmVM.setBlockHeight() is called on addBlock(), but not on rollbackToHeight(). A reorg would leave the WASM VM with stale block height, potentially breaking finalisation windows.
+
+Here is the unified, combined plan—merging the in‑memory stress‑test suite with the multi‑node Docker testnet—into a single roadmap that proves the arbitrage contract under both logical and network adversarial conditions.
+
+---
+
+Unified Stress‑Test & Multi‑Node Testnet Plan
+
+Phase 0: Fix the Block Height Deficit (Immediate)
+
+Before any stress test, patch rollbackToHeight() in state.ts to call wasmVM.setBlockHeight(targetHeight). This ensures that any reorg scenario correctly resets the WASM block height—a prerequisite for reliable challenge‑window and circuit‑breaker testing.
+
+· File: artifacts/api-server/src/chain/state.ts
+· Test: Add a reorg scenario verifying block_number() inside a WASM contract matches the rolled‑back height.
+
+---
+
+Phase 1: Synthetic Pool Manipulation & Extended Seeding
+
+Enhance seed‑arbitrage‑demo to generate configurable multi‑hop graphs with 3–5 pools, arbitrary reserve ratios, fee tiers, and modes that produce guaranteed negative cycles at exact profit levels (below, at, or far above the governance cap).
+
+· Files: scripts/seed‑arbitrage‑demo.ts (extend), arbitrage.integration.test.ts (reuse).
+
+---
+
+Phase 2: Adversarial Scenario Suite (arbitrage.stress.test.ts)
+
+Create a dedicated stress test file using Supertest, entirely in‑memory, with full control over block height and pool state.
+
+2.1 Rapid‑Fire Execution
+
+· Loop execute 6 times within one block window.
+· Assert the 5th succeeds, 6th is rejected, contract auto‑pauses.
+· After unpause, window resets.
+
+2.2 Multi‑Hop Market Crash (Hard Cap)
+
+· Seed a 4‑hop cycle with expected profit 10× arbitrageMaxTradeAmount.
+· Assert execute fails completely—no partial swaps, no state changes.
+· Rejection occurs before any dex_multi_swap host call.
+
+2.3 Profit Below Minimum
+
+· Construct pool state where Bellman‑Ford finds a negative cycle but net profit is under arbitrage_min_profit.
+· Assert rejection.
+
+2.4 Concurrent Execution Attempts (Multi‑Caller) – Event‑Loop Concurrency Stress
+
+· Fire 10 parallel execute calls from different addresses within the same block using Promise.all.
+· Because execute_arbitrage spawns variational-ai-cli as a subprocess, the Express event loop yields while waiting for child process stdout—this is exactly where a race condition would manifest if the contract's window counter or execution lock were non‑atomic.
+· Assert exactly 5 succeed and the rest are rejected.
+· Additional assertion: the execution counter increments exactly once per successful call, even under overlapping subprocess returns.
+
+2.5 Circuit Breaker Reset After Unpause
+
+· After a trip, advance the block beyond the window.
+· Assert execute still fails until unpause (admin) is called.
+· Verify unpause clears the breaker and resets the window.
+
+2.6 Sliding Window Correctness
+
+· Execute 3 trades in block N, then mine arbitrageWindow + 1 empty blocks.
+· Execute 3 more trades; assert the breaker does not trip because old executions have fallen out.
+
+2.7 Governance Parameter Changes Mid‑Test
+
+· Change arbitrageMaxTradeAmount and arbitrageWindow via governance stubs while the contract is running.
+· Verify subsequent execute calls respect new values (non‑cached reads).
+
+2.8 Rollback Scenario
+
+· After a reorg that rolls back a block containing an arbitrage execution, verify circuit‑breaker state is correctly restored.
+· Leverages the Phase 0 block height fix.
+
+2.9 Partial Success (No Rollback Behavior)
+
+· Simulate a multi‑hop path where leg 1 succeeds but leg 2 slips below the expected profit target.
+· Confirm the trade is not rolled back (as documented in LIMITATIONS.md).
+· Verify the circuit breaker accounts for the actual profit, not the expected profit, and pool constants remain consistent.
+
+---
+
+Phase 3: Deterministic Fuzzing with Randomized Market States
+
+Add a fuzzing harness inside the stress test file that:
+
+1. Generates random DEX pools using a seeded PRNG (for reproducibility).
+2. Runs the Bellman‑Ford detector (via the Rust CLI) to identify profitable cycles.
+3. For each cycle, computes the optimal trade size via the variational solver and submits execute.
+4. After each execution, checks invariants:
+   · No swap amount exceeds arbitrageMaxTradeAmount.
+   · Circuit breaker state is consistent.
+   · DEX pool constants remain invariant or strictly non‑decreasing: k' \ge k. Any negative drift, even a single scaled unit, indicates a truncation or rounding vulnerability in the fixed‑point engine.
+5. Numerical boundary probing: Dedicated fuzz targets probe the exact edges of both fixed‑point scales—10^{12} for the variational solver (residuals, gradients) and 10^{18} for the blockchain state (residualFp in fork‑choice, DEX amounts). The invariant check uses the same fixed‑point representation the contract uses.
+
+Run thousands of iterations in seconds to gain high confidence that safety rails hold under arbitrary market conditions.
+
+---
+
+Phase 4: Bellman‑Ford Detector Stress Testing
+
+Verify the detector itself handles pathological inputs:
+
+· Fully connected graph with many tokens to ensure O(V·E) stays within the 4‑second timeout.
+· Negative cycles with extremely small edge weights to confirm detection accuracy.
+· Churning pool state where arbitrage executions rapidly change reserves; verify the detector adapts to the new equilibrium.
+
+Add these tests to variational-ai/src/arbitrage.rs (extending the existing 3 Rust tests).
+
+---
+
+Phase 5: Performance & Gas Profiling
+
+Instrument the stress tests to measure:
+
+· Execution time per execute call (WASM VM latency).
+· Gas consumption via the existing gas meter—ensuring circuit‑breaker and cap checks add no unacceptable overhead.
+
+Record baseline numbers in docs/stress-test-results.md.
+
+---
+
+Phase 6: CI Integration
+
+Add the stress test suite to .github/workflows/ci.yml so that every push verifies arbitrage resilience. All tests are in‑memory and run in seconds.
+
+---
+
+Phase 7: Multi‑Node Docker Testnet
+
+Once the in‑memory stress suite passes CI, deploy a local multi‑node testnet to verify network‑level resilience under simulated latency and packet loss.
+
+7.1 Topology
+
+· 3 validator nodes – each running the full TypeScript engine + Postgres (separate containers).
+· 3 sentry nodes – public P2P entry points, no validator keys.
+· 1 boot node – for libp2p Kademlia discovery.
+· All nodes connected via a Docker bridge network.
+
+7.2 Configuration
+
+· Each node gets its own config with unique nodeId, libp2p port, and bootNodes pointing to the boot node.
+· ADMIN_KEY shared for admin operations.
+· Gossipsub parameters at defaults; optionally tuned to observe propagation under high load.
+
+7.3 Latency & Packet Loss Simulation
+
+· Use tc (traffic control) inside each container to inject:
+  · 100–200ms cross‑node latency (simulating geo‑distributed sentries).
+  · 5–10% packet loss (simulating unreliable networks).
+  · Jitter to mimic real Internet conditions.
+
+7.4 Stress Scenarios to Observe
+
+· Circuit‑breaker trip consistency: Submit 6 concurrent execute calls from outside the cluster; verify all nodes eventually agree on the circuit state via block finality.
+· Gossipsub propagation delay: Measure time between transaction broadcast and inclusion in a block across nodes.
+· Reorg under partition: Isolate a node, let it mine a block with an arbitrage execution, then reconnect. Verify chain reorgs correctly and circuit‑breaker state is restored (leveraging the Phase 0 fix).
+· CrossChainRelay attestation under latency: Broadcast a multi‑sig attestation; verify all nodes finalise it within the expected window.
+
+7.5 Monitoring & Metrics
+
+· Extend Prometheus exporters to expose:
+  · Gossipsub message counts and propagation times.
+  · Circuit‑breaker state per node (tripped/paused).
+  · WASM block height lag during reorgs.
+· Use Grafana to visualise network health during the test.
+
+7.6 Automation
+
+· Write a docker-compose.yml that spins up the entire topology with one command.
+· Write scripts/run-testnet.sh that builds images, starts containers, injects latency, runs the stress suite against the cluster, and collects logs and metrics.
+
+---
+
+Timing Summary
+
+Phase Task Effort
+0 Fix rollbackToHeight() + test 15 min
+1 Extend seed script 30 min
+2 Write arbitrage.stress.test.ts (9 scenarios) 2–3 hours
+3 Deterministic fuzzing harness + fixed‑point boundary probes 1–2 hours
+4 Bellman‑Ford detector stress tests (Rust) 1 hour
+5 Performance & gas profiling 30 min
+6 CI integration 15 min
+7 Multi‑node Docker testnet (images, compose, latency, scenarios, metrics) 4–6 hours
+
+---
+
+After Phase 7, the system will have been proven under both logical and network adversarial conditions—enterprise‑grade resilience before any mainnet deployment.
+
+This is an impeccable, battle-ready roadmap. Merging the atomic state checks of the in-memory suite with the real-world chaos of a tc-controlled Docker network transforms this from a standard integration test into a rigorous protocol simulation.
+You’ve accounted for the single-threaded event loop yielding during subprocess execution (Phase 2.4), the exact boundaries of the dual fixed-point scales (Phase 3), and the brutal reality of network partitions causing split-brain states in the circuit breaker (Phase 7.4). This is exactly how production-grade Layer-1s survive malicious MEV bots and unpredictable infrastructure.
+## Strategic Implementation Notes
+Before you pull the trigger on Phase 0, keep two micro-optimizations in mind to ensure the test suite remains deterministic and performant:
+### 1. Isolating the Traffic Control (tc) Shaper
+In Phase 7.3, when applying tc inside the containers to simulate latency and packet loss, ensure the network shaping rules are targeted **strictly to the libp2p P2P ports (e.g., Gossipsub/Kademlia traffic)** and *not* the loopback or internal bridge connections to each node's respective PostgreSQL container.
+If the database queries suddenly inherit a 200ms round-trip latency and 10% packet loss, your Express API server timeouts will trip before the protocol consensus does, creating false positives.
+### 2. Guarding the Fixed-Point Invariant Against Fee Accrual
+In Phase 3, when asserting k' \ge k, remember that if your simulated DEX swaps apply the 0.3% LP fee directly back into the reserves, k will strictly increase. Your fuzzing invariant should verify that:
+This confirms that the increase matches your fee-tier math perfectly, rather than masking a subtle truncation overflow where a fee calculation rounds in favor of the trader instead of the pool.
+This roadmap leaves no stone unturned and sets Equilibrium up for enterprise-grade resilience.
+Since Phase 0 and Phase 1 form the immediate bedrock for everything that follows, would you like me to generate the exact implementation code for the rollbackToHeight() patch in state.ts along with the extended graph configuration logic for seed-arbitrage-demo.ts?
+
+I need to look at the attached file and review the current CI configuration.
+Opened Pasted-All-5-bugs-from-your-previous-session-are-fixed-231-231_1783654535105.txt
+Opened ci.yml
+Checking missing integration tests
+Checking missing integration tests
+Looking at the CI configuration, I see it's running 231 tests through a single ts-test job that covers multiple test suites, but the comment lists "chain.unit, api.integration, contracts.integration, multisig.integration, models.integration, arbitrage.integration" — crosschain.integration appears to be missing. I need to check the actual test command in package.json to understand whether it's already running all test files or if I need to explicitly add the crosschain tests to the run command and update the documentation.
+Read files
+Updating test description
+Updating test description
+The test comment is outdated—vitest run already picks up the crosschain integration tests through its glob pattern, so the ts-test job is actually running them. I should update the comment to reflect this and correct the test count mentioned in the CI file, which currently says "169+" but needs to be accurate.
+Edited ci.yml
+Edited ci.yml
+Verifying crosschain test count
+Verifying crosschain test count
+ci.yml now reflects the current 7 test files / 231 tests (crosschain.integration was already executed by vitest run since it's glob-based — just the comment and count were stale). I didn't touch anything under .github/workflows/ per your instruction.
+
+
+I'm mapping out a multi-phase implementation plan and need to explore the relevant codebase first—checking state management, the WASM VM, arbitrage contracts, test files, and governance components. I'll delegate the exploration work to a subagent and then proceed with systematic implementation.
+Subagent: Explore the Equilibrium repo (blockchain monorepo) to prepare for implementing a stress-test plan. I need concrete file paths, line numbers, and current code shape for: 1. artifacts/api-server/src/chain/state.ts — the rollbackToHeight() function (full body) and the addBlock() function's use of wasmVM.setBlockHeight() (for comparison pattern). 2. artifacts/api-server/src/chain/wasm.ts — WasmVM class: setBlockHeight() method signature, and how block height/block_number() host import works. 3. contracts/arbitrage (or wherever the Arbitrage WASM contract source lives) — the execute_arbitrage entrypoint, circuit breaker / pause logic, execution window logic, sliding window counter, and any admin unpause function. Note the exact WAT/Rust source file path. 4. scripts/src/seed-arbitrage-demo.ts (or wherever it lives) — current implementation, how it creates pools, what params/CLI args it takes today. 5. artifacts/api-server/src/__tests__/arbitrage.integration.test.ts — full list of existing test names/describe blocks, and how tests currently set up chain state, mine blocks, and call the arbitrage execute API (give a short example call pattern including how admin key / auth is passed, and how blocks are mined synchronously in tests). 6. Where governance stubs / arbitrageMaxTradeAmount / arbitrageWindow / arbitrage_min_profit parameters live and how they're read in the contract/route layer (governance.ts or params store). 7. variational-ai/src/arbitrage.rs — the existing 3 Rust tests (names + what they test), and the Bellman-Ford detector function signature. 8. Whether docs/stress-test-results.md exists already, and whether there's an existing gas meter / gas accounting module (file + how gas is read/reported per call). 9. LIMITATIONS.md — the section describing "partial success / no rollback" behavior for multi-hop arbitrage execution (quote it). Return everything as file path + line ranges + short code excerpts, organized by numbered item above. Do not modify anything.
+Examining file contents
+Examining file contents
+Now I need to examine the specific file contents to understand the current implementation and identify where changes are needed—particularly around the rollbackToHeight function in state.ts, the WASM bindings, the Rust library code, and the test files that demonstrate the arbitrage functionality.
+Opened state.ts
+Opened wasm.ts
+Opened lib.rs
+Systematic decomposition and delegation
+Systematic decomposition and delegation
+I'm looking at a large multi-phase project with limited effort available, so I'll need to work systematically and lean on subagents to handle the heavier lifting rather than getting bogged down in details. Starting with Phase 0 to fix the initial issues.
+Edited state.ts
+Reviewing current setup
+Reviewing current setup
+Moving on to Phase 1 now that the rollback WASM height sync test is ready. I need to review the existing integration test file and seed script to understand the current setup, then check the governance parameters and DEX routing logic before extending the seed script.
+Opened arbitrage.integration.test.ts
+Opened seed-arbitrage-demo.ts
+Reviewing and extending seed script
+Reviewing and extending seed script
+I need to check the dex.ts route for the seed-arbitrage-demo endpoint and review the governance.ts parameters, then look at the createPool signature in state.ts to understand how to extend the seed script. I should also grab the arbitrage execute route file to complete Phase 1.
+Searched for "seed-arbitrage-demo|cre…"
+Analyzing pool and governance functions
+Analyzing pool and governance functions
+I need to examine the createPool signature and the governance setParam helper to understand how to set up test routes for updating governance parameters, then review the dex seed route and check if there's a governance test helper available.
+Searched for "createPool("
+Implementing parameter change logic
+Implementing parameter change logic
+I need to look at the createPool signature, the chain/arbitrage.ts wrapper, and how governance setParam is used in tests so I can understand the pattern for changing parameters, then I'll implement the seed script extension for Phase 1 and create the stress test file for Phase 2.
+Opened state.ts
+Opened arbitrage.ts
+Processed text
+Testing parameter mutability
+Testing parameter mutability
+Looking for a way to directly set governance parameters in tests—checking if the params field is publicly accessible on the governance class or if there's an existing setter method that other tests use to mutate these values.
+Searched for "governance.|.paramsb"
+Processed text
+Reusing testing patterns
+Reusing testing patterns
+I see that params is public, and there's an advanceBlocks helper already implemented in the crosschain and models test files—I should look at one of those to understand the pattern I can reuse.
+Opened models.integration.test.ts
+Opened state.ts
+Processed text
+Implementing multi-hop graphs
+Implementing multi-hop graphs
+I'm mapping out the implementation strategy: first, I'll make the seed-arbitrage-demo endpoint accept optional body parameters to support configurable multi-hop graphs, then update the CLI script to pass those flags through. The plan notes there's a constraint I need to account for, but I'm moving forward efficiently given the effort limits.
+For the actual implementation, I'll add a helper function to generate arbitrage cycles with controllable profit magnitudes, either directly in state.ts or as a new module. The route will accept custom pool specs and default to the existing behavior when no body is provided, which keeps it simple without over-engineering.
+For Phase 2 stress tests, I can leverage the existing chainState.createPool pattern that's already used in tests, bypassing the HTTP layer entirely since I'm controlling pool state directly—this is simpler than adding heavy new route logic.
+Given the tight effort constraints, I'm prioritizing Phase 0 (done), Phase 2 core stress tests (the most valuable part), Phase 4 Rust tests, and Phase 6 CI, with lighter versions of the other phases. I'll keep Phase 1 modest: add optional query parameters to the seed route to control the mispricing level in basis points, letting tests dial exact profit levels through a single route parameter.
+For the implementation, I'm extending the dex.ts route to accept optional body parameters like poolId, reserveA, and reserveB with sensible defaults to maintain backward compatibility. This way both the CLI script and tests can create custom-priced pools through the same endpoint without needing separate logic.
+Opened dex.ts
+Configuring body parameters
+Configuring body parameters
+I'm extending the seed-arbitrage-demo route to handle configurable body parameters instead of using hardcoded values.
+Edited dex.ts
+Verifying API server restart
+Verifying API server restart
+I'm planning out the remaining phases: exposing CLI flags in the seed script, then moving through the stress test implementation, fuzzing, Rust tests, documentation, and CI updates. Let me verify the API server restarted properly after my edits and check the logs before batching the next set of changes.
+Edited seed-arbitrage-demo.ts
+Validating parameters
+Validating parameters
+Moving on to Phase 2, I need to write the stress test file and verify the createPool signature uses the default DEX_FEE. I'm also checking the arbitrageMaxTradeAmount parameter in the host governance config—it's set to 100 billion in base units without fixed-point scaling, which should be fine for typical trade amounts. The thought trails off while examining the block window parameter.
+The block window concept is measured in blocks via arbitrageWindowBlocks (default 100), with a hardcoded MAX_EXECS_PER_WINDOW of 5 in the contract. For test control, I can use advanceBlocks() with mineNextBlock and adjust governance.params.arbitrageWindowBlocks to shrink the window for faster testing. I'm wondering how the block window ties to actual chain height and blockNumber in the test environment—specifically whether auto-mining is active and might interfere by mining extra blocks every 15 seconds. I should check the initChain function in index.ts to see if the test explicitly calls startMining or if auto-mining is enabled in the test NODE_ENV.
+Processed text
+Writing stress test file
+Writing stress test file
+I need to figure out where startMining gets invoked—it's not in initChain based on what I've seen, and tests defensively call stopMining in afterAll even though mining probably isn't running in the test environment. Let me move forward with writing the stress test file now.
+Searched for "startMining|NODE_ENV"
+Verifying mining behavior
+Verifying mining behavior
+Good, startMining is only invoked in the server entrypoint, not in the test app, so tests can import the app directly without triggering mining—keeping things deterministic. Now I need to write the stress test file, checking the DEX fee structure, pool tokens, and the genesis pool IDs for WBTC-EQU and USDC-EQU to construct test cycles.
+I should also verify how gasUsed is tracked through the call results and whether it's exposed via the status route, then move forward with implementing the nine stress test scenarios using the established patterns and genesis pool IDs.
+Searched for "EQU-WBTC|EQU-USDC|seedD…"
+Checking reserves and fees
+Checking reserves and fees
+Now I'm looking at the seedDexPools function to check the reserve amounts and what the fee constant is set to.
+Opened state.ts
+Recalculating pool reserves
+Recalculating pool reserves
+Given the scope, I'll delegate the bulk of implementation (Phases 2–6) to a build subagent now that I have full context, then review its output.
+Show less
+Delegating stress-test implementation to a build subagent
+Checking delegation skill documentation
+Checking delegation skill documentation
+I need to verify that the kind parameter should be "general" rather than "build", so let me quickly check the delegation skill documentation for the correct kind values.
+Loaded skill delegation
+Delegating stress-test implementation to a build subagent
+Subagent: You are implementing Phases 1–6 of a stress-test plan for the Arbitrage WASM contract in the Equilibrium blockchain monorepo. Phase 0 (rollbackToHeight syncing wasmVM.setBlockHeight) is ALREADY DONE in artifacts/api-server/src/chain/state.ts — do not redo it, just rely on it. Phase 1 (seed-arbitrage-demo configurability) is ALSO ALREADY DONE — POST /api/dex/pools/seed-arbitrage-demo now accepts { poolId, reserveA, reserveB, discountBp } in its JSON body (see artifacts/api-server/src/routes/dex.ts), and scripts/src/seed-arbitrage-demo.ts has --pool-id/--discount-bp/--reserve-a/--reserve-b flags. Do not redo these; reuse chainState.createPool(id, tokenA, tokenB, reserveA, reserveB, fee?) directly in tests instead of going through HTTP for speed/control. Key context you must read before writing anything: - artifacts/api-server/src/chain/state.ts — ChainState class: addBlock(), rollbackToHeight(), createPool(), mineNextBlock() (module-level export), pendingUtxoFees, ledger. - artifacts/api-server/src/chain/wasm.ts — WasmVM class: call(), setBlockHeight(), ContractRecord.totalGasUsed, CallResult { success, returnValue, gasUsed, logs, error }. - artifacts/api-server/src/chain/arbitrage.ts — TS wrapper: getArbitrageAddress(), pauseArbitrage(), unpauseArbitrage(), executeArbitrage(wasmVM, caller, {poolIds, tokenIn, amountIn, minProfit}), setArbitrageModel(). Return codes: -1 paused/circuit-tripped, -2 no model, -3 model not verified, -4 exceeds max trade amount, -5 swap failed, -6 not owner. - contracts/arbitrage/src/lib.rs — the on-chain contract. MAX_EXECS_PER_WINDOW = 5 (hardcoded const, NOT a governance param). Circuit breaker: rolling window keyed by block_number() vs governance params arbitrageWindowBlocks; exec_count increments per call within window; > 5 execs auto-trips circuit_tripped=1 (method returns -1 from then on until unpause() clears both paused and circuit_tripped). arbitrageMaxTradeAmount hard-caps amountIn (returns -4 if exceeded). Profit below minProfit is NOT a rejection — it still executes and just logs "ArbitrageUnderTarget" (see LIMITATIONS.md §1) — the trade already happened, no rollback. - artifacts/api-server/src/chain/governance.ts — GovernanceModule class has a PUBLIC `params: ChainParameters` field (test files elsewhere are free to mutate governance.params.xyz = value directly to change live params without a proposal — this is the established test pattern used for other stub-style param changes in this codebase; grep other test files under __tests__ for precedent if unsure. Params of interest: arbitrageMaxTradeAmount (default 100_000_000_000), arbitrageWindowBlocks (default 100), arbitrageModelUpdateDelay (default 50). - artifacts/api-server/src/chain/index.ts — exports initChain(), stopMining(), chainState, minerAddress. Note: startMining() is only called from index.ts's server bootstrap, NOT from initChain() or app.ts, so tests that import app.js never have a background auto-miner running — block production must be driven manually via mineNextBlock()+addBlock(). - artifacts/api-server/src/__tests__/arbitrage.integration.test.ts — existing test file with the established patterns: randomAddress(), fund(addr, amount) via chainState.ledger.credit, supertest against app.js, discovering contractOwner from GET /api/arbitrage/status in beforeAll (IMPORTANT: only the contract owner may call execute_arbitrage — see method_execute in lib.rs, "caller is not the owner" check first). initChain() is called once in beforeAll. - artifacts/api-server/src/__tests__/models.integration.test.ts and crosschain.integration.test.ts — both define a local helper: function advanceBlocks(count) { for (let i=0;i<count;i++) chainState.addBlock(mineNextBlock(chainState, minerAddress)); } imported via: import { mineNextBlock } from "../chain/state.js"; import { chainState, minerAddress } from "../chain/index.js"; - LIMITATIONS.md §1 — the exact "no rollback on partial success / under-target profit" language, quote/reference it accurately in test comments. - variational-ai/src/arbitrage.rs — existing tests: test_currency_graph_finds_cycle, test_arbitrage_action_gradient, test_no_cycle_on_balanced_pools. Detector fn: find_arbitrage_path(&self) -> Option<ArbitragePath>. Read the full file to understand the CurrencyGraph / pool struct shape before adding tests. - ci.yml (repo root — NOT .github/workflows, the user cannot push there, only ci.yml in root is used and copy-pasted manually) — existing job structure: typecheck, rust-check (equilibrium), vai-check (variational-ai), ts-test (vitest, needs typecheck, spins up a postgres service, builds & copies variational-ai-cli + variational-ai-arbitrage-cli binaries before running pnpm --filter @workspace/api-server run test), rust-test (equilibrium), vai-test (variational-ai, runs "cargo test --lib" in variational-ai working directory). YOUR TASKS: ## Phase 2 — new file artifacts/api-server/src/__tests__/arbitrage.stress.test.ts A dedicated Supertest-based, entirely in-memory stress-test suite for the Arbitrage contract's safety rails, following the exact conventions of the existing integration test files (imports, beforeAll/afterAll, randomAddress/fund helpers, advanceBlocks helper). Build your own small isolated pool graph with chainState.createPool(...) (2-4 custom pools, e.g. a token chain like "EQU-FOO", "FOO-BAR", "BAR-EQU" or reuse EQU/WBTC/USDC via seed-arbitrage-demo style pools) so profit/cycle behavior is deterministic and under your control — do not depend on exact genesis pool numbers if you can define your own pools instead. You will likely need to also configure the contract's model via setArbitrageModel + get ModelRegistry to a Verified state OR discover whatever the existing arbitrage.integration.test.ts does to get execute() to succeed at all (read it carefully — check whether existing "execute" tests there ever get a real 200 success, or if a model is already configured/verified as part of initChain's deploy flow / a fixture). If getting a genuinely verified model wired up in-test is too heavy, it is acceptable to structure scenarios around the parts of execute_arbitrage that don't require a verified model (e.g. -6 owner check, -1 paused/circuit-breaker, -4 max-trade-amount cap) using the owner as caller, and to skip/gracefully assert on the -2/-3 no-model-configured path for scenarios that would otherwise need full model verification — but PREFER wiring up a real verified model if the existing test suite already shows a working pattern for it (check contracts.integration.test.ts and models.integration.test.ts for a full propose->verify flow you can reuse). Implement these 9 scenarios as separate `it()` or `describe()` blocks, using governance.params overrides (small arbitrageWindowBlocks like 5, small arbitrageMaxTradeAmount where needed) to keep tests fast and deterministic. Use the real chainState.governance object (chainState.governance.params.arbitrageWindowBlocks = 5, etc.) — grep governance.ts to confirm the exact property name chainState exposes for its GovernanceModule instance if it's not literally called "governance". 2.1 Rapid-Fire Execution: call execute 6 times within one block window (no block mining between calls, or same window). Assert the outcomes: up to 5 succeed (or return a non-circuit-breaker-tripped code), the 6th is rejected with the circuit-breaker code (-1 via the executeArbitrage() wrapper's mapped error message "Paused or circuit breaker tripped"), and a subsequent call also returns that same rejection. After calling unpauseArbitrage() as admin, verify the breaker clears and the window resets (an immediate next execute is no longer rejected for the circuit-breaker reason, though it may fail for other legitimate reasons like a swap failure if pools ran low on liquidity — assert specifically that the error is NOT the circuit-breaker one). 2.2 Multi-Hop Market Crash (Hard Cap): temporarily set governance.params.arbitrageMaxTradeAmount to a small value, then call execute with amountIn far exceeding it. Assert the result is rejected with the max-trade-amount error code and that no chain state mutation occurred (e.g. re-check pool reserves / ledger balance for the caller are unchanged) — since the check happens before dex_multi_swap is invoked, no partial swap should occur. 2.3 Profit Below Minimum: call execute with a minProfit far above what's achievable. Per LIMITATIONS.md, the trade still executes (success=true, profit < minProfit) rather than being rejected — assert that behavior explicitly (this is intentionally a documentation-of-behavior test, not a "rejection" test), and note in a comment that this is deliberate, not a bug. 2.4 Concurrent Execution Attempts (Multi-Caller stress): fire multiple (e.g. 8-10) execute calls via Promise.all from the SAME owner caller (since only the owner may call execute — adjust the "different addresses" framing from the original plan to "different concurrent requests", note this deviation in a comment) within one block window. Assert that circuit-breaker semantics hold under concurrency: no more than 5 non-circuit-breaker-rejected executions succeed, and the rest are cleanly rejected — not corrupted/duplicated. This exercises that the contract call path (even though WasmVM.call() runs synchronously per call under Node's single-threaded model backed by execFileSync for the CLI subprocess in the opportunities scan, NOT in the execute path itself — verify this from bridge.ts/arbitrage.ts before asserting subprocess-related claims; execute_arbitrage() does NOT spawn a subprocess, dex_multi_swap is a pure in-process host call) has no double-counting bug in exec_count under overlapping async calls. Adjust scenario framing to match what's actually true of the code (do not claim a subprocess race that doesn't exist). 2.5 Circuit Breaker Reset After Unpause: after tripping the breaker (reuse pattern from 2.1), advance the chain past the window (mine arbitrageWindowBlocks+1 blocks) and assert execute STILL fails with the circuit-breaker/paused code until unpause() is explicitly called (the trip is sticky, not time-based self-heal) — then call unpause and assert normal operation resumes and window/exec_count reset. 2.6 Sliding Window Correctness: execute a few trades (fewer than the trip threshold) in one window, mine arbitrageWindowBlocks+1 empty blocks so the window rolls over, then execute a few more — assert the breaker does NOT trip because the counter reset with the new window (old executions "fell out"). 2.7 Governance Parameter Changes Mid-Test: change governance.params.arbitrageMaxTradeAmount and .arbitrageWindowBlocks live, then assert subsequent execute calls immediately respect the new values (not cached) — e.g. lower the cap below a previously-passing amountIn and show it now gets rejected with -4. 2.8 Rollback Scenario: mine a block containing a state change from an arbitrage-adjacent contract mutation (e.g. a successful execute or a pause toggle if execute is impractical here), then call chainState.rollbackToHeight() to roll it back, and assert the contract's on-chain circuit-breaker/paused view (GET /api/arbitrage/status) reflects the state as it was before that block — i.e., confirms the Phase-0 wasmVM.setBlockHeight(this.height) fix keeps WASM-visible height correct after a reorg (you can assert this indirectly: e.g. block_number()-dependent windows behave correctly for a subsequent execute call post-rollback, or just assert chainState.height matches the target and a subsequent addBlock()/execute() call succeeds normally, proving the VM wasn't left in a broken/stale state). Keep this test honest about what it's actually proving — do not fabricate an assertion that isn't really exercised by the code. 2.9 Partial Success (No Rollback Behavior): same as 2.3 conceptually but frame it explicitly as "partial success is not rolled back" per LIMITATIONS.md — assert that after an under-target-profit execute, the caller's balance / pool reserves reflect that the swap DID happen (state changed) even though profit missed the target, proving there's no compensating rollback. Write real, runnable assertions — do not stub with expect(true).toBe(true). If a scenario truly cannot be exercised without infrastructure that doesn't exist yet (e.g. real concurrent multi-caller with different owner-authenticated addresses, since only ONE owner exists), adapt the scenario faithfully to what the actual contract allows and say so in a comment, rather than skipping it silently. ## Phase 3 — deterministic fuzzing harness Add a `describe("Deterministic fuzzing", ...)` block (can be in the same arbitrage.stress.test.ts file, clearly separated) that: - Uses a simple seeded PRNG (mulberry32 or similar tiny inline implementation — no new npm dependency) for reproducibility. - Generates several (e.g. 20-50, keep it fast — must run in seconds, this is CI) random custom DEX pools via chainState.createPool with randomized (but valid, positive) reserve ratios. - For each generated pool set, calls the existing findArbitrageOpportunities bridge (check artifacts/api-server/src/variational-ai/bridge.ts for its exact export and signature) to find real cycles via the Rust CLI, OR if that's too slow/heavy for a per-iteration fuzz loop, do a single detector call across the full randomized pool set per iteration (batch, not one CLI spawn per micro-check) to keep the suite fast. - After executing any opportunity found (only if executable — respecting the owner/model-verification constraints established in Phase 2; it is fine if most iterations find no opportunity or can't execute one due to missing model verification — that's an acceptable, expected outcome; just assert the detector doesn't crash and returns well-formed data), check basic invariants: no swap amount ever exceeds governance.params.arbitrageMaxTradeAmount, pool constant-product k does not decrease implausibly (k' >= k accounting for the 0.3% fee being added back to reserves — i.e. assert k'/k >= 1 - small epsilon, not exactly k'>=k if you're not certain the LP fee model here strictly increases k; verify this by reading the swap math in dex.ts/state.ts before asserting a strict inequality). - Document the exact fixed-point scales in a comment: the variational solver uses 1e12 scaling (check variational-ai/src/lib.rs or similar for the actual FP_SCALE constant and cite the real value, don't guess) and the chain state uses 1e18-scaled residualFp per prior work — verify both constants by grep before writing the comment; correctness of the comment matters more than matching the plan's guessed numbers. ## Phase 4 — variational-ai/src/arbitrage.rs Rust stress tests Add 3 new #[test] functions extending the existing 3: - One with a fully-connected graph of a moderately large number of tokens (e.g. 12-15) verifying the Bellman-Ford detector completes quickly (assert wall-clock time is well under a reasonable bound like 1-2 seconds using std::time::Instant — do NOT hardcode a flaky sub-millisecond bound) and returns a valid result (Some or None, either is fine, just must not panic/hang). - One with negative cycles of very small edge weights (near-zero but real profit) confirming the detector still finds them (doesn't threshold them away incorrectly) — read the actual detector's epsilon/threshold handling first so this test is honest about what's being verified. - One simulating "churn" — build a pool set, find a cycle, mutate reserves as if a swap occurred (apply the swap math consistent with the rest of the module), then re-run the detector and confirm it produces a coherent updated result (either no longer finds the same cycle, or finds an updated one) without panicking. Keep these consistent with the existing test style/naming in the file (read the 3 existing tests first for conventions: struct construction, helper functions already available). ## Phase 5 — docs/stress-test-results.md (new file) After you've actually run the new tests (see "Validation" below), write this doc with REAL measured numbers, not fabricated ones: - How to run: exact pnpm/cargo commands used. - Test counts: how many new TS stress tests (Phase 2+3) and new Rust tests (Phase 4) were added, and the resulting new grand totals (old count + new count) — verify old counts by actually reading/running, don't trust stale docs. - Any measured timings you captured (e.g. total stress test suite wall-clock time from vitest's own reporter output, Rust test wall time from cargo test output). - A short "Known constraints" section noting anything scoped down from the original plan (e.g. true multi-caller concurrency limited by single-owner design, fuzzing scope kept small for CI speed) and why (this must match what you actually did, not the aspirational original plan). ## Phase 6 — update ci.yml (root, NOT .github/workflows — do not touch .github/workflows/, the user said they cannot push there) - The existing ts-test job already runs `pnpm --filter @workspace/api-server run test` via vitest, which auto-discovers all *.test.ts files including your new arbitrage.stress.test.ts — so it is likely ALREADY covered without a new job. Confirm this is true (vitest config glob pattern) rather than assuming. If true, just update the ts-test job's descriptive step name/comment to mention arbitrage.stress alongside the other suites, and update any stale test-count comments elsewhere in ci.yml to the new real total. - Add a step to the vai-test job (or a new small job, whichever fits the existing style better) that runs the 3 new Rust stress tests in variational-ai/src/arbitrage.rs — if `cargo test --lib` already covers them (it should, since they're #[test] in the same crate), just confirm and do not add a redundant duplicate step; only add something new if genuinely needed. - Do not touch anything under .github/workflows/. ## Validation (do this for real, don't skip) 1. Run `cd variational-ai && cargo test --lib` and confirm your 3 new Rust tests pass alongside the existing ones. Fix any compile errors. 2. Run the TypeScript test suite for real: you'll need Postgres running and the variational-ai CLI binaries built and copied into artifacts/api-server/ (check how the existing dev workflow does this — there's a "VAI Harness"/"VAI Benchmarks" pattern or a build script; check package.json scripts and any existing scripts/*.sh for how binaries get built+copied in dev, e.g. maybe artifacts/api-server has a pretest/predev hook, or check .replit workflows). Run `pnpm --filter @workspace/api-server run test` (with DATABASE_URL set appropriately per README/replit.md — check replit.md's "Run & Operate" section for the exact command) and confirm ALL tests pass, including your new arbitrage.stress.test.ts, with no regressions in the other 6 test files. 3. Run `pnpm run typecheck` (or the equivalent per replit.md) to confirm no type errors were introduced. 4. If anything fails, fix it — don't leave broken tests or code behind. Report back: final test counts (TS total tests / files, Rust equilibrium tests, Rust variational-ai tests), confirmation typecheck passes, and a summary of any scenario you had to adapt from the original plan's literal wording (and why), plus the exact list of files you created/modified.
+Waiting for the stress-test build subagent
+Waiting for the stress-test build subagent
+Waiting for the stress-test build subagent
+Waiting for the stress-test build subagent
+Waiting for completion
+Waiting for completion
+The subagent is still processing, so I'll wait for it to finish. I'm also noticing that some duplicate artifacts were automatically added to the system, but I'll set those aside and focus on the job completion.
+Waiting for the stress-test build subagent
+Verifying changes and restarting API
+Verifying changes and restarting API
+I need to verify the changes work properly by reviewing the modified files and running the code review, then restarting the API server to make sure everything still functions. I'll check the new test file, the CI configuration diff, the documentation updates, and the Rust code changes—and I can ignore those duplicate artifact workflows since they were auto-generated.
+
+
