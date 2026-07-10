@@ -32,6 +32,7 @@ import DexPage from "@/pages/Dex";
 import SearchPage from "@/pages/Search";
 import ModelsPage from "@/pages/Models";
 import ArbitragePage from "@/pages/Arbitrage";
+import RelayPage from "@/pages/Relay";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -70,6 +71,7 @@ const SafeContractDetail = withErrorBoundary(ContractDetail);
 const SafeAdminMultisig  = withErrorBoundary(AdminMultisig);
 const SafeModels         = withErrorBoundary(ModelsPage);
 const SafeArbitrage      = withErrorBoundary(ArbitragePage);
+const SafeRelay          = withErrorBoundary(RelayPage);
 
 function AppRouter() {
   useChainWebSocket();
@@ -102,6 +104,7 @@ function AppRouter() {
           <Route path="/admin/multisig"      component={SafeAdminMultisig} />
           <Route path="/models"              component={SafeModels} />
           <Route path="/arbitrage"           component={SafeArbitrage} />
+          <Route path="/relay"               component={SafeRelay} />
           <Route component={NotFound} />
         </Switch>
       </Layout>
