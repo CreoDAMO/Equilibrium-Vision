@@ -11,6 +11,7 @@ import { loadBlocksFromDb, persistBlock, persistBlocks } from "./persistence.js"
 import { deployAdminMultisigIfConfigured } from "./multisig.js";
 import { deployModelRegistryIfNeeded } from "./modelRegistry.js";
 import { deployArbitrageIfNeeded } from "./arbitrage.js";
+import { deployCrossChainRelayIfNeeded } from "./crossChainRelay.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
 // address, but overridden by initChain() to the first genesis.json validator
@@ -180,6 +181,14 @@ export async function initChain(): Promise<void> {
     await deployArbitrageIfNeeded(chainState.wasmVM, minerAddress, minerAddress);
   } catch (err) {
     logger.warn({ err }, "ModelRegistry/Arbitrage deployment check failed — continuing without them");
+  }
+
+  // CrossChainRelay — deploy once on first boot; pin via CROSS_CHAIN_RELAY_ADDRESS.
+  // Gracefully skipped if the contract hex hasn't been built yet.
+  try {
+    await deployCrossChainRelayIfNeeded(chainState.wasmVM, minerAddress);
+  } catch (err) {
+    logger.warn({ err }, "CrossChainRelay deployment check failed — continuing without it");
   }
 }
 

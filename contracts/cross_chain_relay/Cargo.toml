@@ -1,0 +1,16 @@
+[package]
+name = "cross_chain_relay"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+
+[dependencies]
+wee_alloc = "0.4"
+sha2 = { version = "0.10", default-features = false }
