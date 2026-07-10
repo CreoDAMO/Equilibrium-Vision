@@ -87,7 +87,7 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
-  # ── TypeScript tests (Vitest) — all 7 test files, 231 tests ────────────────
+  # ── TypeScript tests (Vitest) — all 8 test files, 245+ tests (incl. crosschain.integration + arbitrage.stress) ────────────────
   ts-test:
     name: TypeScript tests (Vitest)
     runs-on: ubuntu-latest
