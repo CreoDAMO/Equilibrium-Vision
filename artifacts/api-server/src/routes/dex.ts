@@ -102,27 +102,57 @@ router.post("/dex/liquidity/add", (req, res) => {
  * the arbitrage detector has a real negative cycle to find (EQU-WBTC and
  * EQU-USDC alone can never form a triangle). Disabled in production.
  * Idempotent — a second call reports the pool already exists.
+ *
+ * Optional JSON body lets callers (tests, the CLI script, or a future
+ * "extended multi-hop" mode) dial the mispricing to an exact magnitude
+ * instead of the fixed 20%-cheap default:
+ *   { poolId?: string, reserveA?: number, reserveB?: number, discountBp?: number }
+ * `discountBp` (basis points below the 100,000 fair price) is the simplest
+ * knob — e.g. 500 = 5% cheap (small/marginal profit), 2000 = 20% (default,
+ * comfortably profitable), 9000 = 90% (deliberately far above any sane cap,
+ * for hard-cap-rejection tests). `reserveA`/`reserveB` override it entirely
+ * for full manual control over an arbitrary reserve ratio.
  */
-router.post("/dex/pools/seed-arbitrage-demo", (_req, res) => {
+router.post("/dex/pools/seed-arbitrage-demo", (req, res) => {
   if (process.env["NODE_ENV"] === "production") {
     res.status(403).json({ error: "Demo seeding is disabled in production" });
     return;
   }
 
-  // Fair WBTC price implied by the two real pools: 1 WBTC = 100,000 EQU =
-  // 100,000 USDC. Price this pool at 1 WBTC = 80,000 USDC (20% cheap) so a
+  const body = (req.body ?? {}) as {
+    poolId?: unknown; reserveA?: unknown; reserveB?: unknown; discountBp?: unknown;
+  };
+  const poolId = typeof body.poolId === "string" && body.poolId ? body.poolId : "WBTC-USDC";
+
+  // Fair WBTC price implied by the two real genesis pools: 1 WBTC = 100,000 EQU
+  // = 100,000 USDC. Default: price this pool 20% cheap (discountBp=2000) so a
   // profitable cycle survives the 0.3%-per-hop DEX fee across all 3 hops.
-  const result = chainState.createPool("WBTC-USDC", "WBTC", "USDC", 100, 8_000_000);
+  let reserveA = typeof body.reserveA === "number" && body.reserveA > 0 ? body.reserveA : 100;
+  let reserveB: number;
+  if (typeof body.reserveB === "number" && body.reserveB > 0) {
+    reserveB = body.reserveB;
+  } else {
+    const discountBp = typeof body.discountBp === "number" && body.discountBp >= 0 && body.discountBp < 10_000
+      ? body.discountBp
+      : 2_000;
+    const fairReserveB = reserveA * 100_000;
+    reserveB = Math.max(1, Math.round(fairReserveB * (10_000 - discountBp) / 10_000));
+  }
+
+  const result = chainState.createPool(poolId, "WBTC", "USDC", reserveA, reserveB);
 
   if (typeof result === "string") {
-    res.status(409).json({ error: result, poolId: "WBTC-USDC" });
+    res.status(409).json({ error: result, poolId });
     return;
   }
 
   res.json({
     success: true,
-    poolId: "WBTC-USDC",
-    message: "Seeded mispriced WBTC-USDC pool (1 WBTC = 80,000 USDC vs. fair 100,000) for arbitrage demo",
+    poolId,
+    reserveA,
+    reserveB,
+    impliedPrice: reserveB / reserveA,
+    message: `Seeded WBTC-USDC pool '${poolId}' (1 WBTC = ${(reserveB / reserveA).toLocaleString()} USDC vs. fair 100,000) for arbitrage demo`,
   });
 });
 

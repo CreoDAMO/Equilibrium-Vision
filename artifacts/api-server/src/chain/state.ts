@@ -409,6 +409,13 @@ export class ChainState {
       this.finalityRounds.delete(block.height);
     }
 
+    // Keep the WASM VM's block_number() host import in sync with the chain
+    // tip after a reorg — mirrors the sync done in addBlock(). Without this,
+    // WASM contracts (e.g. Arbitrage's circuit-breaker window, CrossChainRelay's
+    // challenge window) would see a stale, too-high block height after a
+    // rollback, breaking any height-relative logic until the next new block.
+    this.wasmVM.setBlockHeight(this.height);
+
     return removed;
   }
 

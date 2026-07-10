@@ -145,7 +145,7 @@ jobs:
       - name: Push DB schema
         run: DATABASE_URL="postgresql://runner@localhost:5432/equilibrium" pnpm --filter @workspace/db run push --config ./drizzle.config.ts
 
-      - name: Run all Vitest tests (chain.unit, api.integration, contracts.integration, multisig.integration, models.integration, arbitrage.integration, crosschain.integration)
+      - name: Run all Vitest tests (chain.unit, api.integration, contracts.integration, multisig.integration, models.integration, arbitrage.integration, crosschain.integration, arbitrage.stress)
         run: pnpm --filter @workspace/api-server run test
         env:
           DATABASE_URL: postgresql://runner@localhost:5432/equilibrium

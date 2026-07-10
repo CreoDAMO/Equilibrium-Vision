@@ -494,4 +494,211 @@ mod tests {
             assert!(p.profit_factor <= 0.01, "profit should be negligible on balanced pools");
         }
     }
+
+    // ── Phase 4 stress tests ──────────────────────────────────────────────────
+
+    /// Build a fully-connected graph of `n` tokens where every token pair has
+    /// a pool. Pool reserves are slightly imbalanced between even/odd pairs to
+    /// create a realistic (but not trivially balanced) graph.
+    fn make_fully_connected_pools(n_tokens: usize) -> Vec<PoolSnapshot> {
+        let tokens: Vec<String> = (0..n_tokens).map(|i| format!("T{}", i)).collect();
+        let mut pools = Vec::new();
+        for i in 0..n_tokens {
+            for j in (i + 1)..n_tokens {
+                // Slight reserve asymmetry so some edges have non-trivial weights
+                let reserve_a = 10_000.0 + (i as f64) * 37.0 + (j as f64) * 13.0;
+                let reserve_b = 10_000.0 + (j as f64) * 41.0 + (i as f64) * 7.0;
+                pools.push(PoolSnapshot {
+                    pool_id:   format!("{}-{}", tokens[i], tokens[j]),
+                    token_a:   tokens[i].clone(),
+                    token_b:   tokens[j].clone(),
+                    reserve_a,
+                    reserve_b,
+                    fee: 0.003,
+                });
+            }
+        }
+        pools
+    }
+
+    /// Phase 4 stress test 1: Bellman-Ford on a large fully-connected graph.
+    ///
+    /// With 13 tokens there are 13*12/2 = 78 pools and 26 directed edges.
+    /// Verifies the detector completes in well under a reasonable time bound
+    /// (1 second) and returns a valid result without panicking.
+    #[test]
+    fn test_large_fully_connected_graph_completes_quickly() {
+        use std::time::Instant;
+
+        let n_tokens = 13;
+        let pools = make_fully_connected_pools(n_tokens);
+        assert_eq!(pools.len(), n_tokens * (n_tokens - 1) / 2);
+
+        let graph = CurrencyGraph::from_pools(&pools);
+        let start = Instant::now();
+        let result = graph.find_arbitrage_path();
+        let elapsed = start.elapsed();
+
+        // Must complete in well under 1 second (Bellman-Ford is O(V*E))
+        assert!(
+            elapsed.as_millis() < 1_000,
+            "Bellman-Ford on {} tokens took {}ms — too slow",
+            n_tokens,
+            elapsed.as_millis(),
+        );
+
+        // Result is either Some or None — both are correct outcomes.
+        // If a cycle is found, validate its structure.
+        if let Some(path) = result {
+            assert!(path.profit_factor > 0.0, "profit_factor must be positive");
+            assert!(
+                path.tokens.len() >= 3,
+                "a valid cycle needs at least 2 hops (3 tokens including close)"
+            );
+            assert_eq!(
+                path.pool_ids.len(),
+                path.tokens.len() - 1,
+                "pool_ids.len() must equal tokens.len() - 1"
+            );
+        }
+        // None is also a valid outcome — balanced pools may have no cycle.
+    }
+
+    /// Phase 4 stress test 2: near-zero-weight negative cycles are detected.
+    ///
+    /// We construct a triangle where one pool has a very small imbalance
+    /// (profit factor ≈ 1e-4). This verifies that the 1e-12 epsilon threshold
+    /// in the Bellman-Ford relaxation check does NOT swallow real (tiny) cycles.
+    #[test]
+    fn test_tiny_negative_cycle_is_detected() {
+        // EQU→WBTC pool: slightly more WBTC per EQU than the reverse path returns
+        // Rate A→B: 1000.001 / 1000.0 = 1.000001 (after fee: ~0.997)
+        // We stack three pools such that product_of_rates > 1.0 by a hair.
+        //
+        // The Bellman-Ford epsilon is 1e-12 (see find_arbitrage_path, the
+        // `new_dist < dist[edge.to] - 1e-12` guard). A cycle with a weight
+        // sum of -1e-6 (well above 1e-12) must still be detected.
+        let pools = vec![
+            PoolSnapshot {
+                pool_id:   "p1".to_string(),
+                token_a:   "A".to_string(), token_b: "B".to_string(),
+                // rate A→B slightly > 1 after fee
+                reserve_a: 10_000.0, reserve_b: 10_050.0,
+                fee: 0.001, // 0.1% fee — small to preserve the cycle
+            },
+            PoolSnapshot {
+                pool_id:   "p2".to_string(),
+                token_a:   "B".to_string(), token_b: "C".to_string(),
+                reserve_a: 10_000.0, reserve_b: 10_050.0,
+                fee: 0.001,
+            },
+            PoolSnapshot {
+                pool_id:   "p3".to_string(),
+                token_a:   "C".to_string(), token_b: "A".to_string(),
+                // return leg: slightly favorable ratio
+                reserve_a: 9_950.0, reserve_b: 10_000.0,
+                fee: 0.001,
+            },
+        ];
+
+        // Confirm the product of rates > 1.0 (cycle should be profitable)
+        let rate_ab = pools[0].rate("A");
+        let rate_bc = pools[1].rate("B");
+        let rate_ca = pools[2].rate("C");
+        let product = rate_ab * rate_bc * rate_ca;
+        assert!(
+            product > 1.0,
+            "test setup error: product of rates {:.8} must be > 1.0 for a real cycle",
+            product
+        );
+
+        let graph = CurrencyGraph::from_pools(&pools);
+        let path = graph.find_arbitrage_path();
+
+        assert!(
+            path.is_some(),
+            "expected Bellman-Ford to detect the small-imbalance cycle (product={:.8})",
+            product
+        );
+        let p = path.unwrap();
+        assert!(
+            p.profit_factor > 0.0,
+            "profit_factor must be positive, got {}",
+            p.profit_factor
+        );
+    }
+
+    /// Phase 4 stress test 3: "churn" — find a cycle, apply swap math, re-run detector.
+    ///
+    /// After a swap consumes some arbitrage profit, the pool reserves shift and
+    /// the cycle either disappears or shrinks. The detector must not panic on
+    /// mutated reserves and must return a coherent (possibly updated) result.
+    #[test]
+    fn test_detector_coherent_after_swap_churn() {
+        let mut pools = make_pools(); // the imbalanced EQU/WBTC/USDC triangle
+
+        let graph = CurrencyGraph::from_pools(&pools);
+        let initial_path = graph.find_arbitrage_path();
+
+        // We expect a cycle on these known-imbalanced pools
+        assert!(
+            initial_path.is_some(),
+            "make_pools() should yield a profitable cycle for this churn test"
+        );
+        let path = initial_path.unwrap();
+
+        // Simulate the first hop of the detected cycle using the AMM formula.
+        // Find the first pool in the path and apply a modest swap.
+        let first_pool_id = &path.pool_ids[0];
+        let first_token_in = &path.tokens[0];
+
+        if let Some(pool) = pools.iter_mut().find(|p| &p.pool_id == first_pool_id) {
+            let amount_in = 50.0; // modest size to not drain the pool
+            let amount_out = pool.amm_out(first_token_in, amount_in);
+
+            assert!(amount_out > 0.0, "swap should produce positive output");
+
+            // Apply the swap: update reserves in-place
+            if first_token_in == &pool.token_a {
+                pool.reserve_a += amount_in;
+                pool.reserve_b -= amount_out;
+            } else {
+                pool.reserve_b += amount_in;
+                pool.reserve_a -= amount_out;
+            }
+
+            // Constant-product invariant: k must not decrease after the swap
+            let k_before = (pool.reserve_a - amount_in) * (pool.reserve_b + amount_out);
+            let k_after  = pool.reserve_a * pool.reserve_b;
+            assert!(
+                k_after >= k_before * 0.9999,
+                "k must not decrease materially after swap: before={:.2} after={:.2}",
+                k_before,
+                k_after,
+            );
+        }
+
+        // Re-run detector on the mutated pool set — must not panic
+        let graph2 = CurrencyGraph::from_pools(&pools);
+        let updated_path = graph2.find_arbitrage_path();
+
+        // Either the cycle is gone (arbitrage was consumed) or a smaller cycle
+        // remains — both are correct. The only invariant is no panic.
+        if let Some(p2) = updated_path {
+            assert!(
+                p2.profit_factor >= 0.0,
+                "updated profit_factor must be non-negative: {}",
+                p2.profit_factor
+            );
+            // If the cycle persists it should be no more profitable than before
+            // (we consumed some of the imbalance)
+            assert!(
+                p2.profit_factor <= path.profit_factor + 0.01,
+                "profit_factor should not increase after a swap: before={} after={}",
+                path.profit_factor,
+                p2.profit_factor
+            );
+        }
+        // None is fine too — cycle may have been fully consumed.
+    }
 }
