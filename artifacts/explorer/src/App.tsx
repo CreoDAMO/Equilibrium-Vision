@@ -33,6 +33,7 @@ import SearchPage from "@/pages/Search";
 import ModelsPage from "@/pages/Models";
 import ArbitragePage from "@/pages/Arbitrage";
 import RelayPage from "@/pages/Relay";
+import MatrixPage from "@/pages/Matrix";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -72,6 +73,7 @@ const SafeAdminMultisig  = withErrorBoundary(AdminMultisig);
 const SafeModels         = withErrorBoundary(ModelsPage);
 const SafeArbitrage      = withErrorBoundary(ArbitragePage);
 const SafeRelay          = withErrorBoundary(RelayPage);
+const SafeMatrix         = withErrorBoundary(MatrixPage);
 
 function AppRouter() {
   useChainWebSocket();
@@ -105,6 +107,7 @@ function AppRouter() {
           <Route path="/models"              component={SafeModels} />
           <Route path="/arbitrage"           component={SafeArbitrage} />
           <Route path="/relay"               component={SafeRelay} />
+          <Route path="/matrix"              component={SafeMatrix} />
           <Route component={NotFound} />
         </Switch>
       </Layout>
