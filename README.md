@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 2026):** Mainnet-readiness hardening complete on Replit. **224 tests (31 Rust + 193 TypeScript across 6 test files)**. All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. **ModelRegistry + Arbitrage WASM contracts deployed and live** — permissionless optimistic-oracle lifecycle, on-chain challenge/slash, Bellman-Ford arbitrage detection, and a real on-chain execution path gated by governance-controlled caps and a rolling circuit breaker. See `LIMITATIONS.md` for known design constraints.
+> **Status (July 10, 2026):** Mainnet-readiness hardening complete on Replit. **262 tests (31 Rust + 231 TypeScript across 7 test files)**. All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. **ModelRegistry + Arbitrage + CrossChainRelay WASM contracts deployed and live** — permissionless optimistic-oracle lifecycle, on-chain challenge/slash, Bellman-Ford arbitrage detection, and a federated m-of-n cross-chain attestation protocol with bonded relayers and a challenge window. See `LIMITATIONS.md` for known design constraints.
 
 ---
 
@@ -215,6 +215,23 @@ pnpm --filter @workspace/api-spec run codegen
 | POST | `/api/arbitrage/unpause` | Resume + clear circuit breaker (requires `X-Admin-Key`) |
 | POST | `/api/arbitrage/execute` | Trigger on-chain arbitrage trade (owner-only at contract level; circuit breaker + hard cap apply) |
 
+### CrossChainRelay Contract
+
+Federated m-of-n cross-chain attestation. Bonded relayers sign inbound state commitments; fraudulent attestations can be challenged and slashed within a configurable window.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/relay/info` | Contract address, m-of-n threshold, registered relayer set |
+| POST | `/api/relay/register` | Register a relayer and bond EQU into escrow (requires `X-Admin-Key`) |
+| DELETE | `/api/relay/register/:addr` | Revoke a relayer and return their bond (requires `X-Admin-Key`) |
+| PATCH | `/api/relay/threshold` | Update m-of-n signing threshold (requires `X-Admin-Key`) |
+| POST | `/api/relay/attest/inbound` | Submit an m-of-n signed inbound attestation (permissionless; contract verifies every signature) |
+| GET | `/api/relay/attest/inbound/:chainId/:seq` | Attestation status, commitment hash, signers, and block height |
+| POST | `/api/relay/attest/inbound/:chainId/:seq/finalize` | Finalize an unchallenged attestation after the challenge window (permissionless) |
+| POST | `/api/relay/attest/inbound/:chainId/:seq/challenge` | Slash all signers of a fraudulent attestation (requires `X-Admin-Key`) |
+| POST | `/api/relay/outbound/:chainId` | Publish an outbound state commitment (caller must be a registered relayer) |
+| GET | `/api/relay/outbound/:chainId/seq` | Current outbound sequence number for a chain |
+
 ### Models (ModelRegistry)
 
 | Method | Path | Description |
@@ -302,6 +319,7 @@ Available at `/` in the running preview. Pages:
 - **DEX** — liquidity pool overview, swap interface (constant-product AMM), add liquidity, swap history, per-address liquidity positions, live Arbitrage Opportunities panel (Bellman-Ford cycle detection, 15s refresh)
 - **Models** (`/models`) — permissionless AI model registry; propose a model with a staked bond, verify after the challenge window, or challenge with matching support data to slash a fraudulent claim; countdown timer, proposer info, status badges
 - **Arbitrage** (`/arbitrage`) — active model binding, recent profit history, circuit-breaker status, owner pause/unpause controls; execution is contract-gated (see `LIMITATIONS.md`)
+- **Cross-Chain Relay** (`/relay`) — live view of the CrossChainRelay WASM contract: m-of-n threshold, registered relayer set with bond status, and an attestation lookup tool (enter chain ID + sequence number to inspect status, commitment hash, signers, and finalization block); auto-refreshes every 15s
 - **Staking** — personal staking dashboard for delegating to validators
 - **Admin** — multisig proposal management (`/admin/multisig`)
 
@@ -439,6 +457,7 @@ Nodes catching up can fetch block headers in bulk via `/api/sync/headers?from=N&
 
 - `POST /api/validators/:addr/slash` requires `X-Admin-Key` header
 - `POST /api/arbitrage/set-model`, `/pause`, `/unpause` also require `X-Admin-Key`
+- `POST /api/relay/register`, `DELETE /api/relay/register/:addr`, `PATCH /api/relay/threshold`, and `POST .../challenge` all require `X-Admin-Key` — registration is admin-gated to prevent bond-theft attacks where an attacker could drain a victim's balance by forging their address as the caller
 - Accepts both `ADMIN_KEY` and `ADMIN_API_KEY` environment variable names
 - Superseded by the native on-chain WASM M-of-N multisig when `ADMIN_MULTISIG_ADDRESS` is configured — single key is fallback only
 
@@ -632,13 +651,14 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 
 ### Testing
 - **Rust unit tests** — 31 tests (28 in `equilibrium-core` via `cargo test --lib` + 3 in `variational-ai/src/arbitrage.rs`): wallet round-trips/sign/verify, stationary solver bounds/clamp/fixed-point, consensus `choose_fork` including fixed-point comparison, Bellman-Ford negative-cycle detection
-- **TypeScript tests** — 193 tests across 6 files (`pnpm --filter @workspace/api-server test`):
+- **TypeScript tests** — 231 tests across 7 files (`NODE_ENV=test DATABASE_URL=... pnpm --filter @workspace/api-server test`):
   - `chain.unit.test.ts` — 41 unit tests: hash256, merkleRoot, ZK proof generate/verify, difficulty adjustment, UTXO fee sweep/rollback
   - `api.integration.test.ts` — 32 integration tests via Supertest: full chain/block/tx/submission/UTXO/peer/validator/governance flow including valid votes, wrong signature → 401, address mismatch → 400
   - `contracts.integration.test.ts` — 58 tests: WASM VM deploy/call/storage, gas tracking, ABI persistence, bulk restore, REST API coverage, `contracts.deployer` filter; includes caller-auth signature verification tests
   - `multisig.integration.test.ts` — 19 tests: on-chain M-of-N proposal/approve/execute flow, replay protection, bitmask tracking
   - `models.integration.test.ts` — 19 tests: ModelRegistry propose → verify → challenge → slash flow, challenge window enforcement, bond mechanics
   - `arbitrage.integration.test.ts` — 24 tests: Arbitrage contract set-model/pause/unpause/execute flows, circuit breaker trip and reset, governance cap enforcement, model-verification gate
+  - `crosschain.integration.test.ts` — 34 tests: CrossChainRelay register/revoke/threshold, inbound attestation submit/duplicate/bad-seq/finalize/challenge, challenge-window enforcement, multi-sig 2-of-2 attestation, admin-key gate on registration
 
 ### Explorer & Wallet
 - Block explorer — Dashboard, Blocks, BlockDetail (with Miner Fee Breakdown panel), TxDetail, AddressDetail, Mempool, Network — all pages live with real-time React Query data
@@ -654,7 +674,15 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 - Timestamp bug fixed — removed double-multiplication in ValidatorDetail and Dex pages (the "56y ago" bug)
 - Live arbitrage opportunity panel — Dex page shows Bellman-Ford-detected cycles (token path, profit factor, optimal size) with a 15s refresh
 - Arbitrage execution page (`/arbitrage`) — active model binding, recent profit history, circuit-breaker status, owner pause/unpause controls; backed by the live `Arbitrage` WASM contract
+- Cross-Chain Relay page (`/relay`) — live relay config (threshold, relayer count, contract address), registered relayer table, and attestation lookup by chain ID + sequence number; polls every 15s
 - Wallet landing page guidance — first-time-user explanation of Ed25519 keys, BIP-39 mnemonics, and self-custody model; import paths clearly documented
+
+### CrossChainRelay Contract
+- **Rust WASM contract** (`contracts/cross_chain_relay/src/lib.rs`) — no-std, compiled to `wasm32-unknown-unknown`; storage-backed relayer set, bond escrow, inbound attestation queue with per-chain sequence tracking, m-of-n Ed25519 signature verification via the `verify_owner_sig` host import, challenge window enforcement via `block_number()`, outbound sequence counter
+- **TypeScript wrapper** (`artifacts/api-server/src/chain/crossChainRelay.ts`) — `registerRelayer`, `revokeRelayer`, `setThreshold`, `submitInboundAttestation`, `challengeInbound`, `finalizeInbound`, `publishOutbound`, `getRelayDetails`, `getInboundStatus`
+- **REST routes** (`artifacts/api-server/src/routes/crossChainRelay.ts`) — 10 endpoints; registration is admin-only to close bond-theft griefing; attestation submission is permissionless; finalization is permissionless after the challenge window
+- **Auto-deploy on boot** — `deployCrossChainRelayIfNeeded()` in `chain/index.ts`; set `CROSS_CHAIN_RELAY_ADDRESS` to keep the address stable across restarts
+- **`block_number()` sync** — `addBlock()` in `state.ts` calls `wasmVM.setBlockHeight(block.height)` so the challenge-window check inside the contract always reflects the current chain tip
 
 ### variational-ai Engine
 - **Rust crate built and compiled** — all three solver types (LogisticAction/Newton-CG, MlpAction/L-BFGS, NtkAction/CG kernel solve) compile and run on synthetic MNIST; real IDX files supported if placed in `variational-ai/data/`
@@ -697,6 +725,8 @@ _Reconciled against the running code on 2026-07-09 — see `TODO.md` for full de
 | Priority | Item | Notes |
 |---|---|---|
 | 🟡 | A few residual "Loading…" text spots | Dashboard chart, ValidatorDetail delegators table, Dex pools table — most other pages already use skeletons |
+| 🟡 | CrossChainRelay in CI | `crosschain.integration.test.ts` runs locally but the contract's `build.sh` isn't wired into `ci.yml` yet; the compiled `.hex` could drift from source |
+| 🟡 | `rollbackToHeight()` WASM block height | `addBlock()` now calls `wasmVM.setBlockHeight()` but `rollbackToHeight()` does not — after a reorg the WASM `block_number()` returns a stale value until the next block is mined |
 | 🟢 | Architecture diagram | `docs/architecture.md` with a Mermaid diagram of the full pipeline |
 | 🟢 | Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md` |
 | 🟢 | Automated CD | `ci.yml` only runs tests/build today — no auto-deploy on `main` push |
