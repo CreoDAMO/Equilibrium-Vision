@@ -153,11 +153,15 @@ export default function ValidatorDetail() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {delegatorsLoading && (
-                    <TableRow>
-                      <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">Loading delegators...</TableCell>
+                  {delegatorsLoading && [...Array(3)].map((_, i) => (
+                    <TableRow key={i}>
+                      {[...Array(6)].map((__, j) => (
+                        <TableCell key={j} className={j === 0 ? "" : "text-right"}>
+                          <div className="h-4 bg-muted rounded animate-pulse ml-auto" style={{ width: j === 0 ? "6rem" : "4.5rem", animationDelay: `${i * 60}ms` }} />
+                        </TableCell>
+                      ))}
                     </TableRow>
-                  )}
+                  ))}
                   {!delegatorsLoading && delegatorsData?.delegators.map((d) => (
                     <TableRow key={d.address}>
                       <TableCell>

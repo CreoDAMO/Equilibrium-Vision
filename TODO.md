@@ -47,20 +47,29 @@ Only a one-line description ("Self-custody, browser-side Ed25519 wallet. Keys ne
 ### 3. Block reward display is inconsistently formatted
 `Blocks.tsx` list uses `formatCompact()` (renders "50M EQU"), but `BlockDetail.tsx` uses `formatAmount()` in two places (full "50,000,000 EQU"). Pick one convention and apply it consistently across the blocks list, block detail, and fee breakdown panel.
 
-### 4. A few isolated raw "Loading…" strings remain
-Most pages have proper skeletons, but `Dashboard.tsx` (chart area), `ValidatorDetail.tsx` (delegators table), and `Dex.tsx` (pools table) still show plain loading text instead of a skeleton — minor polish, low effort given the pattern already exists elsewhere.
+### 4. ~~A few isolated raw "Loading…" strings remain~~ — RESOLVED 2026-07-10
+`Dashboard.tsx` (chart area), `ValidatorDetail.tsx` (delegators table), and `Dex.tsx` (pools table) now use skeleton loaders consistent with the rest of the app.
 
-### 5. Architecture diagram
-No `docs/architecture.md` exists showing how the Rust core, TS API server, Explorer, mobile app, Stratum server, and ZK pipeline relate. Would help new contributors orient themselves — a single Mermaid diagram is enough.
+### 5. ~~Architecture diagram~~ — RESOLVED 2026-07-10
+`docs/architecture.md` — Mermaid diagram + notes on how the TS API server, Rust core, WASM contracts, variational-ai CLI subprocesses, and observability stack relate.
 
-### 6. Operator docs
-No `docs/validator-setup.md` or `docs/delegator-guide.md` — needed before external contributors can register a validator or delegate stake without reading source code.
+### 6. ~~Operator docs~~ — RESOLVED 2026-07-10
+`docs/validator-setup.md` and `docs/delegator-guide.md` added.
 
-### 7. Automated CD pipeline
-`ci.yml` runs tests/build only. No workflow deploys the API server or Explorer automatically on `main` push — manual push to Replit Deploy is the current process.
+### 7. Automated CD pipeline — still open (by design)
+`ci.yml` runs tests/build only. Deploys to this Replit environment go through Replit's own Deploy flow — an inherently manual/user-triggered action — so there's no `main`-push auto-deploy workflow to add here.
 
-### 8. Rust/node binary release pipeline
-Android APK has a release pipeline; the Rust validator/testnet-node binary does not. No `release-node.yml` building linux-amd64/arm64 binaries and attaching them to GitHub Releases on version tags.
+### 8. ~~Rust/node binary release pipeline~~ — RESOLVED 2026-07-10
+Root-level `release-node.yml` (copy into `.github/workflows/` — Replit can't push there directly, same pattern as `android-apk-ci.yml`) cross-builds `testnet-node`/`wallet` for linux-amd64/arm64 and attaches them to GitHub Releases on `node-v*` tags.
+
+### 9a. ~~CrossChainRelay .hex could drift from source in CI~~ — RESOLVED 2026-07-10
+Root-level `ci.yml` (copy into `.github/workflows/ci.yml`) now rebuilds `arbitrage`, `model_registry`, and `cross_chain_relay` from source in the `ts-test` job and fails if a checked-in `.hex` differs from a fresh build.
+
+### 9b. ~~`rollbackToHeight()` WASM block height~~ — verified already fixed
+Checked directly against `chain/state.ts`: `rollbackToHeight()` already calls `wasmVM.setBlockHeight(this.height)` after unwinding blocks, mirroring `addBlock()`. No stale-height bug present in the current code.
+
+### 9c. ~~Per-caller rate limit on arbitrage execute~~ — RESOLVED 2026-07-10
+`POST /api/arbitrage/execute` now rate-limits to 2 calls/15s per caller address (`routes/arbitrage.ts`, `RateLimiter` from `lib/submission-guard.ts`), independent of the contract's shared 5-execution circuit breaker.
 
 ### 9. Arbitrage: safety rails + execution path (intentionally out of scope so far)
 The Bellman-Ford detector is wired up as **read-only detection + sizing only** — this was the explicit scope of the current task (display opportunities, don't act on them). Still not built, and would be needed before any autonomous execution: governance-controlled `max_arbitrage_size` parameter, a per-block rate limit on arbitrage trades, a negative-P&L circuit breaker, and the atomic multi-hop WASM contract execution path itself. No trades are currently ever placed automatically.
@@ -84,11 +93,9 @@ The Bellman-Ford detector is wired up as **read-only detection + sizing only** �
 ## Suggested priority order for next session
 
 1. **#3** — Block reward format consistency (quick win, user-visible)
-2. **#4** — Remaining raw loading-text spots (quick win, pattern already exists)
-3. **#1** — Refactor `ContractDetail.tsx` / `AdminMultisig.tsx` onto generated hooks
-4. **#2** — Wallet landing guidance for first-time users
-5. **#6** — Operator docs (validator-setup.md, delegator-guide.md)
-6. **#5** — Architecture diagram
-7. **#7** — Automated CD pipeline
-8. **#8** — Rust/node binary release pipeline
-9. **#9** — Arbitrage governance safety rails (only if moving toward autonomous execution — not needed for the read-only detector already shipped)
+2. **#1** — Refactor `ContractDetail.tsx` / `AdminMultisig.tsx` onto generated hooks
+3. **#2** — Wallet landing guidance for first-time users
+4. **#7** — Automated CD pipeline (open by design — see note; Replit Deploy is inherently manual)
+5. **#9** — Arbitrage governance safety rails (only if moving toward autonomous execution — not needed for the read-only detector already shipped)
+
+_Items #4, #5, #6, #8, #9a, #9b, #9c resolved 2026-07-10 — see above._

@@ -1,3 +1,18 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ci.yml — Typecheck, build, and test the full Equilibrium stack.
+#
+# This file lives at the repo root because it was authored from Replit, where
+# pushing directly into `.github/workflows/` isn't available. Copy this file
+# over `.github/workflows/ci.yml` in your GitHub repo to update it.
+#
+# What changed vs. the currently-committed .github/workflows/ci.yml:
+#   - ts-test now also rebuilds the arbitrage, model_registry, and
+#     cross_chain_relay WASM contracts from source (via their build.sh
+#     scripts) and fails the build if the checked-in .hex artifact drifts
+#     from source — closes the "CrossChainRelay in CI" gap called out in the
+#     README's Remaining Work section (the compiled .hex could previously
+#     drift from source undetected).
+# ─────────────────────────────────────────────────────────────────────────────
 name: CI
 
 on:
@@ -121,6 +136,8 @@ jobs:
 
       - name: Install Rust toolchain (stable)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts (variational-ai)
         uses: Swatinem/rust-cache@v2
@@ -135,6 +152,27 @@ jobs:
         run: |
           cp variational-ai/target/release/variational-ai-cli artifacts/api-server/
           cp variational-ai/target/release/variational-ai-arbitrage-cli artifacts/api-server/
+
+      - name: Cache Rust build artifacts (WASM contracts)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            contracts/arbitrage -> target
+            contracts/model_registry -> target
+            contracts/cross_chain_relay -> target
+
+      - name: Rebuild WASM contracts from source (keeps checked-in .hex from drifting)
+        run: |
+          bash contracts/arbitrage/build.sh
+          bash contracts/model_registry/build.sh
+          bash contracts/cross_chain_relay/build.sh
+
+      - name: Fail if a contract's checked-in .hex is stale vs. its source
+        run: |
+          git diff --exit-code -- contracts/arbitrage/arbitrage.hex contracts/model_registry/model_registry.hex contracts/cross_chain_relay/cross_chain_relay.hex || {
+            echo "::error::A contract's compiled .hex is out of date with its source. Rebuild locally and commit the updated .hex file(s)." >&2
+            exit 1
+          }
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

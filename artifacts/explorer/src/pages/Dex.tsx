@@ -399,7 +399,26 @@ export default function DexPage() {
             <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Pools</CardTitle></CardHeader>
             <CardContent className="p-0">
               {isLoading ? (
-                <p className="p-6 text-center text-muted-foreground">Loading pools…</p>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Pool</TableHead>
+                      <TableHead className="text-right">Price</TableHead>
+                      <TableHead className="text-right">TVL</TableHead>
+                      <TableHead className="text-right">Fee</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {[...Array(3)].map((_, i) => (
+                      <TableRow key={i}>
+                        <TableCell><div className="h-4 w-24 bg-muted rounded animate-pulse" style={{ animationDelay: `${i * 60}ms` }} /></TableCell>
+                        <TableCell className="text-right"><div className="h-4 w-16 bg-muted rounded animate-pulse ml-auto" /></TableCell>
+                        <TableCell className="text-right"><div className="h-4 w-16 bg-muted rounded animate-pulse ml-auto" /></TableCell>
+                        <TableCell className="text-right"><div className="h-4 w-10 bg-muted rounded animate-pulse ml-auto" /></TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               ) : (
                 <Table>
                   <TableHeader>

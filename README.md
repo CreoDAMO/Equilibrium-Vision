@@ -213,7 +213,7 @@ pnpm --filter @workspace/api-spec run codegen
 | POST | `/api/arbitrage/set-model` | Bind a ModelRegistry model (requires `X-Admin-Key`) |
 | POST | `/api/arbitrage/pause` | Pause execution (requires `X-Admin-Key`) |
 | POST | `/api/arbitrage/unpause` | Resume + clear circuit breaker (requires `X-Admin-Key`) |
-| POST | `/api/arbitrage/execute` | Trigger on-chain arbitrage trade (owner-only at contract level; circuit breaker + hard cap apply) |
+| POST | `/api/arbitrage/execute` | Trigger on-chain arbitrage trade (owner-only at contract level; circuit breaker + hard cap apply; also rate-limited to 2 calls/15s per caller at the route level, independent of the contract's shared circuit breaker) |
 
 ### CrossChainRelay Contract
 
@@ -723,16 +723,23 @@ _Reconciled against the running code on 2026-07-09 — see `TODO.md` for full de
 
 ### Actionable in Replit
 
+_Updated 2026-07-10 — see below for what's now resolved._
+
 | Priority | Item | Notes |
 |---|---|---|
-| 🟡 | A few residual "Loading…" text spots | Dashboard chart, ValidatorDetail delegators table, Dex pools table — most other pages already use skeletons |
-| 🟡 | CrossChainRelay in CI | `crosschain.integration.test.ts` runs locally but the contract's `build.sh` isn't wired into `ci.yml` yet; the compiled `.hex` could drift from source |
-| 🟡 | `rollbackToHeight()` WASM block height | `addBlock()` now calls `wasmVM.setBlockHeight()` but `rollbackToHeight()` does not — after a reorg the WASM `block_number()` returns a stale value until the next block is mined |
-| 🟢 | Architecture diagram | `docs/architecture.md` with a Mermaid diagram of the full pipeline |
-| 🟢 | Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md` |
-| 🟢 | Automated CD | `ci.yml` only runs tests/build today — no auto-deploy on `main` push |
-| 🟢 | Rust/node binary release pipeline | Android APK has one; the validator/testnet-node binary does not |
-| 🟢 | Per-caller rate limit on arbitrage execute | Circuit breaker is global (shared 5-execution window); a per-caller limit would prevent a single caller burning the whole window |
+| 🟢 | Automated CD | `ci.yml` (root, and its committed copy in `.github/workflows/`) still only runs tests/build — no auto-deploy on `main` push. Deploys to this environment go through Replit's own Deploy flow, which is inherently a manual/user-triggered action, not something a GitHub Actions push can drive. Left open by design. |
+
+**Resolved this session:**
+
+| Item | Resolution |
+|---|---|
+| A few residual "Loading…" text spots | Dashboard chart, ValidatorDetail delegators table, and Dex pools table now use skeleton loaders matching the rest of the app |
+| CrossChainRelay in CI | `ts-test` now rebuilds `arbitrage`, `model_registry`, and `cross_chain_relay` from source via their `build.sh` scripts and fails if a checked-in `.hex` drifts from source. **Note:** authored from Replit, which can't push to `.github/workflows/` directly — the updated workflow lives at repo-root `ci.yml`; copy it over `.github/workflows/ci.yml` to activate |
+| `rollbackToHeight()` WASM block height | Already fixed in the running code — `rollbackToHeight()` calls `wasmVM.setBlockHeight(this.height)` after unwinding, mirroring `addBlock()` |
+| Architecture diagram | `docs/architecture.md` — Mermaid diagram of the full TS/Rust/WASM/observability pipeline |
+| Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md` |
+| Rust/node binary release pipeline | Root-level `release-node.yml` (same "copy into `.github/workflows/`" pattern as `android-apk-ci.yml`) cross-builds `testnet-node`/`wallet` for linux-amd64/arm64 and attaches them to GitHub Releases on `node-v*` tags |
+| Per-caller rate limit on arbitrage execute | `POST /api/arbitrage/execute` now enforces a 2-calls-per-15s sliding window per caller address, independent of the contract's shared 5-execution circuit breaker |
 
 ### External infrastructure and ops
 

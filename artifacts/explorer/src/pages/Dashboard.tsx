@@ -52,7 +52,13 @@ export default function Dashboard() {
             <CardTitle>Mempool Size &amp; PoS Residual (Last 20 Blocks)</CardTitle>
           </CardHeader>
           <CardContent className="h-[300px]">
-            {stats && stats.length > 0 ? (
+            {!stats ? (
+              <div className="h-full flex flex-col justify-end gap-2 px-2 pb-4 animate-pulse">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="h-4 bg-muted rounded" style={{ width: `${100 - i * 14}%`, animationDelay: `${i * 60}ms` }} />
+                ))}
+              </div>
+            ) : stats.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={stats.slice().reverse()} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
@@ -71,7 +77,7 @@ export default function Dashboard() {
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-full flex items-center justify-center text-muted-foreground">Loading chart...</div>
+              <div className="h-full flex items-center justify-center text-muted-foreground">No chart data yet.</div>
             )}
           </CardContent>
         </Card>

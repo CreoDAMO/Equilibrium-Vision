@@ -2,6 +2,7 @@ import { Router } from "express";
 import { chainState } from "../chain/index.js";
 import { findArbitrageOpportunities } from "../variational-ai/bridge.js";
 import { logger } from "../lib/logger.js";
+import { RateLimiter } from "../lib/submission-guard.js";
 import {
   getArbitrageAddress,
   setArbitrageModel,
@@ -11,6 +12,17 @@ import {
 } from "../chain/arbitrage.js";
 
 const router = Router();
+
+/**
+ * Per-caller execute limiter — independent of the contract's own global
+ * circuit breaker (max 5 executions per `arbitrageWindow` block window,
+ * shared across every caller). Without this, a single permissionless caller
+ * could burn the entire shared window with back-to-back calls and starve
+ * every other caller until the contract's window rolls over. 2 calls per
+ * 15s (roughly one block interval) per caller is generous enough for
+ * legitimate use while preventing single-caller monopolization.
+ */
+const executeLimiter = new RateLimiter(2, 15_000).startPruning();
 
 /**
  * Owner-privileged arbitrage actions (set-model, pause, unpause) use the
@@ -151,8 +163,17 @@ router.post("/arbitrage/execute", async (req, res) => {
   if (typeof caller !== "string" || !Array.isArray(poolIds) || typeof tokenIn !== "string" || typeof amountIn !== "number") {
     return res.status(400).json({ error: "caller, poolIds (array), tokenIn, amountIn are required" });
   }
+  const normalizedCaller = caller.trim().toLowerCase();
+  if (!executeLimiter.tryConsume(normalizedCaller)) {
+    const retryAfter = executeLimiter.retryAfterSecs(normalizedCaller);
+    res.setHeader("Retry-After", String(retryAfter));
+    return res.status(429).json({
+      error: `Rate limit exceeded for this caller — retry in ${retryAfter}s`,
+      retryAfter,
+    });
+  }
   chainState.wasmVM.setBlockHeight(chainState.height);
-  const result = await executeArbitrage(chainState.wasmVM, caller.trim().toLowerCase(), {
+  const result = await executeArbitrage(chainState.wasmVM, normalizedCaller, {
     poolIds,
     tokenIn,
     amountIn,
