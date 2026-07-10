@@ -9,33 +9,21 @@ args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
 [workflows]
-runButton = "Project"
-
-# ── Project (run button) ──────────────────────────────────────────────────────
-# Starts services in strict order: Postgres must be ready before the API Server
-# connects, and the API Server must be ready before the Explorer starts.
-[[workflows.workflow]]
-name = "Project"
-mode = "sequential"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Postgres"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "API Server"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Explorer"
+runButton = "Postgres"
 
 # ── Postgres ──────────────────────────────────────────────────────────────────
 # Idempotent bootstrap: creates role, pushes Drizzle schema, grants privileges,
 # then starts postgres in the foreground on port 5432.
 # Also runs `pnpm install --frozen-lockfile` on cold boot if node_modules is
 # absent so the schema push never fails after a fresh clone or container reset.
+#
+# The API Server and Explorer are now managed as artifacts (generated from
+# each artifact's artifact.toml — see "artifacts/api-server: API Server" and
+# "artifacts/explorer: web" in the workflow list) and start on their own;
+# they used to also be defined here as plain workflows on the same ports
+# (8080 / 5000), which caused EADDRINUSE conflicts once the artifacts were
+# registered. Removed the duplicates — do not recreate "API Server" or
+# "Explorer" workflow entries here.
 [[workflows.workflow]]
 name = "Postgres"
 author = "agent"
@@ -47,38 +35,6 @@ outputType = "console"
 task = "shell.exec"
 args = "bash scripts/start-postgres.sh"
 waitForPort = 5432
-
-# ── API Server ────────────────────────────────────────────────────────────────
-# TypeScript Express node: in-memory chain + Postgres persistence, auto-miner,
-# Stratum pool, WebSocket push, Prometheus metrics. Restores persisted chain
-# from DB on every start instead of resetting to genesis.
-# variational-ai-cli binary is co-located in this directory for the TypeScript
-# bridge (artifacts/api-server/src/variational-ai/bridge.ts).
-[[workflows.workflow]]
-name = "API Server"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "DATABASE_URL=postgresql://runner@127.0.0.1:5432/equilibrium PORT=8080 pnpm --filter @workspace/api-server run dev"
-waitForPort = 8080
-
-# ── Explorer ──────────────────────────────────────────────────────────────────
-# React + Vite block explorer and self-custody browser wallet.
-[[workflows.workflow]]
-name = "Explorer"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "webview"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PORT=5000 BASE_PATH=/ pnpm --filter @workspace/explorer run dev"
-waitForPort = 5000
 
 # ── variational-ai: determinism harness ───────────────────────────────────────
 # Trains logistic + MLP + NTK on synthetic MNIST, hashes all intermediate
