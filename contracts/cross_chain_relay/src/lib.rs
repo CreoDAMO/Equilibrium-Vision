@@ -78,6 +78,32 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     core::arch::wasm32::unreachable()
 }
 
+// ── global allocator ──────────────────────────────────────────────────────────
+// Required for `extern crate alloc` on wasm32-unknown-unknown (Rust ≥ 1.73
+// removed the implicit dlmalloc allocator from the target's std libs).
+// WASM is single-threaded, so UnsafeCell + Sync is sound.
+mod bump_alloc {
+    use core::alloc::{GlobalAlloc, Layout};
+    use core::cell::UnsafeCell;
+    struct Bump { buf: UnsafeCell<[u8; 65536]>, pos: UnsafeCell<usize> }
+    unsafe impl Sync for Bump {}
+    unsafe impl GlobalAlloc for Bump {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let pos = &mut *self.pos.get();
+            let start = (*pos + layout.align() - 1) & !(layout.align() - 1);
+            if start + layout.size() > 65536 { return core::ptr::null_mut(); }
+            *pos = start + layout.size();
+            (*self.buf.get()).as_mut_ptr().add(start)
+        }
+        unsafe fn dealloc(&self, _: *mut u8, _: Layout) {}
+    }
+    #[global_allocator]
+    pub static ALLOC: Bump = Bump {
+        buf: UnsafeCell::new([0u8; 65536]),
+        pos: UnsafeCell::new(0),
+    };
+}
+
 // ── host imports (module "env", matching artifacts/api-server/src/chain/wasm.ts) ──
 #[link(wasm_import_module = "env")]
 extern "C" {

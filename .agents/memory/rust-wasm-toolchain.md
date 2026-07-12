@@ -49,4 +49,36 @@ in already; replicate it for any new Rust-to-wasm contract build script.
   (e.g. `host_log_raw`) while keeping the wasm import name `log` to match
   the JS host's `importObject.env.log`.
 - No `xxd` binary in this container for hex-encoding the built `.wasm` —
-  use `python3 -c "open(...).read().hex()"` instead in build scripts.
+  use `node -e "const fs=require('fs');const d=fs.readFileSync('...');fs.writeFileSync('....hex',d.toString('hex'))"` (python3 is not in PATH on Replit). CI ubuntu-latest does have python3, so the build.sh python3 call is fine for CI.
+
+## Global allocator requirement (Rust ≥ 1.73)
+All `no_std` WASM contracts that use `extern crate alloc` (i.e. use `String`, `Vec`, `format!`) **must** declare a `#[global_allocator]`. Since Rust 1.73, `wasm32-unknown-unknown` no longer ships an implicit dlmalloc allocator. Without it, rustc emits a hard error: `no global memory allocator found but one is required`.
+
+**Fix (zero extra dependencies):** add this bump allocator module to each contract's `lib.rs` right after the `#[panic_handler]`:
+```rust
+mod bump_alloc {
+    use core::alloc::{GlobalAlloc, Layout};
+    use core::cell::UnsafeCell;
+    struct Bump { buf: UnsafeCell<[u8; 65536]>, pos: UnsafeCell<usize> }
+    unsafe impl Sync for Bump {}
+    unsafe impl GlobalAlloc for Bump {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let pos = &mut *self.pos.get();
+            let start = (*pos + layout.align() - 1) & !(layout.align() - 1);
+            if start + layout.size() > 65536 { return core::ptr::null_mut(); }
+            *pos = start + layout.size();
+            (*self.buf.get()).as_mut_ptr().add(start)
+        }
+        unsafe fn dealloc(&self, _: *mut u8, _: Layout) {}
+    }
+    #[global_allocator]
+    pub static ALLOC: Bump = Bump {
+        buf: UnsafeCell::new([0u8; 65536]),
+        pos: UnsafeCell::new(0),
+    };
+}
+```
+WASM is single-threaded so `UnsafeCell` + `unsafe impl Sync` is sound.
+
+## Toolchain version pinning for reproducible .hex
+WASM codegen is NOT byte-for-byte stable across rustc versions. Pin each contract's `rust-toolchain.toml` to a specific version (currently `1.97.0`, the stable as of 2026-07-07). CI must install that exact toolchain (`rustup toolchain install 1.97.0 --profile minimal --target wasm32-unknown-unknown`) BEFORE running the `build.sh` scripts, or the rebuilt .hex will differ from the committed one and the staleness check will fail.
