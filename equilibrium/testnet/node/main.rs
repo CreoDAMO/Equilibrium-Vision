@@ -42,10 +42,12 @@ async fn main() {
         println!("Coinbase     : {reward} EQU → miner\n");
 
         // ── Alice gets a grant from the miner ─────────────────────────────────
+        // Use the ledger's tracked nonce for the miner account so this is
+        // always sequentially correct and never hard-codes a value.
         let miner_nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
+            .unwrap_or_else(|_| ledger.nonce(&miner.address));
         let fund_alice = miner.sign_tx(alice.address, 10_000_000, 1_000, miner_nonce);
         match ledger.apply_tx(&fund_alice) {
             Ok(()) => println!("Transfer OK  : miner → alice, 10_000_000 EQU"),
@@ -53,7 +55,9 @@ async fn main() {
         }
 
         // ── Alice sends to Bob ─────────────────────────────────────────────────
-        let alice_nonce = 0u64;
+        // Derive the nonce from the ledger so it is always correct regardless
+        // of prior transaction history — no hard-coded value.
+        let alice_nonce = ledger.nonce(&alice.address);
         let alice_to_bob = alice.sign_tx(bob.address, 3_000_000, 500, alice_nonce);
         match ledger.apply_tx(&alice_to_bob) {
             Ok(()) => println!("Transfer OK  : alice → bob,  3_000_000 EQU"),

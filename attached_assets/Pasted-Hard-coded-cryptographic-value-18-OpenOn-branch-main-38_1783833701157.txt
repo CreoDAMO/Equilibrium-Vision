@@ -1,0 +1,471 @@
+Hard-coded cryptographic value #18
+OpenOn branch main • 38 minutes ago
+Copilot Autofix for CodeQL attempted to generate an autofix for this alert, but wasn't able to. Please retry.
+Code snippet
+equilibrium/src/wallet.rs:386 
+       let mut ledger = Ledger::new();
+
+
+       ledger.credit(&sender.address, 10_000);
+
+
+       // Nonce 1 expected (0 was never used)
+
+
+       let tx = sender.sign_tx(recipient.address, 100, 5, 1);
+
+
+ Warning
+Hard-coded cryptographic value
+This hard-coded value is used as a nonce.
+CodeQL
+       assert!(ledger.apply_tx(&tx).is_err());
+
+
+   }
+
+
+}
+
+
+
+Rule
+Tool
+CodeQL
+Rule ID
+rust/hard-coded-cryptographic-value
+Query
+View source
+Description
+Hard-coded passwords, keys, initialization vectors, and salts should not be used for cryptographic operations.
+Activity
+First detected in commit 4 days ago
+
+Add wallet cryptography and equilibrium solver implementations with s… …
+c64a51b
+equilibrium/src/ wallet.rs:386 on branch main
+Appeared in branch main 4 days ago
+ Push on main #33: Commit c64a51bf
+( language: rust build-mode: none runner: ["ubuntu-latest"] category: /language:rust )
+
+
+Hard-coded cryptographic value #17
+OpenOn branch main • 39 minutes ago
+Speed up the remediation of this alert with Copilot Autofix for CodeQL
+Code snippet
+equilibrium/src/wallet.rs:375 
+       let recipient = Wallet::from_bytes(&[4u8; 32]);
+
+
+       let mut ledger = Ledger::new();
+
+
+       ledger.credit(&sender.address, 100);
+
+
+       let tx = sender.sign_tx(recipient.address, 200, 5, 0);
+
+
+ Warning
+Hard-coded cryptographic value
+This hard-coded value is used as a nonce.
+CodeQL
+       assert!(ledger.apply_tx(&tx).is_err());
+
+
+   }
+
+
+
+
+
+
+
+
+Rule
+Tool
+CodeQL
+Rule ID
+rust/hard-coded-cryptographic-value
+Query
+View source
+Description
+Hard-coded passwords, keys, initialization vectors, and salts should not be used for cryptographic operations.
+Activity
+First detected in commit 4 days ago
+
+Add wallet cryptography and equilibrium solver implementations with s… …
+c64a51b
+equilibrium/src/ wallet.rs:375 on branch main
+Appeared in branch main 4 days ago
+ Push on main #33: Commit c64a51bf
+( runner: ["ubuntu-latest"] category: /language:rust language: rust build-mode: none )
+
+Hard-coded cryptographic value #16
+OpenOn branch main • 39 minutes ago
+Speed up the remediation of this alert with Copilot Autofix for CodeQL
+Code snippet
+equilibrium/src/wallet.rs:361 
+       ledger.credit(&sender.address, 10_000);
+
+
+       assert_eq!(ledger.balance(&sender.address), 10_000);
+
+
+
+
+
+
+
+       let tx = sender.sign_tx(recipient.address, 500, 5, 0);
+
+
+ Warning
+Hard-coded cryptographic value
+This hard-coded value is used as a nonce.
+CodeQL
+       ledger.apply_tx(&tx).expect("valid tx should apply");
+
+
+       // sender: 10_000 - 500 - 5 = 9_495; nonce 1
+
+
+       assert_eq!(ledger.balance(&sender.address), 9_495);
+
+
+
+Rule
+Tool
+CodeQL
+Rule ID
+rust/hard-coded-cryptographic-value
+Query
+View source
+Description
+Hard-coded passwords, keys, initialization vectors, and salts should not be used for cryptographic operations.
+Activity
+First detected in commit 4 days ago
+
+Add wallet cryptography and equilibrium solver implementations with s… …
+c64a51b
+equilibrium/src/ wallet.rs:361 on branch main
+Appeared in branch main 4 days ago
+ Push on main #33: Commit c64a51bf
+( build-mode: none runner: ["ubuntu-latest"] category: /language:rust language: rust )
+
+Hard-coded cryptographic value #14
+OpenOn branch main • 40 minutes ago
+Speed up the remediation of this alert with Copilot Autofix for CodeQL
+Code snippet
+equilibrium/src/wallet.rs:340 
+   fn sign_and_verify_roundtrip() {
+
+
+       let sender = test_wallet();
+
+
+       let recipient = Wallet::from_bytes(&[2u8; 32]);
+
+
+       let tx = sender.sign_tx(recipient.address, 1000, 10, 0);
+
+
+ Warning
+Hard-coded cryptographic value
+This hard-coded value is used as a nonce.
+CodeQL
+       assert!(tx.verify().is_ok(), "freshly signed tx must verify");
+
+
+   }
+
+
+
+
+
+
+
+
+Rule
+Tool
+CodeQL
+Rule ID
+rust/hard-coded-cryptographic-value
+Query
+View source
+Description
+Hard-coded passwords, keys, initialization vectors, and salts should not be used for cryptographic operations.
+Activity
+First detected in commit 4 days ago
+
+Add wallet cryptography and equilibrium solver implementations with s… …
+c64a51b
+equilibrium/src/ wallet.rs:340 on branch main
+Appeared in branch main 4 days ago
+ Push on main #33: Commit c64a51bf
+( runner: ["ubuntu-latest"] category: /language:rust language: rust build-mode: none )
+
+Hard-coded cryptographic value #8
+OpenOn branch main • 40 minutes ago
+Copilot Autofix AI attempted to generate an autofix for this alert, but wasn't able to. Please manually review the alert and decide on a suitable fix.
+Code snippet
+equilibrium/testnet/node/main.rs:48  
+Test
+       let miner_nonce = std::time::SystemTime::now()
+
+
+           .duration_since(std::time::UNIX_EPOCH)
+
+
+           .map(|d| d.as_nanos() as u64)
+
+
+           .unwrap_or(0);
+
+
+ Warning
+Hard-coded cryptographic value
+This hard-coded value is used as a nonce.
+CodeQL 
+       let fund_alice = miner.sign_tx(alice.address, 10_000_000, 1_000, miner_nonce);
+
+
+       match ledger.apply_tx(&fund_alice) {
+
+
+           Ok(()) => println!("Transfer OK  : miner → alice, 10_000_000 EQU"),
+
+
+
+Rule
+Tool
+CodeQL
+Rule ID
+rust/hard-coded-cryptographic-value
+Query
+View source
+Description
+Hard-coded passwords, keys, initialization vectors, and salts should not be used for cryptographic operations.
+Activity
+First detected in commit last week
+
+
+Potential fix for code scanning alert no. 6: Hard-coded cryptographic… …
+344169e
+equilibrium/testnet/node/ main.rs:48 on branch refs/pull/4/head
+Appeared in branch main last week
+ Push on main #8: Commit fa0b3b4c
+( language: rust build-mode: none runner: ["ubuntu-latest"] category: /language:rust )
+
+
+Hard-coded cryptographic value #7
+OpenOn branch main • 40 minutes ago
+The previous fix suggestion was discarded because new code was pushed affecting this alert's location.
+Request a new fix to remediate this alert with the help of Copilot Autofix for CodeQL
+Code snippet
+equilibrium/testnet/node/main.rs:56  
+Test
+       }
+
+
+
+
+
+
+
+       // ── Alice sends to Bob ─────────────────────────────────────────────────
+
+
+       let alice_nonce = 0u64;
+
+
+ Warning
+Hard-coded cryptographic value
+This hard-coded value is used as a nonce.
+CodeQL 
+       let alice_to_bob = alice.sign_tx(bob.address, 3_000_000, 500, alice_nonce);
+
+
+       match ledger.apply_tx(&alice_to_bob) {
+
+
+           Ok(()) => println!("Transfer OK  : alice → bob,  3_000_000 EQU"),
+
+
+
+Rule
+Tool
+CodeQL
+Rule ID
+rust/hard-coded-cryptographic-value
+Query
+View source
+Description
+Hard-coded passwords, keys, initialization vectors, and salts should not be used for cryptographic operations.
+Activity
+First detected in commit last week
+
+
+Potential fix for code scanning alert no. 3: Hard-coded cryptographic… …
+8f80e2a
+equilibrium/testnet/node/ main.rs:53 on branch refs/pull/3/head
+Appeared in branch main last week
+ Push on main #6: Commit 9074441d
+( language: rust build-mode: none runner: ["ubuntu-latest"] category: /language:rust )
+
+Server-side request forgery #27
+OpenOn branch main • 46 minutes ago
+Copilot Autofix AI attempted to generate an autofix for this alert, but wasn't able to. Please manually review the alert and decide on a suitable fix.
+Code snippet
+artifacts/api-server/src/routes/models.ts:92 
+
+
+
+
+
+ let res: Response;
+
+
+ try {
+
+
+   res = await fetch(url, { signal: controller.signal });
+
+
+ Error
+Server-side request forgery
+The URL of this request depends on a user-provided value.
+CodeQL 
+ } catch (err: unknown) {
+
+
+   throw new Error(`IPFS fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+
+
+ } finally {
+
+
+
+Rule
+Tool
+CodeQL
+Rule ID
+js/request-forgery
+Query
+View source
+Description
+Directly incorporating user input in the URL of an outgoing HTTP request can enable a request forgery attack, in which the request is altered to target an unintended API endpoint or resource. If the server performing the request is connected to an internal network, this can give an attacker the means to bypass the network boundary and make requests against internal services. A forged request may perform an unintended action on behalf of the attacker, or cause information leak if redirected to an external server or if the request response is fed back to the user. It may also compromise the server making the request, if the request response is handled in an unsafe way.
+Activity
+First detected in commit 46 minutes ago
+
+Restored to 'b4acc9e105e903f0dfa3a0f21477e22a041d4431' …
+f3260b5
+artifacts/api-server/src/routes/ models.ts:92 on branch main
+Appeared in branch main 46 minutes ago
+ Push on main #104: Commit f3260b5b
+( language: javascript-typescript build-mode: none runner: ["ubuntu-latest"] category: /language:javascript-typescript )
+
+
+Polynomial regular expression used on uncontrolled data #26
+OpenOn branch main • 1 minute ago
+Rule js/polynomial-redos is not supported by Copilot Autofix for CodeQL
+Code snippet
+artifacts/api-server/src/routes/models.ts:65 
+ if (ipfsScheme) return ipfsScheme[1]!.trim();
+
+
+
+
+
+
+
+ // Full gateway URL: anything after /ipfs/
+
+
+ const gatewayPath = s.match(/\/ipfs\/(.+)$/i);
+
+
+ Warning
+Polynomial regular expression used on uncontrolled data
+This regular expression that depends on a user-provided value may run slow on strings starting with '/ipfs/' and with many repetitions of '/ipfs/a'.
+CodeQL 
+ if (gatewayPath) return gatewayPath[1]!.trim();
+
+
+
+
+
+
+
+ // Bare CID (v0 starts with Qm, v1 with bafy / b...)
+
+
+
+Rule
+Tool
+CodeQL
+Rule ID
+js/polynomial-redos
+Query
+View source
+Description
+Some regular expressions take a long time to match certain input strings to the point where the time it takes to match a string of length n is proportional to nk or even 2n. Such regular expressions can negatively affect performance, or even allow a malicious user to perform a Denial of Service ("DoS") attack by crafting an expensive input string for the regular expression to match.
+Activity
+First detected in commit 1 hour ago
+
+Restored to 'b4acc9e105e903f0dfa3a0f21477e22a041d4431' …
+f3260b5
+artifacts/api-server/src/routes/ models.ts:65 on branch main
+Appeared in branch main 1 hour ago
+ Push on main #104: Commit f3260b5b
+( language: javascript-typescript build-mode: none runner: ["ubuntu-latest"] category: /language:javascript-typescript )
+
+
+Polynomial regular expression used on uncontrolled data #1
+OpenOn branch main • 1 minute ago
+Rule js/polynomial-redos is not supported by Copilot Autofix for CodeQL
+Code snippet
+lib/api-client-react/src/custom-fetch.ts:29 
+* Pass `null` to clear the base URL.
+
+
+*/
+
+
+export function setBaseUrl(url: string | null): void {
+
+
+ _baseUrl = url ? url.replace(/\/+$/, "") : null;
+
+
+ Warning
+Polynomial regular expression used on uncontrolled data
+This regular expression that depends on library input may run slow on strings with many repetitions of '/'.
+CodeQL 
+}
+
+
+
+
+
+
+
+/**
+
+
+
+Rule
+Tool
+CodeQL
+Rule ID
+js/polynomial-redos
+Query
+View source
+Description
+Some regular expressions take a long time to match certain input strings to the point where the time it takes to match a string of length n is proportional to nk or even 2n. Such regular expressions can negatively affect performance, or even allow a malicious user to perform a Denial of Service ("DoS") attack by crafting an expensive input string for the regular expression to match.
+Activity
+First detected in commit last week
+
+Update documentation to refer to native coin instead of token …
+b97eb3d
+lib/api-client-react/src/ custom-fetch.ts:29 on branch main

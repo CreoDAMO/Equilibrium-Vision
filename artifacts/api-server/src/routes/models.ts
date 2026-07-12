@@ -64,7 +64,9 @@ function extractCid(raw: string): string | null {
   if (ipfsScheme) return ipfsScheme[1]!.trim();
 
   // Full gateway URL: anything after /ipfs/
-  const gatewayPath = s.match(/\/ipfs\/(.+)$/i);
+  // Use [^\s]+ instead of .+ to avoid catastrophic backtracking on
+  // adversarial inputs like repeated '/ipfs/a' segments (ReDoS).
+  const gatewayPath = s.match(/\/ipfs\/([^\s]+)$/i);
   if (gatewayPath) return gatewayPath[1]!.trim();
 
   // Bare CID (v0 starts with Qm, v1 with bafy / b...)
@@ -78,12 +80,34 @@ interface IpfsSupportPayload {
   supportLabels: number[];
 }
 
+// Pre-parsed origin of the configured gateway, used to prevent SSRF: we
+// verify the assembled request URL never leaves the gateway's origin even if
+// a CID somehow contained path-escape sequences.
+const IPFS_GATEWAY_ORIGIN = (() => {
+  try { return new URL(IPFS_GATEWAY).origin; }
+  catch { return null; }
+})();
+
 /**
  * Fetch support-set JSON from an IPFS gateway.
  * Expected payload shape: { supportData: number[][], supportLabels: number[] }
  */
 async function fetchSupportFromIpfs(cid: string, timeoutMs = 15_000): Promise<IpfsSupportPayload> {
   const url = `${IPFS_GATEWAY}/${cid}`;
+
+  // SSRF guard: confirm the assembled URL stays on the configured gateway's
+  // origin.  A CID that somehow escaped extractCid() validation and contained
+  // a path-traversal or authority component would produce a different origin
+  // and be rejected here before any network call is made.
+  if (IPFS_GATEWAY_ORIGIN) {
+    let assembledOrigin: string;
+    try { assembledOrigin = new URL(url).origin; }
+    catch { throw new Error(`Invalid IPFS URL assembled for CID ${cid}`); }
+    if (assembledOrigin !== IPFS_GATEWAY_ORIGIN) {
+      throw new Error(`SSRF guard: assembled URL origin ${assembledOrigin} does not match gateway origin ${IPFS_GATEWAY_ORIGIN}`);
+    }
+  }
+
   logger.info({ url }, "Fetching support set from IPFS gateway");
 
   const controller = new AbortController();
