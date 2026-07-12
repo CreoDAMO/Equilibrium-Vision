@@ -3,3 +3,4 @@
 - [Rust→wasm32 toolchain](rust-wasm-toolchain.md) — rustup setup, GLIBC_TUNABLES TLS crash fix, wasm_import_module/log-name gotchas for hand-written no_std contracts
 - [ModelRegistry inference attestation](model-registry-inference-attestation.md) — why it's an Ed25519 signed receipt, not a zkML proof; scope boundary if revisited
 - [CrossChainRelay fixes](crosschain-relay-fixes.md) — 4 bugs fixed (rate limiter in tests, dup-attest check order, admin-only register, block_number sync)
+- [libp2p-yamux compat shim](libp2p-yamux-compat-shim.md) — yamux 0.12.1 stays in lock by design; Config::default() uses 0.13.x; CVE not reachable via our code

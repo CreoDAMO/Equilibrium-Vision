@@ -100,9 +100,6 @@ use alloc::vec::Vec;
 use core::slice;
 use sha2::{Digest, Sha256};
 
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
-
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     core::arch::wasm32::unreachable()

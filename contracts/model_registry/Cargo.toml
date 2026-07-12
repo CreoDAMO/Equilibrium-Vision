@@ -13,10 +13,6 @@ lto = true
 panic = "abort"        # required for no_std WASM
 
 [dependencies]
-# Allocator for no_std WASM — the contract uses `alloc::{String, Vec, format!}`
-# for storage-key/JSON-request construction, but never touches std.
-wee_alloc  = "0.4"
-
 # SHA-256 for the support-set commitment (propose() commits to a hash of the
 # support data; challenge() must supply data that hashes to the same value).
 # No serde/serde_json here: the only outbound JSON is the fixed-shape

@@ -12,4 +12,3 @@ lto = true
 panic = "abort"
 
 [dependencies]
-wee_alloc = "0.4"
