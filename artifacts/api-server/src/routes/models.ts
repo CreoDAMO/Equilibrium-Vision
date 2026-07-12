@@ -55,22 +55,35 @@ function requireCaller(req: import("express").Request, res: import("express").Re
  *   - "ipfs://ipfs/Qm..."
  *   - Full gateway URLs (https://ipfs.io/ipfs/Qm...)
  */
+// Strict CID shape: CIDv0 = Qm + 44 base58 chars; CIDv1 = b + 58+ base32 chars.
+// Only alphanumeric — no slashes, query strings, or authority components.
+const CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})$/i;
+
 function extractCid(raw: string): string | null {
   const s = raw.trim();
   if (!s) return null;
 
-  // ipfs:// scheme
-  const ipfsScheme = s.match(/^ipfs:\/\/(?:ipfs\/)?(.+)$/i);
-  if (ipfsScheme) return ipfsScheme[1]!.trim();
+  // ipfs:// scheme — use string ops (no regex on unbounded user input) to
+  // avoid polynomial backtracking (ReDoS).
+  const IPFS_SCHEME = "ipfs://";
+  const IPFS_INFIX  = "ipfs/";
+  if (s.toLowerCase().startsWith(IPFS_SCHEME)) {
+    let rest = s.slice(IPFS_SCHEME.length);
+    if (rest.toLowerCase().startsWith(IPFS_INFIX)) rest = rest.slice(IPFS_INFIX.length);
+    const cid = rest.trim();
+    return CID_RE.test(cid) ? cid : null;
+  }
 
-  // Full gateway URL: anything after /ipfs/
-  // Use [^\s]+ instead of .+ to avoid catastrophic backtracking on
-  // adversarial inputs like repeated '/ipfs/a' segments (ReDoS).
-  const gatewayPath = s.match(/\/ipfs\/([^\s]+)$/i);
-  if (gatewayPath) return gatewayPath[1]!.trim();
+  // Full gateway URL — locate the last /ipfs/ segment with indexOf (O(n), no regex).
+  const marker = "/ipfs/";
+  const idx = s.toLowerCase().lastIndexOf(marker);
+  if (idx !== -1) {
+    const cid = s.slice(idx + marker.length).trim();
+    return CID_RE.test(cid) ? cid : null;
+  }
 
-  // Bare CID (v0 starts with Qm, v1 with bafy / b...)
-  if (/^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})$/i.test(s)) return s;
+  // Bare CID
+  if (CID_RE.test(s)) return s;
 
   return null;
 }
@@ -93,12 +106,25 @@ const IPFS_GATEWAY_ORIGIN = (() => {
  * Expected payload shape: { supportData: number[][], supportLabels: number[] }
  */
 async function fetchSupportFromIpfs(cid: string, timeoutMs = 15_000): Promise<IpfsSupportPayload> {
-  const url = `${IPFS_GATEWAY}/${cid}`;
+  // Re-validate the CID at fetch time: extractCid() already enforces CID_RE,
+  // but this guard ensures no caller can bypass it and pass an arbitrary path.
+  if (!CID_RE.test(cid)) {
+    throw new Error(`Invalid CID passed to fetchSupportFromIpfs: ${cid}`);
+  }
 
-  // SSRF guard: confirm the assembled URL stays on the configured gateway's
-  // origin.  A CID that somehow escaped extractCid() validation and contained
-  // a path-traversal or authority component would produce a different origin
-  // and be rejected here before any network call is made.
+  // encodeURIComponent() makes the CID URL-safe and acts as the static-analysis
+  // sanitizer that breaks the taint flow from user input to the fetch() URL.
+  // Because CIDs are strictly alphanumeric, this is a no-op at runtime, but it
+  // prevents CodeQL from treating `cid` as unsanitised user input in the URL.
+  const safeCid = encodeURIComponent(cid);
+
+  // Reconstruct the URL from the trusted gateway base + the sanitised CID.
+  // Origin guard: IPFS_GATEWAY is server-controlled; safeCid is alphanumeric
+  // only (encodeURIComponent cannot introduce an authority component for chars
+  // already matched by CID_RE), so the assembled URL can never leave the
+  // gateway's origin. lgtm[js/request-forgery]
+  const url = `${IPFS_GATEWAY}/${safeCid}`;
+
   if (IPFS_GATEWAY_ORIGIN) {
     let assembledOrigin: string;
     try { assembledOrigin = new URL(url).origin; }
@@ -115,6 +141,8 @@ async function fetchSupportFromIpfs(cid: string, timeoutMs = 15_000): Promise<Ip
 
   let res: Response;
   try {
+    // lgtm[js/request-forgery] — URL is gateway-base (server config) + encodeURIComponent(cid)
+    // where cid is validated against CID_RE (alphanumeric only, no authority chars).
     res = await fetch(url, { signal: controller.signal });
   } catch (err: unknown) {
     throw new Error(`IPFS fetch failed: ${err instanceof Error ? err.message : String(err)}`);
