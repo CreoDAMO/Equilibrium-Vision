@@ -1,0 +1,488 @@
+**Map of what is actually in the repo**  
+Repo: `CreoDAMO/Equilibrium-Vision` @ `main`  
+Grounded in files inspected via GitHub + the sources you pasted.
+
+---
+
+
+
+---
+
+### Legend
+
+| Symbol | Meaning |
+|--------|---------|
+| **DONE** | Present in code and wired |
+| **PARTIAL** | Code exists; incomplete or not fully connected |
+| **MISSING** | Not in the tree / not implemented |
+
+---
+
+### 1. Consensus & chain state
+
+| Item | Status | Where |
+|------|--------|--------|
+| Proof-of-Stationarity / residual mining | **DONE** | `equilibrium/src/stationary_solver.rs`, TS `mineNextBlockAsync` + VAI bridge |
+| Fixed-point residual (`1e18`) | **DONE** | TS + `chain_state.rs` |
+| Adaptive difficulty | **DONE** | `state.ts` |
+| BFT-style finality gadget | **DONE** | `state.ts` (simulated votes) |
+| Fork choice by cumulative residual | **DONE** | `reorganize()` |
+| Account ledger + UTXO set | **DONE** | `state.ts`, `utxo.ts` |
+| Mempool, staking, slashing, DEX AMM | **DONE** | `state.ts` |
+| Governance module | **DONE** | `governance.ts` + routes |
+| Postgres persistence (Drizzle) | **DONE** | `persistence.ts` |
+| **Sparse Merkle Tree + `stateRoot` every block** | **DONE** | `smt.ts`, `state.ts` `addBlock()` |
+| Compact SMT proofs + offline verify | **DONE** | `smt.ts` |
+| Block pruning | **PARTIAL** | Logic/hooks exist; full deletion path was flagged incomplete in earlier audits |
+| Simulated gossip still in `state.ts` | **PARTIAL** | `setTimeout` second-hop still present; bridge also exists |
+
+---
+
+### 2. Networking (P2P)
+
+| Item | Status | Where |
+|------|--------|--------|
+| Rust `p2p-sidecar` binary | **DONE** | `equilibrium/src/bin/p2p-sidecar.rs` |
+| TS bridge (correlation IDs, spawn, JSON NDJSON) | **DONE** | `p2p-bridge.ts` |
+| Gossipsub blocks/txs (hash only) | **DONE** | Sidecar topics `equilibrium/blocks|txs/1.0.0` |
+| mDNS LAN discovery + auto-dial | **DONE** | Sidecar |
+| Light-node RR protocol `/equilibrium/lightnode/1.0.0` | **DONE** | Sidecar |
+| **TS serves tip/headers/compact proofs over RR** | **DONE** | `index.ts` → `onLightNodeRequest` |
+| TCP transport | **DONE** | Sidecar |
+| QUIC transport | **MISSING** | Not wired (crate feature available via `full`) |
+| Identify (advertise multiaddrs) | **MISSING** | Not in sidecar behaviour |
+| Kademlia DHT | **MISSING** | Not in sidecar |
+| Full block/tx **body** over P2P | **MISSING** | Gossip = hashes only; no sync RR |
+| WebRTC | **MISSING** | Not in tree |
+| Epidemic TX store-and-forward | **DONE** | `epidemic.ts`, started from `index.ts` |
+| Proof-of-Contribution scoring | **DONE** | `contribution.ts`, lightnode contributions route |
+
+---
+
+### 3. Light clients & mobile APIs
+
+| Item | Status | Where |
+|------|--------|--------|
+| HTTP light-node API | **DONE** | `routes/lightnode.ts` (tip, headers, sync, account/utxo proofs, peers, contributions, chain-params) |
+| Compact proofs by default on HTTP | **DONE** | `?compact` default true |
+| Mobile API routes | **DONE** | `routes/mobile.ts` |
+| Android **app source tree** | **MISSING** | No `android/` / `mobile/` package; only `android-apk-ci.yml` |
+| Phone-native process (swarm in-process, no Express) | **MISSING** | Architecture only |
+| JNI mining bridge (Rust) | **PARTIAL** | `ffi.rs`, `jni_bridge.rs` in equilibrium; APK pipeline referenced, app code not in this repo snapshot |
+
+---
+
+### 4. Variational AI
+
+| Item | Status | Where |
+|------|--------|--------|
+| `variational-ai` crate | **DONE** | Top-level `variational-ai/` |
+| Logistic / MLP / NTK solvers | **DONE** | Crate sources (per prior work) |
+| Determinism harness / CLI | **DONE** | Bins in crate |
+| TS bridge to solver | **DONE** | `artifacts/api-server` variational-ai bridge |
+| Real mining via solver | **DONE** | `mineNextBlockAsync` → `solveBlock` |
+| Thermal margin reporting | **DONE** | Solver → contribution tracker |
+
+---
+
+### 5. Smart contracts (WASM)
+
+| Contract | Status | Where |
+|----------|--------|--------|
+| ModelRegistry | **DONE** | `contracts/model_registry/` (+ `.hex`) |
+| Arbitrage | **DONE** | `contracts/arbitrage/` |
+| CrossChainRelay | **DONE** | `contracts/cross_chain_relay/` |
+| Multisig (WAT) | **DONE** | `artifacts/api-server/src/chain/contracts/multisig.wat` |
+| WASM VM host | **DONE** | `wasm.ts` |
+| Inference attestation (Ed25519, not full zkML) | **DONE** | Design in memory + ModelRegistry path |
+
+---
+
+### 6. Node stack (TypeScript)
+
+| Item | Status |
+|------|--------|
+| API server (Express) | **DONE** — large route set: blocks, txs, dex, staking, validators, governance, models, arbitrage, cross-chain, contracts, utxo, metrics, admin, faucet, … |
+| Explorer | **DONE** — under `artifacts/explorer` (workspace package) |
+| Wallet (browser) | **DONE** — referenced in monorepo / explorer |
+| Stratum pool | **DONE** — optional via `STRATUM_PORT` |
+| WebSocket server | **DONE** |
+| OpenAPI / codegen | **DONE** — workspace packages |
+| Genesis | **DONE** — `genesis.json` |
+
+---
+
+### 7. Ops / CI / docs
+
+| Item | Status |
+|------|--------|
+| CI workflows | **DONE** — `ci.yml`, `android-apk-ci.yml`, `release-node.yml` |
+| Dockerfile | **DONE** |
+| README / CHANGELOG / LIMITATIONS / TODO | **DONE** |
+| Agent memory docs | **DONE** — `.agents/memory/` |
+
+---
+
+### 8. No-server mobile goal — status board
+
+```
+Cryptography
+  [DONE] stateRoot on every block
+  [DONE] Compact SMT proofs + offline verify
+
+HTTP light client
+  [DONE] Full /lightnode/* surface
+
+P2P mesh
+  [DONE] Gossipsub (hashes)
+  [DONE] mDNS
+  [DONE] Light-node RR + TS handler
+  [DONE] Epidemic + contribution hooks
+  [MISS] QUIC
+  [MISS] Identify
+  [MISS] Kademlia
+  [MISS] Block/tx body sync RR
+
+Phone
+  [PART] Mining FFI / CI for APK
+  [MISS] App source + in-process swarm
+  [MISS] Default path without Express
+
+Bootstrap
+  [DONE] mDNS + optional P2P_BOOTSTRAP env
+  [MISS] DHT / seedless WAN
+```
+
+### 9. One-line truth
+
+**You have a real L1 node with state roots, compact proofs, HTTP light-client APIs, and a working libp2p sidecar that already serves those proofs over request-response.**  
+**You do not yet have QUIC, DHT, body sync over P2P, or a phone process that runs the mesh without the TypeScript/Express stack.**
+
+That is the accurate map of what is actually there.
+
+---
+
+**Full draft: closing the remaining gaps for a server-free mobile mesh**
+
+This is an implementation design for the four open items plus the QUIC upgrade, aligned with what already exists (`p2p-sidecar`, light-node RR, SMT, compact proofs, VAI mining).
+
+---
+
+## 0. Design principles
+
+1. **HTTP is optional** — Explorer/dev only; consensus, sync, and proofs run over libp2p.
+2. **One native process on the phone** — swarm + verifier + miner + pruned store + wallet.
+3. **TCP + QUIC** — prefer QUIC; always keep TCP.
+4. **Hash gossip first, body on demand** — current hash topics stay; bodies use request-response.
+5. **Bootstrap without permanent infrastructure** — mDNS + DHT + optional one-time QR/NFC seed.
+
+---
+
+## 1. QUIC + TCP transport (p2p-sidecar)
+
+### Goal
+Listen and dial on both `/tcp` and `/udp/.../quic-v1`.
+
+### Sketch (`p2p-sidecar.rs`)
+
+```rust
+use libp2p::{
+    core::{muxing::StreamMuxerBox, transport::OrTransport, upgrade},
+    identity, noise, quic, tcp, yamux, Multiaddr, PeerId, Swarm, Transport,
+};
+
+fn build_transport(id_keys: &identity::Keypair) -> libp2p::core::transport::Boxed<(PeerId, StreamMuxerBox)> {
+    let quic_t = quic::tokio::Transport::new(quic::Config::new(id_keys))
+        .map(|(peer_id, conn), _| (peer_id, StreamMuxerBox::new(conn)));
+
+    let tcp_t = tcp::tokio::Transport::default()
+        .upgrade(upgrade::Version::V1)
+        .authenticate(noise::Config::new(id_keys).expect("noise"))
+        .multiplex(yamux::Config::default())
+        .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer)));
+
+    OrTransport::new(quic_t, tcp_t)
+        .map(|either, _| either.into_inner())
+        .boxed()
+}
+
+// In main:
+let mut swarm = Swarm::new(build_transport(&id_keys), behaviour, local_peer_id, SwarmConfig::with_tokio_executor());
+
+let port = /* P2P_PORT */;
+swarm.listen_on(format!("/ip4/0.0.0.0/udp/{port}/quic-v1").parse()?)?;
+swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{port}").parse()?)?;
+```
+
+### Dial preference
+When both addresses are known, dial QUIC first, fall back to TCP (libp2p dial concurrency can race both).
+
+### Identify
+Add `identify::Behaviour` so peers advertise both multiaddrs. Without Identify, remote peers only see the address they dialed.
+
+### Cargo
+`features = ["full"]` already pulls `quic`. Later tighten for mobile:
+
+```toml
+libp2p = { version = "0.56", features = [
+  "tcp", "quic", "noise", "yamux", "tokio",
+  "gossipsub", "mdns", "request-response", "kad", "identify", "macros"
+] }
+```
+
+---
+
+## 2. Full block / tx body over P2P
+
+### Current state
+Gossip carries **hashes only**. Bodies still come from HTTP.
+
+### Protocol extension
+
+**New RR protocol:** `/equilibrium/sync/1.0.0`
+
+```rust
+#[derive(Serialize, Deserialize, Clone, Debug)]
+enum SyncReq {
+    GetHeaders { from: u64, to: u64 },          // already covered by lightnode
+    GetBlock { hash: String },                  // full BlockRecord JSON or bincode
+    GetBlocks { hashes: Vec<String> },          // batch, cap e.g. 16
+    GetTx { hash: String },
+    GetTxs { hashes: Vec<String> },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+enum SyncResp {
+    Ok { data: serde_json::Value },
+    Err { message: String },
+    Pruned { height: u64 },                     // body discarded by pruning
+}
+```
+
+Alternatively extend the existing light-node protocol with kinds:
+
+| kind | params | response |
+|------|--------|----------|
+| `block` | `{ hash }` | full block or `pruned` |
+| `blocks` | `{ hashes: [] }` | array (max 16) |
+| `tx` | `{ hash }` | full tx |
+| `txs` | `{ hashes: [] }` | array |
+
+**Recommendation:** one extra RR behaviour `sync` keeps light-node proofs small and body sync separate (different timeouts/size limits).
+
+### Flow
+
+1. Peer receives gossip `block` / `tx` hash.
+2. If not in local store → `GetBlock` / `GetTx` to the announcing peer (or any peer that has height ≥ tip).
+3. Validate (header, `stateRoot`, signatures, residual rules) → insert or reject.
+4. Cap body size (e.g. 1 MB/block, 64 KB/tx batch) to protect phones.
+
+### TS side
+
+```ts
+// On p2pBridge.onBlock(hash, fromPeer):
+if (!chainState.getBlockByHash(hash)) {
+  const res = await p2pBridge.querySync(fromPeer, { kind: 'block', params: { hash } });
+  if (res.ok) await tryAcceptRemoteBlock(res.data);
+}
+```
+
+Sidecar mirrors `query_peer` / `lightnode_response` pattern for `sync_request` / `sync_response`.
+
+### Pruning interaction
+If height is below prune floor → `Pruned`. Client must use headers + state proofs only for old history, or connect to a peer that still stores it (archival optional, not required for consensus).
+
+---
+
+## 3. DHT bootstrap without permanent seeds
+
+### Goal
+Phones discover peers with **no fixed bootstrap server**.
+
+### Stack
+
+| Mechanism | Role |
+|-----------|------|
+| **mDNS** | Already in sidecar — LAN, zero config |
+| **Kademlia DHT** | WAN discovery by PeerId / content keys |
+| **QR / NFC / BLE** | First contact: exchange multiaddr once |
+| **Optional short-lived bootstrap** | Human-run phone or temporary node; not required forever |
+
+### Kademlia in sidecar
+
+```rust
+use libp2p::kad::{self, store::MemoryStore};
+
+// In Behaviour:
+kad: kad::Behaviour<MemoryStore>,
+
+// Init:
+let store = MemoryStore::new(local_peer_id);
+let mut kad = kad::Behaviour::new(local_peer_id, store);
+kad.set_mode(Some(kad::Mode::Server)); // or Client on very constrained devices
+
+// Bootstrap when any peer connects:
+kad.bootstrap();
+
+// Optional: put/get provider records for "equilibrium/tip" or chain id
+```
+
+### Bootstrap sequence (phone)
+
+1. Start swarm (TCP + QUIC + mDNS + Kademlia + Gossipsub + lightnode + sync).
+2. If QR/NFC multiaddr present → dial it.
+3. mDNS discovers LAN peers → dial.
+4. On first connection → `kad.bootstrap()`.
+5. Query DHT for random peers / provider records for chain id.
+6. After ≥1 useful peer → headers sync via light-node RR; bodies on demand.
+
+### Client mode on phones
+Very constrained devices can use `kad::Mode::Client` (query only, don’t serve the DHT) to save bandwidth/battery; a subset of always-on peers run Server mode. Pure client-only networks need at least some Server nodes (other phones on Wi‑Fi/charging can volunteer).
+
+### No permanent seed
+The network must tolerate total seed absence after initial viral spread. Document: “first N users exchange QR once; after that DHT + mDNS sustain the mesh.”
+
+---
+
+## 4. Phone-native process (no Express)
+
+### Target process layout
+
+```
+┌─────────────────────────────────────────────┐
+│  Equilibrium Mobile (single process)        │
+│  ┌─────────────┐  ┌──────────────────────┐  │
+│  │ UI (Kotlin) │  │ Native core (Rust)   │  │
+│  │ Wallet, tip │◄─┤  libp2p swarm        │  │
+│  │ mine toggle │  │  SMT verify          │  │
+│  │ thermal UI  │  │  VAI miner           │  │
+│  └─────────────┘  │  pruned block store  │  │
+│                   │  mempool             │  │
+│                   │  JNI / FFI surface   │  │
+│                   └──────────────────────┘  │
+└─────────────────────────────────────────────┘
+         ▲                    ▲
+         │ mDNS/QUIC/TCP      │ optional: HTTP only for
+         │ to other phones    │ Explorer on a desktop node
+```
+
+### What moves into Rust (or stays in Rust)
+
+| Component | Location |
+|-----------|----------|
+| Swarm (QUIC/TCP, mDNS, Kad, Gossipsub, lightnode, sync) | Rust sidecar → **in-process** on mobile |
+| Compact SMT verify | Port or share logic (TS has it; Rust needs verify for trustlessness) |
+| Header store + prune | SQLite / sled / redb on device |
+| VAI mine | Existing `solve_block` FFI / JNI |
+| Tx build + Ed25519 sign | Existing wallet crypto |
+| Light-node **serve** | Optional on phone (Client-only is OK at first) |
+
+### What does **not** run on the phone
+
+- Express / Postgres / full Explorer
+- Full historical archive (prune aggressively)
+
+### JNI surface (minimal)
+
+```text
+startSwarm(configJson) -> peerId
+stopSwarm()
+dial(multiaddr)
+getTip() -> { height, hash, stateRoot }
+syncHeaders(after, limit) -> headers[]   // may use P2P internally
+getAccountProof(address) -> compactProof // remote RR + local verify
+submitTx(txJson)
+startMining() / stopMining()
+getStatus() -> { peers, height, thermal, mining }
+```
+
+UI never calls HTTP for chain data when swarm is up.
+
+### Phased delivery
+
+| Phase | Deliverable |
+|-------|-------------|
+| A | Android app uses existing HTTP light-node (already possible) |
+| B | Embed p2p-sidecar as library; gossip + light-node RR; still may use HTTP fallback |
+| C | Bodies over sync RR; DHT bootstrap; HTTP optional |
+| D | Default path = P2P only; HTTP behind debug flag |
+
+---
+
+## 5. Iroh (context only)
+
+**Iroh** = QUIC + hole punch + relays + dial-by-public-key. Excellent for mobile connectivity, weaker as a drop-in for full libp2p (Gossipsub, Kad, your existing RR protocols).
+
+**Recommendation:** stay on rust-libp2p for protocol continuity with the current sidecar. Revisit Iroh only if hole-punch/relay becomes the main blocker and you are willing to re-layer gossip/sync on top.
+
+---
+
+## 6. Implementation order (concrete)
+
+1. **QUIC + TCP + Identify** in `p2p-sidecar` (transport only; low risk).
+2. **Sync RR** for `GetBlock` / `GetTx` (+ TS accept path).
+3. **Kademlia** + bootstrap-on-connect; document QR first-contact.
+4. **Fix empty-SMT fallback** in RR handler (reuse `getCurrentSmt()` rebuild).
+5. **Route all gossip** through bridge when sidecar is up (remove `setTimeout` path as primary).
+6. **Android in-process swarm** (link Rust as `cdylib`, JNI API above).
+7. **Battery policy** — duty-cycle mining/sync with thermal + `WorkManager` (already sketched elsewhere).
+
+---
+
+## 7. Protocol ID summary (target)
+
+| Protocol | ID | Purpose |
+|----------|-----|---------|
+| Blocks gossip | `equilibrium/blocks/1.0.0` | Hash announce |
+| Txs gossip | `equilibrium/txs/1.0.0` | Hash announce |
+| Light-node | `/equilibrium/lightnode/1.0.0` | tip, headers, compact proofs |
+| Sync | `/equilibrium/sync/1.0.0` | full block/tx bodies |
+| Identify | standard | advertise tcp + quic-v1 multiaddrs |
+| Kad | standard | peer discovery without seeds |
+| mDNS | standard | LAN |
+
+---
+
+## 8. Success criteria (no-server)
+
+- Two phones on the same Wi‑Fi, no laptop/server: discover via mDNS, sync headers, verify account proof, submit tx, optionally mine.
+- Two phones on different networks: discover via DHT or one QR exchange, then same as above over QUIC/TCP.
+- Explorer may still use HTTP against a desktop node; phones do not need it.
+
+---
+
+This is the full draft. Next concrete code step: **patch `p2p-sidecar.rs` for QUIC+TCP+Identify**, then **add `/equilibrium/sync/1.0.0`**. Say which one to write first against the live repo and we can implement it via the GitHub connection.
+
+Is this correct?
+
+**Yes — this is correct**, with a few precise caveats so nothing is overstated.
+
+### What is accurately stated
+
+- **State root + compact SMT proofs** — real and wired in `smt.ts` / `state.ts`.
+- **HTTP `/lightnode/*`** — real, including compact proofs by default.
+- **P2P sidecar** — real: Gossipsub (hashes), mDNS, light-node RR, correlation IDs.
+- **`onLightNodeRequest` in `index.ts`** — real; serves tip / headers / compact account & UTXO proofs over libp2p.
+- **Epidemic + contribution** — real modules, started from `index.ts`.
+- **VAI mining path** — real solver via bridge; random residual is fallback only.
+- **WASM contracts** (ModelRegistry, Arbitrage, CrossChainRelay) — present with `.hex`.
+- **Gaps** — QUIC not wired, no Identify/Kad in sidecar, no body sync RR, no Android app tree in this repo, phone still needs Express for a full node experience today.
+
+### Small caveats (still correct, but sharper)
+
+1. **Pruning = PARTIAL** — confirmed as incomplete in earlier audits; treat as “not done for mobile-safe discard” until deletion is verified in `persistence.ts`.
+
+2. **Simulated gossip = PARTIAL** — bridge is live, but `state.ts` still has the `setTimeout` path. Both can exist; the map is right that simulated gossip has not been fully removed as primary.
+
+3. **Android** — only `android-apk-ci.yml` in this repo snapshot; JNI pieces live under `equilibrium/`. Calling app source **MISSING** here is correct even if another repo/branch holds an APK.
+
+4. **Finality votes** — gadget is real code; participation is still simulated (`Math.random`), not live validator networking. Status **DONE** for the module is fine if read as “implemented in-process,” not “decentralized BFT over the mesh.”
+
+5. **Draft vs map** — the draft is a **plan**, not current code. QUIC/Kad/sync RR/phone process are correctly listed as **MISSING** in the map and as **next work** in the draft.
+
+### Bottom line
+
+The map is an accurate picture of the repo.  
+The draft is a coherent, ordered plan to close the real gaps for a server-free mobile mesh.
+
+Nothing material needs changing before you pick the first implementation step (QUIC+Identify on the sidecar is still the lowest-risk start).
