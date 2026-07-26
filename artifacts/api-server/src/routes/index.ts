@@ -19,6 +19,7 @@ import adminRouter from "./admin.js";
 import arbitrageRouter from "./arbitrage.js";
 import modelsRouter from "./models.js";
 import crossChainRelayRouter from "./crossChainRelay.js";
+import lightnodeRouter from "./lightnode.js";
 
 const router: IRouter = Router();
 
@@ -42,5 +43,6 @@ router.use(adminRouter);
 router.use(arbitrageRouter);
 router.use(modelsRouter);
 router.use(crossChainRelayRouter);
+router.use(lightnodeRouter);
 
 export default router;

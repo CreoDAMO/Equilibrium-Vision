@@ -4,7 +4,8 @@ import { logger } from "./lib/logger.js";
 import { initChain, startMining, chainState } from "./chain/index.js";
 import { createWsServer } from "./lib/ws-server.js";
 import { StratumServer } from "./lib/stratum-server.js";
-import { closeWorkers } from "./variational-ai/bridge.js";
+import { closeWorkers, warmupConsensus } from "./variational-ai/bridge.js";
+import { p2pBridge } from "./chain/p2p-bridge.js";
 
 const rawPort = process.env["PORT"];
 
@@ -32,6 +33,12 @@ if (Number.isNaN(port) || port <= 0) {
     logger.info({ port }, "Server listening");
     startMining();
 
+    // Start the real libp2p P2P sidecar (no-op if binary not yet compiled)
+    p2pBridge.start();
+
+    // Pre-warm the Groth16 proving key in the background
+    void warmupConsensus();
+
     // Stratum mining pool — enabled when STRATUM_PORT is set (default: off)
     const stratumPort = Number(process.env["STRATUM_PORT"] ?? 0);
     if (stratumPort > 0) {
@@ -48,6 +55,7 @@ if (Number.isNaN(port) || port <= 0) {
 
   // Graceful shutdown — close long-lived Rust worker processes cleanly.
   const shutdown = () => {
+    p2pBridge.stop();
     closeWorkers();
     server.close(() => process.exit(0));
   };

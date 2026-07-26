@@ -272,6 +272,19 @@ export class UTXOSet {
   }
 
   /**
+   * Return every unspent UTXO in the set (all addresses).
+   * Used by the state-root builder to commit the full UTXO set
+   * into each block header's Sparse Merkle Tree.
+   */
+  getAllUnspent(): UTXO[] {
+    const result: UTXO[] = [];
+    for (const u of this.utxos.values()) {
+      if (!u.spent) result.push(u);
+    }
+    return result;
+  }
+
+  /**
    * Select UTXOs for a new transaction (greedy coin selection).
    * Returns selected UTXOs and change amount.
    */

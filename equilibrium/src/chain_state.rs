@@ -41,6 +41,17 @@ pub struct BlockHeader {
     /// Stationarity residual, fixed-point scaled by `RESIDUAL_SCALE` (10^18).
     /// Never compare or persist this as a float — see `RESIDUAL_SCALE` docs.
     pub residual: i64,
+    /// Sparse Merkle Tree root committing to the full world state (accounts,
+    /// UTXOs, contract storage) at this block height.
+    ///
+    /// Zero-filled for genesis and blocks mined before this field existed
+    /// (backward-compatible via `#[serde(default)]`).
+    ///
+    /// This is the cryptographic foundation for mobile light nodes: any phone
+    /// can verify an account balance with a 256-sibling SMT proof against this
+    /// root, without replaying the full chain.
+    #[serde(default)]
+    pub state_root: [u8; 32],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

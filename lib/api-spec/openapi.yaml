@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: lightnode
+    description: Mobile light-node sync — headers-only sync, cryptographic state proofs, chain parameters
   - name: chain
     description: Chain state and network info
   - name: blocks
@@ -1202,6 +1204,129 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+
+  # ── Light node / Mobile sync ────────────────────────────────────────────────
+
+  /lightnode/tip:
+    get:
+      operationId: getLightnodeTip
+      tags: [lightnode]
+      summary: Current chain tip with state root — the entry point for any mobile light node
+      responses:
+        "200":
+          description: Current tip
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LightnodeTip"
+
+  /lightnode/headers:
+    get:
+      operationId: getLightnodeHeaders
+      tags: [lightnode]
+      summary: Block headers only (no transaction data) — for initial sync and chain verification
+      parameters:
+        - name: from
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: to
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Array of compact block headers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LightnodeHeadersPage"
+
+  /lightnode/sync:
+    get:
+      operationId: getLightnodeSync
+      tags: [lightnode]
+      summary: Incremental sync — returns headers added after a given height (poll this repeatedly)
+      parameters:
+        - name: after
+          in: query
+          required: true
+          schema: { type: integer }
+          description: Last height the client already has. Returns headers with height > after.
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 200 }
+      responses:
+        "200":
+          description: Incremental sync payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LightnodeSyncPage"
+
+  /lightnode/proof/account/{address}:
+    get:
+      operationId: getLightnodeAccountProof
+      tags: [lightnode]
+      summary: Account balance + 256-sibling SMT proof against the current state root
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Account state and Merkle proof
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LightnodeAccountProof"
+
+  /lightnode/proof/utxo/{txHash}/{index}:
+    get:
+      operationId: getLightnodeUtxoProof
+      tags: [lightnode]
+      summary: UTXO state + 256-sibling SMT proof against the current state root
+      parameters:
+        - name: txHash
+          in: path
+          required: true
+          schema: { type: string }
+        - name: index
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: UTXO state and Merkle proof
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LightnodeUtxoProof"
+
+  /lightnode/chain-params:
+    get:
+      operationId: getLightnodeChainParams
+      tags: [lightnode]
+      summary: Network parameters and current chain info — used by mobile nodes on first connect
+      responses:
+        "200":
+          description: Chain parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LightnodeChainParams"
+
+  /lightnode/peers:
+    get:
+      operationId: getLightnodePeers
+      tags: [lightnode]
+      summary: Peer list for mobile P2P bootstrap
+      responses:
+        "200":
+          description: Connected peers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LightnodePeers"
 
   /mobile/version:
     get:
@@ -2537,6 +2662,125 @@ components:
           enum: [slashed, failed]
         error:
           type: string
+
+    # ── Light node schemas ──────────────────────────────────────────────────────
+
+    LightBlockHeader:
+      type: object
+      required: [hash, height, prevHash, merkleRoot, stateRoot, timestamp, nonce, difficulty, residual, residualFp, recursionDepth, coinbaseReward, miner, txCount, finalized]
+      properties:
+        hash:           { type: string }
+        height:         { type: integer }
+        prevHash:       { type: string }
+        merkleRoot:     { type: string }
+        stateRoot:      { type: string, description: "256-bit SMT root committing to accounts + UTXOs + contracts" }
+        timestamp:      { type: integer }
+        nonce:          { type: integer }
+        difficulty:     { type: integer }
+        residual:       { type: number }
+        residualFp:     { type: integer }
+        recursionDepth: { type: integer }
+        coinbaseReward: { type: integer }
+        miner:          { type: string }
+        txCount:        { type: integer }
+        finalized:      { type: boolean }
+
+    LightnodeTip:
+      type: object
+      properties:
+        height:          { type: integer }
+        hash:            { type: string }
+        prevHash:        { type: string }
+        stateRoot:       { type: string }
+        merkleRoot:      { type: string }
+        timestamp:       { type: integer }
+        difficulty:      { type: integer }
+        residual:        { type: number }
+        residualFp:      { type: integer }
+        finalized:       { type: boolean }
+        finalizedHeight: { type: integer }
+        peers:           { type: integer }
+        smtDepth:        { type: integer, description: "Always 256 — number of siblings in any SMT proof" }
+
+    LightnodeHeadersPage:
+      type: object
+      properties:
+        from:    { type: integer }
+        to:      { type: integer }
+        count:   { type: integer }
+        tip:     { type: integer }
+        headers: { type: array, items: { $ref: "#/components/schemas/LightBlockHeader" } }
+
+    LightnodeSyncPage:
+      type: object
+      properties:
+        syncedTo: { type: integer }
+        tip:      { type: integer }
+        count:    { type: integer }
+        more:     { type: boolean, description: "true if there are more headers beyond this page" }
+        headers:  { type: array, items: { $ref: "#/components/schemas/LightBlockHeader" } }
+
+    SMTProof:
+      type: object
+      properties:
+        key:      { type: string, description: "64-char hex SMT key" }
+        value:    { type: string, nullable: true, description: "64-char hex value (null = non-membership proof)" }
+        siblings: { type: array, items: { type: string }, description: "256 sibling hashes from root to leaf" }
+        root:     { type: string, description: "State root at proof generation time" }
+
+    LightnodeAccountProof:
+      type: object
+      properties:
+        address:       { type: string }
+        balance:       { type: integer }
+        nonce:         { type: integer }
+        stateRoot:     { type: string }
+        height:        { type: integer }
+        proof:         { $ref: "#/components/schemas/SMTProof" }
+        valueEncoding: { type: string }
+
+    LightnodeUtxoProof:
+      type: object
+      properties:
+        txHash:        { type: string }
+        outputIndex:   { type: integer }
+        utxo:          { type: object, nullable: true }
+        stateRoot:     { type: string }
+        height:        { type: integer }
+        proof:         { $ref: "#/components/schemas/SMTProof" }
+        valueEncoding: { type: string }
+
+    LightnodeChainParams:
+      type: object
+      properties:
+        chainId:         { type: string }
+        height:          { type: integer }
+        stateRoot:       { type: string }
+        difficulty:      { type: integer }
+        finalizedHeight: { type: integer }
+        validatorCount:  { type: integer }
+        mempoolSize:     { type: integer }
+        dexPoolCount:    { type: integer }
+        contractCount:   { type: integer }
+        smtDepth:        { type: integer }
+        residualScale:   { type: number }
+        pruneBelow:      { type: integer }
+
+    LightnodePeers:
+      type: object
+      properties:
+        peers:
+          type: array
+          items:
+            type: object
+            properties:
+              peerId:    { type: string }
+              address:   { type: string }
+              height:    { type: integer }
+              connected: { type: boolean }
+              syncState: { type: string }
+              latencyMs: { type: integer }
+        count: { type: integer }
 
     AppRelease:
       type: object

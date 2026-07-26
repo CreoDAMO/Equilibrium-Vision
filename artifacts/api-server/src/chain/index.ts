@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlock } from "./state.js";
+import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlock, mineNextBlockAsync } from "./state.js";
 import { persistContract, loadContractsFromDb } from "./persistence.js";
 import type { ChainState } from "./state.js";
 import type { GenesisDocument } from "@workspace/coinomics";
@@ -206,9 +206,9 @@ let miningEnabled    = false;
 let miningGeneration = 0;
 let miningTimer: ReturnType<typeof setTimeout> | null = null;
 
-function runMiningCycle(generation: number): void {
+async function runMiningCycle(generation: number): Promise<void> {
   try {
-    const block = mineNextBlock(chainState, minerAddress);
+    const block = await mineNextBlockAsync(chainState, minerAddress);
     logger.info(
       { height: block.height, hash: block.hash.slice(0, 16), txCount: block.txCount, residual: block.residual },
       "Block mined",
@@ -250,7 +250,7 @@ function runMiningCycle(generation: number): void {
     // is still enabled.  Bumping miningGeneration in stopMining() makes any
     // in-flight finally block see a stale generation and exit cleanly.
     if (generation === miningGeneration && miningEnabled) {
-      miningTimer = setTimeout(() => runMiningCycle(generation), 15_000);
+      miningTimer = setTimeout(() => { void runMiningCycle(generation); }, 15_000);
     }
   }
 }
@@ -261,7 +261,7 @@ export function startMining(): void {
   miningGeneration++;
   const gen = miningGeneration;
   logger.info({ minerAddress }, "Mining started");
-  miningTimer = setTimeout(() => runMiningCycle(gen), 0);
+  miningTimer = setTimeout(() => { void runMiningCycle(gen); }, 0);
 }
 
 export function stopMining(): void {

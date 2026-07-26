@@ -35,8 +35,9 @@ function resolveCliBinary(name: string): string {
   ];
   return candidates.find(c => fs.existsSync(c)) ?? candidates[0]!;
 }
-const CLI_PATH          = resolveCliBinary('variational-ai-cli');
+const CLI_PATH           = resolveCliBinary('variational-ai-cli');
 const ARBITRAGE_CLI_PATH = resolveCliBinary('variational-ai-arbitrage-cli');
+const CONSENSUS_CLI_PATH = resolveCliBinary('consensus-api');
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -245,11 +246,67 @@ class CliWorker {
 // the first call arrives.
 const residualWorker   = new CliWorker(CLI_PATH,           30_000);
 const arbitrageWorker  = new CliWorker(ARBITRAGE_CLI_PATH, 30_000);
+const consensusWorker  = new CliWorker(CONSENSUS_CLI_PATH, 60_000);
 
 /** Call on graceful server shutdown to clean up the background processes. */
 export function closeWorkers(): void {
   residualWorker.close();
   arbitrageWorker.close();
+  consensusWorker.close();
+}
+
+// ── Consensus / PoS solver ────────────────────────────────────────────────────
+
+export interface SolveBlockRequest {
+  /** method discriminator required by consensus-api stdin/stdout protocol */
+  method: 'solve';
+  prevHash: string;
+  merkleRoot: string;
+  timestamp: number;
+  difficulty: number;
+  maxIter?: number;
+  mempoolPressure?: number;
+  cumulativeWork?: number;
+}
+
+export interface SolveBlockResponse {
+  ok: boolean;
+  /** Winning nonce found by the PoS solver */
+  nonce: number;
+  /** Stationarity residual as float64 (NOT fixed-point) */
+  residual: number;
+  error?: string;
+}
+
+/**
+ * Call the Rust consensus-api to run the real Proof-of-Stationarity solver.
+ * Returns the best nonce and residual found within `maxIter` iterations.
+ *
+ * Falls back gracefully if the binary is not compiled yet (returns null).
+ */
+export async function solveBlock(
+  req: Omit<SolveBlockRequest, 'method'>,
+  timeoutMs = 30_000,
+): Promise<SolveBlockResponse | null> {
+  try {
+    const res = await consensusWorker.call<SolveBlockResponse>(
+      { method: 'solve', ...req },
+      timeoutMs,
+    );
+    return res;
+  } catch {
+    // Binary not compiled or crashed — caller falls back to random
+    return null;
+  }
+}
+
+export interface WarmupResponse { ok: boolean; warmup: boolean; }
+
+/** Pre-warm the Groth16 proving key (~100 ms); call once at startup. */
+export async function warmupConsensus(): Promise<void> {
+  try {
+    await consensusWorker.call<WarmupResponse>({ method: 'warmup' }, 10_000);
+  } catch { /* non-fatal */ }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

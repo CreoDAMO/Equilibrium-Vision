@@ -68,6 +68,39 @@ export interface BlockRecord {
   transactions: TxRecord[];
   finalized?: boolean;
   zkProof?: ZkProof;
+  /**
+   * Sparse Merkle Tree root committing to the full world state at this height:
+   * all account balances+nonces, all unspent UTXOs, and all contract storage hashes.
+   *
+   * This is the cryptographic foundation for mobile light nodes: a phone can
+   * verify any account balance or UTXO with a 256-sibling Merkle proof against
+   * this root, without downloading the full chain.
+   *
+   * Optional for backward compatibility with blocks mined before this field existed.
+   */
+  stateRoot?: string;
+}
+
+/**
+ * Compact block header for light-node / mobile sync.
+ * Contains only the fields needed to verify the chain without transaction data.
+ */
+export interface LightBlockHeader {
+  hash: string;
+  height: number;
+  prevHash: string;
+  merkleRoot: string;
+  stateRoot: string;
+  timestamp: number;
+  nonce: number;
+  difficulty: number;
+  residual: number;
+  residualFp: number;
+  recursionDepth: number;
+  coinbaseReward: number;
+  miner: string;
+  txCount: number;
+  finalized: boolean;
 }
 
 export interface AccountState {

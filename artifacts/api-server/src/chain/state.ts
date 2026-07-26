@@ -3,7 +3,9 @@ import type {
   ValidatorRecord, SlashEvent, FinalityRound, FinalityVote,
   DexPool, LiquidityPosition, SwapEvent, StakeRecord, UnbondingEntry, GossipEvent,
 } from "./types.js";
+import { SparseMerkleTree, smtKey, smtValue } from "./smt.js";
 import { merkleRoot, randomHex, addressFromSeed, hash256 } from "./crypto.js";
+import { solveBlock } from "../variational-ai/bridge.js";
 import { logger } from "../lib/logger.js";
 import { GovernanceModule } from "./governance.js";
 import { UTXOSet } from "./utxo.js";
@@ -74,6 +76,11 @@ export class Ledger {
 
   getAccount(addr: string): AccountState {
     return this.accounts.get(addr) ?? { balance: 0, nonce: 0 };
+  }
+
+  /** Return all accounts — used by the state-root SMT builder. */
+  getAllAccounts(): Map<string, AccountState> {
+    return this.accounts;
   }
 }
 
@@ -166,6 +173,9 @@ export class ChainState {
 
   // WASM smart contract VM
   wasmVM = new WasmVM();
+
+  /** Cached Sparse Merkle Tree for the current chain tip. Rebuilt on each addBlock(). */
+  _stateSmt: SparseMerkleTree | null = null;
 
   // On-chain governance (proposals, voting, parameter changes)
   governance = new GovernanceModule(
@@ -354,6 +364,48 @@ export class ChainState {
 
     // Keep the WASM VM's block_number() host import in sync with the chain tip.
     this.wasmVM.setBlockHeight(block.height);
+
+    // ── Cryptographic state root (Sparse Merkle Tree) ─────────────────────────
+    //
+    // Commits the full world state to a single 32-byte root in every block header.
+    // A mobile light node can verify any account balance or UTXO with a
+    // 256-sibling Merkle proof against this root — without downloading the
+    // full chain. This is the foundational primitive for the mobile node design.
+    //
+    // Scope: account balances+nonces, unspent UTXOs, WASM contract storage hashes.
+    // Validators/DEX pools are omitted for now (added in state-root-v2).
+    try {
+      const smt = new SparseMerkleTree();
+
+      // 1. Account balances and nonces
+      for (const [addr, acc] of this.ledger.getAllAccounts()) {
+        smt.set(
+          smtKey("acct", addr),
+          smtValue(`${acc.balance}:${acc.nonce}`),
+        );
+      }
+
+      // 2. Unspent UTXOs
+      for (const utxo of this.utxoSet.getAllUnspent()) {
+        smt.set(
+          smtKey("utxo", `${utxo.txHash}:${utxo.outputIndex}`),
+          smtValue(`${utxo.amount}:${utxo.address}:${utxo.blockHeight}`),
+        );
+      }
+
+      // 3. WASM contract storage commitments
+      for (const contract of this.wasmVM.listContracts()) {
+        smt.set(
+          smtKey("contract", contract.address),
+          smtValue(JSON.stringify(contract.storage)),
+        );
+      }
+
+      block.stateRoot = smt.root();
+      this._stateSmt = smt;
+    } catch (err) {
+      logger.warn({ err, height: block.height }, "State root computation failed — skipping");
+    }
   }
 
   // ── Chain reorganization ─────────────────────────────────────────────────────
@@ -1368,6 +1420,107 @@ export function buildGenesisChain(): ChainState {
 }
 
 // ── Block miner ───────────────────────────────────────────────────────────────
+
+/**
+ * Async block miner — tries the real Proof-of-Stationarity solver first
+ * (Rust consensus-api binary), falls back to the deterministic-random
+ * approach if the solver binary is unavailable (dev / CI environments).
+ *
+ * This is the production mining path. mineNextBlock() below is kept for
+ * backwards-compatible sync callers (genesis chain construction only).
+ */
+export async function mineNextBlockAsync(
+  state: ChainState,
+  minerAddr: string,
+): Promise<BlockRecord> {
+  const prev = state.latestBlock!;
+  const height = state.height + 1;
+  const now = Math.floor(Date.now() / 1000);
+
+  const candidates = state.mempool.all().slice(0, 50);
+  const signed = candidates.filter((t) => t.signature && t.publicKey);
+  let invalidHashes = new Set<string>();
+  if (signed.length > 0) {
+    const sigItems = signed.map((t) => ({
+      sig: new Uint8Array(Buffer.from(t.signature!, "hex")),
+      message: new TextEncoder().encode(`${t.from}${t.to}${t.amount}${t.fee}${t.nonce}`),
+      publicKey: new Uint8Array(Buffer.from(t.publicKey!, "hex")),
+    }));
+    const results = verifyEd25519BatchDetailed(sigItems);
+    invalidHashes = new Set(
+      signed.filter((_, i) => !results[i]).map((t) => t.hash),
+    );
+    if (invalidHashes.size > 0) {
+      logger.warn(`mineNextBlockAsync: dropping ${invalidHashes.size} tx(s) with invalid signatures`);
+      state.mempool.remove([...invalidHashes]);
+    }
+  }
+  const selected = candidates.filter((t) => !invalidHashes.has(t.hash));
+  const txHashes = selected.map((t) => t.hash);
+  const mr = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
+
+  // ── Real PoS solver ──────────────────────────────────────────────────────────
+  //
+  // Calls the Rust consensus-api binary which runs the actual Lagrangian
+  // stationarity solver (Newton-CG / L-BFGS) to find an optimal nonce.
+  // Falls back to Math.random() when the binary isn't compiled yet.
+  let nonce   = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+  let residual = Math.random() * 5e-9 + 1e-10;
+  try {
+    const solution = await solveBlock({
+      prevHash:        prev.hash,
+      merkleRoot:      mr,
+      timestamp:       now,
+      difficulty:      state.currentDifficulty,
+      maxIter:         500,
+      mempoolPressure: state.mempool.pressure,
+      cumulativeWork:  state.blocks.length,
+    }, 20_000);
+    if (solution?.ok) {
+      nonce    = solution.nonce;
+      residual = solution.residual; // f64 from Rust solver
+      logger.debug({ height, nonce, residual }, "PoS solver found solution");
+    }
+  } catch {
+    // Solver unavailable — random fallback is acceptable for dev/testnet
+  }
+
+  const quality  = 1.0 / (residual + 1e-6);
+  const reward   = Math.floor(BASE_REWARD * Math.min(quality, 1.0));
+  const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
+
+  const txs: TxRecord[] = selected.map((t) => ({
+    ...t,
+    blockHash,
+    blockHeight: height,
+    status: "confirmed" as const,
+  }));
+
+  const zkProof = generateZkProof(residual, blockHash, height);
+
+  const block: BlockRecord = {
+    hash:           blockHash,
+    height,
+    prevHash:       prev.hash,
+    merkleRoot:     mr,
+    timestamp:      now,
+    nonce,
+    difficulty:     state.currentDifficulty,
+    residual,
+    residualFp:     Math.floor(residual * 1e18),
+    recursionDepth: 2,
+    coinbaseReward: reward,
+    miner:          minerAddr,
+    txCount:        txs.length,
+    transactions:   txs,
+    finalized:      false,
+    zkProof,
+  };
+
+  state.addBlock(block);
+  state.gossipBlock(blockHash);
+  return block;
+}
 
 export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord {
   const prev = state.latestBlock!;

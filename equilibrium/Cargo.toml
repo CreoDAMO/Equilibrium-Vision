@@ -12,6 +12,10 @@ path = "testnet/node/main.rs"
 name = "wallet"
 path = "src/bin/wallet.rs"
 
+[[bin]]
+name = "p2p-sidecar"
+path = "src/bin/p2p-sidecar.rs"
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
