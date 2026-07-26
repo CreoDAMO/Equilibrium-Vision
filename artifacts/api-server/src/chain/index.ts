@@ -12,6 +12,7 @@ import { deployAdminMultisigIfConfigured } from "./multisig.js";
 import { deployModelRegistryIfNeeded } from "./modelRegistry.js";
 import { deployArbitrageIfNeeded } from "./arbitrage.js";
 import { deployCrossChainRelayIfNeeded } from "./crossChainRelay.js";
+import { p2pBridge } from "./p2p-bridge.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
 // address, but overridden by initChain() to the first genesis.json validator
@@ -231,6 +232,11 @@ async function runMiningCycle(generation: number): Promise<void> {
         timestamp: block.timestamp,
       },
     });
+
+    // Gossip the new block hash to the real P2P network (no-op if sidecar not running)
+    void p2pBridge.gossipBlock(block.hash);
+    // Update the internal gossip log for the explorer's network view
+    chainState.gossipBlock(block.hash);
 
     // Update peer heights
     for (const peer of chainState.peers) {

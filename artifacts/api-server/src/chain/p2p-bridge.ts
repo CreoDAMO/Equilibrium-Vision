@@ -100,6 +100,12 @@ class P2PBridge {
    * The handler should compute the response and call respondToLightNodeRequest().
    */
   onLightNodeRequest?: (requestId: string, fromPeerId: string, query: LightNodeQuery) => void;
+  /**
+   * Called when a remote peer requests a full block or TX body via the
+   * /equilibrium/sync/1.0.0 request-response protocol.
+   * The handler should fetch the data and call respondToSyncRequest().
+   */
+  onSyncRequest?: (requestId: string, fromPeerId: string, kind: string, params: Record<string, unknown>) => void;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -244,6 +250,51 @@ class P2PBridge {
     }).catch(() => {/* best-effort */});
   }
 
+  /**
+   * Request a full block or TX body from a remote peer via the
+   * /equilibrium/sync/1.0.0 protocol. Unlike gossip (hashes only), this
+   * fetches the actual body directly from the peer — no HTTP required.
+   *
+   * @param peerId  Target peer's libp2p PeerId string.
+   * @param kind    "block" | "blocks" | "tx" | "txs"
+   * @param params  Query params, e.g. { hash: "abc123..." }
+   */
+  async requestSync(
+    peerId: string,
+    kind: string,
+    params?: Record<string, unknown>,
+  ): Promise<LightNodeResponse> {
+    if (!this.isAvailable) throw new Error('p2p-sidecar not available');
+    const res = await this.send<{ ok: boolean; id: string; data?: unknown; error?: string }>({
+      method: 'query_sync',
+      peerId,
+      query: { kind, params: params ?? {} },
+    });
+    return { ok: res.ok, data: res.data, error: res.error };
+  }
+
+  /**
+   * Send a response to an inbound sync request (body fetch from a remote peer).
+   *
+   * @param requestId  The requestId from the onSyncRequest callback.
+   * @param data       The block or TX body to return (JSON-serialisable).
+   */
+  async respondToSyncRequest(
+    requestId: string,
+    data: unknown,
+    ok = true,
+    error?: string,
+  ): Promise<void> {
+    if (!this.isAvailable) return;
+    await this.send({
+      method: 'sync_response',
+      requestId,
+      ok,
+      data,
+      error,
+    }).catch(() => {/* best-effort */});
+  }
+
   // ── Private ─────────────────────────────────────────────────────────────────
 
   /**
@@ -351,6 +402,22 @@ class P2PBridge {
         const fromPeerId = String(evt['fromPeerId'] ?? '');
         const query      = (evt['query'] ?? {}) as LightNodeQuery;
         this.onLightNodeRequest?.(requestId, fromPeerId, query);
+        break;
+      }
+
+      // Inbound sync request: a remote peer wants a full block or TX body
+      case 'sync_request': {
+        const requestId  = String(evt['requestId'] ?? '');
+        const fromPeerId = String(evt['fromPeerId'] ?? '');
+        const q          = (evt['query'] ?? {}) as { kind?: string; params?: Record<string, unknown> };
+        this.onSyncRequest?.(requestId, fromPeerId, q.kind ?? 'block', q.params ?? {});
+        break;
+      }
+
+      // Identify confirmed for a peer — currently informational
+      case 'peer_identified': {
+        const peerId = String(evt['peerId'] ?? '');
+        logger.debug({ peerId }, 'p2p-bridge: peer identified (multiaddrs registered in DHT)');
         break;
       }
 

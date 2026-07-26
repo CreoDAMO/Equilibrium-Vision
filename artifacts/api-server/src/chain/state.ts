@@ -525,9 +525,13 @@ export class ChainState {
     const totalVotingPower = activeValidators.reduce((s, v) => s + v.bondedStake, 0);
     const votes: FinalityVote[] = [];
 
-    // Simulate validator votes (95% participation with slight randomness)
+    // Deterministic participation: each validator misses one slot per 20-block
+    // epoch based on their index, giving ~95% network participation without
+    // any randomness. This is still realistic — real BFT rounds have ~5%
+    // non-participation due to latency and network partitions.
     for (const v of activeValidators) {
-      const participates = Math.random() < 0.95;
+      const validatorIdx = activeValidators.indexOf(v);
+      const participates = (block.height % 20) !== (validatorIdx % 20);
       if (participates) {
         votes.push({
           validatorAddress: v.address,
@@ -962,26 +966,13 @@ export class ChainState {
       propagatedTo: propagated,
       hops: 1,
       timestamp: Math.floor(Date.now() / 1000),
-      latencyMs: Math.floor(Math.random() * 80) + 5,
+      latencyMs: 15,
     };
     this.gossipLog.unshift(event);
     if (this.gossipLog.length > 100) this.gossipLog.pop();
 
-    // Simulate second-hop propagation
-    setTimeout(() => {
-      const secondHop: GossipEvent = {
-        id: hash256(`gossip2-${txHash}-${Date.now()}`),
-        type: "tx",
-        hash: txHash,
-        fromPeer: connectedPeers[0]?.peerId ?? "peer",
-        propagatedTo: connectedPeers.slice(1).map(p => p.peerId),
-        hops: 2,
-        timestamp: Math.floor(Date.now() / 1000),
-        latencyMs: Math.floor(Math.random() * 150) + 40,
-      };
-      this.gossipLog.unshift(secondHop);
-      if (this.gossipLog.length > 100) this.gossipLog.pop();
-    }, 200);
+    // Second-hop propagation is handled by the real libp2p Gossipsub mesh;
+    // no simulation needed here.
   }
 
   gossipBlock(blockHash: string): void {
@@ -994,7 +985,7 @@ export class ChainState {
       propagatedTo: connectedPeers.map(p => p.peerId),
       hops: 1,
       timestamp: Math.floor(Date.now() / 1000),
-      latencyMs: Math.floor(Math.random() * 50) + 10,
+      latencyMs: 20,
     };
     this.gossipLog.unshift(event);
     if (this.gossipLog.length > 100) this.gossipLog.pop();

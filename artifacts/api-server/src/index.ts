@@ -55,12 +55,102 @@ if (Number.isNaN(port) || port <= 0) {
       }
     };
 
+    // Maximum residual a PoS block may have — must match routes/blocks.ts
+    const RESIDUAL_THRESHOLD = 1e-7;
+
     p2pBridge.onBlock = (blockHash, peerId) => {
       contributionTracker.onBlockRelayed(peerId);
+      // Update the local gossip log so the Explorer network view reflects P2P activity
+      if (chainState) chainState.gossipBlock(blockHash);
+
+      // If we haven't seen this block body yet, fetch it from the announcing peer
+      // via the /equilibrium/sync/1.0.0 RR protocol — no HTTP required.
+      if (chainState && !chainState.getBlockByHash(blockHash)) {
+        p2pBridge.requestSync(peerId, 'block', { hash: blockHash })
+          .then(async (res) => {
+            if (!res.ok || !res.data) {
+              logger.debug({ blockHash, peerId, err: res.error }, 'P2P body sync: peer could not serve block');
+              return;
+            }
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const remote = res.data as any;
+
+            // ── Validate the received block before insertion ───────────────────
+            // Re-check: another path may have added this block while we were fetching
+            if (chainState.getBlockByHash(blockHash)) return;
+
+            const remoteHeight: number  = Number(remote.height);
+            const remoteResidual: number = Number(remote.residual);
+
+            // Only accept the immediate next block to avoid complex reorg logic.
+            // Fork-choice across heights is deferred to the full sync protocol.
+            if (remoteHeight !== chainState.height + 1) {
+              logger.debug(
+                { blockHash, remoteHeight, ourHeight: chainState.height },
+                'P2P sync: block is not the next height — skipping',
+              );
+              return;
+            }
+
+            // Verify prevHash links to our current tip
+            if (remote.prevHash !== chainState.latestBlock?.hash) {
+              logger.debug(
+                { blockHash, remotePrev: remote.prevHash, ourTip: chainState.latestBlock?.hash },
+                'P2P sync: block prevHash mismatch — likely fork, skipping',
+              );
+              return;
+            }
+
+            // Verify residual meets the PoS threshold (same rule as the HTTP submit route)
+            if (remoteResidual >= RESIDUAL_THRESHOLD) {
+              logger.warn(
+                { blockHash, residual: remoteResidual, threshold: RESIDUAL_THRESHOLD },
+                'P2P sync: block residual above threshold — rejected',
+              );
+              return;
+            }
+
+            // Timestamp drift guard: ±300 s
+            const now = Math.floor(Date.now() / 1000);
+            if (Math.abs(Number(remote.timestamp) - now) > 300) {
+              logger.warn({ blockHash, ts: remote.timestamp, now }, 'P2P sync: block timestamp out of drift window — rejected');
+              return;
+            }
+
+            // All checks pass — insert into chain state
+            logger.info({ blockHash, height: remoteHeight, miner: remote.miner, peerId }, 'P2P sync: accepting block from peer');
+            chainState.addBlock(remote);
+
+            // Persist to Postgres so the block survives a restart
+            const { persistBlock } = await import('./chain/persistence.js');
+            persistBlock(remote).catch((err: unknown) =>
+              logger.warn({ err, height: remoteHeight }, 'P2P sync: block persistence failed'),
+            );
+
+            // Notify WebSocket clients
+            const { broadcast } = await import('./lib/ws-server.js');
+            broadcast({
+              type: 'new_block',
+              data: {
+                height:    remote.height,
+                hash:      remote.hash,
+                txCount:   remote.txCount,
+                residual:  remote.residual,
+                miner:     remote.miner,
+                timestamp: remote.timestamp,
+              },
+            });
+          })
+          .catch((err: unknown) => {
+            logger.debug({ err, blockHash, peerId }, 'P2P body sync failed (non-fatal)');
+          });
+      }
     };
 
     p2pBridge.onTx = (txHash, peerId) => {
       contributionTracker.onTxRelayed(peerId);
+      if (chainState) chainState.gossipTx(txHash);
     };
 
     // mDNS: local peers discovered automatically — log and let the bridge dial them
@@ -136,6 +226,77 @@ if (Number.isNaN(port) || port <= 0) {
       } catch (err) {
         logger.warn({ err, requestId, fromPeerId }, 'P2P light-node request failed');
         await p2pBridge.respondToLightNodeRequest(requestId, null, false, String(err));
+      }
+    };
+
+    // ── P2P Sync handler ────────────────────────────────────────────────────
+    // When a remote peer requests a full block or TX body via the
+    // /equilibrium/sync/1.0.0 protocol, serve it from our local store.
+    // This eliminates HTTP as a required transport for block body propagation.
+    p2pBridge.onSyncRequest = async (requestId, fromPeerId, kind, params) => {
+      try {
+        if (!chainState) {
+          await p2pBridge.respondToSyncRequest(requestId, null, false, 'Chain not initialised');
+          return;
+        }
+
+        let data: unknown = null;
+
+        switch (kind) {
+          case 'block': {
+            const hash  = String(params['hash'] ?? '');
+            const block = chainState.getBlockByHash(hash);
+            if (block) {
+              data = block;
+            } else {
+              await p2pBridge.respondToSyncRequest(requestId, null, false, `block not found: ${hash}`);
+              return;
+            }
+            break;
+          }
+
+          case 'blocks': {
+            const hashes = Array.isArray(params['hashes']) ? params['hashes'] as string[] : [];
+            const blocks = hashes
+              .slice(0, 16) // cap batch size to protect mobile peers
+              .map((h) => chainState.getBlockByHash(h))
+              .filter(Boolean);
+            data = blocks;
+            break;
+          }
+
+          case 'tx': {
+            const hash = String(params['hash'] ?? '');
+            const tx   = chainState.getTx(hash);
+            if (tx) {
+              data = tx;
+            } else {
+              await p2pBridge.respondToSyncRequest(requestId, null, false, `tx not found: ${hash}`);
+              return;
+            }
+            break;
+          }
+
+          case 'txs': {
+            const hashes = Array.isArray(params['hashes']) ? params['hashes'] as string[] : [];
+            const txs = hashes
+              .slice(0, 64)
+              .map((h) => chainState.getTx(h))
+              .filter(Boolean);
+            data = txs;
+            break;
+          }
+
+          default:
+            await p2pBridge.respondToSyncRequest(requestId, null, false, `unknown sync kind: ${kind}`);
+            return;
+        }
+
+        logger.debug({ requestId, fromPeerId, kind }, 'P2P sync request served');
+        await p2pBridge.respondToSyncRequest(requestId, data, true);
+      } catch (err) {
+        logger.warn({ err, requestId, fromPeerId, kind }, 'P2P sync request failed');
+        await p2pBridge.respondToSyncRequest(requestId, null, false, String(err));
       }
     };
 
