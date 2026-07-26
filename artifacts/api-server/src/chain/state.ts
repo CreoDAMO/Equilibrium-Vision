@@ -1479,7 +1479,14 @@ export async function mineNextBlockAsync(
     if (solution?.ok) {
       nonce    = solution.nonce;
       residual = solution.residual; // f64 from Rust solver
-      logger.debug({ height, nonce, residual }, "PoS solver found solution");
+      // Report thermal margin to the contribution tracker so the network
+      // can observe per-device health. Value ∈ [0,1]; 1 = cool, 0 = hot.
+      const margin = solution.thermal_margin ?? 1.0;
+      try {
+        const { contributionTracker } = await import('./contribution.js');
+        contributionTracker.reportLocalThermal(margin);
+      } catch { /* non-fatal if module not yet loaded */ }
+      logger.debug({ height, nonce, residual, thermalMargin: margin }, "PoS solver found solution");
     }
   } catch {
     // Solver unavailable — random fallback is acceptable for dev/testnet

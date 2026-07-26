@@ -32,6 +32,7 @@ pub unsafe extern "C" fn solve_block(
         difficulty,
         recursion_depth,
         residual: 0,
+        state_root: [0u8; 32], // default empty root for FFI callers
     };
 
     let state = ChainState {

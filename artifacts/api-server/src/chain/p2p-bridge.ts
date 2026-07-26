@@ -5,11 +5,20 @@
  * network. The p2p-sidecar binary is spawned once at startup and communicates
  * via newline-delimited JSON on stdin/stdout — the same pattern as consensus-api.
  *
+ * Protocol extensions over the original:
+ *   - Correlation IDs on every command (fixes the broken FIFO assumption — the
+ *     original assumed responses arrive in the exact order commands were sent,
+ *     which breaks under concurrent queries).
+ *   - queryLightNode(peerId, query) — request headers/proofs from a peer
+ *     directly over the libp2p request-response protocol without an HTTP server.
+ *   - respondToLightNodeRequest(requestId, data) — answer an inbound light-node
+ *     query received from a remote peer.
+ *   - onPeerDiscovered — callback for mDNS-discovered peers (LAN, no seed needed).
+ *
  * Usage:
  *   import { p2pBridge } from './p2p-bridge.js';
  *   p2pBridge.gossipBlock('abc123...');
- *   p2pBridge.gossipTx('def456...');
- *   const peers = await p2pBridge.peers();
+ *   const proof = await p2pBridge.queryLightNode('QmPeer...', { kind: 'proof_account', params: { address: '...' } });
  *
  * If the binary is not compiled the bridge silently no-ops so the TS node
  * continues running in simulated mode (existing behaviour preserved).
@@ -19,6 +28,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 import { logger } from '../lib/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +47,7 @@ function resolveP2pSidecar(): string {
 interface PendingCall {
   resolve: (v: unknown) => void;
   reject:  (e: Error) => void;
+  timer:   ReturnType<typeof setTimeout>;
 }
 
 export interface P2PPeer {
@@ -44,20 +55,53 @@ export interface P2PPeer {
   address?: string;
 }
 
+export interface LightNodeQuery {
+  /** "tip" | "headers" | "sync" | "proof_account" | "proof_utxo" */
+  kind:   string;
+  params?: Record<string, unknown>;
+}
+
+export interface LightNodeResponse {
+  ok:    boolean;
+  data?: unknown;
+  error?: string;
+}
+
 // ── P2P Bridge class ──────────────────────────────────────────────────────────
+
+const DEFAULT_TIMEOUT_MS = 10_000; // 10 s per command
 
 class P2PBridge {
   private proc:      ChildProcess | null = null;
   private buffer:    string = '';
-  private queue:     PendingCall[] = [];
+  /**
+   * Correlation-ID map: id → pending promise.
+   * Replaces the FIFO queue which broke under concurrent requests.
+   */
+  private pending:   Map<string, PendingCall> = new Map();
   private available: boolean = false;
 
-  /** Callback invoked when a block is gossiped from a remote peer. */
+  // ── Callbacks ──────────────────────────────────────────────────────────────
+
+  /** Called when a block is gossiped from a remote peer. */
   onBlock?: (blockHash: string, peerId: string) => void;
-  /** Callback invoked when a tx is gossiped from a remote peer. */
-  onTx?:    (txHash: string, peerId: string) => void;
-  /** Callback invoked when a peer connects or disconnects. */
-  onPeer?:  (event: 'connected' | 'disconnected', peerId: string) => void;
+  /** Called when a tx is gossiped from a remote peer. */
+  onTx?:   (txHash: string, peerId: string) => void;
+  /** Called when a peer connects or disconnects. */
+  onPeer?: (event: 'connected' | 'disconnected', peerId: string) => void;
+  /**
+   * Called when mDNS discovers a new peer on the local network.
+   * The bridge automatically dials discovered peers; this callback lets
+   * the chain layer update its peer list without a round-trip.
+   */
+  onPeerDiscovered?: (peerId: string, addrs: string[]) => void;
+  /**
+   * Called when a remote peer sends us a light-node query.
+   * The handler should compute the response and call respondToLightNodeRequest().
+   */
+  onLightNodeRequest?: (requestId: string, fromPeerId: string, query: LightNodeQuery) => void;
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   start(): void {
     const binaryPath = resolveP2pSidecar();
@@ -117,6 +161,8 @@ class P2PBridge {
     return this.available && this.proc !== null;
   }
 
+  // ── Outbound commands ──────────────────────────────────────────────────────
+
   async gossipBlock(blockHash: string): Promise<void> {
     if (!this.isAvailable) return;
     await this.send({ method: 'gossip_block', blockHash }).catch(() => {/* fire and forget */});
@@ -157,19 +203,75 @@ class P2PBridge {
     }
   }
 
+  /**
+   * Query a remote peer's light-node data directly over libp2p request-response.
+   * No HTTP server required — the peer's sidecar handles the protocol natively.
+   *
+   * @param peerId  The libp2p PeerId string of the target peer.
+   * @param query   What to request (tip, headers, proof_account, proof_utxo…).
+   * @returns       The peer's response data, or throws on timeout/error.
+   */
+  async queryLightNode(peerId: string, query: LightNodeQuery): Promise<LightNodeResponse> {
+    if (!this.isAvailable) throw new Error('p2p-sidecar not available');
+    const res = await this.send<{ ok: boolean; id: string; data?: unknown; error?: string }>({
+      method: 'query_peer',
+      peerId,
+      query,
+    });
+    return { ok: res.ok, data: res.data, error: res.error };
+  }
+
+  /**
+   * Send a response to an inbound light-node request from a remote peer.
+   * Call this from the onLightNodeRequest handler after computing the proof.
+   *
+   * @param requestId  The requestId from the onLightNodeRequest callback.
+   * @param data       The response payload (will be JSON-serialised).
+   */
+  async respondToLightNodeRequest(
+    requestId: string,
+    data: unknown,
+    ok = true,
+    error?: string,
+  ): Promise<void> {
+    if (!this.isAvailable) return;
+    await this.send({
+      method: 'lightnode_response',
+      requestId,
+      ok,
+      data,
+      error,
+    }).catch(() => {/* best-effort */});
+  }
+
   // ── Private ─────────────────────────────────────────────────────────────────
 
-  private send<T>(payload: unknown): Promise<T> {
+  /**
+   * Send a command to the sidecar with a correlation ID.
+   * The ID is included in the command payload; the sidecar echoes it in the
+   * response so concurrent commands can be matched without FIFO assumptions.
+   */
+  private send<T>(payload: Record<string, unknown>, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       if (!this.proc?.stdin) {
         reject(new Error('p2p-sidecar not running'));
         return;
       }
-      this.queue.push({
+
+      const id = randomUUID();
+      const timer = setTimeout(() => {
+        if (this.pending.delete(id)) {
+          reject(new Error(`p2p-sidecar command timed out (id=${id}, method=${String(payload['method'])})`));
+        }
+      }, timeoutMs);
+
+      this.pending.set(id, {
         resolve: resolve as (v: unknown) => void,
         reject,
+        timer,
       });
-      this.proc.stdin.write(JSON.stringify(payload) + '\n');
+
+      this.proc.stdin.write(JSON.stringify({ ...payload, id }) + '\n');
     });
   }
 
@@ -181,15 +283,33 @@ class P2PBridge {
       return;
     }
 
-    // Check if this is an unsolicited event (has "event" key)
+    // Unsolicited event — dispatch to the appropriate callback
     if (typeof parsed['event'] === 'string') {
       this.handleEvent(parsed);
       return;
     }
 
-    // Otherwise it's a response to a queued command
-    const waiter = this.queue.shift();
-    if (waiter) {
+    // Correlated response: resolve by ID
+    const id = typeof parsed['id'] === 'string' ? parsed['id'] : null;
+    if (id) {
+      const waiter = this.pending.get(id);
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        this.pending.delete(id);
+        if (parsed['ok'] === false) {
+          waiter.reject(new Error(String(parsed['error'] ?? 'p2p error')));
+        } else {
+          waiter.resolve(parsed);
+        }
+        return;
+      }
+    }
+
+    // Legacy fallback: if no id in response, resolve oldest pending (compat)
+    if (this.pending.size > 0) {
+      const [firstId, waiter] = [...this.pending.entries()][0]!;
+      clearTimeout(waiter.timer);
+      this.pending.delete(firstId);
       if (parsed['ok'] === false) {
         waiter.reject(new Error(String(parsed['error'] ?? 'p2p error')));
       } else {
@@ -213,12 +333,37 @@ class P2PBridge {
       case 'peer_disconnected':
         this.onPeer?.('disconnected', String(evt['peerId'] ?? ''));
         break;
+
+      // mDNS local discovery — the sidecar auto-dials; we surface it here
+      case 'peer_discovered': {
+        const peerId = String(evt['peerId'] ?? '');
+        const addrs  = Array.isArray(evt['addrs'])
+          ? (evt['addrs'] as unknown[]).map(String)
+          : [];
+        logger.info({ peerId, addrs }, 'mDNS: local peer discovered');
+        this.onPeerDiscovered?.(peerId, addrs);
+        break;
+      }
+
+      // Inbound light-node query from a remote peer
+      case 'lightnode_request': {
+        const requestId  = String(evt['requestId'] ?? '');
+        const fromPeerId = String(evt['fromPeerId'] ?? '');
+        const query      = (evt['query'] ?? {}) as LightNodeQuery;
+        this.onLightNodeRequest?.(requestId, fromPeerId, query);
+        break;
+      }
+
+      default:
+        logger.debug({ type }, 'p2p-bridge: unknown event type');
     }
   }
 
   private rejectAll(err: Error): void {
-    while (this.queue.length > 0) {
-      this.queue.shift()!.reject(err);
+    for (const [id, waiter] of this.pending) {
+      clearTimeout(waiter.timer);
+      this.pending.delete(id);
+      waiter.reject(err);
     }
   }
 }

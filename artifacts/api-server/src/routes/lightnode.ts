@@ -22,6 +22,8 @@
 import { Router } from "express";
 import { chainState } from "../chain/index.js";
 import { SparseMerkleTree, smtKey, smtValue } from "../chain/smt.js";
+import { contributionTracker } from "../chain/contribution.js";
+import { epidemicBroadcaster } from "../chain/epidemic.js";
 import type { BlockRecord, LightBlockHeader } from "../chain/types.js";
 
 const router = Router();
@@ -86,21 +88,29 @@ router.get("/lightnode/tip", (_req, res) => {
     res.status(503).json({ error: "Chain not initialised" });
     return;
   }
+  const contribStats = contributionTracker.stats();
+  const epidemicStats = epidemicBroadcaster.stats();
   res.json({
-    height:        tip.height,
-    hash:          tip.hash,
-    prevHash:      tip.prevHash,
-    stateRoot:     tip.stateRoot ?? "0".repeat(64),
-    merkleRoot:    tip.merkleRoot,
-    timestamp:     tip.timestamp,
-    difficulty:    tip.difficulty,
-    residual:      tip.residual,
-    residualFp:    tip.residualFp ?? Math.floor(tip.residual * 1e18),
-    finalized:     tip.finalized ?? false,
-    finalizedHeight: chainState.finalizedHeight,
-    peers:         chainState.peers.filter((p) => p.connected).length,
-    /** Protocol hint: how many siblings in each SMT proof */
-    smtDepth:      256,
+    height:           tip.height,
+    hash:             tip.hash,
+    prevHash:         tip.prevHash,
+    stateRoot:        tip.stateRoot ?? "0".repeat(64),
+    merkleRoot:       tip.merkleRoot,
+    timestamp:        tip.timestamp,
+    difficulty:       tip.difficulty,
+    residual:         tip.residual,
+    residualFp:       tip.residualFp ?? Math.floor(tip.residual * 1e18),
+    finalized:        tip.finalized ?? false,
+    finalizedHeight:  chainState.finalizedHeight,
+    peers:            chainState.peers.filter((p) => p.connected).length,
+    /** Protocol hints for mobile clients */
+    smtDepth:         256,
+    compactProofSupport: true,
+    /** Network health from Proof-of-Contribution */
+    networkThermal:   contribStats.networkThermal,
+    activePeers:      contribStats.activePeers,
+    /** Epidemic TX queue depth — non-zero means some TXs are awaiting propagation */
+    epidemicQueueSize: epidemicStats.queueSize,
   });
 });
 
@@ -179,13 +189,15 @@ router.get("/lightnode/sync", (req, res) => {
 
 router.get("/lightnode/proof/account/:address", (req, res) => {
   const { address } = req.params;
+  const compact = req.query["compact"] !== "false"; // compact by default for mobile
   const tip = chainState.latestBlock;
   if (!tip) { res.status(503).json({ error: "Chain not initialised" }); return; }
 
-  const acc   = chainState.ledger.getAccount(address);
-  const smt   = getCurrentSmt();
-  const key   = smtKey("acct", address);
-  const proof = smt.prove(key);
+  const acc          = chainState.ledger.getAccount(address);
+  const smt          = getCurrentSmt();
+  const key          = smtKey("acct", address);
+  const proof        = smt.prove(key);
+  const compactProof = smt.proveCompact(key);
 
   res.json({
     address,
@@ -193,12 +205,22 @@ router.get("/lightnode/proof/account/:address", (req, res) => {
     nonce:      acc.nonce,
     stateRoot:  tip.stateRoot ?? smt.root(),
     height:     tip.height,
+    /**
+     * Full 256-sibling proof (8 KB) — use for maximum compatibility.
+     * Mobile clients should prefer compactProof.
+     */
     proof: {
       key:      proof.key,
       value:    proof.value,
-      siblings: proof.siblings,
+      siblings: compact ? undefined : proof.siblings,
       root:     proof.root,
     },
+    /**
+     * Compact proof — only non-default siblings (~32–512 bytes).
+     * Verify offline with SparseMerkleTree.verifyCompact(compactProof, stateRoot).
+     * Included by default; pass ?compact=false to omit.
+     */
+    compactProof: compact ? compactProof : undefined,
     /** The value encoding for verification: SHA256("balance:nonce") */
     valueEncoding: "sha256(balance.toString() + ':' + nonce.toString())",
   });
@@ -209,15 +231,17 @@ router.get("/lightnode/proof/account/:address", (req, res) => {
 router.get("/lightnode/proof/utxo/:txHash/:index", (req, res) => {
   const { txHash, index } = req.params;
   const outputIndex = parseInt(index, 10);
+  const compact     = req.query["compact"] !== "false";
   const tip = chainState.latestBlock;
 
   if (!tip) { res.status(503).json({ error: "Chain not initialised" }); return; }
   if (isNaN(outputIndex)) { res.status(400).json({ error: "index must be an integer" }); return; }
 
-  const utxo  = chainState.utxoSet.get(txHash, outputIndex);
-  const smt   = getCurrentSmt();
-  const key   = smtKey("utxo", `${txHash}:${outputIndex}`);
-  const proof = smt.prove(key);
+  const utxo         = chainState.utxoSet.get(txHash, outputIndex);
+  const smt          = getCurrentSmt();
+  const key          = smtKey("utxo", `${txHash}:${outputIndex}`);
+  const proof        = smt.prove(key);
+  const compactProof = smt.proveCompact(key);
 
   res.json({
     txHash,
@@ -228,9 +252,10 @@ router.get("/lightnode/proof/utxo/:txHash/:index", (req, res) => {
     proof: {
       key:      proof.key,
       value:    proof.value,
-      siblings: proof.siblings,
+      siblings: compact ? undefined : proof.siblings,
       root:     proof.root,
     },
+    compactProof: compact ? compactProof : undefined,
     valueEncoding: "sha256(amount.toString() + ':' + address + ':' + blockHeight.toString())",
   });
 });
@@ -269,6 +294,40 @@ router.get("/lightnode/peers", (_req, res) => {
       latencyMs: p.latencyMs,
     })),
     count: chainState.peers.length,
+  });
+});
+
+// ── GET /lightnode/contributions ──────────────────────────────────────────────
+//
+// Proof-of-Contribution leaderboard. Returns the top peers sorted by their
+// contribution score (uptime × thermal_margin × log(1+blocksRelayed)).
+//
+// Mobile clients can use this to pick high-quality peers to sync from: a
+// peer with a high score has been online reliably, is running cool, and has
+// actively relayed blocks — all signals of a trustworthy, well-connected node.
+//
+// The score is NOT used for block validity — it's a reputation signal only.
+// Tiebreaking in leader election is an opt-in governance decision.
+
+router.get("/lightnode/contributions", (req, res) => {
+  const limit = Math.min(100, parseInt(String(req.query["limit"] ?? 50), 10));
+  const leaderboard = contributionTracker.getLeaderboard(limit);
+  const stats       = contributionTracker.stats();
+  const epidemic    = epidemicBroadcaster.stats();
+
+  res.json({
+    leaderboard,
+    stats: {
+      ...stats,
+      epidemicQueueSize: epidemic.queueSize,
+      epidemicTotalRelays: epidemic.totalRelays,
+    },
+    /**
+     * networkThermal: aggregate thermal health across all observed peers.
+     * 1.0 = entire network is running cool.
+     * < 0.5 = majority of nodes are thermal-throttling.
+     */
+    networkThermal: contributionTracker.networkThermalHealth(),
   });
 });
 

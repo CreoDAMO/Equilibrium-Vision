@@ -81,6 +81,36 @@ export interface SMTProof {
   root: string;
 }
 
+/**
+ * Compact SMT proof — only non-default siblings are transmitted.
+ *
+ * A standard 256-sibling proof is 256 × 32 bytes = 8 KB per proof. For a
+ * sparse tree (typical at testnet/early-mainnet scale), most siblings are
+ * the precomputed EMPTY_HASHES and carry no information. This compact form
+ * drops them, reducing proof size to O(log n × 32 bytes) — typically
+ * 32–512 bytes for a tree with fewer than 2^20 leaves.
+ *
+ * Mobile-critical: verifying your account balance should not cost 8 KB
+ * of bandwidth per block. A phone syncing 1 000 accounts/day saves ~7.5 MB.
+ *
+ * Verification: expand sparse siblings back to the full 256-length array
+ * (fill gaps with EMPTY_HASHES[255-depth]) then run the standard walk.
+ * Use SparseMerkleTree.verifyCompact() for this — identical security as
+ * the full verify().
+ */
+export interface CompactSMTProof {
+  key:   string;
+  value: string | null;
+  /**
+   * Sparse sibling list: only entries where hash ≠ EMPTY_HASHES[255 − depth].
+   * Sorted ascending by depth for deterministic encoding.
+   */
+  siblings: Array<{ depth: number; hash: string }>;
+  root: string;
+  /** Original proof length (always 256) — lets clients validate expansion. */
+  fullDepth: 256;
+}
+
 // ── Sparse Merkle Tree ────────────────────────────────────────────────────────
 
 /**
@@ -145,7 +175,61 @@ export class SparseMerkleTree {
     };
   }
 
+  /**
+   * Generate a compact proof for `key`.
+   *
+   * Identical cryptographic security as prove() — the compact form is a
+   * lossless compression of the full proof. Reduces proof size from 8 KB
+   * to O(log n × 32 bytes) for sparse trees.
+   *
+   * Mobile nodes should always request compact proofs; full proofs are
+   * available for backwards compatibility with existing clients.
+   */
+  proveCompact(key: string): CompactSMTProof {
+    const full = this.prove(key);
+    const sparse: Array<{ depth: number; hash: string }> = [];
+    for (let d = 0; d < 256; d++) {
+      const sibling = full.siblings[d]!;
+      // At depth d, an empty sibling subtree has hash EMPTY_HASHES[256-(d+1)] = EMPTY_HASHES[255-d]
+      if (sibling !== EMPTY_HASHES[255 - d]) {
+        sparse.push({ depth: d, hash: sibling });
+      }
+    }
+    return {
+      key:       full.key,
+      value:     full.value,
+      siblings:  sparse,
+      root:      full.root,
+      fullDepth: 256,
+    };
+  }
+
   // ── Proof verification (static) ──────────────────────────────────────────────
+
+  /**
+   * Verify a compact proof against a known root.
+   *
+   * Expands sparse siblings back to the full 256-length array, filling
+   * missing positions with EMPTY_HASHES[255 − depth], then delegates to
+   * the standard verify(). Identical security guarantee — the expansion
+   * is deterministic and fully determined by EMPTY_HASHES.
+   *
+   * Mobile light nodes should call this instead of verify() to save bandwidth.
+   */
+  static verifyCompact(proof: CompactSMTProof, expectedRoot: string): boolean {
+    // Expand: start with all-empty siblings, overlay the non-default entries
+    const siblings = new Array<string>(256);
+    for (let d = 0; d < 256; d++) {
+      siblings[d] = EMPTY_HASHES[255 - d]!;
+    }
+    for (const { depth, hash } of proof.siblings) {
+      if (depth >= 0 && depth < 256) siblings[depth] = hash;
+    }
+    return SparseMerkleTree.verify(
+      { key: proof.key, value: proof.value, siblings, root: proof.root },
+      expectedRoot,
+    );
+  }
 
   /**
    * Verify a proof against a known root.

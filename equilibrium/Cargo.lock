@@ -952,6 +952,7 @@ dependencies = [
  "ark-std",
  "bincode",
  "ed25519-dalek",
+ "futures",
  "hex",
  "jni",
  "libp2p",

@@ -33,6 +33,7 @@
 //! ```
 
 use std::io::{self, BufRead, Read, Write};
+use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 // Pull in the library modules directly (binary is in the same crate).
@@ -67,7 +68,16 @@ struct Response {
     computed_residual_f64: f64,
     valid:                 bool,
     epsilon:               i64,
+    /// Thermal margin proxy: fraction of the time budget unused (0 = hot, 1 = cool).
+    /// On server hardware this is based on wall-clock solver time vs a 5 s ceiling.
+    /// Mobile nodes override this with ThermalGuard.getCurrentThermalStatus().
+    /// Used by per-device difficulty adjustment and Proof-of-Contribution scoring.
+    thermal_margin:        f64,
 }
+
+/// Thermal ceiling in milliseconds. Solves under this budget are "cool";
+/// solves that approach or exceed it indicate the device is working hard.
+const THERMAL_CEILING_MS: f64 = 5_000.0;
 
 /// Process one JSON request string → JSON response string.
 /// Returns Err with an error JSON string on bad input.
@@ -85,6 +95,8 @@ fn process(input: &str) -> Result<(Response, bool), String> {
         }).to_string());
     }
 
+    let t0 = Instant::now();
+
     let ntk_action = compute_empirical_ntk_mlp(
         &req.support_data,
         &req.support_labels,
@@ -101,16 +113,25 @@ fn process(input: &str) -> Result<(Response, bool), String> {
         req.max_iter,
     );
 
+    let elapsed_ms        = t0.elapsed().as_millis() as f64;
     let grad              = ntk_action.gradient(&alpha);
     let residual_f64      = norm2(&grad);
     let computed_residual = to_fixed(residual_f64);
     let valid             = (req.claimed_residual - computed_residual).abs() <= req.epsilon;
+
+    // Thermal margin proxy: fraction of the time budget *not* consumed.
+    // A server solving in 50 ms reports ~0.99 (very cool).
+    // A mobile device solving in 2 500 ms reports ~0.50 (moderately warm).
+    // ThermalGuard.kt overrides this with the real Android thermal sensor reading
+    // before the value reaches the chain; this is the server-side fallback.
+    let thermal_margin = (1.0 - (elapsed_ms / THERMAL_CEILING_MS)).max(0.0).min(1.0);
 
     Ok((Response {
         computed_residual_fp:  computed_residual,
         computed_residual_f64: residual_f64,
         valid,
         epsilon: req.epsilon,
+        thermal_margin,
     }, valid))
 }
 

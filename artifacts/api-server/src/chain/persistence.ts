@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { asc, desc, eq, gte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lt } from "drizzle-orm";
 import { blocksTable, transactionsTable, contractsTable } from "@workspace/db/schema";
 import type { BlockRecord, TxRecord } from "./types.js";
 import type { ContractRecord } from "./wasm.js";
@@ -352,21 +352,19 @@ export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<n
     const pruneBelow = tipHeight - keepBlocks;
     if (pruneBelow <= 0) return 0; // nothing to prune
 
-    // Delete blocks (cascade deletes transactions via FK)
-    const deleted = await db
+    // Delete blocks with height in (0, pruneBelow) — never prune genesis (height=0).
+    // The FK cascade on transactions means rows in the transactions table are
+    // automatically removed when their parent block is deleted.
+    const result = await db
       .delete(blocksTable)
-      .where(gte(blocksTable.height, 1)) // never prune genesis
-      // Drizzle doesn't have a direct "height < pruneBelow AND height > 0" helper
-      // so we load the target block hashes and delete by them.
-      // For production use an index on height; this is sufficient for testnet.
-      ;
+      .where(and(
+        gte(blocksTable.height, 1),  // preserve genesis
+        lt(blocksTable.height, pruneBelow),
+      ));
 
-    // Simpler: use raw SQL via the pool if available.
-    // For now, log intent and return 0 — full implementation requires
-    // the `lt` operator from drizzle-orm. Import it at the top of the file.
-    logger.info({ pruneBelow, tipHeight, keepBlocks }, "Block pruning requested");
-    void deleted; // suppress unused warning
-    return 0;
+    const count = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+    logger.info({ pruneBelow, tipHeight, keepBlocks, deleted: count }, "Block pruning complete");
+    return count;
   } catch (err) {
     logger.warn({ err }, "Block pruning failed");
     return 0;

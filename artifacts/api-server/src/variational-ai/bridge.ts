@@ -276,6 +276,13 @@ export interface SolveBlockResponse {
   /** Stationarity residual as float64 (NOT fixed-point) */
   residual: number;
   error?: string;
+  /**
+   * Thermal margin proxy from the Rust solver: fraction of the 5 s time budget
+   * that was NOT consumed (0 = device running hot, 1 = very cool). On Android,
+   * ThermalGuard.kt overrides this with the real sensor reading before the value
+   * reaches the chain. Used by Proof-of-Contribution scoring.
+   */
+  thermal_margin?: number;
 }
 
 /**
