@@ -14,10 +14,11 @@
 #![cfg(target_os = "android")]
 
 use jni::{
-    objects::{JByteArray, JLongArray, JObject},
+    objects::{JByteArray, JLongArray, JObject, JString},
     sys::{jboolean, jdouble, jint, jlong, JNI_FALSE, JNI_TRUE},
     JNIEnv,
 };
+use crate::p2p_runtime;
 
 use crate::{
     chain_state::{BlockHeader, ChainState},
@@ -127,5 +128,43 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
             JNI_TRUE
         }
         None => JNI_FALSE,
+    }
+}
+
+/// Start the in-process mobile swarm. The Android UI supplies the TCP and QUIC
+/// listener ports; a zero QUIC port disables QUIC for constrained networks.
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_start(
+    _env: JNIEnv,
+    _obj: JObject,
+    tcp_port: jint,
+    quic_port: jint,
+) -> jboolean {
+    if p2p_runtime::start(tcp_port.max(0) as u16, quic_port.max(0) as u16) {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_stop(
+    _env: JNIEnv,
+    _obj: JObject,
+) {
+    p2p_runtime::stop();
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_connect(
+    mut env: JNIEnv,
+    _obj: JObject,
+    invite_addr: JString,
+) -> jboolean {
+    let Ok(addr) = env.get_string(&invite_addr) else { return JNI_FALSE; };
+    if p2p_runtime::connect(addr.to_str().unwrap_or_default()) {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
     }
 }

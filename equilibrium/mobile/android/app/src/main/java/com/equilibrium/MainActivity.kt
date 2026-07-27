@@ -9,6 +9,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
+import android.widget.EditText
 
 /**
  * MainActivity — landing screen for the sideloaded miner app.
@@ -42,6 +43,24 @@ class MainActivity : AppCompatActivity() {
         updateStatus = findViewById(R.id.updateStatus)
         updateProgress = findViewById(R.id.updateProgress)
 
+        val bootstrapInput = findViewById<EditText>(R.id.bootstrapInput)
+        findViewById<MaterialButton>(R.id.startNodeButton).setOnClickListener {
+            val started = P2PNode.startDefault()
+            updateStatus.text = if (started) {
+                getString(R.string.p2p_started)
+            } else {
+                getString(R.string.p2p_already_started)
+            }
+        }
+        findViewById<MaterialButton>(R.id.connectBootstrapButton).setOnClickListener {
+            val connected = P2PNode.connectInvite(bootstrapInput.text.toString())
+            updateStatus.text = if (connected) {
+                getString(R.string.bootstrap_connecting)
+            } else {
+                getString(R.string.bootstrap_invalid)
+            }
+        }
+
         findViewById<MaterialButton>(R.id.checkUpdatesButton).setOnClickListener {
             checkForUpdates()
         }
@@ -49,6 +68,18 @@ class MainActivity : AppCompatActivity() {
         // Check automatically on launch too, so contributors notice new
         // builds without having to remember to tap the button.
         checkForUpdates()
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        intent?.data?.toString()?.let { invite ->
+            val connected = P2PNode.connectInvite(invite)
+            updateStatus.text = if (connected) {
+                getString(R.string.bootstrap_connecting)
+            } else {
+                getString(R.string.bootstrap_invalid)
+            }
+        }
     }
 
     private fun checkForUpdates() {

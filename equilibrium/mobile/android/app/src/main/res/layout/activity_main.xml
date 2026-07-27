@@ -24,6 +24,29 @@
         android:textColor="#666666" />
 
     <com.google.android.material.button.MaterialButton
+        android:id="@+id/startNodeButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="@string/start_node_button" />
+
+    <EditText
+        android:id="@+id/bootstrapInput"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:hint="@string/bootstrap_hint"
+        android:inputType="textUri"
+        android:maxLines="2" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/connectBootstrapButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/connect_bootstrap_button" />
+
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/checkUpdatesButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

@@ -163,6 +163,7 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       residual:      b.residual,
       // Fall back to float conversion for rows written before residualFp was added.
       residualFp:    b.residualFp ?? Math.floor(b.residual * 1e18),
+      stateRoot:     b.stateRoot ?? undefined,
       recursionDepth: 2,
       coinbaseReward: b.coinbaseReward,
       miner:         b.miner,
@@ -206,6 +207,7 @@ export async function persistBlock(block: BlockRecord): Promise<void> {
           coinbaseReward: block.coinbaseReward,
           finalized:      block.finalized ?? false,
           zkProof:        (block.zkProof ?? null) as unknown as null,
+          stateRoot:      block.stateRoot ?? null,
         })
         .onConflictDoNothing();
 
@@ -341,6 +343,19 @@ export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<n
   if (!db) return 0;
 
   try {
+    // The current node persists headers and transaction bodies, but does not
+    // yet persist a complete ledger/UTXO/contract snapshot. Deleting old
+    // blocks would therefore make a restart unable to reconstruct state:
+    // loadBlocksFromDb() would see a height gap after genesis and truncate the
+    // retained suffix. Keep this operation explicitly opt-in until snapshots
+    // are durable and validated during restore.
+    if (process.env["ENABLE_UNSAFE_PRUNING"] !== "true") {
+      logger.warn(
+        "Block pruning skipped: durable state snapshots are not enabled; set ENABLE_UNSAFE_PRUNING=true only for disposable nodes",
+      );
+      return 0;
+    }
+
     // Find the tip height first
     const tipRows = await db
       .select({ height: blocksTable.height })

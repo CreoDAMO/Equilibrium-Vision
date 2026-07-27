@@ -12,4 +12,11 @@
     <string name="later_button">Later</string>
     <string name="update_check_failed">Couldn\'t check for updates: %1$s</string>
     <string name="current_version">Current version: %1$s (%2$d)</string>
+    <string name="start_node_button">Start embedded P2P node</string>
+    <string name="bootstrap_hint">Paste QR/NFC invite or libp2p multiaddr</string>
+    <string name="connect_bootstrap_button">Connect first peer</string>
+    <string name="p2p_started">Embedded P2P node started (TCP + QUIC).</string>
+    <string name="p2p_already_started">Embedded P2P node is already running.</string>
+    <string name="bootstrap_connecting">Bootstrap peer connection requested.</string>
+    <string name="bootstrap_invalid">Invalid bootstrap invite or node is not running.</string>
 </resources>

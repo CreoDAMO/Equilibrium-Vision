@@ -55,6 +55,12 @@ export interface P2PPeer {
   address?: string;
 }
 
+export interface P2PListenAddress {
+  addr: string;
+  /** True for UDP QUIC addresses; false for TCP addresses. */
+  quic: boolean;
+}
+
 export interface LightNodeQuery {
   /** "tip" | "headers" | "sync" | "proof_account" | "proof_utxo" */
   kind:   string;
@@ -95,6 +101,8 @@ class P2PBridge {
    * the chain layer update its peer list without a round-trip.
    */
   onPeerDiscovered?: (peerId: string, addrs: string[]) => void;
+  /** Called whenever the sidecar advertises a TCP or QUIC listen address. */
+  onListenAddress?: (address: P2PListenAddress) => void;
   /**
    * Called when a remote peer sends us a light-node query.
    * The handler should compute the response and call respondToLightNodeRequest().
@@ -393,6 +401,17 @@ class P2PBridge {
           : [];
         logger.info({ peerId, addrs }, 'mDNS: local peer discovered');
         this.onPeerDiscovered?.(peerId, addrs);
+        break;
+      }
+
+      case 'listen_addr': {
+        const addr = String(evt['addr'] ?? '');
+        if (addr) {
+          this.onListenAddress?.({
+            addr,
+            quic: addr.includes('/udp/') && addr.includes('/quic-v1'),
+          });
+        }
         break;
       }
 

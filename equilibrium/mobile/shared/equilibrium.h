@@ -16,4 +16,10 @@ int solve_block(
     double *out_residual
 );
 
+/* Embedded mobile swarm. A zero QUIC port disables the UDP listener. */
+int start_p2p_runtime(uint16_t listen_tcp, uint16_t listen_quic);
+void stop_p2p_runtime(void);
+int p2p_runtime_running(void);
+int connect_p2p_peer(const uint8_t *addr, uintptr_t len);
+
 #endif

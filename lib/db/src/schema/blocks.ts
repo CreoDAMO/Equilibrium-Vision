@@ -34,6 +34,8 @@ export const blocksTable = pgTable(
     finalized:     boolean("finalized").notNull().default(false),
     /** Serialised ZkProof JSON for the stationarity proof */
     zkProof:       jsonb("zk_proof"),
+    /** Sparse Merkle state commitment for light-node verification. */
+    stateRoot:     text("state_root"),
   },
   (t) => [
     index("blocks_height_idx").on(t.height),

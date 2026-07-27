@@ -1,6 +1,40 @@
 use std::slice;
 use crate::chain_state::{BlockHeader, ChainState};
 use crate::stationary_solver::StationarySolver;
+use crate::p2p_runtime;
+
+/// Start the embedded dual TCP/QUIC libp2p node. This is intentionally
+/// independent from `solve_block`, so mobile hosts can run a light node
+/// without an HTTP/Express process.
+#[no_mangle]
+pub extern "C" fn start_p2p_runtime(listen_tcp: u16, listen_quic: u16) -> bool {
+    p2p_runtime::start(listen_tcp, listen_quic)
+}
+
+#[no_mangle]
+pub extern "C" fn stop_p2p_runtime() {
+    p2p_runtime::stop();
+}
+
+#[no_mangle]
+pub extern "C" fn p2p_runtime_running() -> bool {
+    p2p_runtime::is_running()
+}
+
+/// Connect to a QR/NFC bootstrap invite's multiaddr.
+///
+/// # Safety
+/// `addr` must point to `len` initialized UTF-8 bytes for the duration of
+/// this call.
+#[no_mangle]
+pub unsafe extern "C" fn connect_p2p_peer(addr: *const u8, len: usize) -> bool {
+    if addr.is_null() {
+        return false;
+    }
+    let bytes = slice::from_raw_parts(addr, len);
+    let Ok(address) = std::str::from_utf8(bytes) else { return false; };
+    p2p_runtime::connect(address)
+}
 
 /// # Safety
 ///

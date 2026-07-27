@@ -37,7 +37,8 @@
 //     {"event":"sync_request","requestId":"<uuid>","fromPeerId":"...","query":{...}}
 //
 // Build:   cargo build --release --bin p2p-sidecar  (from equilibrium/)
-// Config:  P2P_PORT (default 9000), P2P_BOOTSTRAP (comma-separated multiaddrs)
+// Config:  P2P_PORT (default 9000), P2P_QUIC_PORT (default P2P_PORT + 1),
+//          P2P_BOOTSTRAP (comma-separated multiaddrs)
 //
 // All log output goes to stderr so it never pollutes the JSON stdout stream.
 
@@ -47,12 +48,14 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use libp2p::{
-    gossipsub, identify, kad, mdns, noise, request_response,
+    core::{muxing::StreamMuxerBox, transport::OrTransport},
+    gossipsub, identify, kad, mdns, noise, quic, request_response,
     swarm::{Config as SwarmConfig, NetworkBehaviour, SwarmEvent},
     tcp, yamux,
     core::upgrade::Version,
     identity, Multiaddr, PeerId, StreamProtocol, Transport,
 };
+use futures::future::Either;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -175,6 +178,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(9000);
+    let quic_port: u16 = std::env::var("P2P_QUIC_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| port.saturating_add(1));
 
     let bootstrap_peers: Vec<String> = std::env::var("P2P_BOOTSTRAP")
         .unwrap_or_default()
@@ -188,11 +195,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let local_peer_id = PeerId::from(id_keys.public());
     eprintln!("[p2p-sidecar] peer_id={local_peer_id}");
 
-    // ── Transport: TCP + Noise + Yamux ─────────────────────────────────────────
-    let transport = tcp::tokio::Transport::default()
+    // ── Transport: QUIC + TCP ───────────────────────────────────────────────────
+    // QUIC is preferred for mobile/NAT-friendly peers; TCP remains available
+    // for existing nodes and networks that block UDP.
+    let tcp_transport = tcp::tokio::Transport::default()
         .upgrade(Version::V1)
         .authenticate(noise::Config::new(&id_keys)?)
-        .multiplex(yamux::Config::default())
+        .multiplex(yamux::Config::default());
+    let quic_transport = quic::tokio::Transport::new(quic::Config::new(&id_keys));
+    let transport = OrTransport::new(quic_transport, tcp_transport)
+        .map(|output, _| match output {
+            Either::Left((peer, muxer)) => (peer, StreamMuxerBox::new(muxer)),
+            Either::Right((peer, muxer)) => (peer, StreamMuxerBox::new(muxer)),
+        })
         .boxed();
 
     // ── Gossipsub ──────────────────────────────────────────────────────────────
@@ -266,6 +281,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Listen ─────────────────────────────────────────────────────────────────
     let listen_addr: Multiaddr = format!("/ip4/0.0.0.0/tcp/{port}").parse()?;
     swarm.listen_on(listen_addr)?;
+    let quic_addr: Multiaddr = format!("/ip4/0.0.0.0/udp/{quic_port}/quic-v1").parse()?;
+    swarm.listen_on(quic_addr)?;
 
     // ── Bootstrap dial ─────────────────────────────────────────────────────────
     for addr_str in &bootstrap_peers {
@@ -542,6 +559,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     SwarmEvent::NewListenAddr { address, .. } => {
                         eprintln!("[p2p-sidecar] listening on {address}");
+                        emit(&stdout, &serde_json::json!({
+                            "event": "listen_addr",
+                            "addr": address.to_string(),
+                        }));
                     }
 
                     _ => {}

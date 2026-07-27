@@ -1,0 +1,85 @@
+**Current state review — Equilibrium-Vision @ main (as of 2026-07-26 evening)**
+
+A material update landed today. The earlier gap map is **out of date** for P2P.
+
+---
+
+### What changed since the last map
+
+Commit `76f0f088` (“Eliminate simulations…”):
+
+| Item | Before | **Now** |
+|------|--------|---------|
+| Identify | Missing | **Done** — multiaddr advertisement into Kad |
+| Kademlia DHT | Missing | **Done** — Server mode, bootstrap on every connection |
+| Block/tx body over P2P | Missing | **Done** — `/equilibrium/sync/1.0.0` + TS handlers |
+| Simulated second-hop gossip | Partial | **Removed** (per commit message) |
+| Random finality participation | Simulated | **Deterministic** uptime-based (per commit) |
+| Inbound block acceptance from P2P | Missing | **Done** — fetch body → validate → `addBlock` + persist |
+
+Verified in current `p2p-sidecar.rs`: Gossipsub, mDNS, light-node RR, **sync RR**, **Identify**, **Kademlia**.
+
+---
+
+### Updated status board
+
+```
+Cryptography
+  [DONE] stateRoot every block
+  [DONE] Compact SMT proofs + offline verify
+
+HTTP light client
+  [DONE] Full /lightnode/* API
+
+P2P mesh
+  [DONE] Gossipsub (hash announce)
+  [DONE] mDNS LAN discovery
+  [DONE] Light-node RR (proofs/headers/tip)
+  [DONE] Sync RR (full block/tx bodies)          ← NEW
+  [DONE] Identify                                 ← NEW
+  [DONE] Kademlia DHT (seedless-oriented)         ← NEW
+  [DONE] Epidemic + contribution
+  [DONE] Real inbound block path (gossip → body → validate → store)  ← NEW
+  [MISS] QUIC (still TCP + Noise + Yamux only)
+  [MISS] WebRTC
+
+Phone
+  [PART] Mining FFI / APK CI
+  [MISS] Android app source in this repo
+  [MISS] In-process swarm (no Express) as default runtime
+
+Bootstrap
+  [DONE] mDNS + optional P2P_BOOTSTRAP
+  [DONE] Kad bootstrap on connect                 ← NEW
+  [PART] True seedless WAN still needs first contact (QR/NFC/BLE) in product UX
+```
+
+---
+
+### Still true (unchanged)
+
+- Full TS node: API, Explorer, wallet, DEX, governance, Stratum, WASM contracts (ModelRegistry, Arbitrage, CrossChainRelay).
+- Variational-AI mining path with thermal margin.
+- Inference attestation = Ed25519 receipt, not zkML (`LIMITATIONS.md`).
+- Arbitrage: detection live; autonomous execution still constrained / safety-scoped.
+- **TODO.md is stale** (last reconciled ~2026-07-08) — does not mention state root / P2P mobile work; do not use it as the mobile status source.
+- No QUIC in sidecar yet (transport is still TCP-only despite Kad/Identify/Sync).
+
+---
+
+### Honest one-line summary (updated)
+
+**The mesh protocol stack for server-optional light clients is largely in place: state roots, compact proofs, light-node RR, body sync RR, Identify, and Kademlia are in the live sidecar and TS wiring.**  
+**What remains for “fully mobile / no Express” is mainly QUIC (optional but valuable), a real Android app process embedding the swarm, and product-level first-contact bootstrap (QR/NFC)—not the core P2P protocols themselves.**
+
+---
+
+### Suggested next priorities (in order)
+
+1. **Refresh TODO.md / README** so they match this P2P reality (docs lag code).
+2. **QUIC + TCP** in the sidecar (transport upgrade; Identify already helps advertise both later).
+3. **Android in-process node** (JNI/cdylib swarm + compact verify + mine) — the last structural barrier to eliminating Express on the phone.
+4. **Pruning** — confirm mobile-safe discard end-to-end if not already closed.
+5. Harden **empty-SMT fallback** on RR if still using a bare `new SparseMerkleTree()` when cache is cold.
+
+The project has moved from “design the mesh” to “ship the phone runtime on top of a real mesh.”
