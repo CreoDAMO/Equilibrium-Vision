@@ -114,94 +114,126 @@ export async function initChain(): Promise<void> {
   // ledger + UTXO set at a given height, so we only need to replay blocks
   // after that height through addBlock() — skipping potentially thousands of
   // full block replays on long-running chains.
+  // ── Snapshot validation & fast-path ─────────────────────────────────────
+  // A snapshot captures ledger + UTXO at a given height so we only replay
+  // post-snapshot blocks.  Three conditions must ALL hold before we trust it;
+  // any failure falls through to the full block-replay path below.
+  //
+  //   (a) Blocks are present in the DB (loadAllBlocksRaw not null/empty)
+  //   (b) A block row exists at snapshot.height
+  //   (c) That block's hash matches snapshot.blockHash
+  //
+  // This guards against:
+  //   • persistBlock failing after takeSnapshot succeeds (snapshot ahead of blocks)
+  //   • Snapshot written to a different genesis/fork than what's in the DB
+  //   • Partial writes or other DB inconsistencies
   const snapshot = await loadLatestSnapshot();
+  let usedSnapshotPath = false;
+
   if (snapshot) {
     logger.info(
       { snapshotHeight: snapshot.height, blockHash: snapshot.blockHash.slice(0, 16) },
-      "State snapshot found — using fast-path restore",
+      "State snapshot found — validating before use",
     );
 
-    const genesisDocForSnap = loadGenesisDoc();
-    // Build a seeded-but-empty ChainState (validators, DEX, peers)
-    // then overwrite the ledger + UTXOs with snapshot data.
-    const seedState = genesisDocForSnap
-      ? buildDocChainFromBlocks(genesisDocForSnap, [])
-      : buildChainFromBlocks([]);
-
-    if (genesisDocForSnap) {
-      const firstV = genesisDocForSnap.initial_validators[0];
-      if (firstV) {
-        minerAddress = firstV.address;
-        logger.info({ minerAddress }, "Mining as first genesis validator");
-      }
-    }
-
-    // Overwrite ledger + UTXO with the snapshot checkpoint.
-    // restoreAccounts / restoreFromSnapshot both clear-and-replace, so any
-    // credits applied by buildDocChainFromBlocks are discarded — correct.
-    seedState.ledger.restoreAccounts(snapshot.ledger);
-    seedState.utxoSet.restoreFromSnapshot(snapshot.utxos);
-
-    // Load all raw blocks from DB without gap-validation (snapshot + post-snapshot).
-    // After block pruning the DB may only contain genesis + the recent suffix, so
-    // the set of available heights is not necessarily contiguous from 0 to tip.
     const allRaw = await loadAllBlocksRaw();
-    if (allRaw) {
-      // ── Snapshot-era blocks ─────────────────────────────────────────────────
-      // Assign blocks by their height index (sparse array) so that:
-      //   • blocks.length - 1 == true tip height even after pruning
-      //   • blocks[h] is always the block at height h (or undefined if pruned)
-      // We do NOT call addBlock() for these — their net ledger/UTXO effect is
-      // already captured in the snapshot.  We rebuild txIndex and addressTxs
-      // for historical TX lookups, but skip all the expensive state mutations.
-      let highestSnapEraBlock: typeof allRaw[0] | undefined;
-      for (const block of allRaw) {
-        if (block.height > snapshot.height) continue;
-        // Height-indexed assignment — safe and idiomatic in JS/TS.
-        // TypeScript infers the element type from the array declaration.
-        seedState.blocks[block.height] = block;
-        if (!highestSnapEraBlock || block.height > highestSnapEraBlock.height) {
-          highestSnapEraBlock = block;
-        }
-        for (const tx of block.transactions) {
-          const confirmed = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" as const };
-          seedState.txIndex.set(tx.hash, confirmed);
-          for (const addr of [tx.from, tx.to]) {
-            if (!seedState.addressTxs.has(addr)) seedState.addressTxs.set(addr, new Set());
-            seedState.addressTxs.get(addr)!.add(tx.hash);
+
+    // (a) Block rows must be present
+    if (!allRaw || allRaw.length === 0) {
+      logger.warn(
+        { snapshotHeight: snapshot.height },
+        "Snapshot exists but block table is empty — falling back to full replay",
+      );
+    } else {
+      // (b) Block at snapshot.height must exist
+      const snapBlockInDb = allRaw.find((b) => b.height === snapshot.height);
+      if (!snapBlockInDb) {
+        logger.warn(
+          { snapshotHeight: snapshot.height },
+          "Snapshot block row missing from DB (persistBlock may have lagged) — falling back to full replay",
+        );
+      } else if (snapBlockInDb.hash !== snapshot.blockHash) {
+        // (c) Hash must match — detects fork divergence or corruption
+        logger.warn(
+          { snapshotHeight: snapshot.height, snapHash: snapshot.blockHash.slice(0, 16), dbHash: snapBlockInDb.hash.slice(0, 16) },
+          "Snapshot block hash mismatch — falling back to full replay",
+        );
+      } else {
+        // ── All checks passed: use snapshot fast-path ─────────────────────
+        usedSnapshotPath = true;
+
+        const genesisDocForSnap = loadGenesisDoc();
+        // Build a seeded-but-empty ChainState (validators, DEX, peers),
+        // then overwrite ledger + UTXOs with the validated snapshot data.
+        const seedState = genesisDocForSnap
+          ? buildDocChainFromBlocks(genesisDocForSnap, [])
+          : buildChainFromBlocks([]);
+
+        if (genesisDocForSnap) {
+          const firstV = genesisDocForSnap.initial_validators[0];
+          if (firstV) {
+            minerAddress = firstV.address;
+            logger.info({ minerAddress }, "Mining as first genesis validator");
           }
         }
-      }
 
-      // ── Difficulty continuity ───────────────────────────────────────────────
-      // Seed currentDifficulty from the highest available snapshot-era block
-      // BEFORE replaying post-snapshot blocks.  addBlock() calls
-      // updateDifficulty() on every replay step, so the first call must start
-      // from the correct base — otherwise it adjusts from the INITIAL_DIFFICULTY
-      // constant (1,000,000) which can be orders of magnitude wrong.
-      if (highestSnapEraBlock) {
-        seedState.currentDifficulty = highestSnapEraBlock.difficulty;
-      }
+        // restoreAccounts / restoreFromSnapshot both clear-and-replace, so any
+        // credits applied by buildDocChainFromBlocks above are discarded.
+        seedState.ledger.restoreAccounts(snapshot.ledger);
+        seedState.utxoSet.restoreFromSnapshot(snapshot.utxos);
 
-      // ── Post-snapshot blocks ────────────────────────────────────────────────
-      // Replay through addBlock() to update ledger, UTXOs, difficulty, finality,
-      // staking, and the state root SMT for blocks after the snapshot boundary.
-      for (const block of allRaw) {
-        if (block.height <= snapshot.height) continue;
-        seedState.addBlock(block);
-        for (const peer of seedState.peers) {
-          if (peer.connected) peer.height = block.height;
+        // ── Snapshot-era blocks ─────────────────────────────────────────────
+        // Assign blocks by height index (sparse array) so that:
+        //   • blocks.length - 1 == true tip height even after pruning
+        //   • blocks[h] is the block at height h (undefined for pruned gaps)
+        // Skip addBlock() — state is in the snapshot; rebuild only the lookup
+        // indexes (txIndex, addressTxs) for historical TX queries.
+        let highestSnapEraBlock: typeof allRaw[0] | undefined;
+        for (const block of allRaw) {
+          if (block.height > snapshot.height) continue;
+          seedState.blocks[block.height] = block;
+          if (!highestSnapEraBlock || block.height > highestSnapEraBlock.height) {
+            highestSnapEraBlock = block;
+          }
+          for (const tx of block.transactions) {
+            const confirmed = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" as const };
+            seedState.txIndex.set(tx.hash, confirmed);
+            for (const addr of [tx.from, tx.to]) {
+              if (!seedState.addressTxs.has(addr)) seedState.addressTxs.set(addr, new Set());
+              seedState.addressTxs.get(addr)!.add(tx.hash);
+            }
+          }
         }
+
+        // ── Difficulty continuity ─────────────────────────────────────────
+        // Set currentDifficulty from the highest snapshot-era block BEFORE
+        // replaying post-snapshot blocks.  addBlock() calls updateDifficulty()
+        // on each step — starting from the correct base prevents it from
+        // adjusting against INITIAL_DIFFICULTY (1,000,000).
+        if (highestSnapEraBlock) {
+          seedState.currentDifficulty = highestSnapEraBlock.difficulty;
+        }
+
+        // ── Post-snapshot replay ──────────────────────────────────────────
+        for (const block of allRaw) {
+          if (block.height <= snapshot.height) continue;
+          seedState.addBlock(block);
+          for (const peer of seedState.peers) {
+            if (peer.connected) peer.height = block.height;
+          }
+        }
+
+        seedState.wasmVM.setBlockHeight(seedState.height);
+        chainState = seedState;
+        logger.info(
+          { height: chainState.height, snapshotHeight: snapshot.height },
+          "Chain restored from validated snapshot + post-snapshot replay",
+        );
       }
     }
+  }
 
-    seedState.wasmVM.setBlockHeight(seedState.height);
-    chainState = seedState;
-    logger.info(
-      { height: chainState.height, snapshotHeight: snapshot.height },
-      "Chain restored from snapshot + post-snapshot replay",
-    );
-  } else {
+  if (!usedSnapshotPath) {
     // ── Full block replay ──────────────────────────────────────────────────
     const dbBlocks = await loadBlocksFromDb();
 

@@ -1,0 +1,129 @@
+Skip to content
+
+Publish a sharable version of your App, unaffected by changes made in the project editor
+
+Manage custom domains for your published project
+
+View traffic, request metrics, resource usage, and analytics for your deployed App
+
+Find, fix, and monitor SEO and growth opportunities
+
+Stores structured data such as user profiles, game scores, and product catalogs.
+
+Let users log in to your App using a prebuilt login page
+
+Find, fix, and monitor security vulnerabilities and privacy issues
+
+Host and save uploads like images, videos, and documents
+
+Connect to Replit-native and external services
+
+Version control for your App
+
+Store sensitive information (like API keys) securely in your App
+
+Manage skills that extend Agent capabilities
+
+Git
+
+Version control for your App
+
+Remote Updates
+
+origin/main•upstreamlast fetched 6 min ago
+
+Commit
+
+There are no changes to commit.
+
+Set up the imported project
+
+The user just imported this project from a GitHub repository. It could be anything — an app to run on Replit, a library, a fork to study, code to reuse — so the first thing to do is ask what they want; everything after depends on the answer.
+
+This is a substantial project — an Equilibrium Layer-1 blockchain with a TypeScript API server, block explorer, Postgres, WASM smart contracts, and Rust components (including the variational-ai crate). It's been actively developed in prior sessions and has detailed setup docs in replit.md.
+
+Let's finish this, al
+
+39 minutes ago
+
+The review is clear: correctness gaps are closed in code, docs are the open work. Let me read the current state of the files before applying the updates.
+
+Let me read the specific sections of README.md that need surgical updates, and check the lightnode/state-root files in parallel.
+
+Good — state-root.ts and getVerifiedStateRoot are already in the codebase and wired into lightnode. The only real work is the documentation. Let me read the exact sections of README.md I need to edit.
+
+I have everything I need. Now I'll apply all four edits in parallel — full TODO.md replacement and three surgical README.md patches.
+
+Now let me update the stale Remaining Work section and also update the replit.md status, then wrap up.
+
+Ok let's close the remaining gaps staring with these three: Android in-process swarm P2PNode.kt is a JNI/invite surface only; default path is still HTTP submit. Real in-process libp2p swarm (gossip + light-node + sync on device) needed for "phone = full node"
+
+Inbound P2P sync CI CI should cover hash → body-fetch → validate → addBlock under TCP+QUIC
+
+Durable snapshots → safe pruning pruneOldBlocks no-ops without ENABLE_UNSAFE_PRUNING=true; safe mobile pruning needs ledger/UTXO/contract snapshots first
+
+27 minutes ago
+
+Exploring codebase for gaps
+
+Let me explore all three areas in parallel before writing any code.
+
+Investigating Rust implementation
+
+Good — now I need to read the actual implementation files before writing code.
+
+Reading key files
+
+Let me read the remaining files I need in parallel.
+
+Let me read a few more critical files before writing — the chain state interface, how existing integration tests set up, and the vitest config.
+
+Let me grab the last few files I need, then implement all three gaps.
+
+I have enough context. Let me read MiningWorker.kt and the DB schema index before writing all three implementations.
+
+Implementing three gaps
+
+Now I have enough. Let me implement all three gaps in parallel — I'll read the exact edit targets while writing the new files.
+
+Let me read the two remaining files I need — chain/index.ts (initChain) and how pruning is triggered — then I'll write everything in one big batch.
+
+Implementing parallel task execution
+
+Now I have all the context I need. Let me implement all three gaps. I'll work on them in parallel:
+
+Android in-process swarm - Rust p2p_runtime.rs + jni_bridge.rs + Kotlin files
+
+P2P sync CI test - New test file
+
+Durable snapshots → safe pruning - DB schema + persistence.ts updates
+
+Let me check the UTXO interface and state.ts quickly, then write everything.
+
+Let me get the last two pieces I need — UTXO interface shape and how initChain uses the loaded blocks — then implement everything in one coordinated batch.
+
+I have everything I need. Now I'll implement all three gaps in coordinated parallel batches.
+
+Let me read the remaining files I need for precise edits, all at once.
+
+Now I'll write all the implementation files in parallel batches.
+
+Let me read the end of initChain to find where to wire the P2P handlers, then batch all remaining writes.
+
+Implementing parallel file updates
+
+Now I have all the context. Let me write everything in one big parallel batch.
+
+Now let me write the persistence, state, chain/index changes and the CI test all in parallel.
+
+Let me now write all the remaining changes in parallel — persistence snapshot functions, state.ts additions, chain/index.ts wiring, and the CI test.
+
+Let me add the UTXOSet and ChainState snapshot methods, wire index.ts, write the test, and update postgres script — all in parallel.
+
+Now I'll write all remaining pieces in one large parallel batch.
+
+Now let me add ChainState.restoreFromSnapshot to state.ts and wire up chain/index.ts with all the new logic — in parallel.
+
+You've reached your daily free quota limit. It will reset at 12:00 AM UTC.
+
+Ok let's close the remaining gaps staring with these three: Android in-process swarm P2PNode.kt is a JNI/invite surface only; default path is still HTTP submit. Real in-process libp2p swarm (gossip + light-node + sync on device) needed for "phone = full node" Inbound P2P sync CI CI should cover hash → body-fetch → validate → addBlock under TCP+QUIC Durable snapshots → safe pruning pruneOldBlocks no-ops without ENABLE_UNSAFE_PRUNING=true; safe mobile pruning needs ledger/UTXO/contract snapshots first Agent activity Let me explore all three areas in parallel before writing any code. Agent activity Agent activity Good — now I need to read the actual implementation files before writing code. Agent activity Let me read the remaining files I need in parallel. Agent activity Let me read a few more critical files before writing — the chain state interface, how existing integration tests set up, and the vitest config. Agent activity Let me grab the last few files I need, then implement all three gaps. Agent activity Agent activity I have enough context. Let me read MiningWorker.kt and the DB schema index before writing all three implementations. Agent activity Now I have enough. Let me implement all three gaps in parallel — I'll read the exact edit targets while writing the new files. Agent activity Let me read the two remaining files I need — chain/index.ts (initChain) and how pruning is triggered — then I'll write everything in one big batch. Agent activity Let me get the last two pieces I need — UTXO interface shape and how `initChain` uses the loaded blocks — then implement everything in one coordinated batch. Agent activity Agent activity I have everything I need. Now I'll implement all three gaps in coordinated parallel batches. Agent activity Let me read the remaining files I need for precise edits, all at once. Agent activity Now I'll write all the implementation files in parallel batches. Agent activity Let me read the end of `initChain` to find where to wire the P2P handlers, then batch all remaining writes. Agent activity Now I have all the context. Let me write everything in one big parallel batch. Agent activity Now let me write the persistence, state, chain/index changes and the CI test all in parallel. Agent activity Agent activity Let me now write all the remaining changes in parallel — persistence snapshot functions, state.ts additions, chain/index.ts wiring, and the CI test. Agent activity Agent activity Let me add the UTXOSet and ChainState snapshot methods, wire index.ts, write the test, and update postgres script — all in parallel. Agent activity Now I'll write all remaining pieces in one large parallel batch. Agent activity Now let me add `ChainState.restoreFromSnapshot` to state.ts and wire up `chain/index.ts` with all the new logic — in parallel. Agent activity Agent activity Agent activity Agent activity
