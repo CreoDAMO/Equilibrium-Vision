@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,10 @@ interface ContractDetail {
 
 // ── Call Panel ────────────────────────────────────────────────────────────────
 
+type CallResult =
+  | { ok: true; returnValue: number | null; gasUsed: number; logs: string[] }
+  | { ok: false; error: string; gasUsed: number };
+
 function CallPanel({
   address,
   fn,
@@ -49,49 +53,32 @@ function CallPanel({
 }) {
   const [args, setArgs] = useState<string[]>(fn.inputs.map(() => "0"));
   const [gasLimit, setGasLimit] = useState("1000000");
+  const [validationError, setValidationError] = useState<string | null>(null);
 
-  const [result, setResult] = useState<
-    | null
-    | { ok: true; returnValue: number | null; gasUsed: number; logs: string[] }
-    | { ok: false; error: string; gasUsed: number }
-  >(null);
-  const [loading, setLoading] = useState(false);
-
-  const handleCall = async () => {
-    const parsedArgs = args.map(Number);
-    const parsedGas = Number(gasLimit);
-    if (parsedArgs.some((a) => !Number.isFinite(a))) {
-      setResult({ ok: false, error: "All arguments must be finite numbers.", gasUsed: 0 });
-      return;
-    }
-    if (!Number.isFinite(parsedGas) || parsedGas <= 0) {
-      setResult({ ok: false, error: "Gas limit must be a positive number.", gasUsed: 0 });
-      return;
-    }
-    setLoading(true);
-    setResult(null);
-    try {
+  const { mutate, data: result, isPending } = useMutation<CallResult, Error, void>({
+    mutationFn: async () => {
+      const parsedArgs = args.map(Number);
+      const parsedGas = Number(gasLimit);
+      if (parsedArgs.some((a) => !Number.isFinite(a)))
+        throw new Error("All arguments must be finite numbers.");
+      if (!Number.isFinite(parsedGas) || parsedGas <= 0)
+        throw new Error("Gas limit must be a positive number.");
       const res = await fetch(`/api/contracts/${address}/call`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          methodId: fn.methodId,
-          args: parsedArgs,
-          gasLimit: parsedGas,
-        }),
+        body: JSON.stringify({ methodId: fn.methodId, args: parsedArgs, gasLimit: parsedGas }),
       });
       const data = await res.json();
       if (data.success) {
-        setResult({ ok: true, returnValue: data.returnValue ?? null, gasUsed: data.gasUsed, logs: data.logs ?? [] });
-      } else {
-        setResult({ ok: false, error: data.error ?? "Call failed", gasUsed: data.gasUsed ?? 0 });
+        return { ok: true, returnValue: data.returnValue ?? null, gasUsed: data.gasUsed, logs: data.logs ?? [] };
       }
-    } catch (err: unknown) {
-      setResult({ ok: false, error: err instanceof Error ? err.message : "Network error", gasUsed: 0 });
-    } finally {
-      setLoading(false);
-    }
-  };
+      return { ok: false, error: data.error ?? "Call failed", gasUsed: data.gasUsed ?? 0 };
+    },
+    onMutate: () => setValidationError(null),
+    onError: (err) => setValidationError(err.message),
+  });
+
+  const handleCall = () => mutate();
 
   return (
     <div className="border rounded-lg p-4 space-y-3 bg-muted/20">
@@ -138,12 +125,16 @@ function CallPanel({
           />
         </div>
         <div className="pt-5">
-          <Button size="sm" onClick={handleCall} disabled={loading}>
-            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
+          <Button size="sm" onClick={handleCall} disabled={isPending}>
+            {isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
             Call
           </Button>
         </div>
       </div>
+
+      {validationError && (
+        <div className="text-xs text-destructive">{validationError}</div>
+      )}
 
       {result && (
         result.ok ? (
@@ -183,34 +174,19 @@ function RawCallPanel({ address }: { address: string }) {
   const [methodId, setMethodId] = useState("0");
   const [argsStr, setArgsStr] = useState("");
   const [gasLimit, setGasLimit] = useState("1000000");
-  const [result, setResult] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
-  const handleCall = async () => {
-    setLoading(true);
-    setResult(null);
-    let args: number[] = [];
-    try {
-      args = argsStr.trim() ? argsStr.split(",").map((s) => Number(s.trim())) : [];
-    } catch {
-      setResult("Error: could not parse args");
-      setLoading(false);
-      return;
-    }
-    try {
+  const { mutate, data: result, isPending, error } = useMutation<string, Error, void>({
+    mutationFn: async () => {
+      const args = argsStr.trim() ? argsStr.split(",").map((s) => Number(s.trim())) : [];
       const res = await fetch(`/api/contracts/${address}/call`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ methodId: Number(methodId), args, gasLimit: Number(gasLimit) }),
       });
       const data = await res.json();
-      setResult(JSON.stringify(data, null, 2));
-    } catch (err: unknown) {
-      setResult(err instanceof Error ? err.message : "Network error");
-    } finally {
-      setLoading(false);
-    }
-  };
+      return JSON.stringify(data, null, 2);
+    },
+  });
 
   return (
     <div className="space-y-3">
@@ -228,10 +204,11 @@ function RawCallPanel({ address }: { address: string }) {
           <Input value={gasLimit} onChange={(e) => setGasLimit(e.target.value)} className="font-mono text-sm" />
         </div>
       </div>
-      <Button onClick={handleCall} disabled={loading} size="sm">
-        {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+      <Button onClick={() => mutate()} disabled={isPending} size="sm">
+        {isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
         Call
       </Button>
+      {error && <p className="text-xs text-destructive">{error.message}</p>}
       {result && (
         <pre className="text-xs font-mono bg-muted/50 rounded-md p-3 border overflow-auto max-h-48">
           {result}

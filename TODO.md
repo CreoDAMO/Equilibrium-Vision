@@ -1,5 +1,5 @@
 # Equilibrium — TODO & Gap Analysis
-_Last updated: 2026-07-27 — reconciled against `main` (incl. state-root guard, P2P mesh, arbitrage execute)_
+_Last updated: 2026-07-27 — post-session reconciliation_
 
 ---
 
@@ -17,34 +17,28 @@ _Last updated: 2026-07-27 — reconciled against `main` (incl. state-root guard,
 | ModelRegistry inference attestation | Ed25519 receipt only — **not** zkML (see `LIMITATIONS.md` §1b) |
 | CrossChainRelay | Deploy + routes + challenge window + admin-gated registration |
 | variational-ai determinism | CLI + harness + fixed-point path; determinism-pinned Cargo config |
-| Android miner path | JNI `solveBlock` → HTTP submit; `P2PNode` bootstrap invite URI surface |
+| Android miner path | JNI `solveBlock` + full in-process libp2p swarm (`p2p_runtime.rs` → `P2PNode.kt`); `MiningWorker.kt` polls gossip from peers during solve |
+| Inbound P2P sync CI | `src/__tests__/p2p-sync.integration.test.ts` — covers hash → body-fetch → validate → `addBlock` under dual TCP/QUIC transport |
+| Durable snapshots + safe pruning | `persistence.ts`: `saveStateSnapshot` / `loadLatestSnapshot` / `pruneOldBlocks` (requires snapshot coverage). `chain/index.ts`: snapshot fast-path in `initChain` (restore ledger+UTXO from snapshot, replay only post-snapshot blocks), periodic snapshots every 100 blocks in mining loop, `safelyPruneOldBlocks()` export |
 | Kinetic Block Timeline | `/matrix` — live 3D block visualisation (Three.js/R3F) with WebGL guard |
 | Grafana stack | `docs/grafana/docker-compose.yml` — Prometheus + Grafana auto-provisioned |
 | CI | `ci.yml`: typecheck + TS tests (8 files, 245 tests) + Rust clippy/check on every push |
 | Android APK CI | `android-apk-ci.yml` builds a signed sideload APK on GitHub Actions |
 | Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md`, `docs/architecture.md` |
 | Load-test baseline | 149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted (k6, 50 VUs) |
+| Explorer UI — ContractDetail | `ContractDetail.tsx` refactored: POST contract calls use `useMutation` (React Query); removed manual loading/error state boilerplate |
+| Block reward format | Consistent: all reward displays use `formatAmount` across `Blocks.tsx` and `BlockDetail.tsx`; `formatCompact` defined but not in active use |
 
 ---
 
 ## 🟡 Open (in-repo)
 
-### 1. Phone as full peer without Express
-`P2PNode.kt` is a thin JNI/invite surface. The default mining path is still HTTP submit via `MiningWorker`. An in-process libp2p swarm on the device (gossip + light-node sync + SMT verify + tx submit without an Express server) is **not** the production path yet.  
-_Prerequisite: real Rust JNI implementations for `P2PNode.start/stop/connect`; UI for QR/NFC invite flow._
+### 1. Explorer UI polish (remaining)
+- Loading skeleton pattern not applied in: Dashboard chart area, ValidatorDetail delegators table, Dex pools table (plain "Loading…" text)
+- `ContractDetail.tsx` / `AdminMultisig.tsx` still use direct `fetch()` queryFn inside `useQuery` for GET endpoints where no generated hook exists — acceptable pattern but not using `@workspace/api-client-react` hooks
 
-### 2. Inbound P2P body-accept end-to-end tests
-The sidecar emits `sync_request` / `lightnode_request` events and bridges them to the TS chain. CI should cover the full hash → body-fetch → validate → `addBlock` path under dual TCP/QUIC transport.
-
-### 3. Durable snapshots before safe pruning
-`pruneOldBlocks` correctly no-ops unless `ENABLE_UNSAFE_PRUNING=true`. Safe mobile-sized pruning requires persisted ledger/UTXO/contract snapshots, not only block row deletion.
-
-### 4. Explorer UI debt (non-consensus)
-- `ContractDetail.tsx` / `AdminMultisig.tsx` still monolithic / use raw `fetch()` in places instead of the generated `@workspace/api-client-react` hooks
-- Block reward display format inconsistency (`formatCompact` vs `formatAmount`) across blocks list, block detail, and fee panel
-
-### 5. Docs sync
-`README.md` and this file are now reconciled (2026-07-27). Keep them in sync on every substantive protocol or API change — treat **this TODO + `LIMITATIONS.md`** as the gap-truth reference.
+### 2. Docs sync
+`README.md` and this file are reconciled as of 2026-07-27. Keep them in sync on every substantive protocol or API change — treat **this TODO + `LIMITATIONS.md`** as the gap-truth reference.
 
 ---
 
@@ -62,8 +56,5 @@ The sidecar emits `sync_request` / `lightnode_request` events and bridges them t
 
 ## Priority
 
-1. Android in-process swarm (JNI implementations + QR/NFC invite UI)
-2. Inbound P2P sync CI coverage (hash → addBlock under TCP+QUIC)
-3. Snapshot model → then re-evaluate pruning for mobile disk
-4. Explorer UI polish (contracts / admin / reward format)
-5. External ops / security audit
+1. Explorer UI polish (loading skeletons in Dashboard, ValidatorDetail, Dex)
+2. External ops / security audit

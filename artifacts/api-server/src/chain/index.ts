@@ -1,13 +1,18 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlock, mineNextBlockAsync } from "./state.js";
-import { persistContract, loadContractsFromDb } from "./persistence.js";
+import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlockAsync } from "./state.js";
+import {
+  persistContract, loadContractsFromDb,
+  loadBlocksFromDb, persistBlock, persistBlocks,
+  loadLatestSnapshot, saveStateSnapshot, loadAllBlocksRaw,
+  pruneOldBlocks, DEFAULT_PRUNE_KEEP,
+  type StateSnapshotData,
+} from "./persistence.js";
 import type { ChainState } from "./state.js";
 import type { GenesisDocument } from "@workspace/coinomics";
 import { addressFromSeed } from "./crypto.js";
 import { logger } from "../lib/logger.js";
 import { broadcast } from "../lib/ws-server.js";
-import { loadBlocksFromDb, persistBlock, persistBlocks } from "./persistence.js";
 import { deployAdminMultisigIfConfigured } from "./multisig.js";
 import { deployModelRegistryIfNeeded } from "./modelRegistry.js";
 import { deployArbitrageIfNeeded } from "./arbitrage.js";
@@ -104,48 +109,138 @@ function loadGenesisDoc(): GenesisDocument | null {
 }
 
 export async function initChain(): Promise<void> {
-  const dbBlocks = await loadBlocksFromDb();
+  // ── Snapshot fast-path ────────────────────────────────────────────────────
+  // Try to restore from a state snapshot first.  A snapshot captures the full
+  // ledger + UTXO set at a given height, so we only need to replay blocks
+  // after that height through addBlock() — skipping potentially thousands of
+  // full block replays on long-running chains.
+  const snapshot = await loadLatestSnapshot();
+  if (snapshot) {
+    logger.info(
+      { snapshotHeight: snapshot.height, blockHash: snapshot.blockHash.slice(0, 16) },
+      "State snapshot found — using fast-path restore",
+    );
 
-  if (dbBlocks) {
-    logger.info({ blockCount: dbBlocks.length }, "Restoring chain from Postgres");
-    // Use doc-aware restoration if genesis.json is present so validator/pool
-    // state matches the original genesis document rather than dev seed data.
-    const genesisDocForRestore = loadGenesisDoc();
-    if (genesisDocForRestore) {
-      // Use the first genesis validator as the local miner so that blocks
-      // produced by this node are attributed to a registered validator and
-      // the Fee Earnings tab in the Explorer shows real data.
-      const firstGenesisValidator = genesisDocForRestore.initial_validators[0];
-      if (firstGenesisValidator) {
-        minerAddress = firstGenesisValidator.address;
+    const genesisDocForSnap = loadGenesisDoc();
+    // Build a seeded-but-empty ChainState (validators, DEX, peers)
+    // then overwrite the ledger + UTXOs with snapshot data.
+    const seedState = genesisDocForSnap
+      ? buildDocChainFromBlocks(genesisDocForSnap, [])
+      : buildChainFromBlocks([]);
+
+    if (genesisDocForSnap) {
+      const firstV = genesisDocForSnap.initial_validators[0];
+      if (firstV) {
+        minerAddress = firstV.address;
         logger.info({ minerAddress }, "Mining as first genesis validator");
       }
-      chainState = buildDocChainFromBlocks(genesisDocForRestore, dbBlocks);
-      logger.info({ height: chainState.height, chainId: genesisDocForRestore.chain_id }, "Chain restored from doc genesis");
-    } else {
-      chainState = buildChainFromBlocks(dbBlocks);
     }
-    logger.info({ height: chainState.height }, "Chain restored");
+
+    // Overwrite ledger + UTXO with the snapshot checkpoint.
+    // restoreAccounts / restoreFromSnapshot both clear-and-replace, so any
+    // credits applied by buildDocChainFromBlocks are discarded — correct.
+    seedState.ledger.restoreAccounts(snapshot.ledger);
+    seedState.utxoSet.restoreFromSnapshot(snapshot.utxos);
+
+    // Load all raw blocks from DB without gap-validation (snapshot + post-snapshot).
+    // After block pruning the DB may only contain genesis + the recent suffix, so
+    // the set of available heights is not necessarily contiguous from 0 to tip.
+    const allRaw = await loadAllBlocksRaw();
+    if (allRaw) {
+      // ── Snapshot-era blocks ─────────────────────────────────────────────────
+      // Assign blocks by their height index (sparse array) so that:
+      //   • blocks.length - 1 == true tip height even after pruning
+      //   • blocks[h] is always the block at height h (or undefined if pruned)
+      // We do NOT call addBlock() for these — their net ledger/UTXO effect is
+      // already captured in the snapshot.  We rebuild txIndex and addressTxs
+      // for historical TX lookups, but skip all the expensive state mutations.
+      let highestSnapEraBlock: typeof allRaw[0] | undefined;
+      for (const block of allRaw) {
+        if (block.height > snapshot.height) continue;
+        // Height-indexed assignment — safe and idiomatic in JS/TS.
+        // TypeScript infers the element type from the array declaration.
+        seedState.blocks[block.height] = block;
+        if (!highestSnapEraBlock || block.height > highestSnapEraBlock.height) {
+          highestSnapEraBlock = block;
+        }
+        for (const tx of block.transactions) {
+          const confirmed = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" as const };
+          seedState.txIndex.set(tx.hash, confirmed);
+          for (const addr of [tx.from, tx.to]) {
+            if (!seedState.addressTxs.has(addr)) seedState.addressTxs.set(addr, new Set());
+            seedState.addressTxs.get(addr)!.add(tx.hash);
+          }
+        }
+      }
+
+      // ── Difficulty continuity ───────────────────────────────────────────────
+      // Seed currentDifficulty from the highest available snapshot-era block
+      // BEFORE replaying post-snapshot blocks.  addBlock() calls
+      // updateDifficulty() on every replay step, so the first call must start
+      // from the correct base — otherwise it adjusts from the INITIAL_DIFFICULTY
+      // constant (1,000,000) which can be orders of magnitude wrong.
+      if (highestSnapEraBlock) {
+        seedState.currentDifficulty = highestSnapEraBlock.difficulty;
+      }
+
+      // ── Post-snapshot blocks ────────────────────────────────────────────────
+      // Replay through addBlock() to update ledger, UTXOs, difficulty, finality,
+      // staking, and the state root SMT for blocks after the snapshot boundary.
+      for (const block of allRaw) {
+        if (block.height <= snapshot.height) continue;
+        seedState.addBlock(block);
+        for (const peer of seedState.peers) {
+          if (peer.connected) peer.height = block.height;
+        }
+      }
+    }
+
+    seedState.wasmVM.setBlockHeight(seedState.height);
+    chainState = seedState;
+    logger.info(
+      { height: chainState.height, snapshotHeight: snapshot.height },
+      "Chain restored from snapshot + post-snapshot replay",
+    );
   } else {
-    const genesisDoc = loadGenesisDoc();
-    if (genesisDoc) {
-      logger.info({ chainId: genesisDoc.chain_id }, "Building genesis chain from genesis.json");
-      const firstGenesisValidator = genesisDoc.initial_validators[0];
-      if (firstGenesisValidator) {
-        minerAddress = firstGenesisValidator.address;
-        logger.info({ minerAddress }, "Mining as first genesis validator");
+    // ── Full block replay ──────────────────────────────────────────────────
+    const dbBlocks = await loadBlocksFromDb();
+
+    if (dbBlocks) {
+      logger.info({ blockCount: dbBlocks.length }, "Restoring chain from Postgres");
+      const genesisDocForRestore = loadGenesisDoc();
+      if (genesisDocForRestore) {
+        const firstGenesisValidator = genesisDocForRestore.initial_validators[0];
+        if (firstGenesisValidator) {
+          minerAddress = firstGenesisValidator.address;
+          logger.info({ minerAddress }, "Mining as first genesis validator");
+        }
+        chainState = buildDocChainFromBlocks(genesisDocForRestore, dbBlocks);
+        logger.info({ height: chainState.height, chainId: genesisDocForRestore.chain_id }, "Chain restored from doc genesis");
+      } else {
+        chainState = buildChainFromBlocks(dbBlocks);
       }
-      chainState = buildGenesisChainFromDoc(genesisDoc);
+      logger.info({ height: chainState.height }, "Chain restored");
     } else {
-      logger.info("Building dev genesis chain (no genesis.json found)");
-      chainState = buildGenesisChain();
-    }
-    // Persist genesis blocks so subsequent restarts load from DB.
-    try {
-      await persistBlocks(chainState.blocks);
-      logger.info({ blockCount: chainState.blocks.length }, "Genesis blocks persisted");
-    } catch (err) {
-      logger.warn({ err }, "Genesis persistence failed — continuing in-memory");
+      const genesisDoc = loadGenesisDoc();
+      if (genesisDoc) {
+        logger.info({ chainId: genesisDoc.chain_id }, "Building genesis chain from genesis.json");
+        const firstGenesisValidator = genesisDoc.initial_validators[0];
+        if (firstGenesisValidator) {
+          minerAddress = firstGenesisValidator.address;
+          logger.info({ minerAddress }, "Mining as first genesis validator");
+        }
+        chainState = buildGenesisChainFromDoc(genesisDoc);
+      } else {
+        logger.info("Building dev genesis chain (no genesis.json found)");
+        chainState = buildGenesisChain();
+      }
+      // Persist genesis blocks so subsequent restarts load from DB.
+      try {
+        await persistBlocks(chainState.blocks);
+        logger.info({ blockCount: chainState.blocks.length }, "Genesis blocks persisted");
+      } catch (err) {
+        logger.warn({ err }, "Genesis persistence failed — continuing in-memory");
+      }
     }
   }
 
@@ -172,11 +267,7 @@ export async function initChain(): Promise<void> {
   }
 
   // ModelRegistry + Arbitrage — same "deploy once, then pin via env var"
-  // pattern as the admin multisig above. Arbitrage's model is deliberately
-  // NOT auto-configured here: setArbitrageModel(registry, modelId) needs a
-  // real modelId, and no model exists yet at genesis boot. An admin wires
-  // them together later via POST /api/arbitrage/set-model once a model has
-  // been proposed (and, for execute() to succeed, verified) in ModelRegistry.
+  // pattern as the admin multisig above.
   try {
     await deployModelRegistryIfNeeded(chainState.wasmVM, minerAddress);
     await deployArbitrageIfNeeded(chainState.wasmVM, minerAddress, minerAddress);
@@ -185,7 +276,6 @@ export async function initChain(): Promise<void> {
   }
 
   // CrossChainRelay — deploy once on first boot; pin via CROSS_CHAIN_RELAY_ADDRESS.
-  // Gracefully skipped if the contract hex hasn't been built yet.
   try {
     await deployCrossChainRelayIfNeeded(chainState.wasmVM, minerAddress);
   } catch (err) {
@@ -203,6 +293,51 @@ export async function initChain(): Promise<void> {
 // is true.  stopMining() bumps the generation so any in-flight cycle sees a
 // stale generation and exits without rescheduling.
 
+// ── Snapshot helpers ─────────────────────────────────────────────────────────
+
+/** How often (in blocks) to automatically take a state snapshot. */
+const SNAPSHOT_INTERVAL = 100;
+
+/**
+ * Capture the current ledger + UTXO state as a named snapshot at the tip.
+ * Fire-and-forget safe — never throws.
+ */
+async function takeSnapshot(): Promise<void> {
+  const tip = chainState?.latestBlock;
+  if (!tip) return;
+  const ledgerData: StateSnapshotData["ledger"] = {};
+  for (const [addr, acc] of chainState.ledger.getAllAccounts()) {
+    ledgerData[addr] = { balance: acc.balance, nonce: acc.nonce };
+  }
+  const utxoData = chainState.utxoSet.getAllUnspent().map((u) => ({
+    txHash:      u.txHash,
+    outputIndex: u.outputIndex,
+    address:     u.address,
+    amount:      u.amount,
+    coinbase:    u.coinbase,
+    blockHeight: u.blockHeight,
+  }));
+  await saveStateSnapshot({
+    height:    tip.height,
+    blockHash: tip.hash,
+    stateRoot: tip.stateRoot ?? "",
+    ledger:    ledgerData,
+    utxos:     utxoData,
+  });
+}
+
+/**
+ * Save a snapshot of the current chain tip, then prune old blocks.
+ * The snapshot ensures `pruneOldBlocks` can confirm coverage before deleting.
+ * Returns the number of blocks pruned (0 when nothing to prune).
+ */
+export async function safelyPruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<number> {
+  await takeSnapshot();
+  return pruneOldBlocks(keepBlocks);
+}
+
+// ── Stop-safe mining loop ────────────────────────────────────────────────────
+
 let miningEnabled    = false;
 let miningGeneration = 0;
 let miningTimer: ReturnType<typeof setTimeout> | null = null;
@@ -219,6 +354,14 @@ async function runMiningCycle(generation: number): Promise<void> {
     persistBlock(block).catch((err) =>
       logger.warn({ err, height: block.height }, "Block persistence failed"),
     );
+
+    // Take a state snapshot every SNAPSHOT_INTERVAL blocks so that pruning
+    // and fast-path restarts are always possible without a full block replay.
+    if (block.height % SNAPSHOT_INTERVAL === 0 && block.height > 0) {
+      takeSnapshot().catch((err) =>
+        logger.warn({ err, height: block.height }, "Periodic snapshot failed — continuing"),
+      );
+    }
 
     // Notify WebSocket clients of the new block
     broadcast({
