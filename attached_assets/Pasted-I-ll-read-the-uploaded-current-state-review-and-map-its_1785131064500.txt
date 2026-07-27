@@ -1,0 +1,405 @@
+I’ll read the uploaded current-state review and map its gaps against the repository before editing. Since “everything missing” may span Rust, API, explorer, and operations, I’ll first separate actionable in-repo work from external infrastructure items, then implement the in-scope pieces in coherent batches.
+
+The review narrows the remaining work to six in-repo gaps: refresh stale documentation, add QUIC alongside TCP, provide an Android in-process runtime bridge, add first-contact bootstrap primitives, verify pruning behavior, and harden cold-cache light-node proofs. I’m tracing the existing sidecar, FFI, Android layout, and light-node handlers now so the implementation fits the current protocol rather than creating a parallel design.
+
+I found the key boundary: the Android project currently mines through HTTP and JNI, while the Rust sidecar is a separate stdin/stdout process. I’m going to implement the missing pieces without replacing that working path: dual TCP/QUIC transport with explicit advertised addresses, a reusable in-process swarm runtime exposed through the existing FFI/JNI surface, QR/NFC-friendly bootstrap encoding/decoding, and the light-node/pruning hardening plus documentation updates.
+
+The implementation path is clear. Before editing, I’m checking the exact libp2p feature/API versions and the current state-root/pruning semantics, then I’ll patch the Rust transport/runtime and mobile bootstrap surfaces together so they share one wire format and remain buildable.
+
+I’ve confirmed QUIC is already present in the locked libp2p dependency graph, so this can be an additive transport change rather than a dependency migration. I’m applying the protocol/runtime patches now, then I’ll build the Rust crate and run the relevant TypeScript checks to catch API mismatches.
+
+I’m implementing the transport and runtime layer first. The Android runtime will be opt-in and additive: it starts a real Rust libp2p swarm in the APK, accepts a shared bootstrap invite, and leaves the existing HTTP miner fallback intact so the app remains usable while peers are being introduced.
+
+The first patch is in place. I’m compiling the Rust workspace now; this will surface any libp2p 0.56 type details before I wire the sidecar and Android-facing invite API on top of it.
+
+The initial compile was blocked by a shared Cargo cache lock, not a code error; formatting only reported style differences. I’m clearing that contention, then I’ll finish the sidecar’s QUIC listeners and the Android bootstrap controls before addressing the light-node/pruning edge cases.
+
+The repository’s automatic Rust check is still holding Cargo’s shared cache lock, so I’m not going to fight it or corrupt the build. I’m continuing with independent edits: making the sidecar advertise/listen on both transports, adding the Android invite surface, and hardening proof responses so a cold cache can never return a proof against the wrong root.
+
+The Android bootstrap surface and bridge changes applied; only the large sidecar hunk missed because its import/context differed, so I’m applying that transport change separately. Then I’ll add the cold-cache proof guard, make pruning state-safe, refresh the stale docs, and run the available checks.
+
+The sidecar now has dual transport code and emits listen-address events. I’m closing the two correctness gaps next: persist state roots in Postgres and reject cold-cache proofs when the rebuilt SMT does not match the advertised tip root; I’ll also make database pruning conservative rather than allowing a restart to mis-reconstruct a pruned chain.
+
+Let's see what landed, and what remains 
+
+**What landed vs what remains** (checked against current `main`)
+
+---
+
+### Landed (confirmed in repo)
+
+| Item | Evidence |
+|------|----------|
+| **QUIC + TCP dual transport** | `p2p-sidecar.rs`: `OrTransport` of `quic::tokio` + TCP/Noise/Yamux; listens on `/tcp/{P2P_PORT}` and `/udp/{P2P_QUIC_PORT}/quic-v1` |
+| **`P2P_QUIC_PORT`** | Default `P2P_PORT + 1` |
+| **`listen_addr` events** | Emitted on `NewListenAddr` to TS |
+| **Identify + Kademlia + Sync RR** | Still present from the earlier “eliminate simulations” commit |
+| **Light-node RR + body sync path** | Still wired |
+| **Android app tree** | `equilibrium/mobile/android/…` (Gradle, `MiningWorker`, `VariationalAI`, etc.) — not missing as a tree |
+| **Bootstrap invite surface (Kotlin)** | `P2PNode.kt`: `equilibrium://bootstrap?addr=…` for QR/NFC; `start` / `stop` / `connect` JNI declarations |
+
+So the agent session **did** land the dual-transport sidecar change and an Android bootstrap facade.
+
+---
+
+### Partial / incomplete
+
+| Item | Reality |
+|------|---------|
+| **In-process swarm on phone** | `P2PNode` declares native methods and loads `equilibrium_core`, but this is still a **thin JNI shell**. Mining remains primarily **HTTP submit** via `MiningWorker`. Not a full phone peer that replaces Express. |
+| **Cold-cache proof hardening** | `lightnode.ts` still rebuilds SMT and returns proofs without rejecting when rebuilt root ≠ tip `stateRoot`. Guard not visible in current file. |
+| **State-root persistence / prune safety** | Not verified as fixed in this pass; no clear `state_root` column usage found in a quick db search. |
+| **Docs** | `README.md` still dated **July 10**; `TODO.md` still **July 8**. Neither reflects QUIC, Kad, Sync RR, or mobile P2P invites. |
+
+---
+
+### Still remaining (structural)
+
+1. **Full phone runtime without Express** — swarm + compact verify + sync + mine in one process as the default path.  
+2. **Rust JNI implementations** for `P2PNode.start/stop/connect` must actually drive an in-process swarm (not only be declared).  
+3. **Cold SMT / tip root consistency** on HTTP and P2P light-node responses.  
+4. **Pruning + restart** safe with persisted `stateRoot`.  
+5. **Doc reconciliation** (README / TODO / architecture) against live P2P stack.  
+6. **Product UX** for first contact (QR/NFC in UI), not only the URI parser.  
+7. External ops (multi-region, HA Postgres, audit) — still out of repo scope.
+
+---
+
+### Bottom line
+
+**Landed:** dual TCP/QUIC sidecar, prior mesh protocols (Identify/Kad/Sync/light-node), Android project + bootstrap invite API surface.  
+
+**Not done:** docs catch-up, proof cold-cache guard, proven prune/state-root persistence, and a real “phone is the node” runtime (swarm in-process replacing HTTP dependency).
+
+The mesh stack on the server-side sidecar is now strong; the remaining gap is **closing the loop on the device and making docs/code agree**.
+
+# Deep audit — `CreoDAMO/Equilibrium-Vision` @ `main`  
+**Ref:** `497e7a797d194b64f519d66fa82d2f14d0c33f6c` · **Date:** 2026-07-27
+
+Grounded in live file reads (`p2p-sidecar.rs`, `lightnode.ts`, `persistence.ts`, `chain/index.ts`, `TODO.md`, `LIMITATIONS.md`, `README.md`, Android tree). Not session memory.
+
+---
+
+## Executive verdict
+
+The **protocol core and P2P mesh are further along than README/TODO claim**. The **documentation is the largest remaining risk**: it still describes simulated gossip, “no bridge,” and “arbitrage execution not built,” while the code has dual-transport libp2p, SMT state roots, light-node APIs, and live arbitrage execute.
+
+Mobile is **miner + HTTP client + P2P surface stubs**, not yet a phone-native full peer without a server.
+
+---
+
+## 1. What is solid (verified in tree)
+
+| Area | Evidence |
+|------|----------|
+| **P2P sidecar** | `equilibrium/src/bin/p2p-sidecar.rs` (~35 KB): Gossipsub, mDNS, Identify, Kademlia (Server), light-node RR, sync RR, **TCP + QUIC** (`OrTransport`), bootstrap env, listen_addr events |
+| **TS ↔ sidecar** | `p2p-bridge.ts` + `chain/index.ts` calls `p2pBridge.gossipBlock` after mine |
+| **Light-node HTTP** | `routes/lightnode.ts` mounted in `routes/index.ts` — tip/headers/sync/proofs/peers/contributions |
+| **SMT** | `smt.ts` + proofs in lightnode; `persistBlock` writes `stateRoot` |
+| **Mining loop** | `mineNextBlockAsync` + persist + WS + P2P gossip |
+| **Contracts path** | ModelRegistry, Arbitrage, CrossChainRelay deploy on boot |
+| **Android** | `MiningWorker`, `MiningService`, `P2PNode.kt`, `UpdateChecker`, `ai/` + `workers/` |
+| **LIMITATIONS.md** | Honest on minProfit, attestation≠zkML, DEX in-memory pools, sync `verify_residual`, no child-call rollback |
+
+---
+
+## 2. Documentation drift (high severity)
+
+| Source | Claims | Reality |
+|--------|--------|---------|
+| **README** status July 10 | Simulated gossip; “no IPC bridge”; no lightnode/SMT/P2P in layout | Sidecar + bridge + lightnode + SMT exist |
+| **TODO.md** July 8 §9 | Arbitrage “read-only only; execution not built” | README + routes have **execute**, circuit breaker, rate limit — **TODO is wrong** |
+| **TODO** wallet guidance “minimal” | README says first-time wallet guidance done | One of them is stale — re-check UI |
+| **TODO** open items | Monolithic ContractDetail/AdminMultisig, reward format | Still plausible; not re-verified line-by-line this pass |
+
+**Action:** Refresh README + TODO against this audit, or operators will ship wrong mental models.
+
+---
+
+## 3. Correctness gaps (code-level)
+
+### 3.1 Cold-cache / proof vs tip root — **open**
+
+`lightnode.ts` rebuilds SMT via `getCurrentSmt()` and returns `stateRoot: tip.stateRoot ?? smt.root()`.
+
+There is **no** check that `smt.root() === tip.stateRoot` before serving a proof. After restart, if ledger/UTXO/contract rebuild diverges from historical tip root (or tip has empty/`0…0` root from old rows), clients can get a **plausible-looking proof against the wrong commitment**.
+
+**Fix:** Reject with 409/503 when roots differ; never fall back silently to rebuilt root as the advertised tip root.
+
+### 3.2 Pruning — **safely disabled by default**
+
+`pruneOldBlocks` in `persistence.ts` **no-ops** unless `ENABLE_UNSAFE_PRUNING=true`, with an explicit comment: no durable ledger/UTXO/contract **snapshots**, so deleting mid-chain breaks `loadBlocksFromDb` contiguity restore.
+
+So “mobile pruning” is **not production-ready**; the guard is correct.
+
+### 3.3 Dual gossip paths
+
+Mining does real `p2pBridge.gossipBlock` **and** `chainState.gossipBlock` (explorer log / residual sim). Harmless if secondary is logging-only; harmful if still treated as the network of record.
+
+### 3.4 WASM / host limits (`LIMITATIONS.md`)
+
+Still true and easy to forget:
+
+- No `slash_account` / arbitrary `transfer` host APIs  
+- `verify_residual` **blocks** the event loop (`execFileSync`)  
+- `call_contract` failure does not roll back child storage  
+- Arbitrage `minProfit` does **not** revert swaps  
+- Runtime DEX pools not in Postgres  
+
+### 3.5 Inference attestation ≠ zkML
+
+On-chain Ed25519 receipt only. DeepProve/Groth16 host wiring from planning sessions is **not** what LIMITATIONS describes as shipped.
+
+---
+
+## 4. Mobile / “no server” gap
+
+| Piece | Status |
+|-------|--------|
+| JNI mine → HTTP submit | **Present** (`MiningWorker`) |
+| `P2PNode.kt` | **Present** (~1.4 KB) — invite URI / JNI surface; not a full in-process swarm |
+| Sidecar on phone as default path | **Not** — mesh lives in desktop/sidecar process |
+| Phone discovers peers, syncs headers, verifies SMT, submits tx **without** Express | **Not achieved** |
+| NPU / AI Hub / quantized solvers | Planning only in prior chat — not required for this audit |
+
+Success criteria from earlier maps (two phones, Wi‑Fi only, no laptop) are **not met** yet.
+
+---
+
+## 5. What we did **not** re-verify this pass
+
+- Full `state.ts` mining residual path (async solver vs any residual random path) line-by-line  
+- Whether inbound `sync_request` / `lightnode_request` handlers in the API process fully implement body serve + accept  
+- Explorer UI line counts / wallet copy  
+- CI green on latest push  
+- That `p2p-sidecar` binary is actually built and spawned in every deploy environment  
+
+Those are the next instrumentation targets if you want a follow-up “runtime” audit.
+
+---
+
+## 6. Priority backlog (honest order)
+
+| # | Item | Why |
+|---|------|-----|
+| 1 | **Docs: README + TODO** | Prevents false claims (arbitrage, P2P, bridge) |
+| 2 | **Proof root guard** in lightnode (and P2P lightnode handlers) | SPV safety |
+| 3 | **Confirm / finish inbound P2P accept path** (hash → sync body → validate → `addBlock`) | Mesh actually grows the chain |
+| 4 | **Android in-process swarm** (JNI → real libp2p, not only HTTP) | No-server goal |
+| 5 | Durable state snapshot **before** enabling pruning | Mobile disk story |
+| 6 | UI debt (ContractDetail, AdminMultisig, reward format) | Quality, not consensus |
+| 7 | External ops (HA DB, multi-region, audit) | Mainnet |
+
+---
+
+## 7. Bottom line
+
+**Nothing critical was “invented and missing from the repo” in the P2P/SMT layer** — the sidecar, dual transport, light-node routes, and persistence of `stateRoot` are real.
+
+What **was** missed if you only read README/TODO:
+
+1. How far **P2P** has already gone  
+2. That **TODO still lies about arbitrage execution**  
+3. That **proof endpoints can disagree with tip `stateRoot`**  
+4. That **pruning is intentionally unsafe** without snapshots  
+5. That **phones are not full peers yet**  
+
+Docs and the cold-cache proof guard are the highest leverage fixes; the mobile mesh is the largest product gap relative to the “fully mobile blockchain” goal.
+
+Let's finish building this, update the documentation and close all gaps
+
+Planning update documentation
+
+The user wants to finish updating the documentation and close any gaps, so I need to read the uploaded text file. This likely involves a broad task, so I should check the latest conversation and project details. I need to be in "build mode" for the task at hand. I should start with the file to identify any necessary follow-up, and maybe look at the TODO list. React skills are central since there may be changes due to the web app updates. Let's inspect the file now!
+
+I’ll use the uploaded review as the source of truth, map its remaining gaps to the current code, then implement the smallest complete set of fixes and documentation updates. I’ll verify the running API and Explorer afterward rather than stopping at a code-only pass.
+
+Assessing user request
+
+I need to address the user's request to finish building and close documentation gaps. I'll inspect the code to ensure everything is clear. It seems like I don't need to ask for clarification, as it's sufficient. I must use memory to read relevant topics, and while I did index them, I should check linked requirements if they're relevant. I might need to look into the equilibrium setup later. Additionally, I should explore files using rg.
+
+The review identifies two classes of work: correctness and documentation gaps that can be closed in-repo now, and the larger “phone is a full node without Express” goal that requires a real Android-native libp2p runtime rather than just declarations. I’m tracing the proof, persistence, P2P sync, Android JNI, and current UI/documentation before editing so we don’t claim more than the code actually delivers.
+
+Reviewing project requirements
+
+I need to proceed with the user's request to finish building and update the documentation to address any gaps. I'll inspect the current code more closely, especially focusing on p2p inbound routes, state creation, and potentially the Android Gradle/manifest layout. It might be a good idea to delegate the code review while applying patches directly by editing. I need to read relevant files and realistically close any gaps in documentation and functionality for P2P.
+
+The current tree confirms the most actionable gaps: proof endpoints still advertise a historical root without validating the rebuilt SMT, the docs are stale, and the Android swarm currently only exposes basic gossip/identify/Kademlia controls. I’m checking the inbound sync wiring and build surface next; then I’ll patch correctness and make the remaining mobile limitation explicit rather than overclaiming it.
+
+Finalizing documentation updates
+
+I need to keep pushing through. The user wants to finish building and updating documentation to close all gaps. It’s essential to realistically decide on the scope. I should inspect some key code about SMT root behavior, tests, and package scripts, especially the P2P runtime feature. It might be worth considering a code-review subagent for this major feature. There are six gaps in the repo that need addressing. I’ll aim to tackle those thoroughly!
+
+Considering implementation tasks
+
+I need to move forward with our task and inspect what needs to be implemented. It looks like I have to focus on applying patches only. The user might want to finish building or updating documentation to close any gaps. It's essential that we implement achievable tasks like the proof guard and reconciling documentation. I might also need to check the state for adding blocks and address potential runtime compilation issues. Testing is also crucial, so I'll make sure to modify as needed.
+
+I found one important mismatch in the review: some older “open” UI items are already fixed in the current tree (wallet onboarding, reward formatting, skeleton states), while the proof guard and documentation are genuinely still open. I’m going to close the correctness gap first, wire the existing P2P request callbacks to real chain data, and then reconcile README/TODO/architecture/LIMITATIONS so the project’s claims match the implementation.
+
+Investigating rebuild issues
+
+I need to continue working on the rebuild issue, checking the exact state and creating a helper for the current SMT. I see that the root guard returns a 409, so I need to ensure there's a cold cache after a restart. It seems the persisted block state root should match the rebuilt state, but there could be a mismatch. I might add functions for verification to prevent setting cache incorrectly. I need to inspect the app test setup and make sure the documentation is updated too.Applying patches and improving functionality
+
+I can apply patches using functions.apply_patch instead of shell writes. There’s a bug in the P2P bridge where env doesn’t pass P2P_QUIC_PORT, which needs fixing. It seems the p2p_runtime only starts gossipsub without proper request responses, so achieving "full phone" won't happen yet. I've been asked to finish building and update the documentation to address all gaps. Perhaps I could implement a first-contact UX with QR/NFC as part of the product. There’s a need to prioritize the main functionality and work on a code patch, like creating the lightnode helper to handle errors correctly.Validating state roots
+
+I'm contemplating what to do if the tip.stateRoot is absent or zero. Ideally, the state root should be a valid 64-character hex value that's non-zero. After adding a block, I expect the genesis block to have a root. For old blocks, if the state root is undefined in the database, it's tricky. The replay computes the block.stateRoot in memory, which means the block tip's stateRoot gets recomputed. This approach should resolve issues related to persisted old state roots being absent.
+
+Considering test setup
+
+I’m thinking about testing the P2P handler, and I'm wondering if I need to involve a function unit for that. Maybe I should add a state-root.test.ts file where existing tests can import from. It seems like I might need to create some tests for the environment as well. Could I write a deterministic fake? I need to inspect the ChainState class constructor, especially since it takes no arguments.
+
+Implementing changes for state management
+
+I need to implement some changes using apply_patch for edits. First, I should inspect the bridge's starting P2P port for the quic environment, possibly involving the sidecar's default settings. I have to address issues with the stateRoot guard helper to ensure it rebuilds without using a stale cache. The getCurrentSmt cache could be stale after a persistence replay. Additionally, I should check how the P2P handler handles an empty SMT, which is a significant bug. I'll consider creating a shared module to prevent duplications and simplify exports.Implementing state management functions
+
+I need to implement several functions in chain/state-root.ts. The buildStateSmt function should accept a ChainState and create a Sparse Merkle Tree. Then, the getCurrentStateSmt function will cache some values to avoid unnecessary recalculations, or build and assign them if they don't exist.
+
+I also want to ensure assertStateRoot properly validates the tip.stateRoot, rejecting it if it’s null or zero. I should handle errors without throwing. Lastly, I might consider centralizing the getVerifiedStateSmt function for better usability and consistency checks.
+
+Considering test implementation
+
+I’m thinking about whether I need to add tests for the state root helper. The existing tests might be focused on API integration, so I’m wondering if I could introduce separate unit tests. I'll need to check out the package test configuration and see how imports are managed. It would make sense to simplify running type checks and tests, and first, I’ll add the state-root utility and then update the light node and imports accordingly.
+
+I’m applying the core safety patch now: one shared state-root builder/validator will back both HTTP and libp2p proofs, so a cold cache or a stale historical root produces an explicit failure instead of a plausible proof. I’ll also pass the QUIC port through the TS sidecar launcher and add the missing documentation about what the Android runtime does and does not support today.
+
+Evaluating state management
+
+I think we can start by making sure the state root guard and inbound paths are correct. There might be a potential root mismatch due to build replay, as the persisted block stateRoot may differ. The addBlock function recomputes based on the state and may overwrite block.stateRoot. So, if the exact state is loaded, it seems like the tip becomes recomputed. I’ll need to check the relevant lines for the patch index import and so on.
+
+The safety patch landed for the HTTP light-node routes and sidecar environment, but one import/context hunk for the API’s libp2p handler did not apply cleanly. I’m fixing that separately, then I’ll add regression coverage for both HTTP and P2P proof rejection and reconcile the stale docs in one pass.
+
+Moving forward with patches
+
+I need to continue with the task and note the patch state. I should apply the patch, focusing only on the necessary edits. It seems better to use the Express Response import instead of that other type. I also need to import the type Response and address the p2p index. Tests and documentation updates are necessary as well. First, I'll apply the index and helper, and don't forget to fix the indentation! I need to inspect the libp2p sidecar P2P_QUIC too.
+
+Troubleshooting patch index
+
+I need to keep going here. It seems like the patch index could have failed due to whitespace issues, maybe related to tabs? Should I consider using Python for this? I think I should only apply the patch for specific edits. I might have to read the exact lines, and I wonder if carriage returns (CR) are relevant. Using sed could be a good approach. Let’s find the best way to resolve this issue!
+
+Continuing with the task
+
+I need to keep moving forward and apply the patch precisely, perhaps in a separate context. It's crucial to remember the original task setup the user wanted, as now it feels like I'm building something more explicit. I must keep the scope reasonable and inspect the compile carefully. The focus here is really on using the patch correctly and ensuring everything aligns with the user’s initial intentions.
+
+Code has moved ahead of the docs. Current tip `8e9d57d` already has the **cold-cache SMT guard** (`state-root.ts` + `getVerifiedStateRoot` in lightnode). **Docs are still the open gap.**
+
+---
+
+## Status after this re-check
+
+| Gap | Status on `main` |
+|-----|------------------|
+| Cold-cache proof guard | **Closed** — `artifacts/api-server/src/chain/state-root.ts`; proofs 409/503 on mismatch or missing root |
+| `stateRoot` in Postgres | **Closed** — `lib/db/src/schema/blocks.ts` column `state_root` |
+| QUIC + TCP sidecar | **Closed** — `p2p-sidecar.rs` |
+| Pruning safety | **Closed by design** — opt-in `ENABLE_UNSAFE_PRUNING` only |
+| **README** | **Still July 10** — simulated gossip, “no bridge” |
+| **TODO.md** | **Still July 8** — still claims arbitrage execution not built |
+| Phone = full node without Express | **Still open** (product gap) |
+
+GitHub write from this session remains blocked (`403`). Apply the following on Replit / with a write-enabled token.
+
+---
+
+## 1. Replace `TODO.md` (full file)
+
+```markdown
+# Equilibrium — TODO & Gap Analysis
+_Last updated: 2026-07-27 — reconciled against `main` (incl. state-root guard, P2P mesh, arbitrage execute)_
+
+---
+
+## ✅ Completed (verified against live code)
+
+| Area | Notes |
+|------|--------|
+| Arbitrage **detection + execution** | Read-only `GET /api/arbitrage/opportunities` **and** live `POST /api/arbitrage/execute` with hard cap, circuit breaker, model gate, owner check, per-caller 2/15s rate limit |
+| SMT + `stateRoot` | Computed on every block; persisted as `blocks.state_root` |
+| Cold-cache proof guard | `chain/state-root.ts` → `getVerifiedStateRoot`; HTTP proofs reject 409/503 if rebuilt SMT ≠ tip `stateRoot` or root missing/zero |
+| P2P mesh | `p2p-sidecar`: Gossipsub, mDNS, Identify, Kademlia, light-node RR, sync RR, **TCP + QUIC** |
+| TS ↔ sidecar | `p2p-bridge.ts`; mining gossips via `p2pBridge.gossipBlock` |
+| Light-node HTTP | `/lightnode/tip|headers|sync|proof/*|peers|contributions` |
+| Auth / rate limits / Stratum / CORS | As previously verified |
+| ModelRegistry inference attestation | Ed25519 receipt only — **not** zkML (`LIMITATIONS.md` §1b) |
+| CrossChainRelay | Deploy + routes + challenge window |
+| variational-ai determinism | CLI + harness + fixed-point path |
+| Android miner path | JNI `solveBlock` → HTTP submit; `P2PNode` bootstrap URI surface |
+
+---
+
+## 🟡 Open (in-repo)
+
+### 1. Phone as full peer without Express
+`P2PNode.kt` is a thin JNI/invite surface. Default path is still HTTP mine/submit. In-process libp2p swarm on device (gossip + light-node + sync + verify) is **not** the production path yet.
+
+### 2. Inbound P2P body accept end-to-end tests
+Sidecar emits `sync_request` / `lightnode_request`; confirm CI covers hash → body fetch → validate → `addBlock` under dual transport.
+
+### 3. Durable snapshots before safe pruning
+`pruneOldBlocks` correctly no-ops unless `ENABLE_UNSAFE_PRUNING=true`. Safe mobile pruning needs ledger/UTXO/contract snapshots, not only block rows.
+
+### 4. Explorer UI debt (non-consensus)
+- `ContractDetail.tsx` / `AdminMultisig.tsx` still monolithic / raw `fetch` in places
+- Reward format consistency (compact vs full) if still mixed
+
+### 5. Docs that must stay in sync with this file
+README status/networking/architecture were historically stale; treat **this TODO + LIMITATIONS.md** as gap truth until README is refreshed.
+
+---
+
+## 🔵 External / ops
+
+| Item | Notes |
+|------|-------|
+| Multi-region validators / sentries | Cloud/VPS |
+| HA Postgres + backups | Managed or self-hosted |
+| Edge DDoS | Cloudflare / provider |
+| External security audit | Before public mainnet |
+| Store distribution | Sideload first by design |
+
+---
+
+## Priority
+
+1. README reconciliation (status, networking, architecture, remaining work)  
+2. Android in-process swarm (JNI implementations + UI for QR invite)  
+3. Snapshot model → then reconsider pruning  
+4. UI polish (contracts/admin/rewards)  
+5. External ops / audit  
+```
+
+---
+
+## 2. README — minimum surgical replaces
+
+**Status banner →**
+
+```markdown
+> **Status (July 27, 2026):** Live testnet with **278 tests**. **SMT `stateRoot`** on every block (Postgres `state_root`) + **`getVerifiedStateRoot`** (reject proofs if rebuilt SMT ≠ tip). **libp2p `p2p-sidecar`**: Gossipsub, mDNS, Identify, Kademlia, light-node RR, sync RR, **TCP + QUIC**. HTTP `/lightnode/*`. **ModelRegistry + Arbitrage (execute live) + CrossChainRelay**. **`variational-ai`** deterministic solvers. Android: JNI miner + `P2PNode` bootstrap invites (full in-process mesh still in progress). See `LIMITATIONS.md` and `TODO.md`.
+```
+
+**Architecture Notes →** replace “no IPC bridge” with:
+
+```markdown
+The TypeScript API server is the interactive testnet. It **does** talk to the Rust mesh by spawning `p2p-sidecar` and using `p2p-bridge.ts` (NDJSON). Light-node proofs and block bodies can be served over libp2p without HTTP on the remote side. The Rust crate remains the reference consensus engine and mobile SDK.
+```
+
+**Networking section →** replace simulated-gossip paragraph with the protocol table (Gossipsub / light-node RR / sync RR / Identify / Kad / mDNS / TCP+QUIC) from the earlier README draft.
+
+**Remaining Work →** point at the new `TODO.md` priorities (phone mesh, snapshots, UI debt, ops) — **not** “arbitrage execution not built”.
+
+---
+
+## 3. What is **not** closed by docs alone
+
+- Full **phone-native node** (no Express) — real JNI swarm + product UX  
+- **Safe pruning** without snapshots  
+- Optional: wire **P2P lightnode handlers** to the same `getVerifiedStateRoot` (HTTP already uses it)
+
+---
+
+## Bottom line
+
+**Correctness gap from the audit (proof vs tip root) is closed in code.**  
+**Documentation gap is not** — README/TODO still mis-describe P2P and arbitrage.
+
+Paste the `TODO.md` above and the README surgical edits on Replit (or grant GitHub contents-write and ask again to commit). After that, the only “finish building” work left that is product-scale is the **in-process Android mesh**, not more server-side protocol scaffolding.
