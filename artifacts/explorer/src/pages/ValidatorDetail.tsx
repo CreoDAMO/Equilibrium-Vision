@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { formatAmount, truncateHash, timeAgo } from "@/lib/format";
 import { CopyButton } from "@/components/CopyButton";
 import { Shield, ShieldAlert, ShieldCheck, Users, TrendingUp, AlertTriangle, Coins } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 export default function ValidatorDetail() {
@@ -157,7 +158,7 @@ export default function ValidatorDetail() {
                     <TableRow key={i}>
                       {[...Array(6)].map((__, j) => (
                         <TableCell key={j} className={j === 0 ? "" : "text-right"}>
-                          <div className="h-4 bg-muted rounded animate-pulse ml-auto" style={{ width: j === 0 ? "6rem" : "4.5rem", animationDelay: `${i * 60}ms` }} />
+                          <Skeleton className={`h-4 ${j === 0 ? "w-24" : "w-16 ml-auto"}`} />
                         </TableCell>
                       ))}
                     </TableRow>

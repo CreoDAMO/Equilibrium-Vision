@@ -1,6 +1,7 @@
 import React from "react";
 import { useGetChainStatus, useGetChainStats, useListBlocks, useGetMempool, getGetChainStatusQueryKey, getGetChainStatsQueryKey, getListBlocksQueryKey, getGetMempoolQueryKey } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Activity, Box, Database, HardDrive, Cpu, Hash, ArrowRight, ArrowRightLeft } from "lucide-react";
 import { Link } from "wouter";
 import { truncateHash, timeAgo, formatAmount, formatScientific } from "@/lib/format";
@@ -53,9 +54,9 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="h-[300px]">
             {!stats ? (
-              <div className="h-full flex flex-col justify-end gap-2 px-2 pb-4 animate-pulse">
+              <div className="h-full flex flex-col justify-end gap-2 px-2 pb-4">
                 {[...Array(5)].map((_, i) => (
-                  <div key={i} className="h-4 bg-muted rounded" style={{ width: `${100 - i * 14}%`, animationDelay: `${i * 60}ms` }} />
+                  <Skeleton key={i} className="h-4" style={{ width: `${100 - i * 14}%` }} />
                 ))}
               </div>
             ) : stats.length > 0 ? (

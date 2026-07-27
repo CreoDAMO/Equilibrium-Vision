@@ -6,3 +6,4 @@
 - [CrossChainRelay fixes](crosschain-relay-fixes.md) — 4 bugs fixed (rate limiter in tests, dup-attest check order, admin-only register, block_number sync)
 - [libp2p-yamux compat shim](libp2p-yamux-compat-shim.md) — yamux 0.12.1 stays in lock by design; Config::default() uses 0.13.x; CVE not reachable via our code
 - [GitHub CI environment](github-ci-environment.md) — CI must use explicit runner PostgreSQL credentials; chain-window tests need more than the default 20s timeout
+- [p2p-bridge callback wiring](p2p-bridge-callbacks.md) — onSyncRequest/onLightNodeRequest must be assigned in initChain(); they are undefined by default; skeleton pattern uses <Skeleton> from @/components/ui/skeleton (bg-primary/10)

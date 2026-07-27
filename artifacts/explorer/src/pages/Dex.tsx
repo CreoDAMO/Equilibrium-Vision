@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useWallet } from "@/wallet/context";
 import { formatAmount, formatScientific, truncateHash, timeAgo } from "@/lib/format";
 import { ArrowRightLeft, Droplets, TrendingUp, AlertTriangle, CheckCircle2, RefreshCw, Zap } from "lucide-react";
@@ -275,7 +276,28 @@ function ArbitrageCard() {
       </CardHeader>
       <CardContent className="p-0">
         {isLoading ? (
-          <p className="p-6 text-center text-muted-foreground">Scanning pools…</p>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Cycle</TableHead>
+                <TableHead className="text-right">Hops</TableHead>
+                <TableHead className="text-right">Profit factor</TableHead>
+                <TableHead className="text-right">Optimal amount in</TableHead>
+                <TableHead className="text-right">Expected profit</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {[...Array(3)].map((_, i) => (
+                <TableRow key={i}>
+                  <TableCell><Skeleton className="h-4 w-36" /></TableCell>
+                  <TableCell className="text-right"><Skeleton className="h-4 w-6 ml-auto" /></TableCell>
+                  <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
+                  <TableCell className="text-right"><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
+                  <TableCell className="text-right"><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         ) : isError ? (
           <p className="p-6 text-center text-destructive">Arbitrage scan failed.</p>
         ) : (
@@ -411,10 +433,10 @@ export default function DexPage() {
                   <TableBody>
                     {[...Array(3)].map((_, i) => (
                       <TableRow key={i}>
-                        <TableCell><div className="h-4 w-24 bg-muted rounded animate-pulse" style={{ animationDelay: `${i * 60}ms` }} /></TableCell>
-                        <TableCell className="text-right"><div className="h-4 w-16 bg-muted rounded animate-pulse ml-auto" /></TableCell>
-                        <TableCell className="text-right"><div className="h-4 w-16 bg-muted rounded animate-pulse ml-auto" /></TableCell>
-                        <TableCell className="text-right"><div className="h-4 w-10 bg-muted rounded animate-pulse ml-auto" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                        <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
+                        <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
+                        <TableCell className="text-right"><Skeleton className="h-4 w-10 ml-auto" /></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

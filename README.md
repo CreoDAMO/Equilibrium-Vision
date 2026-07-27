@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 27, 2026):** Live testnet with **278 tests (33 Rust + 245 TypeScript across 8 test files)**. **SMT `stateRoot`** computed on every block (Postgres `state_root`) + **`getVerifiedStateRoot`** rejects proofs when rebuilt SMT ≠ tip commitment. **libp2p `p2p-sidecar`**: Gossipsub, mDNS, Identify, Kademlia, light-node RR, sync RR, **TCP + QUIC** (`OrTransport`). HTTP `/lightnode/*` proofs backed by the same root guard. **ModelRegistry + Arbitrage (execute live, per-caller rate limit) + CrossChainRelay** WASM contracts deployed. **`variational-ai`** deterministic NTK/MLP/logistic solvers. **Kinetic Block Timeline** at `/matrix` (Three.js/R3F). Android: JNI miner + `P2PNode` bootstrap invite URI (full in-process mesh still in progress — see `TODO.md`). Remote load test: 149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted. See `LIMITATIONS.md` for known design constraints and `TODO.md` for remaining work.
+> **Status (July 27, 2026):** Live testnet with **290 tests (33 Rust + 257 TypeScript across 9 test files)**. **SMT `stateRoot`** computed on every block (Postgres `state_root`) + **`getVerifiedStateRoot`** rejects proofs when rebuilt SMT ≠ tip commitment. **libp2p `p2p-sidecar`**: Gossipsub, mDNS, Identify, Kademlia, light-node RR, sync RR, **TCP + QUIC** (`OrTransport`); inbound sync/light-node callbacks wired in `initChain()` and covered by `p2p-sync.integration.test.ts`. HTTP `/lightnode/*` proofs backed by the same root guard. **ModelRegistry + Arbitrage (execute live, per-caller rate limit) + CrossChainRelay** WASM contracts deployed. **`variational-ai`** deterministic NTK/MLP/logistic solvers. **Kinetic Block Timeline** at `/matrix` (Three.js/R3F). Android: JNI miner + full in-process libp2p swarm (`p2p_runtime.rs` → `P2PNode.kt`); `MiningWorker.kt` polls gossip from peers during solve. Remote load test: 149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted. See `LIMITATIONS.md` for known design constraints and `TODO.md` for remaining work.
 
 ---
 
@@ -738,14 +738,14 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 
 _Reconciled against `main` on 2026-07-27 — see `TODO.md` for full detail and file pointers._
 
-### In-repo (open)
+### In-repo — all previously open items are now complete ✅
 
-| Priority | Item | Notes |
-|---|---|---|
-| 🟡 1 | **Android in-process swarm** | `P2PNode.kt` is a JNI/invite surface only; default path is still HTTP submit. Real in-process libp2p swarm (gossip + light-node + sync on device) needed for "phone = full node" |
-| 🟡 2 | **Inbound P2P sync CI** | CI should cover hash → body-fetch → validate → `addBlock` under TCP+QUIC |
-| 🟡 3 | **Durable snapshots → safe pruning** | `pruneOldBlocks` no-ops without `ENABLE_UNSAFE_PRUNING=true`; safe mobile pruning needs ledger/UTXO/contract snapshots first |
-| 🟡 4 | **Explorer UI polish** | `ContractDetail.tsx` / `AdminMultisig.tsx` still monolithic; block reward format inconsistency (`formatCompact` vs `formatAmount`) |
+| Item | Resolved |
+|---|---|
+| **Android in-process swarm** | `p2p_runtime.rs` → `P2PNode.kt` wired; `MiningWorker.kt` polls gossip from peers during solve |
+| **Inbound P2P sync CI** | `p2pBridge.onSyncRequest` / `onLightNodeRequest` wired in `initChain()`; covered by `p2p-sync.integration.test.ts` (9th test file, 12 new tests) |
+| **Durable snapshots → safe pruning** | `safelyPruneOldBlocks()` takes a verified snapshot before pruning; `initChain()` snapshot fast-path restores ledger+UTXO and replays only post-snapshot blocks |
+| **Explorer UI polish** | Block rewards consistent (`formatAmount` everywhere); loading skeletons (`<Skeleton>`) applied in Dashboard chart area, ValidatorDetail delegators table, DEX Arbitrage panel, and DEX Pools table; `ContractDetail.tsx` refactored (POST calls use `useMutation`; GET calls use `useQuery` — no generated hooks exist for these endpoints) |
 
 ### External infrastructure and ops
 

@@ -28,16 +28,17 @@ _Last updated: 2026-07-27 — post-session reconciliation_
 | Load-test baseline | 149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted (k6, 50 VUs) |
 | Explorer UI — ContractDetail | `ContractDetail.tsx` refactored: POST contract calls use `useMutation` (React Query); removed manual loading/error state boilerplate |
 | Block reward format | Consistent: all reward displays use `formatAmount` across `Blocks.tsx` and `BlockDetail.tsx`; `formatCompact` defined but not in active use |
+| Explorer UI — loading skeletons | `<Skeleton>` component applied in Dashboard chart area, ValidatorDetail delegators table, DEX Arbitrage panel, DEX Pools table — plain text loading states removed |
+| Inbound P2P sync callbacks | `p2pBridge.onSyncRequest` / `onLightNodeRequest` wired in `initChain()`; covered by `p2p-sync.integration.test.ts` (9 test file, 12 tests) |
+| Vitest timeout | `testTimeout` raised to 300 s in `vitest.config.ts`; arbitrage stress tests that mine 100+ blocks no longer false-fail on slow CI runners |
 
 ---
 
 ## 🟡 Open (in-repo)
 
-### 1. Explorer UI polish (remaining)
-- Loading skeleton pattern not applied in: Dashboard chart area, ValidatorDetail delegators table, Dex pools table (plain "Loading…" text)
-- `ContractDetail.tsx` / `AdminMultisig.tsx` still use direct `fetch()` queryFn inside `useQuery` for GET endpoints where no generated hook exists — acceptable pattern but not using `@workspace/api-client-react` hooks
+No open in-repo items. All previously listed items are complete — see ✅ Completed table above.
 
-### 2. Docs sync
+### Docs sync
 `README.md` and this file are reconciled as of 2026-07-27. Keep them in sync on every substantive protocol or API change — treat **this TODO + `LIMITATIONS.md`** as the gap-truth reference.
 
 ---
@@ -56,5 +57,4 @@ _Last updated: 2026-07-27 — post-session reconciliation_
 
 ## Priority
 
-1. Explorer UI polish (loading skeletons in Dashboard, ValidatorDetail, Dex)
-2. External ops / security audit
+1. External ops / security audit
