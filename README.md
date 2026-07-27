@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 10, 2026):** Mainnet-readiness hardening complete on Replit. **278 tests (33 Rust + 245 TypeScript across 8 test files)**. All security, UI, and infrastructure-preparation tasks are finished. Remote load test: 149 TPS sustained, p95 70ms, 9,009/9,009 txs accepted. Android APK CI pipeline live, Grafana monitoring stack ready. **`variational-ai` Rust crate shipped** — deterministic NTK/MLP/logistic solvers, CLI verification binary, TypeScript bridge, and SHA-256 determinism harness. **ModelRegistry + Arbitrage + CrossChainRelay WASM contracts deployed and live** — permissionless optimistic-oracle lifecycle, on-chain challenge/slash, Bellman-Ford arbitrage detection, and a federated m-of-n cross-chain attestation protocol with bonded relayers and a challenge window. **Kinetic Block Timeline** — a live 3D visualization of mined blocks at `/matrix`, driven entirely by real chain data (no mocked feeds). See `LIMITATIONS.md` for known design constraints.
+> **Status (July 27, 2026):** Live testnet with **278 tests (33 Rust + 245 TypeScript across 8 test files)**. **SMT `stateRoot`** computed on every block (Postgres `state_root`) + **`getVerifiedStateRoot`** rejects proofs when rebuilt SMT ≠ tip commitment. **libp2p `p2p-sidecar`**: Gossipsub, mDNS, Identify, Kademlia, light-node RR, sync RR, **TCP + QUIC** (`OrTransport`). HTTP `/lightnode/*` proofs backed by the same root guard. **ModelRegistry + Arbitrage (execute live, per-caller rate limit) + CrossChainRelay** WASM contracts deployed. **`variational-ai`** deterministic NTK/MLP/logistic solvers. **Kinetic Block Timeline** at `/matrix` (Three.js/R3F). Android: JNI miner + `P2PNode` bootstrap invite URI (full in-process mesh still in progress — see `TODO.md`). Remote load test: 149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted. See `LIMITATIONS.md` for known design constraints and `TODO.md` for remaining work.
 
 ---
 
@@ -84,12 +84,13 @@ android-apk-ci.yml          # Copy this to .github/workflows/ to activate APK CI
 
 ## Architecture Notes
 
-The Rust core and the TypeScript API server are two separate, parallel implementations of the protocol. There is no FFI/WASM/IPC bridge between them:
+The TypeScript API server **is** the interactive testnet. It **does** talk to the Rust mesh layer by spawning `p2p-sidecar` and communicating with it over NDJSON via `p2p-bridge.ts`:
 
-- The explorer, browser wallet, and everything at `/api/*` run entirely on `artifacts/api-server`'s TypeScript `ChainState` + Postgres — this is what you interact with when you run the project.
-- `equilibrium/` (the Rust crate) is a standalone consensus engine with its own `testnet-node` and `wallet` binaries, and mobile FFI exports. It doesn't talk to the TS server.
+- The explorer, browser wallet, and everything at `/api/*` run on `artifacts/api-server`'s TypeScript `ChainState` + Postgres. This is what you interact with when you run the project.
+- After every mined block, the API server calls `p2pBridge.gossipBlock()`, which forwards the block hash to the sidecar for Gossipsub propagation. Inbound sync/light-node requests from the sidecar are handled back in the TS chain.
+- `equilibrium/` (the Rust crate) is a standalone consensus engine with its own `testnet-node` and `wallet` binaries, and mobile FFI exports.
 
-This is intentional: the TypeScript stack is the live testnet (full explorer, wallet, REST API, Postgres persistence), while the Rust crate is the reference consensus engine and mobile SDK. Address derivation (`SHA-256(pubkeyHex).slice(0,40)`) and ZK public-input encoding (`fpEncode`, `blockHashToFields`) are kept in sync across both.
+The TypeScript stack is the live testnet (full explorer, wallet, REST API, Postgres persistence). The Rust crate is the reference consensus engine and mobile SDK. Address derivation (`SHA-256(pubkeyHex).slice(0,40)`) and ZK public-input encoding (`fpEncode`, `blockHashToFields`) are kept in sync across both.
 
 ---
 
@@ -419,9 +420,25 @@ Any address can bond EQU to a validator via `POST /api/stake`. Unbonding has a *
 
 ## Networking
 
-### Gossipsub Transaction Propagation
+### P2P Sidecar (`p2p-sidecar`)
 
-Every broadcasted transaction is gossipped to all connected peers. A simulated second-hop propagation fires 200ms later, replicating Gossipsub fan-out. All events logged in `/api/gossip`.
+The `equilibrium/src/bin/p2p-sidecar.rs` binary runs as a subprocess of the API server and drives the real libp2p stack. The TypeScript server communicates with it via NDJSON over stdio (`p2p-bridge.ts`).
+
+| Protocol | Role |
+|----------|------|
+| **Gossipsub** | Block-hash propagation; block bodies fetched on demand |
+| **mDNS** | Local peer discovery |
+| **Identify** | Peer capability and address exchange |
+| **Kademlia (server mode)** | DHT for peer routing |
+| **Light-node RR** | Remote peers can request compact SMT proofs |
+| **Sync RR** | Remote peers can request block headers and bodies |
+| **TCP + QUIC** (`OrTransport`) | Dual transport; QUIC port is `P2P_PORT + 1` by default |
+
+Bootstrap peers are configured via `BOOTSTRAP_PEERS` (multiaddr list). The sidecar emits `listen_addr` events so the TS layer can log and expose advertised addresses.
+
+### Transaction Gossip
+
+Broadcasted transactions are forwarded to all connected peers via Gossipsub. All gossip events are logged at `GET /api/gossip`.
 
 ### Headers-First Block Sync
 
@@ -719,27 +736,16 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 
 ## Remaining Work
 
-_Reconciled against the running code on 2026-07-09 — see `TODO.md` for full detail and file pointers._
+_Reconciled against `main` on 2026-07-27 — see `TODO.md` for full detail and file pointers._
 
-### Actionable in Replit
+### In-repo (open)
 
-_Updated 2026-07-10 — see below for what's now resolved._
-
-**Resolved this session:**
-
-| Item | Resolution |
-|---|---|
-| A few residual "Loading…" text spots | Dashboard chart, ValidatorDetail delegators table, and Dex pools table now use skeleton loaders matching the rest of the app |
-| CrossChainRelay in CI | `ts-test` now rebuilds `arbitrage`, `model_registry`, and `cross_chain_relay` from source via their `build.sh` scripts and fails if a checked-in `.hex` drifts from source. **Note:** authored from Replit, which can't push to `.github/workflows/` directly — the updated workflow lives at repo-root `ci.yml`; copy it over `.github/workflows/ci.yml` to activate |
-| `rollbackToHeight()` WASM block height | Already fixed in the running code — `rollbackToHeight()` calls `wasmVM.setBlockHeight(this.height)` after unwinding, mirroring `addBlock()` |
-| Architecture diagram | `docs/architecture.md` — Mermaid diagram of the full TS/Rust/WASM/observability pipeline |
-| Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md` |
-| Rust/node binary release pipeline | Root-level `release-node.yml` (same "copy into `.github/workflows/`" pattern as `android-apk-ci.yml`) cross-builds `testnet-node`/`wallet` for linux-amd64/arm64 and attaches them to GitHub Releases on `node-v*` tags |
-| Per-caller rate limit on arbitrage execute | `POST /api/arbitrage/execute` now enforces a 2-calls-per-15s sliding window per caller address, independent of the contract's shared 5-execution circuit breaker |
-|  | Automated CD | `ci.yml` |
+| Priority | Item | Notes |
 |---|---|---|
-
-
+| 🟡 1 | **Android in-process swarm** | `P2PNode.kt` is a JNI/invite surface only; default path is still HTTP submit. Real in-process libp2p swarm (gossip + light-node + sync on device) needed for "phone = full node" |
+| 🟡 2 | **Inbound P2P sync CI** | CI should cover hash → body-fetch → validate → `addBlock` under TCP+QUIC |
+| 🟡 3 | **Durable snapshots → safe pruning** | `pruneOldBlocks` no-ops without `ENABLE_UNSAFE_PRUNING=true`; safe mobile pruning needs ledger/UTXO/contract snapshots first |
+| 🟡 4 | **Explorer UI polish** | `ContractDetail.tsx` / `AdminMultisig.tsx` still monolithic; block reward format inconsistency (`formatCompact` vs `formatAmount`) |
 
 ### External infrastructure and ops
 
