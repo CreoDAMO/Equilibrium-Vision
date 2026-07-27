@@ -15,7 +15,7 @@
 
 use jni::{
     objects::{JByteArray, JLongArray, JObject, JString},
-    sys::{jboolean, jdouble, jint, jlong, JNI_FALSE, JNI_TRUE},
+    sys::{jboolean, jdouble, jint, jlong, jstring, JNI_FALSE, JNI_TRUE},
     JNIEnv,
 };
 use crate::p2p_runtime;
@@ -167,4 +167,57 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_connect(
     } else {
         JNI_FALSE
     }
+}
+
+/// Publish a solved block hash to all connected peers via Gossipsub.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun gossipBlock(hash: String): Boolean
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_gossipBlock(
+    mut env: JNIEnv,
+    _obj: JObject,
+    hash: JString,
+) -> jboolean {
+    let Ok(hash_str) = env.get_string(&hash) else { return JNI_FALSE; };
+    if p2p_runtime::gossip_block(hash_str.to_str().unwrap_or_default()) {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
+}
+
+/// Pop the next inbound block hash from the gossip queue, or an empty string
+/// if the queue is empty.  The Android mining loop uses this to learn about
+/// competing solutions that arrived while the solver was running.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun pollGossip(): String
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_pollGossip(
+    env: JNIEnv,
+    _obj: JObject,
+) -> jstring {
+    let hash = p2p_runtime::poll_gossip().unwrap_or_default();
+    env.new_string(&hash)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// Whether the in-process swarm is currently running.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun isRunning(): Boolean
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_isRunning(
+    _env: JNIEnv,
+    _obj: JObject,
+) -> jboolean {
+    if p2p_runtime::is_running() { JNI_TRUE } else { JNI_FALSE }
 }

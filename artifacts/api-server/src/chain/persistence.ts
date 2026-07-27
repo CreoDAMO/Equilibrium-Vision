@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { and, asc, desc, eq, gte, lt } from "drizzle-orm";
-import { blocksTable, transactionsTable, contractsTable } from "@workspace/db/schema";
+import { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable } from "@workspace/db/schema";
 import type { BlockRecord, TxRecord } from "./types.js";
 import type { ContractRecord } from "./wasm.js";
 import { logger } from "../lib/logger.js";
@@ -21,6 +21,7 @@ type Db = ReturnType<typeof drizzle<{
   blocksTable: typeof blocksTable;
   transactionsTable: typeof transactionsTable;
   contractsTable: typeof contractsTable;
+  stateSnapshotsTable: typeof stateSnapshotsTable;
 }>>;
 
 let _db: Db | null = null;
@@ -42,7 +43,7 @@ function getDb(): Db | null {
 
   try {
     const pool = new Pool({ connectionString: url });
-    _db = drizzle(pool, { schema: { blocksTable, transactionsTable, contractsTable } }) as unknown as Db;
+    _db = drizzle(pool, { schema: { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable } }) as unknown as Db;
     // Only mark done once we have a real db handle.
     _initDone = true;
     logger.info({ url: url.replace(/:[^@]*@/, ":***@") }, "Postgres persistence enabled");
@@ -322,6 +323,145 @@ export async function loadContractsFromDb(): Promise<ContractRecord[]> {
   }
 }
 
+// ── State snapshots ───────────────────────────────────────────────────────────
+//
+// A snapshot captures the full ledger + UTXO set at a given block height so
+// that old block rows can be safely deleted without losing the ability to
+// reconstruct the live state on restart.
+//
+// Contract storage is NOT included — it is already durable in the `contracts`
+// table's JSONB `storage` column and is loaded separately.
+
+/** Serialised form passed between chain/index.ts and persistence.ts. */
+export interface StateSnapshotData {
+  height:    number;
+  blockHash: string;
+  stateRoot: string;
+  ledger:    Record<string, { balance: number; nonce: number }>;
+  utxos:     Array<{
+    txHash:      string;
+    outputIndex: number;
+    address:     string;
+    amount:      number;
+    coinbase:    boolean;
+    blockHeight: number;
+  }>;
+}
+
+/**
+ * Upsert a state snapshot for the given block height.
+ * Called by chain/index.ts every SNAPSHOT_INTERVAL blocks and before pruning.
+ */
+export async function saveStateSnapshot(data: StateSnapshotData): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+  try {
+    await db
+      .insert(stateSnapshotsTable)
+      .values({
+        height:    data.height,
+        blockHash: data.blockHash,
+        stateRoot: data.stateRoot,
+        ledger:    data.ledger,
+        utxos:     data.utxos,
+        createdAt: Date.now(),
+      })
+      .onConflictDoUpdate({
+        target: stateSnapshotsTable.height,
+        set: {
+          blockHash: data.blockHash,
+          stateRoot: data.stateRoot,
+          ledger:    data.ledger,
+          utxos:     data.utxos,
+          createdAt: Date.now(),
+        },
+      });
+    logger.info({ height: data.height }, "State snapshot saved");
+  } catch (err) {
+    logger.warn({ err, height: data.height }, "Failed to save state snapshot");
+  }
+}
+
+/** Return the most recent state snapshot, or null if none exists. */
+export async function loadLatestSnapshot(): Promise<StateSnapshotData | null> {
+  const db = getDb();
+  if (!db) return null;
+  try {
+    const rows = await db
+      .select()
+      .from(stateSnapshotsTable)
+      .orderBy(desc(stateSnapshotsTable.height))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      height:    row.height,
+      blockHash: row.blockHash,
+      stateRoot: row.stateRoot,
+      ledger:    row.ledger as StateSnapshotData["ledger"],
+      utxos:     row.utxos  as StateSnapshotData["utxos"],
+    };
+  } catch (err) {
+    logger.warn({ err }, "Failed to load state snapshot");
+    return null;
+  }
+}
+
+/**
+ * Load ALL blocks from Postgres ordered by height without gap validation.
+ * Used by initChain when restoring from a snapshot: the caller is responsible
+ * for gap handling (replaying only post-snapshot blocks).
+ * Returns null when Postgres is unavailable or the table is empty.
+ */
+export async function loadAllBlocksRaw(): Promise<BlockRecord[] | null> {
+  const db = getDb();
+  if (!db) return null;
+  try {
+    const blockRows = await db
+      .select()
+      .from(blocksTable)
+      .orderBy(asc(blocksTable.height));
+    if (blockRows.length === 0) return null;
+
+    const txRows = await db
+      .select()
+      .from(transactionsTable)
+      .where(eq(transactionsTable.status, "confirmed"))
+      .orderBy(asc(transactionsTable.blockHeight));
+
+    const txByBlock = new Map<string, TxRecord[]>();
+    for (const row of txRows) {
+      if (!row.blockHash) continue;
+      const tx = toTxRecord(row);
+      if (!txByBlock.has(row.blockHash)) txByBlock.set(row.blockHash, []);
+      txByBlock.get(row.blockHash)!.push(tx);
+    }
+
+    return blockRows.map((b) => ({
+      hash:          b.hash,
+      height:        b.height,
+      prevHash:      b.prevHash,
+      merkleRoot:    b.merkleRoot,
+      timestamp:     b.timestamp,
+      nonce:         b.nonce,
+      difficulty:    b.difficulty,
+      residual:      b.residual,
+      residualFp:    b.residualFp ?? undefined,
+      recursionDepth: 2,
+      miner:         b.miner,
+      txCount:       b.txCount,
+      coinbaseReward: b.coinbaseReward,
+      finalized:     b.finalized,
+      zkProof:       b.zkProof as BlockRecord["zkProof"],
+      stateRoot:     b.stateRoot ?? undefined,
+      transactions:  txByBlock.get(b.hash) ?? [],
+    }));
+  } catch (err) {
+    logger.warn({ err }, "Failed to load raw blocks");
+    return null;
+  }
+}
+
 // ── Block pruning ─────────────────────────────────────────────────────────────
 //
 // Allows mobile nodes and storage-constrained deployments to shed old block
@@ -329,13 +469,18 @@ export async function loadContractsFromDb(): Promise<ContractRecord[]> {
 //
 // Strategy: keep the last `keepBlocks` blocks in full; discard anything older.
 // The genesis block (height 0) is always kept.
+//
+// Safe pruning requires a durable state snapshot at or above the prune
+// boundary.  Call saveStateSnapshot() before pruning, or use the
+// safelyPruneOldBlocks() helper in chain/index.ts which does both.
 
 /** Default number of blocks to retain. ~7 days at 15 s/block. */
 export const DEFAULT_PRUNE_KEEP = 40_320;
 
 /**
  * Prune blocks older than `keepBlocks` from Postgres.
- * No-op when running in-memory or when the chain is shorter than `keepBlocks`.
+ * Refuses (returns 0) when no snapshot covers the prune boundary — this
+ * prevents a restart from being unable to reconstruct state.
  * Returns the number of blocks deleted.
  */
 export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<number> {
@@ -343,20 +488,6 @@ export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<n
   if (!db) return 0;
 
   try {
-    // The current node persists headers and transaction bodies, but does not
-    // yet persist a complete ledger/UTXO/contract snapshot. Deleting old
-    // blocks would therefore make a restart unable to reconstruct state:
-    // loadBlocksFromDb() would see a height gap after genesis and truncate the
-    // retained suffix. Keep this operation explicitly opt-in until snapshots
-    // are durable and validated during restore.
-    if (process.env["ENABLE_UNSAFE_PRUNING"] !== "true") {
-      logger.warn(
-        "Block pruning skipped: durable state snapshots are not enabled; set ENABLE_UNSAFE_PRUNING=true only for disposable nodes",
-      );
-      return 0;
-    }
-
-    // Find the tip height first
     const tipRows = await db
       .select({ height: blocksTable.height })
       .from(blocksTable)
@@ -367,13 +498,39 @@ export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<n
     const pruneBelow = tipHeight - keepBlocks;
     if (pruneBelow <= 0) return 0; // nothing to prune
 
-    // Delete blocks with height in (0, pruneBelow) — never prune genesis (height=0).
-    // The FK cascade on transactions means rows in the transactions table are
-    // automatically removed when their parent block is deleted.
+    // Require a snapshot at or above the prune boundary so a restart can
+    // reconstruct state from snapshot + retained blocks rather than a full
+    // block replay.
+    const snapRows = await db
+      .select({ height: stateSnapshotsTable.height })
+      .from(stateSnapshotsTable)
+      .orderBy(desc(stateSnapshotsTable.height))
+      .limit(1);
+
+    const snapHeight = snapRows[0]?.height ?? -1;
+    if (snapHeight < pruneBelow - 1) {
+      // ENABLE_UNSAFE_PRUNING bypass for disposable/testing nodes.
+      if (process.env["ENABLE_UNSAFE_PRUNING"] !== "true") {
+        logger.warn(
+          { pruneBelow, snapHeight },
+          "Block pruning skipped: no state snapshot covers the prune boundary. " +
+          "Call safelyPruneOldBlocks() from chain/index.ts (saves snapshot automatically), " +
+          "or set ENABLE_UNSAFE_PRUNING=true only for disposable nodes.",
+        );
+        return 0;
+      }
+      logger.warn(
+        { pruneBelow, snapHeight },
+        "ENABLE_UNSAFE_PRUNING=true — pruning without a valid snapshot (restart will lose state)",
+      );
+    }
+
+    // Delete blocks with height in (0, pruneBelow) — never prune genesis (0).
+    // The FK cascade on transactions removes their rows automatically.
     const result = await db
       .delete(blocksTable)
       .where(and(
-        gte(blocksTable.height, 1),  // preserve genesis
+        gte(blocksTable.height, 1),
         lt(blocksTable.height, pruneBelow),
       ));
 

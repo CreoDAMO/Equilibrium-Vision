@@ -4,3 +4,4 @@ export * from "./validators";
 export * from "./contracts";
 export * from "./faucet";
 export * from "./app-releases";
+export * from "./state-snapshots";

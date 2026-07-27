@@ -82,6 +82,18 @@ export class Ledger {
   getAllAccounts(): Map<string, AccountState> {
     return this.accounts;
   }
+
+  /**
+   * Replace all account state with the given snapshot data.
+   * Used during snapshot-based chain restore so the ledger reflects the
+   * persisted checkpoint without replaying the full block history.
+   */
+  restoreAccounts(data: Record<string, { balance: number; nonce: number }>): void {
+    this.accounts.clear();
+    for (const [addr, acc] of Object.entries(data)) {
+      this.accounts.set(addr, { balance: acc.balance, nonce: acc.nonce });
+    }
+  }
 }
 
 // ── Mempool ───────────────────────────────────────────────────────────────────

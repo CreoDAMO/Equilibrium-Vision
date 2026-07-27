@@ -285,6 +285,28 @@ export class UTXOSet {
   }
 
   /**
+   * Replace all UTXO state with the given snapshot data.
+   * Used during snapshot-based chain restore so the UTXO set reflects the
+   * persisted checkpoint without replaying the full block history.
+   */
+  restoreFromSnapshot(
+    utxos: Array<{
+      txHash:      string;
+      outputIndex: number;
+      address:     string;
+      amount:      number;
+      coinbase:    boolean;
+      blockHeight: number;
+    }>,
+  ): void {
+    this.utxos.clear();
+    this.addressIndex.clear();
+    for (const u of utxos) {
+      this.add({ ...u, spent: false });
+    }
+  }
+
+  /**
    * Select UTXOs for a new transaction (greedy coin selection).
    * Returns selected UTXOs and change amount.
    */

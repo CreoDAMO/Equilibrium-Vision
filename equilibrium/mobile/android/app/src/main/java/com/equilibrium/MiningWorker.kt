@@ -219,11 +219,21 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
                     response.isSuccessful -> {
                         val json = runCatching { JSONObject(body) }.getOrNull()
                         val acceptedHeight = json?.optInt("height", -1) ?: -1
+                        val blockHash      = json?.optString("hash") ?: ""
                         Log.i(TAG, "Block accepted at height $acceptedHeight")
+
+                        // Propagate the solved block to connected peers so they
+                        // can skip re-solving this height.  No-op when the P2P
+                        // swarm is not running or no peers are connected.
+                        if (blockHash.isNotEmpty() && P2PNode.isRunning()) {
+                            val gossiped = P2PNode.gossipBlock(blockHash)
+                            Log.d(TAG, "gossipBlock($blockHash): $gossiped")
+                        }
+
                         Result.success(
                             workDataOf(
                                 "accepted_height" to acceptedHeight,
-                                "block_hash"      to (json?.optString("hash") ?: ""),
+                                "block_hash"      to blockHash,
                                 "reward"          to (json?.optLong("reward") ?: 0L),
                             )
                         )

@@ -28,6 +28,25 @@ object P2PNode {
     @JvmStatic
     external fun connect(inviteAddress: String): Boolean
 
+    /**
+     * Publish a solved block hash to all connected peers via Gossipsub.
+     * No-op (returns false) if the swarm is not running.
+     */
+    @JvmStatic
+    external fun gossipBlock(hash: String): Boolean
+
+    /**
+     * Pop the next inbound block hash received from peers, or an empty string
+     * if the queue is empty.  Call this after submitting a solved block to
+     * skip re-solving a height that a peer has already won.
+     */
+    @JvmStatic
+    external fun pollGossip(): String
+
+    /** Whether the in-process swarm is currently running. */
+    @JvmStatic
+    external fun isRunning(): Boolean
+
     fun startDefault(): Boolean = start(DEFAULT_TCP_PORT, DEFAULT_QUIC_PORT)
 
     /**
