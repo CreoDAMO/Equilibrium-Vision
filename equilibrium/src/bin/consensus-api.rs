@@ -129,6 +129,7 @@ fn handle(line: &str) -> Response {
                 difficulty: 1,
                 recursion_depth: 1,
                 residual: residual_to_fixed(0.005),
+                state_root: [0u8; 32],
             };
             let state = ChainState::default();
             let _ = StationarityProof::prove(&dummy_header, &[], &state, 0.01);
@@ -152,6 +153,7 @@ fn handle(line: &str) -> Response {
                 difficulty: 1,
                 recursion_depth: 1,
                 residual: residual_to_fixed(r.residual),
+                state_root: [0u8; 32],
             };
             let state = ChainState { height: r.height, ..ChainState::default() };
             let sp = StationarityProof::prove(&header, &[], &state, r.threshold);
@@ -186,6 +188,7 @@ fn handle(line: &str) -> Response {
                 difficulty: 1,
                 recursion_depth: 1,
                 residual: residual_to_fixed(r.residual),
+                state_root: [0u8; 32],
             };
 
             // Deserialize proof bytes from the JSON wire format
@@ -215,6 +218,7 @@ fn handle(line: &str) -> Response {
                 difficulty: r.difficulty,
                 recursion_depth: 3,
                 residual: i64::MAX,
+                state_root: [0u8; 32],
             };
             let state = ChainState {
                 cumulative_work: r.cumulative_work,

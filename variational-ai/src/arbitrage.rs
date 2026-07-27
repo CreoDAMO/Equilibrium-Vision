@@ -501,7 +501,7 @@ mod tests {
     /// a pool. Pool reserves are slightly imbalanced between even/odd pairs to
     /// create a realistic (but not trivially balanced) graph.
     fn make_fully_connected_pools(n_tokens: usize) -> Vec<PoolSnapshot> {
-        let tokens: Vec<String> = (0..n_tokens).map(|i| format!("T{}", i)).collect();
+        let tokens: Vec<String> = (0..n_tokens).map(|i| format!("T{i}")).collect();
         let mut pools = Vec::new();
         for i in 0..n_tokens {
             for j in (i + 1)..n_tokens {
@@ -608,8 +608,7 @@ mod tests {
         let product = rate_ab * rate_bc * rate_ca;
         assert!(
             product > 1.0,
-            "test setup error: product of rates {:.8} must be > 1.0 for a real cycle",
-            product
+            "test setup error: product of rates {product:.8} must be > 1.0 for a real cycle",
         );
 
         let graph = CurrencyGraph::from_pools(&pools);
@@ -617,8 +616,7 @@ mod tests {
 
         assert!(
             path.is_some(),
-            "expected Bellman-Ford to detect the small-imbalance cycle (product={:.8})",
-            product
+            "expected Bellman-Ford to detect the small-imbalance cycle (product={product:.8})",
         );
         let p = path.unwrap();
         assert!(
@@ -672,9 +670,7 @@ mod tests {
             let k_after  = pool.reserve_a * pool.reserve_b;
             assert!(
                 k_after >= k_before * 0.9999,
-                "k must not decrease materially after swap: before={:.2} after={:.2}",
-                k_before,
-                k_after,
+                "k must not decrease materially after swap: before={k_before:.2} after={k_after:.2}",
             );
         }
 

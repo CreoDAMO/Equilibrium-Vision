@@ -28,6 +28,7 @@ async fn main() {
         difficulty:      1_000_000,
         recursion_depth: 2,
         residual:        0,
+        state_root:     [0u8; 32],
     };
     let state = ChainState::default();
 

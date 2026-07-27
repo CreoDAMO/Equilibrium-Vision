@@ -96,6 +96,7 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
         difficulty:     difficulty as u64,
         recursion_depth: recursion_depth as u32,
         residual:       0,
+        state_root:     [0u8; 32],
     };
 
     let state = ChainState {

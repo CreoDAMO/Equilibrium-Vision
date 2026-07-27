@@ -124,7 +124,7 @@ fn process(input: &str) -> Result<(Response, bool), String> {
     // A mobile device solving in 2 500 ms reports ~0.50 (moderately warm).
     // ThermalGuard.kt overrides this with the real Android thermal sensor reading
     // before the value reaches the chain; this is the server-side fallback.
-    let thermal_margin = (1.0 - (elapsed_ms / THERMAL_CEILING_MS)).max(0.0).min(1.0);
+    let thermal_margin = (1.0 - (elapsed_ms / THERMAL_CEILING_MS)).clamp(0.0, 1.0);
 
     Ok((Response {
         computed_residual_fp:  computed_residual,

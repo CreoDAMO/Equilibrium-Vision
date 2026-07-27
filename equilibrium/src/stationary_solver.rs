@@ -193,6 +193,7 @@ mod tests {
             difficulty: 1_000_000,
             recursion_depth: 1,
             residual: 0,
+            state_root: [0u8; 32],
         }
     }
 

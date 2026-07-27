@@ -10,7 +10,10 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    testTimeout: 20_000,
+    // Chain-advancing integration tests intentionally mine 100+ blocks to
+    // cross challenge/finality windows. On GitHub runners this can take about
+    // a minute, so the default 20-second timeout causes false CI failures.
+    testTimeout: 120_000,
     include: ["src/**/*.test.ts"],
     pool: "forks",
     forks: { singleFork: true },

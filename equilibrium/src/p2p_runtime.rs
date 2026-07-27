@@ -12,7 +12,7 @@
 //! - Kademlia (server mode) — DHT peer routing
 //! - gossip_block(hash) — publish a solved block hash to all connected peers
 //! - poll_gossip()      — pop the next inbound block hash received from peers
-//!                        (used by the Android mining loop to detect competing solutions)
+//!   (used by the Android mining loop to detect competing solutions)
 
 use futures::{future::Either, StreamExt};
 use libp2p::{
@@ -102,11 +102,10 @@ pub fn start(listen_tcp: u16, listen_quic: u16) -> bool {
             let result = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .and_then(|runtime| {
+                .map(|runtime| {
                     runtime.block_on(async move {
                         run_swarm(rx, listen_tcp, listen_quic).await
                     });
-                    Ok(())
                 });
             if let Err(error) = result {
                 eprintln!("[p2p-runtime] stopped: {error}");

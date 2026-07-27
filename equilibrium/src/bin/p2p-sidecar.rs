@@ -400,12 +400,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("[p2p-sidecar] kad: routing table updated for {peer}");
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Kad(
-                        kad::Event::OutboundQueryProgressed { result, .. }
+                        kad::Event::OutboundQueryProgressed {
+                            result: kad::QueryResult::Bootstrap(Ok(
+                                kad::BootstrapOk { num_remaining, .. }
+                            )),
+                            ..
+                        }
                     )) => {
-                        if let kad::QueryResult::Bootstrap(Ok(kad::BootstrapOk { num_remaining, .. })) = result {
-                            if num_remaining == 0 {
-                                eprintln!("[p2p-sidecar] kad: bootstrap complete");
-                            }
+                        if num_remaining == 0 {
+                            eprintln!("[p2p-sidecar] kad: bootstrap complete");
                         }
                     }
                     SwarmEvent::Behaviour(BehaviourEvent::Kad(_)) => {}
