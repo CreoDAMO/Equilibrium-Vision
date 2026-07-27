@@ -129,6 +129,7 @@ class P2PBridge {
         env: {
           ...process.env,
           P2P_PORT:      process.env['P2P_PORT'] ?? '9000',
+          P2P_QUIC_PORT: process.env['P2P_QUIC_PORT'] ?? '9001',
           P2P_BOOTSTRAP: process.env['P2P_BOOTSTRAP'] ?? '',
         },
         stdio: ['pipe', 'pipe', 'pipe'],

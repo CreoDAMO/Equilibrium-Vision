@@ -19,9 +19,10 @@
  *   - Proofs are 256-sibling SMT proofs verifiable offline.
  */
 
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { chainState } from "../chain/index.js";
-import { SparseMerkleTree, smtKey, smtValue } from "../chain/smt.js";
+import { smtKey } from "../chain/smt.js";
+import { getVerifiedStateRoot } from "../chain/state-root.js";
 import { contributionTracker } from "../chain/contribution.js";
 import { epidemicBroadcaster } from "../chain/epidemic.js";
 import type { BlockRecord, LightBlockHeader } from "../chain/types.js";
@@ -50,34 +51,13 @@ function toLightHeader(b: BlockRecord): LightBlockHeader {
   };
 }
 
-// ── Helper: rebuild SMT from current chain state ──────────────────────────────
-//
-// Reuses the cached SMT from the last block if available. Rebuilds from
-// scratch otherwise (e.g. after a restart before any new block is mined).
-
-function getCurrentSmt(): SparseMerkleTree {
-  // Use the cached SMT from the most recent addBlock() call if available
-  if (chainState._stateSmt) return chainState._stateSmt;
-
-  // Rebuild from scratch
-  const smt = new SparseMerkleTree();
-  for (const [addr, acc] of chainState.ledger.getAllAccounts()) {
-    smt.set(smtKey("acct", addr), smtValue(`${acc.balance}:${acc.nonce}`));
+function requireVerifiedStateRoot(res: Response) {
+  const result = getVerifiedStateRoot(chainState);
+  if (!result.snapshot) {
+    res.status(result.error!.status).json({ error: result.error!.message });
+    return null;
   }
-  for (const utxo of chainState.utxoSet.getAllUnspent()) {
-    smt.set(
-      smtKey("utxo", `${utxo.txHash}:${utxo.outputIndex}`),
-      smtValue(`${utxo.amount}:${utxo.address}:${utxo.blockHeight}`),
-    );
-  }
-  for (const contract of chainState.wasmVM.listContracts()) {
-    smt.set(
-      smtKey("contract", contract.address),
-      smtValue(JSON.stringify(contract.storage)),
-    );
-  }
-  chainState._stateSmt = smt;
-  return smt;
+  return result.snapshot;
 }
 
 // ── GET /lightnode/tip ────────────────────────────────────────────────────────
@@ -190,11 +170,11 @@ router.get("/lightnode/sync", (req, res) => {
 router.get("/lightnode/proof/account/:address", (req, res) => {
   const { address } = req.params;
   const compact = req.query["compact"] !== "false"; // compact by default for mobile
-  const tip = chainState.latestBlock;
-  if (!tip) { res.status(503).json({ error: "Chain not initialised" }); return; }
+  const verified = requireVerifiedStateRoot(res);
+  if (!verified) return;
+  const { tip, smt } = verified;
 
   const acc          = chainState.ledger.getAccount(address);
-  const smt          = getCurrentSmt();
   const key          = smtKey("acct", address);
   const proof        = smt.prove(key);
   const compactProof = smt.proveCompact(key);
@@ -203,7 +183,7 @@ router.get("/lightnode/proof/account/:address", (req, res) => {
     address,
     balance:    acc.balance,
     nonce:      acc.nonce,
-    stateRoot:  tip.stateRoot ?? smt.root(),
+    stateRoot:  tip.stateRoot,
     height:     tip.height,
     /**
      * Full 256-sibling proof (8 KB) — use for maximum compatibility.
@@ -232,13 +212,12 @@ router.get("/lightnode/proof/utxo/:txHash/:index", (req, res) => {
   const { txHash, index } = req.params;
   const outputIndex = parseInt(index, 10);
   const compact     = req.query["compact"] !== "false";
-  const tip = chainState.latestBlock;
-
-  if (!tip) { res.status(503).json({ error: "Chain not initialised" }); return; }
+  const verified = requireVerifiedStateRoot(res);
+  if (!verified) return;
+  const { tip, smt } = verified;
   if (isNaN(outputIndex)) { res.status(400).json({ error: "index must be an integer" }); return; }
 
   const utxo         = chainState.utxoSet.get(txHash, outputIndex);
-  const smt          = getCurrentSmt();
   const key          = smtKey("utxo", `${txHash}:${outputIndex}`);
   const proof        = smt.prove(key);
   const compactProof = smt.proveCompact(key);
@@ -247,7 +226,7 @@ router.get("/lightnode/proof/utxo/:txHash/:index", (req, res) => {
     txHash,
     outputIndex,
     utxo:       utxo ?? null,
-    stateRoot:  tip.stateRoot ?? smt.root(),
+    stateRoot:  tip.stateRoot,
     height:     tip.height,
     proof: {
       key:      proof.key,

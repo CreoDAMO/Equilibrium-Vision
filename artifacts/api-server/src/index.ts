@@ -8,7 +8,8 @@ import { closeWorkers, warmupConsensus } from "./variational-ai/bridge.js";
 import { p2pBridge } from "./chain/p2p-bridge.js";
 import { epidemicBroadcaster } from "./chain/epidemic.js";
 import { contributionTracker } from "./chain/contribution.js";
-import { SparseMerkleTree, smtKey, smtValue } from "./chain/smt.js";
+import { smtKey } from "./chain/smt.js";
+import { getVerifiedStateRoot } from "./chain/state-root.js";
 
 const rawPort = process.env["PORT"];
 
@@ -196,23 +197,33 @@ if (Number.isNaN(port) || port <= 0) {
           }
 
           case 'proof_account': {
+            const verified = getVerifiedStateRoot(chainState);
+            if (!verified.snapshot) {
+              await p2pBridge.respondToLightNodeRequest(requestId, null, false, verified.error!.message);
+              return;
+            }
             const address = String(query.params?.['address'] ?? '');
             const acc     = chainState.ledger.getAccount(address);
-            const smt     = chainState._stateSmt ?? new SparseMerkleTree();
+            const { tip: verifiedTip, smt } = verified.snapshot;
             const key     = smtKey('acct', address);
             const proof   = smt.proveCompact(key);
-            data = { address, balance: acc.balance, nonce: acc.nonce, stateRoot: tip.stateRoot, proof };
+            data = { address, balance: acc.balance, nonce: acc.nonce, stateRoot: verifiedTip.stateRoot, proof };
             break;
           }
 
           case 'proof_utxo': {
+            const verified = getVerifiedStateRoot(chainState);
+            if (!verified.snapshot) {
+              await p2pBridge.respondToLightNodeRequest(requestId, null, false, verified.error!.message);
+              return;
+            }
             const txHash      = String(query.params?.['txHash'] ?? '');
             const outputIndex = Number(query.params?.['outputIndex'] ?? 0);
             const utxo        = chainState.utxoSet.get(txHash, outputIndex);
-            const smt         = chainState._stateSmt ?? new SparseMerkleTree();
+            const { tip: verifiedTip, smt } = verified.snapshot;
             const key         = smtKey('utxo', `${txHash}:${outputIndex}`);
             const proof       = smt.proveCompact(key);
-            data = { txHash, outputIndex, utxo: utxo ?? null, stateRoot: tip.stateRoot, proof };
+            data = { txHash, outputIndex, utxo: utxo ?? null, stateRoot: verifiedTip.stateRoot, proof };
             break;
           }
 
