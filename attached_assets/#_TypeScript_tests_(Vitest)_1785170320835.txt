@@ -1,0 +1,1150 @@
+﻿# TypeScript tests (Vitest) 
+
+
+❯ src/__tests__/arbitrage.stress.test.ts (14 tests | 6 failed) 1440481ms
+
+
+    ✓ sets up verified model and executions 1–5 are NOT rejected with the circuit-breaker error 16420ms
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 17 ⎯⎯⎯⎯⎯⎯⎯
+
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.4 Concurrent execution — circuit-breaker semantics under Promise.all > no more than 5 non-circuit-breaker results from 10 concurrent calls
+
+
+    ✓ the 6th call is rejected with 'Paused or circuit breaker tripped' 42710ms
+
+
+Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+    ✓ after unpause, the next call is no longer blocked by the circuit breaker 51968ms
+
+
+    ✓ rejects amountIn exceeding the governance cap with 'Amount exceeds the max trade amount' 67041ms
+
+
+    ✓ pool reserves are unchanged after a cap-rejected call 81933ms
+
+
+    ✓ execute succeeds and pool reserves change even when profit < minProfit 101177ms
+
+
+    × no more than 5 non-circuit-breaker results from 10 concurrent calls 120909ms
+
+
+    × advancing past the window does NOT clear a tripped breaker; unpause() does 155216ms
+
+
+    × 3 execs in window N, advance past it, 3 execs in window N+1 — never trips breaker 170414ms
+
+
+    × lowering arbitrageMaxTradeAmount rejects a previously-passing amountIn 181559ms
+
+
+    × changing arbitrageWindowBlocks live affects subsequent window checks 219269ms
+
+
+    ✓ rollbackToHeight keeps chainState.height correct and the VM stays coherent 4386ms
+
+
+    × pool reserves change after a swap even if ArbitrageUnderTarget is logged 227288ms
+
+
+    ✓ 20 randomised pool sets: detector does not crash, returns well-formed data 81ms
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:338:3
+
+
+   336|    * is not possible with the current single-owner design.
+
+
+   337|    */
+
+
+   338|   it("no more than 5 non-circuit-breaker results from 10 concurrent ca…
+
+
+     |   ^
+
+
+   339|     await unpauseArbitrage(chainState.wasmVM, contractOwner);
+
+
+   340|     chainState.governance.params.arbitrageWindowBlocks = 20;
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.5 Circuit breaker is sticky (no time-based self-heal) > advancing past the window does NOT clear a tripped breaker; unpause() does
+
+
+Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:384:3
+
+
+   382|
+
+
+   383| describe("2.5 Circuit breaker is sticky (no time-based self-heal)", ()…
+
+
+   384|   it("advancing past the window does NOT clear a tripped breaker; unpa…
+
+
+     |   ^
+
+
+   385|     await unpauseArbitrage(chainState.wasmVM, contractOwner);
+
+
+   386|     chainState.governance.params.arbitrageWindowBlocks = 5;
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.6 Sliding window correctness — exec_count resets after window rolls > 3 execs in window N, advance past it, 3 execs in window N+1 — never trips breaker
+
+
+Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:433:3
+
+
+   431|
+
+
+   432| describe("2.6 Sliding window correctness — exec_count resets after win…
+
+
+   433|   it("3 execs in window N, advance past it, 3 execs in window N+1 — ne…
+
+
+     |   ^
+
+
+   434|     await unpauseArbitrage(chainState.wasmVM, contractOwner);
+
+
+   435|     chainState.governance.params.arbitrageWindowBlocks = 5;
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.7 Governance parameter hot-reload > lowering arbitrageMaxTradeAmount rejects a previously-passing amountIn
+
+
+Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:479:3
+
+
+   477|   });
+
+
+   478|
+
+
+   479|   it("lowering arbitrageMaxTradeAmount rejects a previously-passing am…
+
+
+     |   ^
+
+
+   480|     await unpauseArbitrage(chainState.wasmVM, contractOwner);
+
+
+   481|     chainState.governance.params.arbitrageModelUpdateDelay = 1;
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.7 Governance parameter hot-reload > changing arbitrageWindowBlocks live affects subsequent window checks
+
+
+Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:503:3
+
+
+   501|   });
+
+
+   502|
+
+
+   503|   it("changing arbitrageWindowBlocks live affects subsequent window ch…
+
+
+     |   ^
+
+
+   504|     // unpause clears circuit_tripped but NOT exec_count. To guarantee…
+
+
+   505|     // window counter, we advance the chain far enough that the curren…
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.9 Partial success — swap state IS mutated even when profit < minProfit > pool reserves change after a swap even if ArbitrageUnderTarget is logged
+
+
+Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:602:3
+
+
+   600|
+
+
+   601| describe("2.9 Partial success — swap state IS mutated even when profit…
+
+
+   602|   it("pool reserves change after a swap even if ArbitrageUnderTarget i…
+
+
+     |   ^
+
+
+   603|     await unpauseArbitrage(chainState.wasmVM, contractOwner);
+
+
+   604|     chainState.governance.params.arbitrageMaxTradeAmount = 100_000_000…
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > P2P handler registration > onSyncRequest is set to a function after initChain()
+
+
+AssertionError: expected 'undefined' to be 'function' // Object.is equality
+
+
+
+
+
+
+Expected: "function"
+
+
+Received: "undefined"
+
+
+
+
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:28:44
+
+
+   26|   it("onSyncRequest is set to a function after initChain()", () => {
+
+
+   27|     // If this is undefined the sidecar's sync_request events are sile…
+
+
+   28|     expect(typeof p2pBridge.onSyncRequest).toBe("function");
+
+
+     |                                            ^
+
+
+   29|   });
+
+
+   30|
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > P2P handler registration > onLightNodeRequest is set to a function after initChain()
+
+
+AssertionError: expected 'undefined' to be 'function' // Object.is equality
+
+
+
+
+
+
+Expected: "function"
+
+
+Received: "undefined"
+
+
+
+
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:32:49
+
+
+   30|
+
+
+   31|   it("onLightNodeRequest is set to a function after initChain()", () =…
+
+
+   32|     expect(typeof p2pBridge.onLightNodeRequest).toBe("function");
+
+
+     |                                                 ^
+
+
+   33|   });
+
+
+   34|
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > onSyncRequest — block by hash > responds with the full block when requested by hash
+
+
+TypeError: p2pBridge.onSyncRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:53:23
+
+
+   51|     const spy = vi.spyOn(p2pBridge, "respondToSyncRequest").mockResolv…
+
+
+   52|     try {
+
+
+   53|       await p2pBridge.onSyncRequest!("req-sync-1", "QmTestPeer", "bloc…
+
+
+     |                       ^
+
+
+   54|
+
+
+   55|       expect(spy).toHaveBeenCalledOnce();
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > onSyncRequest — block by hash > responds with an error object for an unknown hash
+
+
+TypeError: p2pBridge.onSyncRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:67:23
+
+
+   65|     const spy = vi.spyOn(p2pBridge, "respondToSyncRequest").mockResolv…
+
+
+   66|     try {
+
+
+   67|       await p2pBridge.onSyncRequest!("req-sync-2", "QmTestPeer", "bloc…
+
+
+     |                       ^
+
+
+   68|         hash: "dead".repeat(16),
+
+
+   69|       });
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > onSyncRequest — block by hash > responds with the block when requested by height
+
+
+TypeError: p2pBridge.onSyncRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:85:23
+
+
+   83|     const spy = vi.spyOn(p2pBridge, "respondToSyncRequest").mockResolv…
+
+
+   84|     try {
+
+
+   85|       await p2pBridge.onSyncRequest!("req-sync-3", "QmTestPeer", "bloc…
+
+
+     |                       ^
+
+
+   86|         height: tip!.height,
+
+
+   87|       });
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > onSyncRequest — headers range > returns an array of headers for a valid range
+
+
+TypeError: p2pBridge.onSyncRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:104:23
+
+
+   102|     const spy = vi.spyOn(p2pBridge, "respondToSyncRequest").mockResolv…
+
+
+   103|     try {
+
+
+   104|       await p2pBridge.onSyncRequest!("req-sync-4", "QmTestPeer", "head…
+
+
+     |                       ^
+
+
+   105|
+
+
+   106|       expect(spy).toHaveBeenCalledOnce();
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > onSyncRequest — headers range > each header includes hash and height
+
+
+TypeError: p2pBridge.onSyncRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:119:23
+
+
+   117|     const spy = vi.spyOn(p2pBridge, "respondToSyncRequest").mockResolv…
+
+
+   118|     try {
+
+
+   119|       await p2pBridge.onSyncRequest!("req-sync-5", "QmTestPeer", "head…
+
+
+     |                       ^
+
+
+   120|
+
+
+   121|       const [, data] = spy.mock.calls[0]!;
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > onLightNodeRequest — tip > responds with ok:true and the current tip data
+
+
+TypeError: p2pBridge.onLightNodeRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:140:23
+
+
+   138|     const spy = vi.spyOn(p2pBridge, "respondToLightNodeRequest").mockR…
+
+
+   139|     try {
+
+
+   140|       await p2pBridge.onLightNodeRequest!("req-ln-1", "QmTestPeer", { …
+
+
+     |                       ^
+
+
+   141|
+
+
+   142|       expect(spy).toHaveBeenCalledOnce();
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > onLightNodeRequest — headers > responds with a headers list
+
+
+TypeError: p2pBridge.onLightNodeRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:161:23
+
+
+   159|     const spy = vi.spyOn(p2pBridge, "respondToLightNodeRequest").mockR…
+
+
+   160|     try {
+
+
+   161|       await p2pBridge.onLightNodeRequest!("req-ln-2", "QmTestPeer", {
+
+
+     |                       ^
+
+
+   162|         kind: "headers",
+
+
+   163|         params: { from: 0, to: 3 },
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > onLightNodeRequest — proof_account (root guard) > responds with a structured object (ok=true or ok=false with error)
+
+
+TypeError: p2pBridge.onLightNodeRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:183:23
+
+
+   181|     const spy = vi.spyOn(p2pBridge, "respondToLightNodeRequest").mockR…
+
+
+   182|     try {
+
+
+   183|       await p2pBridge.onLightNodeRequest!("req-ln-3", "QmTestPeer", {
+
+
+     |                       ^
+
+
+   184|         kind: "proof_account",
+
+
+   185|         params: { address: "a".repeat(40) },
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/17]⎯
+
+
+
+
+
+
+FAIL src/__tests__/p2p-sync.integration.test.ts > onLightNodeRequest — unknown kind > responds with ok:false for an unrecognised query kind
+
+
+TypeError: p2pBridge.onLightNodeRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:206:23
+
+
+   204|     const spy = vi.spyOn(p2pBridge, "respondToLightNodeRequest").mockR…
+
+
+   205|     try {
+
+
+   206|       await p2pBridge.onLightNodeRequest!("req-ln-4", "QmTestPeer", {
+
+
+     |                       ^
+
+
+   207|         kind: "unknown_query_type_xyz",
+
+
+   208|       });
+
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/17]⎯
+
+
+
+
+
+
+
+
+
+
+Test Files 2 failed | 7 passed (9)
+
+
+     Tests 17 failed | 240 passed (257)
+
+
+  Start at 08:49:37
+
+
+  Duration 1442.87s (transform 1.94s, setup 0ms, import 14.22s, tests 1573.77s, environment 1ms)
+
+
+
+
+
+
+
+
+
+
+Error: Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:338:3
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:384:3
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:433:3
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:479:3
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:503:3
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: Error: Test timed out in 120000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:602:3
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: AssertionError: expected 'undefined' to be 'function' // Object.is equality
+
+
+
+
+
+
+Expected: "function"
+
+
+Received: "undefined"
+
+
+
+
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:28:44
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: AssertionError: expected 'undefined' to be 'function' // Object.is equality
+
+
+
+
+
+
+Expected: "function"
+
+
+Received: "undefined"
+
+
+
+
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:32:49
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: TypeError: p2pBridge.onSyncRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:53:23
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: TypeError: p2pBridge.onSyncRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:67:23
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: TypeError: p2pBridge.onSyncRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:85:23
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: TypeError: p2pBridge.onSyncRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:104:23
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: TypeError: p2pBridge.onSyncRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:119:23
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: TypeError: p2pBridge.onLightNodeRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:140:23
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: TypeError: p2pBridge.onLightNodeRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:161:23
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: TypeError: p2pBridge.onLightNodeRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:183:23
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Error: TypeError: p2pBridge.onLightNodeRequest is not a function
+
+
+❯ src/__tests__/p2p-sync.integration.test.ts:206:23
+
+
+
+
+
+
+
+
+
+
+/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server:
+
+
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 test: `vitest run`
+
+
+Exit status 1
+
+
+Error: Process completed with exit code 1.
+
+
+0s
+0s
+0s
+0s
+0s
+0s
+0s
+
+
+
+
+
+
+## Note 
+We CANNOT update the GitHub workflows because I won't be able to push it. We can create a docs folder in the .github folder and add them there. I will copy and paste them manually if they need to be updated with all tests and everything else that has been done. From the looks of what's

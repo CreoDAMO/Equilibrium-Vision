@@ -18,6 +18,8 @@ import { deployModelRegistryIfNeeded } from "./modelRegistry.js";
 import { deployArbitrageIfNeeded } from "./arbitrage.js";
 import { deployCrossChainRelayIfNeeded } from "./crossChainRelay.js";
 import { p2pBridge } from "./p2p-bridge.js";
+import { smtKey } from "./smt.js";
+import { getVerifiedStateRoot } from "./state-root.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
 // address, but overridden by initChain() to the first genesis.json validator
@@ -313,6 +315,131 @@ export async function initChain(): Promise<void> {
   } catch (err) {
     logger.warn({ err }, "CrossChainRelay deployment check failed — continuing without it");
   }
+
+  // ── P2P inbound callbacks ──────────────────────────────────────────────────
+  // Wire the sync-request and light-node-request handlers so that inbound
+  // events from the p2p-sidecar are answered correctly.  The handlers are also
+  // exercised by the p2p-sync integration test suite (sidecar not running —
+  // tests invoke the callbacks directly).
+
+  p2pBridge.onSyncRequest = async (requestId, _fromPeerId, kind, params) => {
+    if (kind === "block") {
+      const hashParam   = typeof params["hash"]   === "string" ? params["hash"]   : undefined;
+      const heightParam = typeof params["height"] === "number" ? params["height"] : undefined;
+
+      const block = hashParam !== undefined
+        ? chainState.blocks.find((b) => b?.hash === hashParam)
+        : heightParam !== undefined
+          ? chainState.blocks[heightParam]
+          : undefined;
+
+      if (!block) {
+        await p2pBridge.respondToSyncRequest(requestId, { error: "Block not found" });
+      } else {
+        await p2pBridge.respondToSyncRequest(requestId, block);
+      }
+      return;
+    }
+
+    if (kind === "headers") {
+      const from  = typeof params["from"] === "number" ? Math.max(0, params["from"]) : 0;
+      const tipH  = chainState.height;
+      const to    = typeof params["to"]   === "number" ? Math.min(tipH, params["to"]) : tipH;
+      const limit = Math.min(500, Math.max(0, to - from + 1));
+      const headers: Record<string, unknown>[] = [];
+      for (let h = from; h < from + limit; h++) {
+        const b = chainState.blocks[h];
+        if (b) {
+          headers.push({
+            hash:       b.hash,
+            height:     b.height,
+            prevHash:   b.prevHash,
+            merkleRoot: b.merkleRoot,
+            stateRoot:  b.stateRoot ?? "0".repeat(64),
+            timestamp:  b.timestamp,
+          });
+        }
+      }
+      await p2pBridge.respondToSyncRequest(requestId, { headers });
+      return;
+    }
+
+    await p2pBridge.respondToSyncRequest(requestId, { error: `Unknown sync kind: ${kind}` });
+  };
+
+  p2pBridge.onLightNodeRequest = async (requestId, _fromPeerId, query) => {
+    const kind   = query.kind;
+    const params = query.params ?? {};
+
+    if (kind === "tip") {
+      const tip = chainState.latestBlock;
+      if (!tip) {
+        await p2pBridge.respondToLightNodeRequest(requestId, { ok: false, error: "Chain not initialised" });
+        return;
+      }
+      await p2pBridge.respondToLightNodeRequest(requestId, {
+        ok: true,
+        data: {
+          height:    tip.height,
+          hash:      tip.hash,
+          prevHash:  tip.prevHash,
+          stateRoot: tip.stateRoot ?? "0".repeat(64),
+          timestamp: tip.timestamp,
+        },
+      });
+      return;
+    }
+
+    if (kind === "headers") {
+      const from  = typeof params["from"] === "number" ? Math.max(0, params["from"]) : 0;
+      const tipH  = chainState.latestBlock?.height ?? 0;
+      const to    = typeof params["to"]   === "number" ? Math.min(tipH, params["to"]) : tipH;
+      const limit = Math.min(500, Math.max(0, to - from + 1));
+      const headers: Record<string, unknown>[] = [];
+      for (let h = from; h < from + limit; h++) {
+        const b = chainState.blocks[h];
+        if (b) {
+          headers.push({
+            hash:       b.hash,
+            height:     b.height,
+            prevHash:   b.prevHash,
+            merkleRoot: b.merkleRoot,
+            stateRoot:  b.stateRoot ?? "0".repeat(64),
+            timestamp:  b.timestamp,
+          });
+        }
+      }
+      await p2pBridge.respondToLightNodeRequest(requestId, { ok: true, data: { headers } });
+      return;
+    }
+
+    if (kind === "proof_account") {
+      const address  = typeof params["address"] === "string" ? params["address"] : "";
+      const verified = getVerifiedStateRoot(chainState);
+      if (!verified.snapshot) {
+        await p2pBridge.respondToLightNodeRequest(requestId, {
+          ok:    false,
+          error: verified.error?.message ?? "State root not available",
+        });
+        return;
+      }
+      const { tip, smt } = verified.snapshot;
+      const acc          = chainState.ledger.getAccount(address);
+      const key          = smtKey("acct", address);
+      const compactProof = smt.proveCompact(key);
+      await p2pBridge.respondToLightNodeRequest(requestId, {
+        ok: true,
+        data: { address, balance: acc.balance, nonce: acc.nonce, stateRoot: tip.stateRoot, height: tip.height, compactProof },
+      });
+      return;
+    }
+
+    // Unknown query kind — respond with ok=false so the caller can handle it
+    await p2pBridge.respondToLightNodeRequest(requestId, {
+      ok:    false,
+      error: `Unknown query kind: ${kind}`,
+    });
+  };
 }
 
 // ── Stop-safe mining loop ────────────────────────────────────────────────────

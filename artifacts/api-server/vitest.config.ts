@@ -13,7 +13,11 @@ export default defineConfig({
     // Chain-advancing integration tests intentionally mine 100+ blocks to
     // cross challenge/finality windows. On GitHub runners this can take about
     // a minute, so the default 20-second timeout causes false CI failures.
-    testTimeout: 120_000,
+    //
+    // The arbitrage stress suite calls setupVerifiedModel() per test which mines
+    // ~103 blocks synchronously — on slow CI runners each test can exceed 2 min.
+    // 300 s (5 min) gives ample headroom without masking genuine hangs.
+    testTimeout: 300_000,
     include: ["src/**/*.test.ts"],
     pool: "forks",
     forks: { singleFork: true },
