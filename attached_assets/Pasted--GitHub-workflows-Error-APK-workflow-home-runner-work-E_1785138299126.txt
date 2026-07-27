@@ -1,0 +1,652 @@
+# GitHub workflows Error
+
+## APK workflow
+
+(/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/equilibrium)
+error[E0063]: missing field `state_root` in initializer of `BlockHeader`
+  --> src/jni_bridge.rs:91:18
+   |
+91 |     let header = BlockHeader {
+   |                  ^^^^^^^^^^^ missing `state_root`
+
+For more information about this error, try `rustc --explain E0063`.
+error: could not compile `equilibrium-core` (lib) due to 1 previous error
+note: If the build failed due to a missing target, you can run this command:
+note: 
+note:     rustup target install armv7-linux-androideabi
+Error: Process completed with exit code 101.
+
+---
+
+## Rust check & clippy (equilibrium)
+Run cargo check --all-targets
+  cargo check --all-targets
+  shell: /usr/bin/bash -e {0}
+  env:
+    CARGO_HOME: /home/runner/.cargo
+    CARGO_INCREMENTAL: 0
+    CARGO_TERM_COLOR: always
+    CACHE_ON_FAILURE: false
+    Updating crates.io index
+    Checking equilibrium-core v0.2.0 (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/equilibrium)
+error[E0063]: missing field `state_root` in initializer of `chain_state::BlockHeader`
+   --> src/stationary_solver.rs:188:9
+    |
+188 |         BlockHeader {
+    |         ^^^^^^^^^^^ missing `state_root`
+
+error[E0063]: missing field `state_root` in initializer of `chain_state::BlockHeader`
+  --> src/consensus.rs:60:9
+   |
+60 |         BlockHeader {
+   |         ^^^^^^^^^^^ missing `state_root`
+
+For more information about this error, try `rustc --explain E0063`.
+error: could not compile `equilibrium-core` (lib test) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+Error: Process completed with exit code 101.
+
+—
+
+## Rust check & clippy (variational-ai)
+
+Run cargo clippy --all-targets -- -D warnings
+  cargo clippy --all-targets -- -D warnings
+  shell: /usr/bin/bash -e {0}
+  env:
+    CARGO_HOME: /home/runner/.cargo
+    CARGO_INCREMENTAL: 0
+    CARGO_TERM_COLOR: always
+    CACHE_ON_FAILURE: false
+    Checking variational-ai v0.1.0 (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/variational-ai)
+error: clamp-like pattern without using clamp function
+   --> src/bin/cli.rs:127:26
+    |
+127 |     let thermal_margin = (1.0 - (elapsed_ms / THERMAL_CEILING_MS)).max(0.0).min(1.0);
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace with clamp: `(1.0 - (elapsed_ms / THERMAL_CEILING_MS)).clamp(0.0, 1.0)`
+    |
+    = note: clamp will panic if max < min, min.is_nan(), or max.is_nan()
+    = note: clamp returns NaN if the input is NaN
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#manual_clamp
+    = note: `-D clippy::manual-clamp` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::manual_clamp)]`
+
+error: could not compile `variational-ai` (bin "variational-ai-cli") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `variational-ai` (bin "variational-ai-cli" test) due to 1 previous error
+Error: Process completed with exit code 101.
+
+—
+
+## TypeScript tests (Vitest)
+
+Skip to content
+CreoDAMO
+Equilibrium-Vision
+Repository navigation
+
+
+Code
+Issues
+Pull requests
+Agents
+Actions
+Projects
+Wiki
+Security and quality
+15
+ (15)
+
+
+Insights
+Settings
+CI
+git update #126
+All jobs
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Run details
+TypeScript tests (Vitest)
+failed 5 minutes ago in 24m 14s
+4s
+24s
+9s
+1s
+5s
+1s
+9s
+2s
+22s
+0s
+2s
+0s
+3s
+5s
+1s
+22m 40s
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/25]⎯
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.4 Concurrent execution — circuit-breaker semantics under Promise.all > no more than 5 non-circuit-breaker results from 10 concurrent calls
+
+
+Error: Test timed out in 20000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:338:3
+
+
+   336|    * is not possible with the current single-owner design.
+
+
+   337|    */
+
+
+   338|   it("no more than 5 non-circuit-breaker results from 10 concurrent ca…
+
+
+     |   ^
+
+
+   339|     await unpauseArbitrage(chainState.wasmVM, contractOwner);
+
+
+   340|     chainState.governance.params.arbitrageWindowBlocks = 20;
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/25]⎯
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.5 Circuit breaker is sticky (no time-based self-heal) > advancing past the window does NOT clear a tripped breaker; unpause() does
+
+
+Error: Test timed out in 20000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:384:3
+
+
+   382|
+
+
+   383| describe("2.5 Circuit breaker is sticky (no time-based self-heal)", ()…
+
+
+   384|   it("advancing past the window does NOT clear a tripped breaker; unpa…
+
+
+     |   ^
+
+
+   385|     await unpauseArbitrage(chainState.wasmVM, contractOwner);
+
+
+   386|     chainState.governance.params.arbitrageWindowBlocks = 5;
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/25]⎯
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.6 Sliding window correctness — exec_count resets after window rolls > 3 execs in window N, advance past it, 3 execs in window N+1 — never trips breaker
+
+
+Error: Test timed out in 20000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:433:3
+
+
+   431|
+
+
+   432| describe("2.6 Sliding window correctness — exec_count resets after win…
+
+
+   433|   it("3 execs in window N, advance past it, 3 execs in window N+1 — ne…
+
+
+     |   ^
+
+
+   434|     await unpauseArbitrage(chainState.wasmVM, contractOwner);
+
+
+   435|     chainState.governance.params.arbitrageWindowBlocks = 5;
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/25]⎯
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.7 Governance parameter hot-reload > lowering arbitrageMaxTradeAmount rejects a previously-passing amountIn
+
+
+Error: Test timed out in 20000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:479:3
+
+
+   477|   });
+
+
+   478|
+
+
+   479|   it("lowering arbitrageMaxTradeAmount rejects a previously-passing am…
+
+
+     |   ^
+
+
+   480|     await unpauseArbitrage(chainState.wasmVM, contractOwner);
+
+
+   481|     chainState.governance.params.arbitrageModelUpdateDelay = 1;
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/25]⎯
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.7 Governance parameter hot-reload > changing arbitrageWindowBlocks live affects subsequent window checks
+
+
+Error: Test timed out in 20000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:503:3
+
+
+   501|   });
+
+
+   502|
+
+
+   503|   it("changing arbitrageWindowBlocks live affects subsequent window ch…
+
+
+     |   ^
+
+
+   504|     // unpause clears circuit_tripped but NOT exec_count. To guarantee…
+
+
+   505|     // window counter, we advance the chain far enough that the curren…
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/25]⎯
+
+
+
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.9 Partial success — swap state IS mutated even when profit < minProfit > pool reserves change after a swap even if ArbitrageUnderTarget is logged
+
+
+Error: Test timed out in 20000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:602:3
+
+
+   600|
+
+
+   601| describe("2.9 Partial success — swap state IS mutated even when profit…
+
+
+   602|   it("pool reserves change after a swap even if ArbitrageUnderTarget i…
+
+
+     |   ^
+
+
+   603|     await unpauseArbitrage(chainState.wasmVM, contractOwner);
+
+
+   604|     chainState.governance.params.arbitrageMaxTradeAmount = 100_000_000…
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/25]⎯
+
+
+
+
+
+FAIL src/__tests__/crosschain.integration.test.ts > CrossChainRelay — admin challenge + slashing > rejects finalization of a challenged attestation
+
+
+Error: Test timed out in 20000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/crosschain.integration.test.ts:442:3
+
+
+   440|   });
+
+
+   441|
+
+
+   442|   it("rejects finalization of a challenged attestation", async () => {
+
+
+     |   ^
+
+
+   443|     const contractAddr = getCrossChainRelayAddress();
+
+
+   444|     if (!contractAddr) return;
+
+
+
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/25]⎯
+
+
+
+
+
+FAIL src/__tests__/models.integration.test.ts > Models API — propose -> verify (undisputed) > verify succeeds once the challenge window has elapsed, flipping status to verified
+
+
+Error: Test timed out in 20000ms.
+
+
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+
+❯ src/__tests__/models.integration.test.ts:90:3
+
+
+   88|   });
+
+
+   89|
+
+
+0s
+0s
+0s
+0s
+Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+
+
+Post job cleanup.
+
+
+Pruning is unnecessary.
+1s
+Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+
+
+Post job cleanup.
+
+
+/usr/bin/git version
+
+
+git version 2.54.0
+
+
+Temporarily overriding HOME='/home/runner/work/_temp/1fc3c28c-dfe3-4f23-968f-7c742613f851' before making global git config changes
+
+
+Adding repository directory to the temporary git global config as a safe directory
+
+
+/usr/bin/git config --global --add safe.directory /home/runner/work/Equilibrium-Vision/Equilibrium-Vision
+
+
+/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+
+
+/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+
+
+/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+
+
+http.https://github.com/.extraheader
+
+
+/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+
+
+/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+
+
+/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+
+
+/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+0s
+Print service container logs: 6cd622e9c2144a89b5d22cd0cec9ef6c_postgres16_276516
+
+
+/usr/bin/docker logs --details 40c66ec19649704fe0e8c4ac3e43be512e3be4e0faa4092a1b19f209e116548b
+
+
+2026-07-27 07:21:27.050 UTC [766] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:21:37.120 UTC [774] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:21:47.189 UTC [783] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:21:57.256 UTC [791] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:22:07.331 UTC [800] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:22:17.401 UTC [808] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:22:27.473 UTC [817] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:22:37.542 UTC [825] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:22:47.622 UTC [835] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:22:57.690 UTC [843] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:23:07.756 UTC [853] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:23:17.822 UTC [861] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:23:27.893 UTC [870] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:23:37.958 UTC [878] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:23:48.029 UTC [887] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:23:58.107 UTC [895] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:24:08.186 UTC [904] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:24:18.263 UTC [912] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:24:28.339 UTC [921] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:24:38.404 UTC [929] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:24:48.476 UTC [938] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:24:58.549 UTC [946] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:25:08.620 UTC [955] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:25:18.689 UTC [963] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:25:28.760 UTC [972] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:25:38.824 UTC [980] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:25:48.898 UTC [989] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:25:58.967 UTC [997] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:26:09.036 UTC [1006] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:26:19.104 UTC [1014] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:26:29.175 UTC [1023] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:26:39.249 UTC [1031] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:26:49.321 UTC [1040] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:26:59.387 UTC [1048] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:27:09.452 UTC [1057] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:27:19.517 UTC [1065] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:27:29.587 UTC [1074] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:27:39.658 UTC [1082] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:27:49.728 UTC [1091] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:27:59.799 UTC [1099] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:28:09.873 UTC [1108] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:28:19.939 UTC [1116] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:28:30.008 UTC [1125] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:28:40.075 UTC [1133] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:28:50.152 UTC [1142] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:29:00.221 UTC [1156] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:29:10.295 UTC [1165] FATAL:  role "root" does not exist
+
+
+2026-07-27 07:29:20.377 UTC [1173] FATAL:  role "root" does not exist
+
+
+0s
+
+
+
+## Note 
+We CANNOT update the GitHub workflows because I won't be able to push it. We can create a docs folder in the .github folder and add them there. I will copy and paste them manually if they need to be updated with all tests and everything else that has been done. From the looks of what's 

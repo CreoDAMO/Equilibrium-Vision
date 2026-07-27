@@ -1,0 +1,87 @@
+This is a project I recognize well — the Equilibrium Layer-1 blockchain (TypeScript API node + block explorer, Rust consensus engine, WASM contracts, mobile mining). It's already fully configured with workflows (Postgres, API Server, Explorer) and has a detailed replit.md.
+
+Nothing critical is missing for running it — just the usual post-reset steps (pnpm install + start workflows in order).
+
+Let's look at the previous transcript from the last session, then let's continue from where we stopped at then finish the TODO list.
+
+Got it — the previous session was mid-implementation of the three open items (Android in-process swarm, P2P sync CI, durable snapshots) but hit the quota limit before finishing. Let me assess exactly what landed vs what's still missing.
+
+Clear picture from the assessment. Two real gaps remain:
+
+Snapshot restore not wired into initChain — saveSnapshot exists but fast-path startup doesn't use it
+
+ContractDetail.tsx — still 438 lines with raw fetch() calls
+
+Let me read the exact files I need before writing anything.
+
+Now I have all the context I need. Here's the precise remaining work:
+
+initChain snapshot fast-path — persistence layer is complete but initChain still does full block replay without ever calling loadLatestSnapshot
+
+ContractDetail.tsx — useQuery wraps the GET fetches but uses raw fetch() queryFns instead of generated hooks; the two POST mutations in CallPanel/RawCallPanel are fine as useMutation
+
+Block reward format — both Blocks.tsx and BlockDetail.tsx already use formatAmount consistently; just verify and mark resolved
+
+Let me check the generated hooks and DB schema before writing anything.
+
+I have everything I need. The generated hooks don't cover /api/contracts/* endpoints (only arbitrage/model-registry), so useQuery with fetch queryFn is already correct for the GETs. The real fixes are:
+
+initChain snapshot fast-path — wire loadLatestSnapshot → restore state → replay only post-snapshot blocks
+
+Periodic snapshot saving in runMiningCycle
+
+safelyPruneOldBlocks export from chain/index.ts
+
+ContractDetail POST mutations — convert to useMutation
+
+Block reward format — already consistent, remove formatCompact dead export
+
+Let me check UTXOSet's restore interface quickly, then write all changes in parallel.
+
+Now I have everything I need. Let me implement all changes in parallel:
+
+Now let me wire the snapshot fast-path into initChain and convert the ContractDetail mutations in parallel.
+
+Now I need to: close the else branch in initChain, fix CallPanel result rendering, convert RawCallPanel to useMutation, and add safelyPruneOldBlocks + periodic snapshot saving. Let me read the current state of both files first.
+
+I can see the issues clearly. Let me fix all remaining items in parallel:
+
+Now I need to add safelyPruneOldBlocks and periodic snapshot saving to the mining loop. Let me read the current state of those sections.
+
+Now I'll add safelyPruneOldBlocks, periodic snapshot saving in the mining loop, and fix the unused import in one batch.
+
+Let me now fix the unused mineNextBlock import, verify the TypeScript compiles, and check that the explorer builds correctly — all in parallel.
+
+The TS6305 errors are pre-existing (lib .d.ts files need building). Let me build libs first, then get accurate error counts for my changes specifically.
+
+No errors in my changed files. Let me run the full test suite and start the workflows in parallel.
+
+Postgres is up. Let me start the API server and explorer, and run tests in parallel.
+
+The API server starts cleanly and chains from Postgres. Let me get the full test summary and verify the app in the browser.
+
+API started fine (port collision with the background instance). Let me verify the test suite quickly and take a screenshot to confirm the app is running.
+
+Let me run just the unit tests (fast) and start the managed workflows in parallel.
+
+All 41 unit tests pass. Let me start the proper managed workflows and verify the app.
+
+Good. Now let me update TODO.md to reflect what was completed, then propose follow-ups and mark the task done.
+
+Let me update memory and mark the task complete in parallel.
+
+Three issues to fix: (1) commit working-tree changes, (2) blocks array must be height-indexed (sparse), not length-based after pruning, (3) difficulty must be set from snapshot block before post-snapshot replay. Let me read the current snapshot path and fix all three.
+
+Now I'll fix all three issues and commit in one coordinated pass.
+
+Now let me verify the fix typechecks, run unit tests, and commit — all in parallel.
+
+Typecheck clean, 41/41 unit tests pass. Now commit and mark complete.
+
+Three more correctness issues to fix before the review passes: snapshot/block alignment validation, guard when blocks are absent after snapshot load, and hash integrity check. Let me implement all three and also add an integration test covering the flagged scenarios.
+
+I need to restructure the snapshot fast-path to add three validation gates, then write integration tests for each scenario. Let me do this now.
+
+Let me read the current state of initChain to see the structure after my edit, and also look at the test setup for writing the snapshot integration tests.
+
+You've reached your daily free quota limit. It will reset at 12:00 AM UTC.
