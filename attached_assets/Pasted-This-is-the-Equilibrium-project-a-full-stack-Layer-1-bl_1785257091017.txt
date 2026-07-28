@@ -1,0 +1,127 @@
+This is the Equilibrium project — a full-stack Layer-1 blockchain you've been building here on Replit, now reimported from GitHub. It's a large monorepo with:
+
+Rust AI solver (variational-ai/) and core blockchain (equilibrium/)
+
+TypeScript/Node.js API server + React explorer (artifacts/)
+
+WASM smart contracts (contracts/)
+
+PostgreSQL for persistence, pre-configured workflows for Postgres, the VAI harness, and benchmarks
+
+290 tests (Rust + TypeScript), Android JNI bridge, libp2p P2P networking
+
+There's a few things left to do, we can do them now
+
+Which items do you want to tackle first?
+
+Where do you want to start?
+
+Protocol gaps — phone sync/lightnode RR client, phone serves phones, two-process mesh CI, Groth16 pairing check
+
+Additional comments
+
+Let's finish the protocol gaps first this way we can focus on just that for now. You may see something the map messed 
+
+If Android UI: which items? (select all that apply)
+
+No answer
+
+If Protocol: which items? (select all that apply)
+
+Phone sync/lightnode RR client (request block bodies from peers), Phone serves other phones (lightnode + sync RR server in p2p_runtime), Two-process P2P mesh CI (build p2p-sidecar in CI), Full Groth16 pairing check in TypeScript
+
+Additional comments
+
+We are setting the stage for a new beginning 😁
+
+Let me understand the four protocol gaps to implement:
+
+Phone sync/lightnode RR client - p2p_runtime.rs needs query_sync and lightnode RR client functions so the phone can request block bodies/headers from peers
+
+Phone serves other phones - p2p_runtime.rs needs a lightnode + sync RR server so phones can answer other phones' requests
+
+Two-process P2P mesh CI - need to add cargo build --release --bin p2p-sidecar to ci.yml and unskip the mesh CI test
+
+Full Groth16 pairing check in TypeScript - the TS fallback currently omits the pairing check
+
+Now I'm looking at the relevant files to see what's already in place before making changes.
+
+All four protocol gaps. Let me explore the relevant code thoroughly before making any changes.
+
+Good picture. Let me read the actual source files before writing a single line — the explorer reports have some contradictions with TODO.md that I need to resolve.
+
+Now let me read the JNI bridge and LIMITATIONS to understand the actual remaining gaps before writing code.
+
+Now I have a complete picture. The reality is more complete than TODO.md suggests — both the sync RR client and server are already in p2p_runtime.rs. The actual gaps are:
+
+JNI bridge — querySyncBlocks (range) and pushBlockBody not exposed to Kotlin
+
+Lightnode server on mobile — headers kind not served (only tip answered, others rejected)
+
+CI — no cargo build --release --bin p2p-sidecar step to un-skip the mesh test
+
+Groth16 pairing — TS verifier omits the pairing check; prover generates points that won't satisfy it
+
+Let me read CI and Kotlin files before writing any code.
+
+Now I have the complete picture. Let me implement all four gaps in parallel:
+
+zkproof.ts — Add VK trapdoor scalars, fix prover to generate pairing-valid proofs, add full Groth16 pairing check
+
+p2p_runtime.rs — Add headers serving to the lightnode RR server (block ring → header fields)
+
+jni_bridge.rs — Add querySyncBlocks (range) and pushBlockBody JNI bindings
+
+P2PNode.kt — Add matching Kotlin external declarations
+
+ci.yml — Add cargo build --release --bin p2p-sidecar to un-skip the mesh test
+
+Now let me tackle the two remaining changes: the zkproof.ts trapdoor prover + pairing verifier, and the ci.yml sidecar build step.
+
+Good, I have the full file. Now I'll write all the remaining changes in one batch — the zkproof.ts trapdoor prover + full pairing verifier, and the ci.yml sidecar build step.
+
+Now I need to add the p2p-sidecar build step to ci.yml. Let me add it after the variational-ai CLI binaries copy step and before the WASM contracts cache. Let me also update the ci.yml header comment.
+
+Now add the sidecar build step to ci.yml and update the header:
+
+Now let me verify the changes compile correctly. I should check:
+
+The Rust changes (p2p_runtime.rs, jni_bridge.rs) - run cargo check
+
+The TypeScript changes (zkproof.ts) - run typecheck
+
+Let me also check if there are any existing tests for zkproof that I should run to verify the pairing check works.
+
+Let me run the checks in parallel.
+
+Let me verify the Rust compiles cleanly and run the ZK proof tests to confirm the pairing check works.
+
+I stopped you because we can't make changes to the ci.yml that's in the GitHub workflows because I won't be able to push it. You can create an updated ci.yml and add it to the docs folder I will copy and paste it in manual. Let's undo the ci.yml changes
+
+Got it. Let me revert ci.yml and put the updated version in docs/ instead.
+
+I need to:
+
+Revert ci.yml to its original state
+
+Create docs/ci.yml with the updated version (including the sidecar build step + updated comments)
+
+Let me do both in parallel.
+
+Reverting ci.yml and writing the updated version to docs/ simultaneously.
+
+Good. Let me verify the code compiles cleanly and the tests pass before marking done.
+
+The TS errors are just unbuilt lib declarations — need to build libs first. Let me check zkproof.ts specifically.
+
+Rust is clean. Let me verify the TS types on zkproof.ts now that libs are built, then run the Vitest chain unit tests.
+
+All 41 unit tests pass including verifyZkProof accepts a freshly generated valid proof — that's the full pairing check exercising all 4 BN254 pairings and confirming the trapdoor formula is correct.
+
+Let me now read the follow-up-tasks skill and wrap up.
+
+Everything checks out. Let me update TODO.md, then propose follow-ups and mark complete.
+
+Let me now update memory, propose follow-up tasks, and mark the task complete.
+
+You've reached your monthly free quota limit. It will reset on August 26, 2026.
