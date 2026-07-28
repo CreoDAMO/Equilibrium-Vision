@@ -3,6 +3,8 @@ import type {
   ValidatorRecord, SlashEvent, FinalityRound, FinalityVote,
   DexPool, LiquidityPosition, SwapEvent, StakeRecord, UnbondingEntry, GossipEvent,
 } from "./types.js";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { hexToBytes, bytesToHex } from "@noble/curves/abstract/utils.js";
 import { SparseMerkleTree, smtKey, smtValue } from "./smt.js";
 import { merkleRoot, randomHex, addressFromSeed, hash256 } from "./crypto.js";
 import { solveBlock } from "../variational-ai/bridge.js";
@@ -186,6 +188,10 @@ export class ChainState {
 
   // WASM smart contract VM
   wasmVM = new WasmVM();
+
+  // BFT: real Ed25519 vote keypairs for each validator (testnet: held in-process)
+  private validatorKeys = new Map<string, Uint8Array>();    // address → pubkey
+  private validatorPrivKeys = new Map<string, Uint8Array>(); // address → privkey
 
   /** Cached Sparse Merkle Tree for the current chain tip. Rebuilt on each addBlock(). */
   _stateSmt: SparseMerkleTree | null = null;
@@ -546,13 +552,30 @@ export class ChainState {
       const validatorIdx = activeValidators.indexOf(v);
       const participates = (block.height % 20) !== (validatorIdx % 20);
       if (participates) {
-        votes.push({
-          validatorAddress: v.address,
-          blockHash: block.hash,
-          height: block.height,
-          signature: hash256(`vote-${v.address}-${block.hash}`),
-          timestamp: block.timestamp,
-        });
+        // SECURITY FIX: real Ed25519 signatures over the vote message instead of
+        // a forgeable hash. Any validator without registered keys is skipped.
+        const privKey = this.validatorPrivKeys.get(v.address);
+        const pubKey  = this.validatorKeys.get(v.address);
+        if (!privKey || !pubKey) {
+          // No key registered — validator doesn't participate in this BFT round
+        } else {
+          const voteMsg = Buffer.concat([
+            Buffer.from("equilibrium-bft-v1"),
+            Buffer.from(block.hash),
+            Buffer.from(block.height.toString()),
+          ]);
+          const sig = ed25519.sign(voteMsg, privKey);
+          // Verify our own signature immediately (paranoia)
+          if (ed25519.verify(sig, voteMsg, pubKey)) {
+            votes.push({
+              validatorAddress: v.address,
+              blockHash: block.hash,
+              height: block.height,
+              signature: bytesToHex(sig),
+              timestamp: block.timestamp,
+            });
+          }
+        }
         v.blocksVoted += 1;
         // Update uptime
         v.uptime = Math.min(1.0, v.uptime + 0.001);
@@ -587,6 +610,18 @@ export class ChainState {
       this.finalizedHeight = block.height;
       this.blocks[block.height]!.finalized = true;
     }
+  }
+
+  /** Register a validator's Ed25519 keypair for BFT voting (testnet only). */
+  registerValidatorKey(address: string, pubkeyHex: string, privkeyHex: string): void {
+    this.validatorKeys.set(address, hexToBytes(pubkeyHex));
+    this.validatorPrivKeys.set(address, hexToBytes(privkeyHex));
+  }
+
+  /** Remove validator keys (e.g. on unbond). */
+  unregisterValidatorKey(address: string): void {
+    this.validatorKeys.delete(address);
+    this.validatorPrivKeys.delete(address);
   }
 
   // ── Validator management ─────────────────────────────────────────────────────

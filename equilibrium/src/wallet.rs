@@ -1,8 +1,13 @@
 use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier, Signature};
 use sha2::{Sha256, Digest};
-use rand::rngs::OsRng;
+use rand::{rngs::OsRng, RngCore};
 use serde::{Serialize, Deserialize};
 use std::{fmt, fs, path::Path};
+use pbkdf2::pbkdf2_hmac;
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
 
 /// 20-byte address derived from SHA-256(public_key)[..20]
 pub type Address = [u8; 20];
@@ -71,16 +76,32 @@ pub struct SignedTx {
     pub public_key: [u8; 32],
 }
 
+/// Chain identifier for replay protection across forks and networks.
+/// Derived from genesis hash or configured at node startup.
+#[derive(Clone, Debug)]
+pub struct ChainConfig {
+    pub chain_id: u64,
+}
+
+static CHAIN_CONFIG: std::sync::OnceLock<ChainConfig> = std::sync::OnceLock::new();
+
+pub fn set_chain_config(cfg: ChainConfig) {
+    let _ = CHAIN_CONFIG.set(cfg);
+}
+
 impl SignedTx {
     /// Canonical bytes that are signed/verified (everything except signature).
+    /// Includes chain_id as the last 8 bytes for replay protection.
     pub fn signing_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(20 + 20 + 8 + 8 + 8 + 32);
+        let chain_id = CHAIN_CONFIG.get().map(|c| c.chain_id).unwrap_or(0);
+        let mut buf = Vec::with_capacity(20 + 20 + 8 + 8 + 8 + 32 + 8);
         buf.extend_from_slice(&self.from);
         buf.extend_from_slice(&self.to);
         buf.extend_from_slice(&self.amount.to_le_bytes());
         buf.extend_from_slice(&self.fee.to_le_bytes());
         buf.extend_from_slice(&self.nonce.to_le_bytes());
         buf.extend_from_slice(&self.public_key);
+        buf.extend_from_slice(&chain_id.to_le_bytes());
         buf
     }
 
@@ -156,7 +177,7 @@ impl Wallet {
 
     // ── Keystore ──────────────────────────────────────────────────────────────
 
-    /// Persist the private key to a file (unencrypted — encrypt before production use).
+    /// Persist the private key to a file (unencrypted — for dev/testing only).
     pub fn save(&self, path: &Path) -> Result<(), WalletError> {
         let ks = KeystoreFile {
             version: 1,
@@ -168,10 +189,77 @@ impl Wallet {
         fs::write(path, json).map_err(|e| WalletError::Io(e.to_string()))
     }
 
-    /// Load a wallet from a keystore file produced by `save`.
-    pub fn load(path: &Path) -> Result<Self, WalletError> {
+    /// Encrypt and save the wallet to disk using PBKDF2-HMAC-SHA256 + AES-256-GCM.
+    ///
+    /// # Security
+    /// - PBKDF2 with 600,000 iterations (OWASP 2023 recommendation)
+    /// - AES-256-GCM with random 96-bit nonce per encryption
+    /// - Salt is 16 bytes random, unique per keystore
+    pub fn save_encrypted(&self, path: &Path, password: &str) -> Result<(), WalletError> {
+        let mut salt = [0u8; 16];
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut salt);
+        OsRng.fill_bytes(&mut nonce_bytes);
+
+        let mut key = [0u8; 32];
+        pbkdf2_hmac::<Sha256>(password.as_bytes(), &salt, 600_000, &mut key);
+
+        let cipher = Aes256Gcm::new_from_slice(&key)
+            .map_err(|_| WalletError::InvalidAddress)?;
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let plaintext = self.private_key_bytes();
+        let ciphertext = cipher
+            .encrypt(nonce, plaintext.as_ref())
+            .map_err(|_| WalletError::Io("encryption failed".to_string()))?;
+
+        let ks = EncryptedKeystore {
+            version: 2,
+            salt: hex::encode(salt),
+            nonce: hex::encode(nonce_bytes),
+            ciphertext: hex::encode(ciphertext),
+            address: address_to_hex(&self.address),
+        };
+        let json = serde_json::to_string_pretty(&ks)
+            .map_err(|e| WalletError::Io(e.to_string()))?;
+        fs::write(path, json).map_err(|e| WalletError::Io(e.to_string()))
+    }
+
+    /// Decrypt and load a wallet from an encrypted keystore (v2) file.
+    pub fn load_encrypted(path: &Path, password: &str) -> Result<Self, WalletError> {
         let raw = fs::read_to_string(path)
             .map_err(|e| WalletError::Io(e.to_string()))?;
+        let ks: EncryptedKeystore = serde_json::from_str(&raw)
+            .map_err(|e| WalletError::Io(e.to_string()))?;
+
+        let salt = hex::decode(&ks.salt).map_err(|_| WalletError::InvalidAddress)?;
+        let nonce_bytes = hex::decode(&ks.nonce).map_err(|_| WalletError::InvalidAddress)?;
+        let ciphertext = hex::decode(&ks.ciphertext).map_err(|_| WalletError::InvalidAddress)?;
+
+        let mut key = [0u8; 32];
+        pbkdf2_hmac::<Sha256>(password.as_bytes(), &salt, 600_000, &mut key);
+
+        let cipher = Aes256Gcm::new_from_slice(&key)
+            .map_err(|_| WalletError::InvalidAddress)?;
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let sk_bytes = cipher
+            .decrypt(nonce, ciphertext.as_ref())
+            .map_err(|_| WalletError::BadSignature)?; // wrong password → bad tag
+
+        let arr: [u8; 32] = sk_bytes.try_into().map_err(|_| WalletError::InvalidAddress)?;
+        Ok(Self::from_bytes(&arr))
+    }
+
+    /// Load a wallet from a keystore file (auto-detects v1 plaintext or v2 encrypted).
+    pub fn load(path: &Path, password: &str) -> Result<Self, WalletError> {
+        let raw = fs::read_to_string(path)
+            .map_err(|e| WalletError::Io(e.to_string()))?;
+        // Try v2 (encrypted) first
+        if serde_json::from_str::<EncryptedKeystore>(&raw).is_ok() {
+            return Self::load_encrypted(path, password);
+        }
+        // Fall back to v1 (plaintext) — auto-migrate on next save_encrypted call
         let ks: KeystoreFile = serde_json::from_str(&raw)
             .map_err(|e| WalletError::Io(e.to_string()))?;
         let bytes = hex::decode(&ks.private_key)
@@ -187,13 +275,24 @@ impl fmt::Display for Wallet {
     }
 }
 
-// ── Keystore file schema ──────────────────────────────────────────────────────
+// ── Keystore file schemas ─────────────────────────────────────────────────────
 
+/// v1 keystore — unencrypted (legacy, dev-only).
 #[derive(Serialize, Deserialize)]
 struct KeystoreFile {
     version:     u32,
     private_key: String,
     address:     String,
+}
+
+/// v2 keystore — PBKDF2-HMAC-SHA256 + AES-256-GCM encrypted.
+#[derive(Serialize, Deserialize)]
+struct EncryptedKeystore {
+    version:    u32,
+    salt:       String,
+    nonce:      String,
+    ciphertext: String,
+    address:    String,
 }
 
 // ── Ledger (in-memory account state) ─────────────────────────────────────────

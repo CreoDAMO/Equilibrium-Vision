@@ -140,18 +140,27 @@ const PARAM_BOUNDS: Record<keyof ChainParameters, { min: number; max: number }> 
 const QUORUM_PCT = 0.334;
 /** Pass: simple majority of participating votes (> 50 %). */
 const PASS_PCT = 0.5;
-/** Voting window: 7 days expressed in seconds (testnet: 10 minutes). */
-const VOTING_WINDOW_S = 600; // 10 min for testnet
+// MAINNET SAFETY: all timing parameters are configurable via environment
+// variables so testnet (fast) and mainnet (slow) can use the same code.
+// Missing env vars fall back to mainnet-safe defaults, NOT testnet speeds.
+const IS_TESTNET = process.env["EQUILIBRIUM_NETWORK"] === "testnet";
+
+/** Voting window: 7 days mainnet default, 10 minutes testnet. */
+const VOTING_WINDOW_S = IS_TESTNET
+  ? 600
+  : Number(process.env["GOV_VOTING_WINDOW_S"] ?? 604_800); // 7 days
 
 /**
  * Execution timelock: mandatory delay between a proposal passing and it being
  * applied on-chain.  Gives token holders time to react to an unexpected result.
- * Testnet: 5 minutes.  Override with GOVERNANCE_TIMELOCK_S env var.
+ * Mainnet default: 2 days.  Testnet: 5 minutes.  Override with GOVERNANCE_TIMELOCK_S.
  *
  * The Drift Protocol ($286 M) attack exploited instant execution of pre-signed
  * admin transactions — a timelock would have made it detectable before impact.
  */
-const EXECUTION_DELAY_S = Number(process.env["GOVERNANCE_TIMELOCK_S"] ?? 300); // 5 min testnet default
+const EXECUTION_DELAY_S = IS_TESTNET
+  ? Number(process.env["GOVERNANCE_TIMELOCK_S"] ?? 300)
+  : Number(process.env["GOVERNANCE_TIMELOCK_S"] ?? 172_800); // 2 days mainnet default
 
 let proposalCounter = 0;
 

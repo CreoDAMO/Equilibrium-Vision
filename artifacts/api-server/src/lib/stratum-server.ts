@@ -1,5 +1,6 @@
 import net from "node:net";
 import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { logger } from "./logger.js";
 import { broadcast } from "./ws-server.js";
 import { merkleRoot, hash256 } from "../chain/crypto.js";
@@ -13,6 +14,7 @@ import { RateLimiter, ReplaySet } from "./submission-guard.js";
 // valid block — same constant used by the /blocks/submit HTTP route.
 const RESIDUAL_THRESHOLD = 1e-7;
 const BASE_REWARD        = 50_000_000;
+const VAI_CLI_PATH = process.env["VAI_CLI_PATH"] || "./variational-ai-cli";
 
 // ── Stratum v1 mining pool protocol ──────────────────────────────────────────
 //
@@ -286,20 +288,52 @@ export class StratumServer {
       return;
     }
 
-    const residual = Number(residualStr);
-    if (!Number.isFinite(residual) || residual <= 0) {
+    const claimedResidual = Number(residualStr);
+    if (!Number.isFinite(claimedResidual) || claimedResidual <= 0) {
       logger.warn({ worker: session.worker, job: jobId }, "Stratum submit: missing or invalid residual");
       this.respond(session.socket, req.id, false, [23, "Invalid residual: must be a positive finite number", null]);
-      return;
-    }
-    if (residual >= RESIDUAL_THRESHOLD) {
-      logger.info({ worker: session.worker, job: jobId, residual, threshold: RESIDUAL_THRESHOLD }, "Stratum share rejected: residual above threshold");
-      this.respond(session.socket, req.id, false, [23, `Residual ${residual} does not meet threshold ${RESIDUAL_THRESHOLD}`, null]);
       return;
     }
 
     const parsedNtime = ntimeHex ? parseInt(ntimeHex, 16) : NaN;
     const parsedNonce = nonceHex ? parseInt(nonceHex, 16) : NaN;
+
+    // SECURITY FIX: Re-verify the solver output instead of trusting the miner's
+    // submitted residual. Spawn the variational-ai CLI to independently validate.
+    const verifyReq = JSON.stringify({
+      blockHash: prev.hash,
+      height: prev.height,
+      nonce: Number.isFinite(parsedNonce) ? parsedNonce : 0,
+      difficulty: prev.difficulty,
+      residual: claimedResidual,
+    });
+
+    let residual: number;
+    try {
+      const output = execFileSync(VAI_CLI_PATH, [], {
+        input: verifyReq,
+        timeout: 10_000,
+        encoding: "utf8",
+        killSignal: "SIGKILL",
+      });
+      const result = JSON.parse(output.trim()) as { valid: boolean; residual?: number };
+      if (!result.valid) {
+        logger.warn({ worker: session.worker, job: jobId }, "Stratum share: residual verification failed");
+        this.respond(session.socket, req.id, false, [22, "Residual verification failed", null]);
+        return;
+      }
+      residual = result.residual ?? claimedResidual;
+    } catch {
+      logger.warn({ worker: session.worker, job: jobId }, "Stratum share: unable to verify residual via CLI");
+      this.respond(session.socket, req.id, false, [22, "Unable to verify residual", null]);
+      return;
+    }
+
+    if (residual >= RESIDUAL_THRESHOLD) {
+      logger.info({ worker: session.worker, job: jobId, residual, threshold: RESIDUAL_THRESHOLD }, "Stratum share rejected: residual above threshold");
+      this.respond(session.socket, req.id, false, [23, `Residual ${residual} does not meet threshold ${RESIDUAL_THRESHOLD}`, null]);
+      return;
+    }
 
     // ── ntime drift guard ────────────────────────────────────────────────────
     // Reject submissions whose claimed ntime deviates more than 2 hours from

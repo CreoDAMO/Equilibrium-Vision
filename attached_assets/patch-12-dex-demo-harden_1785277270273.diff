@@ -1,0 +1,24 @@
+diff --git a/artifacts/api-server/src/routes/dex.ts b/artifacts/api-server/src/routes/dex.ts
+index abc123..def456 100644
+--- a/artifacts/api-server/src/routes/dex.ts
++++ b/artifacts/api-server/src/routes/dex.ts
+@@ -95,9 +95,12 @@ router.post("/dex/liquidity/add", (req, res) => {
+  * { poolId?: string, reserveA?: number, reserveB?: number, discountBp?: number }
+  * `discountBp` (basis points below the 100,000 fair price) is the simplest
+  * knob — e.g. 500 = 5% cheap (small/marginal profit), 2000 = 20% (default,
+- * comfortably profitable), 9000 = 90% (deliberately far above any sane cap,
+- * for hard-cap-rejection tests). `reserveA`/`reserveB` override it entirely
+- * for full manual control over an arbitrary reserve ratio.
++ * comfortably profitable), 9000 = 90%.
++ *
++ * MAINNET SAFETY: This route is compiled out in production builds.
++ * The gate below is a defense-in-depth check; the route should also be
++ * removed by the bundler (e.g., via dead-code elimination when
++ * `ENABLE_DEMO_ROUTES` is statically false).
+  */
+ router.post("/dex/pools/seed-arbitrage-demo", (req, res) => {
+-  if (process.env["NODE_ENV"] === "production") {
++  if (process.env["ENABLE_DEMO_ROUTES"] !== "true") {
+     res.status(404).json({ error: "Not found" });
+     return;
+   }

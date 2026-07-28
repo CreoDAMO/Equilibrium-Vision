@@ -1,0 +1,100 @@
+diff --git a/artifacts/api-server/src/chain/state.ts b/artifacts/api-server/src/chain/state.ts
+index abc123..def456 100644
+--- a/artifacts/api-server/src/chain/state.ts
++++ b/artifacts/api-server/src/chain/state.ts
+@@ -1,5 +1,6 @@
+ import { createHash } from "crypto";
+ import { ed25519 } from "@noble/curves/ed25519.js";
++import { hexToBytes, bytesToHex } from "@noble/curves/abstract/utils.js";
+ import type { Block, Transaction, ChainStatus } from "../types.js";
+ import { SparseMerkleTree } from "./smt.js";
+ import { WasmVM } from "./wasm.js";
+@@ -45,6 +46,9 @@ export class ChainState {
+   private validators: Validator[] = [];
+   private delegations: Delegation[] = [];
+   private wasmVM = new WasmVM();
++  // BFT: real Ed25519 vote signatures instead of mock hashes
++  private validatorKeys = new Map<string, Uint8Array>(); // address -> pubkey
++  private validatorPrivKeys = new Map<string, Uint8Array>(); // address -> privkey (testnet only)
+
+   constructor(genesis: GenesisConfig) {
+     this.genesis = genesis;
+@@ -180,15 +184,28 @@ export class ChainState {
+   }
+
+   /**
+-   * BFT finality round — replaces deterministic mock signatures with
+-   * real Ed25519 signatures over the vote message.
++   * BFT finality round — real Ed25519 signatures over the vote message.
++   * 
++   * SECURITY FIX (M6): Previously used hash256(`vote-${addr}-${hash}`) which
++   * is forgeable by anyone who knows the address. Now each validator signs
++   * `sha256("equilibrium-bft-v1" || block_hash || height)` with their
++   * Ed25519 private key, and the round only counts votes with valid signatures.
+    */
+   private runFinalityRound(block: Block): void {
+     const bonded = this.validators.filter((v) => v.bonded);
+     if (bonded.length === 0) return;
+
+     const threshold = Math.ceil((bonded.reduce((s, v) => s + v.stake, 0) * 2) / 3);
+-    const votes = bonded.map((v) => ({
++    const voteMsg = createHash("sha256")
++      .update("equilibrium-bft-v1")
++      .update(block.hash)
++      .update(Buffer.from(BigInt(block.height).toString()))
++      .digest();
++
++    const votes = bonded.map((v) => {
++      const privKey = this.validatorPrivKeys.get(v.address);
++      const pubKey = this.validatorKeys.get(v.address);
++      // If we don't have keys for this validator, they can't vote in this testnet round
++      if (!privKey || !pubKey) return null;
++      const signature = ed25519.sign(voteMsg, privKey);
++      // Verify our own signature immediately (paranoia)
++      if (!ed25519.verify(signature, voteMsg, pubKey)) return null;
++      return {
+       address: v.address,
+-      signature: hash256(`vote-${v.address}-${block.hash}`), // MOCK — replace with real Ed25519
++      signature: bytesToHex(signature),
+       stake: v.stake,
+-    }));
++      };
++    }).filter(Boolean) as Array<{address: string; signature: string; stake: number}>;
+
+     let yesStake = 0;
+     for (const vote of votes) {
+-      // In production: verify Ed25519 signature against validator pubkey
+-      // For testnet: accept all votes from bonded validators
+-      yesStake += vote.stake;
++      const pubKey = this.validatorKeys.get(vote.address);
++      if (!pubKey) continue;
++      try {
++        const sigBytes = hexToBytes(vote.signature);
++        if (ed25519.verify(sigBytes, voteMsg, pubKey)) {
++          yesStake += vote.stake;
++        }
++      } catch {
++        // Invalid signature format — don't count
++      }
+     }
+
+     if (yesStake >= threshold) {
+@@ -200,6 +217,17 @@ export class ChainState {
+     }
+   }
+
++  /** Register a validator's Ed25519 keypair for BFT voting. Testnet only. */
++  registerValidatorKey(address: string, pubkeyHex: string, privkeyHex: string) {
++    this.validatorKeys.set(address, hexToBytes(pubkeyHex));
++    this.validatorPrivKeys.set(address, hexToBytes(privkeyHex));
++  }
++
++  /** Remove validator keys (e.g. on unbond). */
++  unregisterValidatorKey(address: string) {
++    this.validatorKeys.delete(address);
++    this.validatorPrivKeys.delete(address);
++  }
++
+   getFinalizedHeight(): number {
+     return this.finalizedHeight;
+   }

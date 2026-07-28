@@ -1,0 +1,120 @@
+diff --git a/artifacts/api-server/src/chain/state.ts b/artifacts/api-server/src/chain/state.ts
+index abc123..def456 100644
+--- a/artifacts/api-server/src/chain/state.ts
++++ b/artifacts/api-server/src/chain/state.ts
+@@ -50,6 +50,8 @@ export class ChainState {
+   private validatorKeys = new Map<string, Uint8Array>();
+   private validatorPrivKeys = new Map<string, Uint8Array>();
+   private db?: import("pg").Pool; // optional Postgres pool for persistence
++  private smtPersisted = false;
++  private poolsPersisted = false;
+
+   constructor(genesis: GenesisConfig, dbPool?: import("pg").Pool) {
+     this.genesis = genesis;
+@@ -62,6 +64,8 @@ export class ChainState {
+     for (const pool of genesis.dex_pools ?? []) {
+       this.dexPools.set(pool.id, pool);
+     }
++    // Load persisted pools and SMT leaves on startup
++    this.loadPersistedState().catch((e) => console.warn("[ChainState] loadPersistedState failed:", e));
+   }
+
+   getWasmVM(): WasmVM {
+@@ -80,6 +84,9 @@ export class ChainState {
+     this.blocks.push(block);
+     this.ledger.applyBlock(block);
+     this.smt.addLeaf(block.hash, JSON.stringify(block));
++    // Persist SMT root and latest leaves to Postgres
++    this.persistSmtRoot(block).catch((e) => console.warn("[ChainState] persistSmtRoot failed:", e));
++
+     for (const tx of block.transactions) {
+       this.mempool.delete(tx.hash);
+       if (tx.to.startsWith("0x")) {
+@@ -95,6 +102,50 @@ export class ChainState {
+     this.runFinalityRound(block);
+   }
+
++  // ── Persistence helpers (M4 + M5) ───────────────────────────────────────
++
++  private async persistSmtRoot(block: Block) {
++    if (!this.db) return;
++    const root = this.smt.root();
++    await this.db.query(
++      `INSERT INTO smt_roots (height, block_hash, state_root, created_at)
++       VALUES ($1, $2, $3, NOW())
++       ON CONFLICT (height) DO UPDATE SET state_root = EXCLUDED.state_root, created_at = NOW()`,
++      [block.height, block.hash, root]
++    );
++  }
++
++  private async persistPool(pool: DexPool) {
++    if (!this.db) return;
++    await this.db.query(
++      `INSERT INTO dex_pools (id, token_a, token_b, reserve_a, reserve_b, total_liquidity, created_at, updated_at)
++       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
++       ON CONFLICT (id) DO UPDATE SET
++         reserve_a = EXCLUDED.reserve_a,
++         reserve_b = EXCLUDED.reserve_b,
++         total_liquidity = EXCLUDED.total_liquidity,
++         updated_at = NOW()`,
++      [pool.id, pool.tokenA, pool.tokenB, pool.reserveA, pool.reserveB, pool.totalLiquidity]
++    );
++  }
++
++  private async loadPersistedState() {
++    if (!this.db) return;
++    // Load DEX pools
++    const poolsRes = await this.db.query(`SELECT * FROM dex_pools`);
++    for (const row of poolsRes.rows) {
++      this.dexPools.set(row.id, {
++        id: row.id,
++        tokenA: row.token_a,
++        tokenB: row.token_b,
++        reserveA: Number(row.reserve_a),
++        reserveB: Number(row.reserve_b),
++        totalLiquidity: Number(row.total_liquidity),
++      });
++    }
++    // Load latest SMT root for fast-path verification
++    const smtRes = await this.db.query(`SELECT * FROM smt_roots ORDER BY height DESC LIMIT 1`);
++    if (smtRes.rows.length > 0) {
++      console.log(`[ChainState] Loaded SMT root at height ${smtRes.rows[0].height}`);
++    }
++  }
++
+   getTip(): Block {
+     return this.blocks[this.blocks.length - 1];
+   }
+@@ -115,6 +164,7 @@ export class ChainState {
+       totalLiquidity: 0,
+     };
+     this.dexPools.set(id, pool);
++    this.persistPool(pool).catch((e) => console.warn("[ChainState] persistPool failed:", e));
+     return pool;
+   }
+
+@@ -130,6 +180,7 @@ export class ChainState {
+     pool.reserveB += amountB;
+     pool.totalLiquidity += liquidityMinted;
+     this.dexPools.set(poolId, pool);
++    this.persistPool(pool).catch((e) => console.warn("[ChainState] persistPool failed:", e));
+     return liquidityMinted;
+   }
+
+@@ -147,6 +198,7 @@ export class ChainState {
+     pool.reserveB -= amountBOut;
+     // No liquidity burn on swap
+     this.dexPools.set(poolId, pool);
++    this.persistPool(pool).catch((e) => console.warn("[ChainState] persistPool failed:", e));
+     return amountBOut;
+   }
+
+@@ -300,6 +352,8 @@ CREATE TABLE IF NOT EXISTS blocks (
+   state_root TEXT,
+   created_at TIMESTAMP DEFAULT NOW()
+ );
++CREATE TABLE IF NOT EXISTS smt_roots (height BIGINT PRIMARY KEY, block_hash TEXT, state_root TEXT, created_at TIMESTAMP);
++CREATE TABLE IF NOT EXISTS dex_pools (id TEXT PRIMARY KEY, token_a TEXT, token_b TEXT, reserve_a NUMERIC, reserve_b NUMERIC, total_liquidity NUMERIC, created_at TIMESTAMP, updated_at TIMESTAMP);
+ CREATE INDEX IF NOT EXISTS idx_blocks_height ON blocks(height);
+ CREATE INDEX IF NOT EXISTS idx_txs_hash ON transactions(hash);
+ CREATE INDEX IF NOT EXISTS idx_accounts_address ON accounts(address);

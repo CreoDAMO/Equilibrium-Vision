@@ -71,13 +71,12 @@ router.post("/validators/:addr/slash", async (req, res) => {
     // secret name) so deployments aren't coupled to one specific secret name.
     // Fails CLOSED: if no key is configured in production the request is
     // rejected (misconfigured deployment should never be open by default).
+    // MAINNET SAFETY: Removed the dev-mode bypass. Slashing ALWAYS requires
+    // either multisig approval or a configured ADMIN_KEY.
     const adminKey = process.env["ADMIN_KEY"] || process.env["ADMIN_API_KEY"];
     if (!adminKey) {
-      if (process.env["NODE_ENV"] === "production") {
-        res.status(503).json({ error: "Server misconfiguration: neither ADMIN_KEY nor ADMIN_API_KEY is set" });
-        return;
-      }
-      // Dev convenience: no key configured → pass through with a log warning.
+      res.status(503).json({ error: "Server misconfiguration: neither ADMIN_KEY nor ADMIN_API_KEY is set" });
+      return;
     } else {
       const provided = req.headers["x-admin-key"];
       if (provided !== adminKey) {

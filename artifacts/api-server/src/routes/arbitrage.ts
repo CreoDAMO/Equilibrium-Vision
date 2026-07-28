@@ -33,13 +33,13 @@ const executeLimiter = new RateLimiter(2, 15_000).startPruning();
  * before spending a WASM call.
  */
 function requireAdmin(req: import("express").Request, res: import("express").Response): boolean {
+  // MAINNET SAFETY: Removed the dev-mode bypass. Admin actions ALWAYS require
+  // authentication. For local development, set ADMIN_KEY to a well-known test
+  // value explicitly — never fall through silently.
   const adminKey = process.env["ADMIN_KEY"] || process.env["ADMIN_API_KEY"];
   if (!adminKey) {
-    if (process.env["NODE_ENV"] === "production") {
-      res.status(503).json({ error: "Server misconfiguration: neither ADMIN_KEY nor ADMIN_API_KEY is set" });
-      return false;
-    }
-    return true; // dev convenience
+    res.status(503).json({ error: "Server misconfiguration: neither ADMIN_KEY nor ADMIN_API_KEY is set" });
+    return false;
   }
   if (req.headers["x-admin-key"] !== adminKey) {
     res.status(403).json({ error: "Forbidden: valid X-Admin-Key header required" });

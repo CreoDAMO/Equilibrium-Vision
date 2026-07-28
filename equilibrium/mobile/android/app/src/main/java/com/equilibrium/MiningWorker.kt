@@ -198,7 +198,34 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             }
         }
 
-        // ── 3. Submit solved block to the node ────────────────────────────────
+        // ── 3. P2P-first block propagation ───────────────────────────────────
+        // If we have peers, try to propagate the block body directly.
+        // Peers that receive it will validate and add it to their chain.
+        val blockHash = computeBlockHash(latestHash, nonce, timestamp, difficulty)
+        val blockBodyJson = buildBlockBodyJson(
+            hash       = blockHash,
+            height     = height + 1,
+            prevHash   = latestHash,
+            nonce      = nonce,
+            residual   = residual,
+            timestamp  = timestamp,
+            miner      = minerAddress,
+            difficulty = difficulty,
+        )
+
+        if (P2PNode.isRunning() && P2PNode.getConnectedPeerCount() > 0) {
+            val bodySent = P2PNode.gossipBlockBody(blockBodyJson)
+            val hashSent = P2PNode.gossipBlock(blockHash)
+            if (bodySent && hashSent) {
+                Log.i(TAG, "Block propagated via P2P mesh — skipping HTTP submit")
+                P2PNode.setLocalTip((height + 1).toLong(), blockHash, difficulty)
+                P2PNode.pushBlockBody(blockBodyJson)
+                return Result.success()
+            }
+            Log.w(TAG, "P2P gossip failed — falling back to HTTP submit")
+        }
+
+        // ── 4. HTTP fallback: submit solved block to the node ─────────────────
         return submitBlock(
             nodeUrl      = nodeUrl,
             miner        = minerAddress,
@@ -207,7 +234,21 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             residual     = residual,
             timestamp    = timestamp,
             difficulty   = difficulty,
+            blockBodyJson = blockBodyJson,
         )
+    }
+
+    /**
+     * Compute the block hash locally so we can gossip it before HTTP confirmation.
+     * Matches the server's hash: sha256(prevHash || nonce || timestamp || difficulty).
+     */
+    private fun computeBlockHash(prevHash: String, nonce: Long, timestamp: Long, difficulty: Long): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        md.update(hexToByteArray(prevHash))
+        md.update(java.nio.ByteBuffer.allocate(8).putLong(nonce).array())
+        md.update(java.nio.ByteBuffer.allocate(8).putLong(timestamp).array())
+        md.update(java.nio.ByteBuffer.allocate(8).putLong(difficulty).array())
+        return md.digest().joinToString("") { "%02x".format(it) }
     }
 
     // ── Network helpers ───────────────────────────────────────────────────────
@@ -251,13 +292,14 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
      * HTTP 5xx / network error → retry
      */
     private fun submitBlock(
-        nodeUrl:    String,
-        miner:      String,
-        prevHash:   String,
-        nonce:      Long,
-        residual:   Double,
-        timestamp:  Long,
-        difficulty: Long,
+        nodeUrl:      String,
+        miner:        String,
+        prevHash:     String,
+        nonce:        Long,
+        residual:     Double,
+        timestamp:    Long,
+        difficulty:   Long,
+        blockBodyJson: String = "",
     ): Result {
         val payload = JSONObject().apply {
             put("miner",     miner)
@@ -288,29 +330,13 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
                             P2PNode.setLocalTip(acceptedHeight.toLong(), blockHash, difficulty)
                         }
 
-                        // Propagate the solved block hash to connected peers so they
-                        // can skip re-solving this height.  No-op when the P2P
-                        // swarm is not running or no peers are connected.
+                        // Propagate the solved block hash + body to peers.
                         if (blockHash.isNotEmpty() && P2PNode.isRunning()) {
-                            val gossiped = P2PNode.gossipBlock(blockHash)
-                            Log.d(TAG, "gossipBlock($blockHash): $gossiped")
+                            P2PNode.gossipBlock(blockHash)
                         }
-
-                        // Gossip the full block body so other phones can store and
-                        // serve it via sync RR without needing an HTTP node.
-                        if (blockHash.isNotEmpty() && acceptedHeight >= 0 && P2PNode.isRunning()) {
-                            val bodyJson = buildBlockBodyJson(
-                                hash       = blockHash,
-                                height     = acceptedHeight,
-                                prevHash   = prevHash,
-                                nonce      = nonce,
-                                residual   = residual,
-                                timestamp  = timestamp,
-                                miner      = miner,
-                                difficulty = difficulty,
-                            )
-                            val sent = P2PNode.gossipBlockBody(bodyJson)
-                            Log.d(TAG, "gossipBlockBody(height=$acceptedHeight): $sent")
+                        if (P2PNode.isRunning() && blockBodyJson.isNotEmpty()) {
+                            // Re-gossip body in case peers joined after the initial P2P attempt
+                            P2PNode.gossipBlockBody(blockBodyJson)
                         }
 
                         Result.success(

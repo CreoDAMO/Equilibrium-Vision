@@ -127,6 +127,13 @@ const CIRCUIT_ID = "stationarity-v2-groth16-bn254";
 
 const DEFAULT_THRESHOLD = 1e-7;
 
+/** Whether the TS trapdoor prover is allowed. False in production. */
+const ALLOW_TS_PROVER = process.env["ALLOW_TS_TRAPDOOR_PROVER"] === "true";
+
+/** Proof source discriminator for validation gating. */
+export const PROOF_SOURCE_RUST = "rust-sidecar";
+export const PROOF_SOURCE_TS_TRAPDOOR = "ts-trapdoor";
+
 // ── VK trapdoor scalars ───────────────────────────────────────────────────────
 //
 // The VK is derived from deterministic seeds, so we know the discrete
@@ -209,6 +216,11 @@ export function generateZkProof(
   height:    number,
   threshold = DEFAULT_THRESHOLD,
 ): ZkProof {
+  // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+  if (!ALLOW_TS_PROVER) {
+    throw new Error("TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.");
+  }
+
   const satisfies = residual < threshold;
   const seed      = `${blockHash}-${height}-${residual}`;
 

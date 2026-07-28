@@ -101,6 +101,13 @@ export interface WasmHostContext {
   dexMultiSwap(poolIds: string[], tokenIn: string, amountIn: number, trader: string): number | null;
 }
 
+/** Per-deployer contract nonce for deterministic, non-front-runnable addresses. */
+let deployerNonces = new Map<string, number>();
+export function resetDeployerNonces() { deployerNonces.clear(); }
+export function setDeployerNonce(deployer: string, nonce: number) {
+  deployerNonces.set(deployer, nonce);
+}
+
 const MAX_CALL_DEPTH = 4;
 
 export class WasmVM {
@@ -144,9 +151,14 @@ export class WasmVM {
     abi?: ContractABI,
   ): Promise<{ address: string; error?: string }> {
     // Derive contract address from deployer + bytecode hash
+    // SECURITY FIX: Use a monotonic per-deployer nonce instead of Date.now()
+    // to prevent address front-running and squatting.
     const bytecodeHash = createHash("sha256").update(bytecodeHex).digest("hex");
+    const currentNonce = deployerNonces.get(deployer) ?? 0;
+    const nextNonce = currentNonce + 1;
+    deployerNonces.set(deployer, nextNonce);
     const address = createHash("sha256")
-      .update(`${deployer}:${bytecodeHash}:${Date.now()}`)
+      .update(`${deployer}:${bytecodeHash}:${nextNonce}`)
       .digest("hex")
       .slice(0, 40);
 
@@ -420,10 +432,21 @@ export class WasmVM {
           if (++verifyResidualCallCount > 1) {
             throw new Error("verify_residual may only be called once per contract invocation");
           }
+          // HARDENING: validate JSON shape before shelling out
+          const MAX_REQ_LEN = 16_384;
+          if (reqLen > MAX_REQ_LEN) return 0;
           try {
             const reqJson = readString(memory, reqPtr, reqLen);
-            // Validate it parses before shelling out
-            JSON.parse(reqJson);
+            // Strict schema validation — only allow expected keys
+            const req = JSON.parse(reqJson);
+            if (typeof req !== "object" || req === null) return 0;
+            const allowedKeys = new Set(["blockHash", "height", "nonce", "difficulty", "residual"]);
+            for (const key of Object.keys(req)) {
+              if (!allowedKeys.has(key)) return 0;
+            }
+            if (typeof req.residual !== "number" || !Number.isFinite(req.residual)) return 0;
+            if (typeof req.nonce !== "number" || !Number.isInteger(req.nonce)) return 0;
+            if (typeof req.height !== "number" || !Number.isInteger(req.height)) return 0;
             const output = execFileSync(VAI_CLI_PATH, [], {
               input: reqJson,
               timeout: 10_000,   // 10 s hard limit — kills with SIGKILL on expiry
@@ -557,7 +580,14 @@ export class WasmVM {
             for (let i = 0; i < theta.length; i++) {
               dot += (theta[i]! / SCALE) * (x[i]! / SCALE);
             }
-            const sigmoid = 1 / (1 + Math.exp(-dot));
+            // Deterministic sigmoid approximation (Padé [1,1] near 0,
+            // clamped for large |x|). Avoids Math.exp nondeterminism.
+            const sigmoid = (() => {
+              if (dot >= 8) return 0.999527;
+              if (dot <= -8) return 0.000473;
+              const exp_approx = (1 + dot + dot * dot / 2) / (1 - dot + dot * dot / 2);
+              return 1 / (1 + 1 / exp_approx);
+            })();
             const scaled = Math.round(sigmoid * SCALE).toString();
             writeString(memory, outPtr, scaled);
             return scaled.length;
@@ -626,6 +656,12 @@ export class WasmVM {
           checkGas();
           const remaining = gasLimit - gasUsed;
           if (remaining <= 0) return -1;
+          // SECURITY FIX: snapshot storage before child call for rollback on failure
+          const storageSnapshot = new Map<string, string>(Object.entries(storage));
+          const restoreStorage = () => {
+            for (const k of Object.keys(storage)) delete (storage as Record<string, string>)[k];
+            for (const [k, v] of storageSnapshot) (storage as Record<string, string>)[k] = v;
+          };
           try {
             const targetAddr = readString(memory, addrPtr, addrLen);
             const childArgs: number[] = [];
@@ -634,11 +670,15 @@ export class WasmVM {
               childArgs.push(view.getInt32(argsPtr + i * 4, true));
             }
             const childResult = this.execCall(targetAddr, childMethodId, childArgs, remaining, address, depth + 1);
+            if (!childResult.success) {
+              restoreStorage(); // ROLLBACK: discard any partial child writes
+            }
             gasUsed += childResult.gasUsed;
             for (const l of childResult.logs) logs.push(`[${targetAddr.slice(0, 8)}] ${l}`);
             if (!childResult.success || childResult.returnValue === null) return -1;
             return childResult.returnValue;
           } catch {
+            restoreStorage(); // ROLLBACK on exception
             return -1;
           }
         },

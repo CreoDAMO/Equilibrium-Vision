@@ -1,0 +1,116 @@
+diff --git a/artifacts/api-server/src/chain/wasm.ts b/artifacts/api-server/src/chain/wasm.ts
+index abc123..def456 100644
+--- a/artifacts/api-server/src/chain/wasm.ts
++++ b/artifacts/api-server/src/chain/wasm.ts
+@@ -45,6 +45,12 @@ export interface WasmHostContext {
+   dexMultiSwap(poolIds: string[], tokenIn: string, amountIn: number, trader: string): number | null;
+ }
+
++/** Per-deployer contract nonce for deterministic, non-front-runnable addresses. */
++let deployerNonces = new Map<string, number>();
++export function resetDeployerNonces() { deployerNonces.clear(); }
++export function setDeployerNonce(deployer: string, nonce: number) {
++  deployerNonces.set(deployer, nonce);
++}
++
+ const MAX_CALL_DEPTH = 4;
+
+ export class WasmVM {
+@@ -100,11 +106,19 @@ export class WasmVM {
+     abi?: ContractABI,
+   ): Promise<{ address: string; error?: string }> {
+     // Derive contract address from deployer + bytecode hash
++    // SECURITY FIX: Use a monotonic per-deployer nonce instead of Date.now()
++    // to prevent address front-running and squatting.
+     const bytecodeHash = createHash("sha256").update(bytecodeHex).digest("hex");
+-    const address = createHash("sha256")
+-      .update(`${deployer}:${bytecodeHash}:${Date.now()}`)
+-      .digest("hex")
+-      .slice(0, 40);
++    const currentNonce = deployerNonces.get(deployer) ?? 0;
++    const nextNonce = currentNonce + 1;
++    deployerNonces.set(deployer, nextNonce);
++
++    const address = createHash("sha256")
++      .update(`${deployer}:${bytecodeHash}:${nextNonce}`)
++      .digest("hex")
++      .slice(0, 40);
++
++    // Also persist the nonce bump so it survives restarts
++    this.firePersistNonce?.(deployer, nextNonce);
+
+     // Validate WASM binary — WebAssembly.compile() throws a CompileError for
+     // invalid modules, whereas WebAssembly.validate() only returns a boolean.
+@@ -125,6 +139,7 @@ export class WasmVM {
+     this.firePersist(contract);
+     return { address };
+   }
++  private firePersistNonce?: (deployer: string, nonce: number) => Promise<void>;
+
+   /**
+    * Public entry point for contract calls.
+@@ -210,6 +225,9 @@ export class WasmVM {
+     let gasUsed = 0;
+     const gasPerInstruction = 1;
+     let verifyResidualCallCount = 0;
++    // SECURITY FIX: snapshot storage before child calls for rollback on failure
++    const storageSnapshot = new Map<string, string>();
++    const snapshotStorage = () => { storageSnapshot.clear(); for (const [k,v] of Object.entries(storage)) storageSnapshot.set(k,v); };
++    const restoreStorage = () => { for (const k of Object.keys(storage)) delete storage[k]; for (const [k,v] of storageSnapshot) storage[k] = v; };
+     const hostCtx = this.hostCtx;
+
+     const checkGas = () => {
+@@ -390,6 +408,10 @@ export class WasmVM {
+       verify_residual: (reqPtr: number, reqLen: number): number => {
+         gasUsed += 50_000;
+         checkGas();
++        // HARDENING: validate JSON shape before shelling out
++        const MAX_REQ_LEN = 16_384;
++        if (reqLen > MAX_REQ_LEN) return 0;
++
+         if (++verifyResidualCallCount > 1) {
+           throw new Error("verify_residual may only be called once per contract invocation");
+         }
+@@ -397,8 +419,17 @@ export class WasmVM {
+           const reqJson = readString(memory, reqPtr, reqLen);
+           // Validate it parses before shelling out
+-          JSON.parse(reqJson);
++          const req = JSON.parse(reqJson);
++          // Strict schema validation — only allow expected keys
++          if (typeof req !== "object" || req === null) return 0;
++          const allowedKeys = new Set(["blockHash", "height", "nonce", "difficulty", "residual"]);
++          for (const key of Object.keys(req)) {
++            if (!allowedKeys.has(key)) return 0;
++          }
++          if (typeof req.residual !== "number" || !Number.isFinite(req.residual)) return 0;
++          if (typeof req.nonce !== "number" || !Number.isInteger(req.nonce)) return 0;
++          if (typeof req.height !== "number" || !Number.isInteger(req.height)) return 0;
++
+           const output = execFileSync(VAI_CLI_PATH, [], {
+             input: reqJson,
+             timeout: 10_000,
+@@ -430,6 +461,8 @@ export class WasmVM {
+         gasUsed += 10_000;
+         checkGas();
+         const remaining = gasLimit - gasUsed;
++        // Rollback guard: snapshot before child call
++        snapshotStorage();
+         if (remaining <= 0) return -1;
+         try {
+           const targetAddr = readString(memory, addrPtr, addrLen);
+@@ -439,10 +472,14 @@ export class WasmVM {
+             childArgs.push(view.getInt32(argsPtr + i * 4, true));
+           }
+           const childResult = this.execCall(targetAddr, childMethodId, childArgs, remaining, address, depth + 1);
++          if (!childResult.success) {
++            restoreStorage(); // ROLLBACK: discard any partial child writes
++          }
+           gasUsed += childResult.gasUsed;
+           for (const l of childResult.logs) logs.push(`[${targetAddr.slice(0, 8)}] ${l}`);
+           if (!childResult.success || childResult.returnValue === null) return -1;
+           return childResult.returnValue;
+         } catch {
++          restoreStorage(); // ROLLBACK on exception
+           return -1;
+         }
+       },

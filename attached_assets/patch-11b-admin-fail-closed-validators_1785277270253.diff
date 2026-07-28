@@ -1,0 +1,28 @@
+diff --git a/artifacts/api-server/src/routes/validators.ts b/artifacts/api-server/src/routes/validators.ts
+index abc123..def456 100644
+--- a/artifacts/api-server/src/routes/validators.ts
++++ b/artifacts/api-server/src/routes/validators.ts
+@@ -35,15 +35,15 @@ router.post("/validators/:addr/slash", async (req, res) => {
+   // Admin multisig, when configured, is the sole authorization path — an
+   // on-chain threshold of owner signatures replaces the single ADMIN_KEY
+   // secret. Falls back to ADMIN_KEY only when no multisig is configured
+-  // (dev/test convenience).
++  // (dev/test convenience — but NEVER bypass in production).
++  //
++  // MAINNET SAFETY: Removed the dev-mode bypass. Slashing ALWAYS requires
++  // either multisig approval or a configured ADMIN_KEY.
+   if (getMultisigAddress()) {
+     // ... multisig path unchanged ...
+   } else {
+     const adminKey = process.env["ADMIN_KEY"] || process.env["ADMIN_API_KEY"];
+     if (!adminKey) {
+-      if (process.env["NODE_ENV"] === "production") {
+-        res.status(503).json({ error: "Server misconfiguration: neither ADMIN_KEY nor ADMIN_API_KEY is set" });
+-        return;
+-      }
+-      // Dev convenience: no key configured → pass through with a log warning.
++      res.status(503).json({ error: "Server misconfiguration: neither ADMIN_KEY nor ADMIN_API_KEY is set" });
++      return;
+     } else {
+       const provided = req.headers["x-admin-key"];
+       if (provided !== adminKey) {

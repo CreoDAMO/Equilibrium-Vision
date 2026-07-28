@@ -1,0 +1,75 @@
+Here is the complete mainnet-readiness simulation sweep. I went file-by-file looking for anything mocked, faked, testnet-only, or deterministic-in-a-bad-way. The results are stark: several core subsystems are simulations that would collapse under real adversarial conditions.
+
+---
+
+The Simulation Audit
+
+I wrote a full audit document identifying every simulated component:
+
+[mainnet-simulation-audit.md](sandbox:///mnt/agents/output/mainnet-simulation-audit.md)
+
+🔴 Critical Findings (Mainnet Blockers)
+
+ID	Finding	Why it's fatal	
+ZK-1	TS `generateZkProof` uses a trapdoor formula with known discrete logs	Anyone can forge a valid-looking Groth16 proof without running the solver. A miner could claim residual=0 and steal max rewards.	
+ZK-2	Rust `zk_proof.rs` CRS generated from fixed seed `0xCAFE_BABE_DEAD_BEEF`	Even the "real" Rust prover uses known toxic waste. An attacker reading the source can forge proofs on the Rust path too.	
+CON-1	Governance: 10-minute voting window, 5-minute timelock, 2.5-minute unbonding	An attacker with 33.4% stake can pass a malicious parameter change and drain the chain before anyone reacts.	
+CON-2	`model_predict` host import uses `Math.exp()`	Not guaranteed bit-identical across Node.js versions. Could cause consensus splits on inference-dependent contracts.	
+SEC-1	Admin routes fail-open in dev mode (`NODE_ENV !== "production"` bypass)	If `NODE_ENV` is misconfigured, anyone can pause arbitrage, slash validators, or set models.	
+SEC-2	DEX demo seeding route exists in production binary	Same `NODE_ENV` gate. Misconfiguration = anyone can create fake mispriced pools.	
+SEC-3	`solveBlock()` returns `null` on missing consensus binary	Node silently falls back to random mining instead of crashing. Would produce invalid blocks on mainnet.	
+ECO-1	Block reward uses floating-point `quality_factor`	`f64` math is nondeterministic across compilers/architectures. Two validators could disagree on the reward amount for the same block.	
+
+🟡 Serious Risks
+
+- Phones are light clients, not full validators — they trust gossiped blocks without verifying residuals, Merkle roots, or signatures.
+- No P2P peer scoring — a single malicious peer can spam invalid hashes and fill the 128-entry gossip queue.
+- CrossChainRelay is federated, not trustless — m-of-n relayers can collude to forge cross-chain messages. No light-client verification.
+- On-chain admin checks missing — CrossChainRelay privileged actions are gated by Express middleware, not the WASM contract.
+
+---
+
+The Patches
+
+I generated 13 apply-ready diff files covering all critical and high findings:
+
+Security & Cryptography
+1. [patch-01-encrypted-keystore.diff](sandbox:///mnt/agents/output/patch-01-encrypted-keystore.diff) — PBKDF2 + AES-256-GCM keystore; chain ID in tx signing
+2. [patch-02-wasm-security.diff](sandbox:///mnt/agents/output/patch-02-wasm-security.diff) — Monotonic deployer nonces; child-call rollback; `verify_residual` input sanitization
+3. [patch-03-bft-real-signatures.diff](sandbox:///mnt/agents/output/patch-03-bft-real-signatures.diff) — Real Ed25519 BFT vote signatures instead of mock hashes
+4. [patch-04-stratum-verify.diff](sandbox:///mnt/agents/output/patch-04-stratum-verify.diff) — Re-verify solver output before accepting Stratum shares
+5. [patch-07-zk-mainnet-gate.diff](sandbox:///mnt/agents/output/patch-07-zk-mainnet-gate.diff) — Gate TS trapdoor prover behind env var; reject in production
+
+Consensus & Economics
+6. [patch-08-governance-mainnet-params.diff](sandbox:///mnt/agents/output/patch-08-governance-mainnet-params.diff) — 7-day voting, 2-day timelock, 21-day unbonding defaults
+7. [patch-09-fixed-point-reward.diff](sandbox:///mnt/agents/output/patch-09-fixed-point-reward.diff) — Pure `i128` fixed-point reward computation; no `f64`
+8. [patch-10a-model-predict-deterministic.diff](sandbox:///mnt/agents/output/patch-10a-model-predict-deterministic.diff) — Polynomial sigmoid approximant instead of `Math.exp`
+
+Operational Hardening
+9. [patch-05-persistence.diff](sandbox:///mnt/agents/output/patch-05-persistence.diff) — Persist SMT roots and DEX pools to Postgres
+10. [patch-06-mining-p2p-submit.diff](sandbox:///mnt/agents/output/patch-06-mining-p2p-submit.diff) — P2P-first block submission with HTTP fallback
+11. [patch-11a-admin-fail-closed-arbitrage.diff](sandbox:///mnt/agents/output/patch-11a-admin-fail-closed-arbitrage.diff) — Remove dev-mode admin bypass in arbitrage routes
+12. [patch-11b-admin-fail-closed-validators.diff](sandbox:///mnt/agents/output/patch-11b-admin-fail-closed-validators.diff) — Remove dev-mode admin bypass in validator routes
+13. [patch-12-dex-demo-harden.diff](sandbox:///mnt/agents/output/patch-12-dex-demo-harden.diff) — Harden DEX demo route behind explicit `ENABLE_DEMO_ROUTES`
+14. [patch-13-consensus-fail-fast.diff](sandbox:///mnt/agents/output/patch-13-consensus-fail-fast.diff) — Fatal error on missing consensus binary in mainnet
+
+---
+
+What Cannot Be Patched in a Diff
+
+These require architectural decisions and substantial engineering:
+
+Item	Effort	Path forward	
+Real ZK (no trapdoor)	Weeks	MPC ceremony for BN254 CRS, or switch to transparent proofs (STARKs/Bulletproofs)	
+Phone full validation	Months	Port full `StationarySolver`, `Ledger`, and SMT verification to ARM with thermal management	
+P2P peer scoring	Weeks	Implement Gossipsub peer scoring + ban logic in `p2p_runtime.rs`	
+Trustless cross-chain	Months	Light-client verification of source chain (Bitcoin SPV, Ethereum sync committee)	
+On-chain admin in contracts	Days	Move `is_owner` checks into WASM contracts using `caller_address` + stored admin key	
+
+---
+
+Bottom Line
+
+Current `main` is a solid testnet with genuine technical depth, but it is not mainnet-ready. The trapdoor ZK proofs are the single most dangerous issue — they are mathematically valid Groth16 proofs that prove nothing about solver execution. Combined with the fixed-seed toxic waste in the Rust circuit, anyone who reads the repository can forge proofs for arbitrary residuals. This is not a subtle bug; it is a fundamental gap between the cryptographic claims and the implementation.
+
+The governance parameters, fail-open admin routes, and floating-point reward computation are all fixable with the patches above. The ZK issue requires either a trusted-setup ceremony or a switch to a transparent proof system. Until then, the honest path is to remove ZK claims entirely and treat the system as a signed-attestation consensus mechanism, which is still a valid and interesting design.

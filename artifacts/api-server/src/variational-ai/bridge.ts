@@ -301,8 +301,14 @@ export async function solveBlock(
       timeoutMs,
     );
     return res;
-  } catch {
-    // Binary not compiled or crashed — caller falls back to random
+  } catch (err) {
+    // MAINNET SAFETY: A missing or crashed consensus binary is a fatal
+    // misconfiguration. We must NOT fall back to random mining, which
+    // would produce invalid blocks.
+    if (process.env["EQUILIBRIUM_NETWORK"] === "mainnet") {
+      throw new Error(`Consensus solver unavailable on mainnet: ${err}`);
+    }
+    // Testnet only: graceful fallback for dev convenience
     return null;
   }
 }

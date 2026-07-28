@@ -1,0 +1,100 @@
+diff --git a/equilibrium/mobile/android/app/src/main/java/com/equilibrium/MiningWorker.kt b/equilibrium/mobile/android/app/src/main/java/com/equilibrium/MiningWorker.kt
+index abc123..def456 100644
+--- a/equilibrium/mobile/android/app/src/main/java/com/equilibrium/MiningWorker.kt
++++ b/equilibrium/mobile/android/app/src/main/java/com/equilibrium/MiningWorker.kt
+@@ -25,8 +25,11 @@ import java.util.concurrent.TimeUnit
+  * 2. pollGossip() — abort if a peer already announced this height
+  * 3. solveBlock() — Rust JNI via libequilibrium_core.so
+  * 4. pollGossip() again — discard stale solution if a peer won mid-solve
+- * 5. POST /api/blocks/submit — still required for body acceptance until
+- *    phone implements sync RR; then setLocalTip + gossipBlock
++ * 5. P2P-first submission:
++ *    a. gossipBlockBody() to all connected peers
++ *    b. If peers are connected and body gossips successfully, skip HTTP
++ *    c. If no peers or gossip fails, fall back to HTTP POST /api/blocks/submit
++ *    d. After HTTP success, still gossipBlock + gossipBlockBody for mesh
++ *    propagation
+  *
+  * Input data keys (set by MiningService):
+  * [KEY_NODE_URL] — base URL of the Equilibrium node (default: emulator localhost)
+@@ -155,6 +158,31 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
+             return Result.success()
+         }
+
++        // ── 3a. P2P-first block propagation ──────────────────────────────
++        // If we have peers, try to propagate the block body directly.
++        // Peers that receive it will validate and add it to their chain.
++        val blockBodyJson = buildBlockBodyJson(
++            hash = computeBlockHash(latestHash, nonce, timestamp, difficulty),
++            height = height + 1,
++            prevHash = latestHash,
++            nonce = nonce,
++            residual = residual,
++            timestamp = timestamp,
++            miner = minerAddress,
++            difficulty = difficulty,
++        )
++
++        if (P2PNode.isRunning() && P2PNode.getConnectedPeerCount() > 0) {
++            val bodySent = P2PNode.gossipBlockBody(blockBodyJson)
++            val hashSent = P2PNode.gossipBlock(computeBlockHash(latestHash, nonce, timestamp, difficulty))
++            if (bodySent && hashSent) {
++                Log.i(TAG, "Block propagated via P2P mesh — skipping HTTP submit")
++                // Update local tip so we continue building on our own block
++                P2PNode.setLocalTip((height + 1).toLong(), computeBlockHash(latestHash, nonce, timestamp, difficulty), difficulty)
++                P2PNode.pushBlockBody(blockBodyJson)
++                return Result.success()
++            }
++            Log.w(TAG, "P2P gossip failed — falling back to HTTP submit")
++        }
++
+         // ── 3. Submit solved block to the node ────────────────────────────────
+         return submitBlock(
+             nodeUrl = nodeUrl,
+@@ -167,6 +195,21 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
+         )
+     }
+
++    /**
++     * Compute the block hash locally so we can gossip it before HTTP confirmation.
++     * Matches the server's hash computation: sha256(prevHash || nonce || timestamp || difficulty)
++     */
++    private fun computeBlockHash(prevHash: String, nonce: Long, timestamp: Long, difficulty: Long): String {
++        val md = java.security.MessageDigest.getInstance("SHA-256")
++        md.update(hexToByteArray(prevHash))
++        md.update(java.nio.ByteBuffer.allocate(8).putLong(nonce).array())
++        md.update(java.nio.ByteBuffer.allocate(8).putLong(timestamp).array())
++        md.update(java.nio.ByteBuffer.allocate(8).putLong(difficulty).array())
++        return md.digest().joinToString("") { "%02x".format(it) }
++    }
++
+     // ── Network helpers ───────────────────────────────────────────────────────
+
+     /**
+@@ -195,7 +238,7 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
+      * POST /api/blocks/submit
+      *
+      * Sends the solved nonce + residual to the node so it can add the block
+-     * to the canonical chain.
++     * to the canonical chain. Used as fallback when P2P mesh is unavailable.
+      *
+      * HTTP 201 → success (block accepted)
+      * HTTP 409 → stale work (chain tip advanced while solving) → success (don't retry stale)
+@@ -228,12 +271,12 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
+                         P2PNode.setLocalTip(acceptedHeight.toLong(), blockHash, difficulty)
+                     }
+
+-                    // Propagate the solved block hash to connected peers so they
+-                    // can skip re-solving this height. No-op when the P2P
+-                    // swarm is not running or no peers are connected.
+                     if (blockHash.isNotEmpty() && P2PNode.isRunning()) {
+-                        val gossiped = P2PNode.gossipBlock(blockHash)
+-                        Log.d(TAG, "gossipBlock($blockHash): $gossiped")
++                        P2PNode.gossipBlock(blockHash)
++                    }
++                    if (P2PNode.isRunning()) {
++                        // Re-gossip body in case peers joined after the initial attempt
++                        P2PNode.gossipBlockBody(blockBodyJson)
+                     }
+
+                     Result.success(

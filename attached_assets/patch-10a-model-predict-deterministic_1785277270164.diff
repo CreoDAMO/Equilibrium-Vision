@@ -1,0 +1,33 @@
+diff --git a/artifacts/api-server/src/chain/wasm.ts b/artifacts/api-server/src/chain/wasm.ts
+index abc123..def456 100644
+--- a/artifacts/api-server/src/chain/wasm.ts
++++ b/artifacts/api-server/src/chain/wasm.ts
+@@ -350,6 +350,11 @@ export class WasmVM {
+         // Deterministic linear-model inference: reads a JSON payload
+         // { "theta": number[], "x": number[] } (both fixed-point i64
+         // arrays, scaled by 1e9 — same convention as fpEncode in
++        //
++        // MAINNET SAFETY: This implementation uses JS Math.exp which is
++        // NOT guaranteed bit-identical across Node.js versions or engines.
++        // For mainnet, delegate to the Rust CLI (deterministic libm) or
++        // replace with a polynomial approximant. See patch-10b for the
++        // polynomial fallback.
+         // zk-encoding.ts) from memory, computes sigmoid(dot(theta, x))
+         // fixed-point-scaled by 1e9, writes it (as decimal ASCII) to
+         // outPtr and returns the written length, or -1 on any parse/shape
+@@ -362,7 +367,15 @@ export class WasmVM {
+           for (let i = 0; i < theta.length; i++) {
+             dot += (theta[i]! / SCALE) * (x[i]! / SCALE);
+           }
+-          const sigmoid = 1 / (1 + Math.exp(-dot));
++          // Deterministic sigmoid approximation (Padé [1,1] near 0,
++          // clamped for large |x|). Avoids Math.exp nondeterminism.
++          const sigmoid = (() => {
++            if (dot >= 8) return 0.999527;
++            if (dot <= -8) return 0.000473;
++            const exp_approx = (1 + dot + dot * dot / 2) / (1 - dot + dot * dot / 2);
++            return 1 / (1 + 1 / exp_approx);
++          })();
+           const scaled = Math.round(sigmoid * SCALE).toString();
+           writeString(memory, outPtr, scaled);
+           return scaled.length;

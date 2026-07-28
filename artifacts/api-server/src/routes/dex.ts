@@ -114,8 +114,9 @@ router.post("/dex/liquidity/add", (req, res) => {
  * for full manual control over an arbitrary reserve ratio.
  */
 router.post("/dex/pools/seed-arbitrage-demo", (req, res) => {
-  if (process.env["NODE_ENV"] === "production") {
-    res.status(403).json({ error: "Demo seeding is disabled in production" });
+  // MAINNET SAFETY: Gate behind explicit ENABLE_DEMO_ROUTES; never open by default.
+  if (process.env["ENABLE_DEMO_ROUTES"] !== "true") {
+    res.status(404).json({ error: "Not found" });
     return;
   }
 
