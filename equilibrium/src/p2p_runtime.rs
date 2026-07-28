@@ -179,6 +179,9 @@ static RUNNING:      AtomicBool = AtomicBool::new(false);
 static COMMANDS:     OnceLock<Mutex<Option<Sender<Command>>>> = OnceLock::new();
 /// Inbound block hashes from remote peers — polled by MiningWorker for race detection.
 static GOSSIP_QUEUE: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
+/// Live count of established connections, updated in the swarm event loop.
+static CONNECTED_PEER_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 fn command_slot() -> &'static Mutex<Option<Sender<Command>>> {
     COMMANDS.get_or_init(|| Mutex::new(None))
@@ -725,6 +728,7 @@ async fn run_swarm(rx: mpsc::Receiver<Command>, listen_tcp: u16, listen_quic: u1
                     // ── Connection lifecycle ───────────────────────────────────
                     SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
                         connected.insert(peer_id);
+                        CONNECTED_PEER_COUNT.store(connected.len(), Ordering::Relaxed);
                         if let libp2p::core::ConnectedPoint::Dialer { address, .. } = endpoint {
                             swarm.behaviour_mut().kad.add_address(&peer_id, address);
                         }
@@ -733,6 +737,7 @@ async fn run_swarm(rx: mpsc::Receiver<Command>, listen_tcp: u16, listen_quic: u1
                     }
                     SwarmEvent::ConnectionClosed { peer_id, .. } => {
                         connected.remove(&peer_id);
+                        CONNECTED_PEER_COUNT.store(connected.len(), Ordering::Relaxed);
                         eprintln!("[p2p-runtime] disconnected: {peer_id} ({} peers)", connected.len());
                     }
 
@@ -742,4 +747,10 @@ async fn run_swarm(rx: mpsc::Receiver<Command>, listen_tcp: u16, listen_quic: u1
             _ = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
     }
+}
+
+/// Return the number of currently established peer connections.
+/// Updated atomically in the swarm event loop on every connect/disconnect.
+pub fn get_connected_peer_count() -> u32 {
+    CONNECTED_PEER_COUNT.load(Ordering::Relaxed) as u32
 }

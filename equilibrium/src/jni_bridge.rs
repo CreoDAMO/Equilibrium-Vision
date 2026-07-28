@@ -366,6 +366,20 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_pushBlockBody(
     p2p_runtime::push_block_body(json_str.to_str().unwrap_or_default());
 }
 
+/// Return the number of currently established peer connections.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun getConnectedPeerCount(): Int
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_getConnectedPeerCount(
+    _env: JNIEnv,
+    _obj: JObject,
+) -> jint {
+    p2p_runtime::get_connected_peer_count() as jint
+}
+
 /// Ask a connected peer for a range of block bodies via the sync RR protocol.
 /// Returns a JSON string `{"blocks":[...]}` containing all available blocks
 /// in the height range [fromHeight, toHeight], or an empty string on failure.

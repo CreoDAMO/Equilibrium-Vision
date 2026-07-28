@@ -125,6 +125,10 @@ object P2PNode {
     @JvmStatic
     external fun querySyncBlocks(fromHeight: Long, toHeight: Long): String
 
+    /** Return the number of currently established peer connections. */
+    @JvmStatic
+    external fun getConnectedPeerCount(): Int
+
     fun startDefault(): Boolean = start(DEFAULT_TCP_PORT, DEFAULT_QUIC_PORT)
 
     /**

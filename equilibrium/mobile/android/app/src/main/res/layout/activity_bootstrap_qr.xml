@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <!-- ── Title ─────────────────────────────────────────────────────── -->
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:text="@string/qr_title"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text="@string/qr_subtitle"
+            android:textSize="14sp" />
+
+        <!-- ── My invite QR ───────────────────────────────────────────────── -->
+
+        <ImageView
+            android:id="@+id/qrImage"
+            android:layout_width="256dp"
+            android:layout_height="256dp"
+            android:layout_marginTop="24dp"
+            android:background="#FFFFFF"
+            android:contentDescription="@string/qr_content_desc"
+            android:padding="8dp" />
+
+        <!-- Share button -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/shareBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/share_invite_button" />
+
+        <!-- ── Divider ────────────────────────────────────────────────────── -->
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginBottom="24dp"
+            android:layout_marginTop="28dp"
+            android:background="?attr/colorOutline" />
+
+        <!-- ── Connect to a peer ─────────────────────────────────────────── -->
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/connect_peer_label"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:text="@string/connect_peer_hint"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/addrInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:hint="@string/bootstrap_hint"
+            android:inputType="textUri"
+            android:maxLines="3" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/scanBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/scan_qr_button" />
+
+            <Button
+                android:id="@+id/connectBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:text="@string/connect_button" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/statusView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:textSize="14sp" />
+
+    </LinearLayout>
+</ScrollView>

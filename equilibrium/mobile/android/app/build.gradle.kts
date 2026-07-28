@@ -95,6 +95,12 @@ dependencies {
 
     // HTTP client for submitting solved blocks to the node API
     implementation(libs.okhttp)
+
+    // QR code generation (BarcodeEncoder) and scanning (IntentIntegrator).
+    // isTransitive = false pins ZXing core to the explicit version below,
+    // preventing the embedded library from pulling in an older copy.
+    implementation(libs.zxing.android.embedded) { isTransitive = false }
+    implementation(libs.zxing.core)
 }
 
 // ── cargo-ndk integration ─────────────────────────────────────────────────────
