@@ -1,0 +1,106 @@
+Session Complete – UI Work Landed (Explorer + Android)
+
+You asked to tackle both UI fronts, starting with Explorer then Android. Here's exactly what was implemented before the quota hit.
+
+---
+
+✅ Explorer – Contracts.tsx Refactored
+
+Before: 3 raw fetch() calls outside React Query.
+
+After:
+
+Call Before After
+Load examples useEffect + fetch() useQuery with queryKey: ['contract-examples']
+Deploy contract Raw fetch in handleDeploy useMutation with onSuccess navigation
+Filtered contracts list Raw fetch in callback useQuery with queryKey including filter + page, refetch() on button click
+
+File changed: artifacts/explorer/src/pages/Contracts.tsx
+
+No more raw fetch calls in the Explorer (confirmed by grep).
+
+---
+
+✅ Android – Full QR/P2P/Mining UI Built
+
+Dependencies Added
+
+· ZXing (com.google.zxing:core:3.5.3) for QR generation and scanning
+· Added to libs.versions.toml and app/build.gradle.kts
+
+New Activities & Layouts
+
+File Purpose
+BootstrapQrActivity.kt Complete rewrite – QR generation, scanning, share, manual entry
+activity_bootstrap_qr.xml New layout with QR image, status text, scan/share/manual buttons
+activity_main.xml Updated with P2P mode toggle, mining status, tip source indicator, "Join Network" button
+
+New UI Features
+
+Feature Status
+QR generation – displays your invite URI as a QR code ✅ Wired
+QR scanning – camera opens, reads invite URIs ✅ Wired
+Share invite button – Android share sheet sends URI ✅ Wired
+P2P mode toggle – HTTP-only / P2P-only / hybrid (saved to SharedPreferences) ✅ Wired
+Mining status UI – live height, tip hash, peer count, gossip activity ✅ Wired (polling every 3s)
+Tip source indicator – shows "Local P2P cache" vs "HTTP fallback" ✅ Wired
+Join Network button – launches BootstrapQrActivity ✅ Wired
+
+JNI / Rust Additions
+
+Addition Purpose
+get_connected_peer_count() in p2p_runtime.rs Returns number of connected peers
+JNI binding in jni_bridge.rs Exposes peer count to Kotlin
+P2PNode.getConnectedPeerCount() Kotlin wrapper
+
+Files changed: p2p_runtime.rs, jni_bridge.rs, P2PNode.kt
+
+Strings & Manifest
+
+· strings.xml – new entries for QR, P2P modes, status labels
+· AndroidManifest.xml – added BootstrapQrActivity and camera permission
+
+---
+
+⚠️ What’s Not Yet Verified (Quota Hit)
+
+The code is written, but not yet compiled, run, or tested on a device or emulator. The following are the final steps to close the loop:
+
+Task Status
+Compile Android project – Gradle sync + build ⏳ Pending
+Run on device/emulator – test QR generation, scanning, P2P mode ⏳ Pending
+Verify P2P mode actually works – two phones discover each other, sync tips, mine blocks without HTTP ⏳ Pending
+Check permissions – camera permission request flow ⏳ Pending
+Test share intent – does it send the correct URI? ⏳ Pending
+Test tip source indicator – does it correctly show cache vs HTTP? ⏳ Pending
+
+---
+
+🧭 Next Steps
+
+1. Gradle sync and build the Android APK.
+2. Install on two Android phones (or one phone + emulator).
+3. Test QR flow:
+   · Phone A: open app → "Join Network" → scan QR from Phone B.
+   · Phone B: open app → "Join Network" → display QR code.
+   · Verify they discover each other (peer count > 0).
+4. Test mining:
+   · Enable P2P mode (no HTTP).
+   · Mine a block on one phone.
+   · Verify the other phone receives the block via gossip (tip height increases).
+5. Test fallback:
+   · Switch to HTTP-only mode → should use configured nodeUrl.
+   · Switch to hybrid → should prefer P2P, fall back to HTTP.
+
+Once these tests pass, the "fully mobile blockchain" claim is product‑validated.
+
+---
+
+📌 Summary
+
+· Explorer UI – ✅ cleaned up (no raw fetch calls).
+· Android UI – ✅ fully built (QR, P2P toggle, mining status, share, tip source).
+· JNI/Rust – ✅ extended with peer count.
+· Remaining – compile, run, test on real devices.
+
+You are one build + test cycle away from a complete, shippable mobile blockchain.

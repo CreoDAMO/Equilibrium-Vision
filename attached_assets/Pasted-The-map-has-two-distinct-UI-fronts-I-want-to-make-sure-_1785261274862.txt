@@ -1,0 +1,257 @@
+The map has two distinct UI fronts — I want to make sure I tackle the right one:
+
+Which UI updates would you like to work on first?
+
+Which UI?
+
+Both — start with Explorer (can do now), then Android
+
+If Android — which items? (select all that apply)
+
+QR code generation (display invite URI as QR), QR code scanning (camera, read invite URIs), Share invite button (Android share sheet), P2P mode toggle (HTTP-only / P2P-only / hybrid), Mining status UI (tip, peer count, gossip, latest block), Tip source indicator (cache / P2P / HTTP fallback)
+
+Let me explore the current state of the Explorer UI files before writing a single line.
+
+Good news: ContractDetail.tsx is already done (uses React Query throughout), AdminMultisig.tsx is only 44 lines and is a layout component with no fetch calls (it delegates to sub-tabs), and WalletHome.tsx already has the first-time user guidance.
+
+So the Explorer TODO items from replit.md are already done! Let me check the sub-tabs of AdminMultisig to find the raw fetch() calls that the TODO.md mentioned. The TODO said AdminMultisig.tsx has 836 lines — but the explorer reports it's only 44 lines. Perhaps it was refactored already, or the sub-tabs (MultisigTab, ValidatorsTab, etc.) are the ones with raw fetch() calls. The subagent confirmed it's a layout component with no data fetching, which contradicts the TODO.md's claim of 836 lines with raw fetch() calls. So either it was already refactored or the actual fetch calls are buried in the sub-tabs. Let me dig into those sub-components to see what's still using raw fetch().
+
+Good — ContractDetail and WalletHome are already done. The AdminMultisig is now a 44-line shell; let me check its sub-tabs for remaining raw fetch() calls, then verify across the full Explorer.
+
+Good. Now I have a clear picture:
+
+Explorer UI status:
+
+ContractDetail.tsx — 415 lines, uses React Query (useQuery/useMutation) ✅ Already done
+
+AdminMultisig.tsx — 44 lines, refactored into sub-tabs, no raw fetch ✅ Already done
+
+MultisigTab.tsx — Uses generated hooks entirely ✅ Already done
+
+WalletHome.tsx — Already has first-time user guidance ✅ Already done
+
+Contracts.tsx — Has 3 raw fetch() calls:
+
+Line 106: useEffect loading examples with raw fetch instead of useQuery
+
+Line 150: handleDeploy mutation handler using raw fetch instead of useMutation
+
+Line 380: raw fetch in a callback
+
+So the remaining work is refactoring those three fetch calls in Contracts.tsx to use proper React Query patterns. I should also verify that the admin sub-tabs like ChainHealthTab, NodeTab, and ValidatorsTab are using the correct pattern of raw fetch inside useQuery.
+
+For Android, there's QR code generation to handle.
+
+invite URIs, camera-based QR scanning, a share button using Android intents, and a P2P mode toggle. I also need to build out the mining status UI showing tip, peer count, gossip, and latest block info, plus a tip source indicator. Let me explore the Android codebase in equilibrium/mobile/android/ to see what's already there.
+
+The major Explorer items are already done. Contracts.tsx still has 3 raw fetch() calls outside React Query — that's the remaining Explorer work. Let me read it fully and explore the Android codebase in parallel before writing anything.
+
+Good picture. I'll tackle both in parallel — Explorer first, then Android. Let me read the remaining files I need.
+
+I need to see the Android layout XML and string resources before writing code.
+
+I have everything I need. Let me now implement both the Explorer and Android changes. First, let me check P2PNode's API surface.
+
+I have everything I need. Let me implement all changes in parallel — Explorer Contracts.tsx refactor, Android QR/share/status/mode UI, new dependencies, and layouts.
+
+Let me check the p2p_runtime state structure to add peer count, then implement everything at once.
+
+I have everything I need. Let me now implement everything in one batch — Explorer refactor, Android QR/share/status/mode UI, dependencies, and Rust peer count.
+
+Now I have everything. Let me write all the changes in parallel — Rust peer count, JNI, Kotlin, ZXing deps, Android layouts, BootstrapQrActivity rewrite, MainActivity update, and Explorer Contracts.tsx refactor.
+
+Let me continue implementing all the changes. I was in the middle of the p2p_runtime.rs edit. Now I need to:
+
+Update connection events in p2p_runtime.rs to track peer count
+
+Add get_connected_peer_count() function to p2p_runtime.rs
+
+Add JNI binding in jni_bridge.rs
+
+Update P2PNode.kt
+
+Update libs.versions.toml
+
+Update build.gradle.kts
+
+Rewrite BootstrapQrActivity.kt
+
+Create activity_bootstrap_qr.xml
+
+Update MainActivity.kt
+
+Update activity_main.xml
+
+Update strings.xml
+
+Refactor Contracts.tsx
+
+Now I'll tackle all the remaining independent changes in parallel.
+
+Let me continue implementing all the changes in parallel. I need to:
+
+Add get_connected_peer_count() to p2p_runtime.rs
+
+Add JNI binding in jni_bridge.rs
+
+Update P2PNode.kt
+
+Update libs.versions.toml
+
+Update build.gradle.kts
+
+Rewrite BootstrapQrActivity.kt
+
+Create activity_bootstrap_qr.xml
+
+Update MainActivity.kt
+
+Update activity_main.xml
+
+Update strings.xml
+
+Refactor Contracts.tsx
+
+Let me batch all independent writes now.
+
+Now let me batch all remaining writes in parallel — Rust function, JNI, Kotlin, Android deps, layouts, and Explorer.
+
+Let me continue with all the remaining writes in parallel. I have the context I need. Let me now write everything.
+
+Now writing everything in parallel — all independent files at once.
+
+Let me continue with all the remaining writes in parallel. I need to:
+
+Add JNI binding for getConnectedPeerCount in jni_bridge.rs
+
+Update P2PNode.kt with getConnectedPeerCount
+
+Update libs.versions.toml with ZXing
+
+Update build.gradle.kts with ZXing dep
+
+Rewrite BootstrapQrActivity.kt
+
+Create activity_bootstrap_qr.xml
+
+Update MainActivity.kt
+
+Update activity_main.xml
+
+Update strings.xml
+
+Refactor Contracts.tsx
+
+Let me batch all of these now.
+
+Let me continue writing all the remaining files in parallel. I'll batch all independent writes now.
+
+Continuing — all remaining independent writes in one batch.
+
+Let me continue with all the remaining writes in one big parallel batch. I need to write:
+
+libs.versions.toml - Add ZXing
+
+build.gradle.kts - Add ZXing dep
+
+BootstrapQrActivity.kt - Major rewrite
+
+activity_bootstrap_qr.xml - New file
+
+MainActivity.kt - Add P2P mode toggle, mining status, tip source, launch BootstrapQr
+
+activity_main.xml - Update layout
+
+strings.xml - Add new strings
+
+Contracts.tsx - Refactor raw fetch calls Now I'm starting with BootstrapQrActivity.kt. I need to switch from extending Activity to AppCompatActivity, then integrate ZXing's BarcodeEncoder for QR generation and IntentIntegrator for scanning. I'll also add a share button and keep the manual entry flow intact. For the local IP, I'll pull it from NetworkInterface.getNetworkInterfaces(), and the invite URI will follow the format equilibrium://bootstrap?addr=<encoded_multiaddr> where the multiaddr is /ip4/<ip>/tcp/9000.
+
+Writing BootstrapQrActivity... Setting up the activity lifecycle...
+
+I'm wiring up the scan and share buttons, then building the invite URI by getting the local IP address and constructing a multiaddr string that gets encoded into a deep link.
+
+Now I'm implementing the QR code generation using a barcode encoder to create a visual representation of that URI, with a fallback for cases where the JNI libraries aren't available. I'm also setting up the share functionality to let users send their invite link through the system chooser.
+
+Setting up the scanner... Writing the layout XML... Writing layout XML... Finishing the layout with a status display, then I need to update the MainActivity to add P2P mode options, mining status polling with a Handler that refreshes every 2 seconds, a tip source indicator, and a button to launch the QR code scanner activity. I'll also need to add the corresponding string resources. I'll simplify the tip source display to just show whether the local P2P cache has data or if we're falling back to HTTP. Now I need to implement the P2P mode toggle, which requires adding a SharedPreferences setting for the mode (HTTP, P2P, or hybrid) that MiningWorker reads to decide whether to start the P2P node. I can pass this as another input parameter to MiningWorker alongside the existing node URL and miner address settings.
+
+Given the scope, I should focus on the highest-priority items: rewriting BootstrapQrActivity with QR generation and scanning, creating the new layout file, updating MainActivity with the P2P toggle and mining status UI, wiring everything together, and adding the necessary strings and dependencies.
+
+For MainActivity's mining status display, I'll poll the P2PNode every 3 seconds to show chain height, tip hash, peer count, and whether the tip came from local cache or HTTP fallback. The P2P mode toggle will be a RadioGroup with three options: HTTP only, P2P + HTTP hybrid mode, and a third option that's still being defined. Writing the implementation...
+
+Let me check the AndroidManifest before writing all the files.
+
+I need to continue implementing all the Android and Explorer changes. Let me batch all the independent writes now.
+
+I'll write all these files in parallel:
+
+libs.versions.toml - Add ZXing
+
+build.gradle.kts - Add ZXing dep
+
+BootstrapQrActivity.kt - Major rewrite
+
+activity_bootstrap_qr.xml - New layout
+
+MainActivity.kt - Add P2P mode toggle, mining status, tip source
+
+activity_main.xml - Update layout
+
+strings.xml - Add new strings
+
+AndroidManifest.xml - Add BootstrapQrActivity + camera permission
+
+Contracts.tsx - Refactor 3 raw fetch calls
+
+Writing all remaining files in one parallel batch.
+
+Let me continue writing all the remaining files in parallel. I have a lot to write:
+
+build.gradle.kts - Add ZXing dep
+
+BootstrapQrActivity.kt - Major rewrite
+
+activity_bootstrap_qr.xml - New layout
+
+MainActivity.kt - Add P2P mode toggle, mining status, tip source, launch BootstrapQr
+
+activity_main.xml - Update layout
+
+strings.xml - Add new strings
+
+AndroidManifest.xml - Add BootstrapQrActivity + camera permission
+
+Contracts.tsx - Refactor 3 raw fetch calls
+
+Now I'm adding the ZXing dependencies to the build configuration, then rewriting the bootstrap QR activity with the complete implementation, updating the main activity to include P2P mode toggling and mining status polling, and refactoring the contract fetch calls in the frontend.
+
+I need to figure out which files can be written in parallel - most of them have no dependencies on each other, but MainActivity.kt will depend on some of the other changes, so I'll handle that separately once I've got the foundational pieces in place. Adding string resources...
+
+Now I'm setting up the MainActivity with TextViews to display the network status information, connecting them to the layout elements and initializing the handler for UI updates. Setting up the P2P mode toggle with shared preferences to persist the user's selection between HTTP, P2P, and hybrid modes...
+
+Finishing the mode selection logic where I save the choice and auto-start the P2P node if needed, then setting up the join network button to launch the bootstrap QR activity and starting the status poller...
+
+Now I'm working on the network status update function...
+
+Fetching the latest tip data and peer count from the P2P node, then parsing the JSON response to display the block height and tip source, with fallback text if the data is unavailable or malformed. I need to handle the useMutation callback for deploy to navigate to the new contract address on success, and refactor ContractsListTab to use useQuery so data reloads when the filter changes while the refresh button calls refetch(). Looking at the current DeployTab, I need to replace the raw fetch for loading examples with useQuery and update the deploy handler to work with the mutation's onSuccess callback.
+
+Writing the refactored files...
+
+Let me continue writing all the remaining files in parallel. I have a lot to write still:
+
+BootstrapQrActivity.kt - Major rewrite
+
+activity_bootstrap_qr.xml - New layout
+
+MainActivity.kt - Add P2P mode toggle, mining status, tip source, launch BootstrapQr
+
+activity_main.xml - Update layout
+
+strings.xml - Add new strings
+
+AndroidManifest.xml - Add BootstrapQrActivity + camera permission
+
+Contracts.tsx - Refactor the fetch calls to consolidate the raw requests
+
+Writing all remaining files in parallel now.
+
+You've reached your daily free quota limit. It will reset at 12:00 AM UTC

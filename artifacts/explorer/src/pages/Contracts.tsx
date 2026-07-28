@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { Link, useLocation } from "wouter";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,7 +86,6 @@ function DeployTab() {
   const [watSource, setWatSource] = useState("");
   const [abiJson, setAbiJson] = useState("");
   const [deployer, setDeployer] = useState(wallet?.address ?? "");
-  const [examples, setExamples] = useState<ExampleContract[]>([]);
 
   const [compileState, setCompileState] = useState<
     | { status: "idle" }
@@ -94,32 +94,52 @@ function DeployTab() {
     | { status: "error"; message: string }
   >({ status: "idle" });
 
-  const [deployState, setDeployState] = useState<
-    | { status: "idle" }
-    | { status: "deploying" }
-    | { status: "ok"; address: string }
-    | { status: "error"; message: string }
-  >({ status: "idle" });
+  // ── Load examples via React Query ──────────────────────────────────────────
+  const { data: examplesData } = useQuery<{ examples: ExampleContract[] }>({
+    queryKey: ["contract-examples"],
+    queryFn: () => fetch("/api/contracts/examples").then((r) => r.json()),
+    staleTime: Infinity, // examples don't change at runtime
+  });
+  const examples = examplesData?.examples ?? [];
 
-  // Load examples on mount
-  useEffect(() => {
-    fetch("/api/contracts/examples")
-      .then((r) => r.json())
-      .then((d) => setExamples(d.examples ?? []))
-      .catch(() => {});
-  }, []);
+  // ── Deploy mutation ────────────────────────────────────────────────────────
+  const deployMutation = useMutation<{ address: string }, Error, void>({
+    mutationFn: async () => {
+      let abi: ContractAbi | null = null;
+      if (abiJson.trim()) {
+        try {
+          abi = JSON.parse(abiJson);
+        } catch {
+          throw new Error("ABI is not valid JSON.");
+        }
+      }
+      if (compileState.status !== "ok") throw new Error("Compile first.");
+      const res = await fetch("/api/contracts/deploy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deployer, bytecodeHex: compileState.hex, abi }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error ?? "Deploy failed.");
+      return { address: data.address };
+    },
+    onSuccess: ({ address }) => {
+      setLocation(`/contracts/${address}`);
+    },
+  });
 
   const handleLoadExample = (ex: ExampleContract) => {
     setWatSource(ex.wat);
     setAbiJson(JSON.stringify(ex.abi, null, 2));
     setCompileState({ status: "idle" });
-    setDeployState({ status: "idle" });
+    deployMutation.reset();
   };
 
+  const deployMutationReset = deployMutation.reset;
   const handleCompile = useCallback(async () => {
     if (!watSource.trim()) return;
     setCompileState({ status: "compiling" });
-    setDeployState({ status: "idle" });
+    deployMutationReset();
     try {
       const result = await compileWatToHex(watSource);
       setCompileState({ status: "ok", ...result });
@@ -129,46 +149,23 @@ function DeployTab() {
         message: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [watSource]);
-
-  const handleDeploy = useCallback(async () => {
-    if (compileState.status !== "ok") return;
-    if (!deployer.trim()) return;
-
-    let abi: ContractAbi | null = null;
-    if (abiJson.trim()) {
-      try {
-        abi = JSON.parse(abiJson);
-      } catch {
-        setDeployState({ status: "error", message: "ABI is not valid JSON." });
-        return;
-      }
-    }
-
-    setDeployState({ status: "deploying" });
-    try {
-      const res = await fetch("/api/contracts/deploy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deployer, bytecodeHex: compileState.hex, abi }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setDeployState({ status: "error", message: data.error ?? "Deploy failed." });
-      } else {
-        setDeployState({ status: "ok", address: data.address });
-      }
-    } catch (err: unknown) {
-      setDeployState({
-        status: "error",
-        message: err instanceof Error ? err.message : "Network error.",
-      });
-    }
-  }, [compileState, deployer, abiJson]);
+  }, [watSource, deployMutationReset]);
 
   const canCompile = watSource.trim().length > 0;
   const HEX_40 = /^[0-9a-f]{40}$/;
-  const canDeploy = compileState.status === "ok" && HEX_40.test(deployer);
+  const canDeploy =
+    compileState.status === "ok" &&
+    HEX_40.test(deployer) &&
+    !deployMutation.isPending;
+
+  // Derive a deployState shape from the mutation for the UI below
+  const deployStatus = deployMutation.isPending
+    ? "deploying"
+    : deployMutation.isSuccess
+      ? "ok"
+      : deployMutation.isError
+        ? "error"
+        : "idle";
 
   return (
     <div className="space-y-6">
@@ -214,7 +211,7 @@ function DeployTab() {
               onChange={(e) => {
                 setWatSource(e.target.value);
                 setCompileState({ status: "idle" });
-                setDeployState({ status: "idle" });
+                deployMutation.reset();
               }}
               placeholder={`(module\n  (func (export "main") (result i32)\n    i32.const 42\n  )\n)`}
               rows={18}
@@ -304,18 +301,18 @@ function DeployTab() {
               </div>
 
               <Button
-                onClick={handleDeploy}
-                disabled={!canDeploy || deployState.status === "deploying"}
+                onClick={() => deployMutation.mutate()}
+                disabled={!canDeploy}
                 className="w-full"
               >
-                {deployState.status === "deploying" ? (
+                {deployStatus === "deploying" ? (
                   <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Deploying…</>
                 ) : (
                   <><Zap className="w-4 h-4 mr-2" /> Deploy Contract</>
                 )}
               </Button>
 
-              {!canDeploy && compileState.status !== "ok" && (
+              {!canDeploy && compileState.status !== "ok" && deployStatus === "idle" && (
                 <p className="text-xs text-muted-foreground text-center">
                   Compile first, then deploy.
                 </p>
@@ -326,31 +323,31 @@ function DeployTab() {
                 </p>
               )}
 
-              {deployState.status === "ok" && (
+              {deployStatus === "ok" && deployMutation.data && (
                 <div className="border border-green-200 bg-green-50 rounded-md p-3 space-y-2">
                   <div className="flex items-center gap-2 text-green-700 font-medium text-sm">
                     <CheckCircle2 className="w-4 h-4" /> Deployed!
                   </div>
                   <div className="flex items-center gap-2">
                     <code className="text-xs font-mono bg-white border border-green-200 rounded px-2 py-1 flex-1 truncate">
-                      {deployState.address}
+                      {deployMutation.data.address}
                     </code>
-                    <CopyButton text={deployState.address} />
+                    <CopyButton text={deployMutation.data.address} />
                   </div>
                   <Button
                     variant="outline"
                     size="sm"
                     className="w-full border-green-200 text-green-700 hover:bg-green-100"
-                    onClick={() => setLocation(`/contracts/${deployState.address}`)}
+                    onClick={() => setLocation(`/contracts/${deployMutation.data!.address}`)}
                   >
                     View Contract <ChevronRight className="w-3 h-3 ml-1" />
                   </Button>
                 </div>
               )}
-              {deployState.status === "error" && (
+              {deployStatus === "error" && (
                 <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md px-3 py-2">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>{deployState.message}</span>
+                  <span>{deployMutation.error?.message}</span>
                 </div>
               )}
             </CardContent>
@@ -365,42 +362,35 @@ function DeployTab() {
 
 function ContractsListTab() {
   const { wallet } = useWallet();
-  const [contracts, setContracts] = useState<DeployedContract[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   // null = show all; wallet.address = show mine only
   const [deployerFilter, setDeployerFilter] = useState<string | null>(null);
 
-  const load = useCallback((deployer: string | null) => {
-    setLoading(true);
-    setError(null);
-    const url = deployer
-      ? `/api/contracts?deployer=${encodeURIComponent(deployer)}`
-      : "/api/contracts";
-    fetch(url)
-      .then((r) => r.json())
-      .then((d) => {
-        setContracts(d.contracts ?? []);
-        setLoading(false);
-      })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : "Failed to load contracts");
-        setLoading(false);
-      });
-  }, []);
+  const url = deployerFilter
+    ? `/api/contracts?deployer=${encodeURIComponent(deployerFilter)}`
+    : "/api/contracts";
 
-  useEffect(() => { load(deployerFilter); }, [load, deployerFilter]);
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery<{ contracts: DeployedContract[] }>({
+    queryKey: ["contracts", deployerFilter],
+    queryFn: () => fetch(url).then((r) => r.json()),
+  });
+
+  const contracts = data?.contracts ?? [];
 
   const handleToggleMine = () => {
     if (!wallet) return;
-    const next = deployerFilter ? null : wallet.address;
-    setDeployerFilter(next);
+    setDeployerFilter((prev) => (prev ? null : wallet.address));
   };
 
   const toolbar = (
     <div className="flex items-center justify-between gap-3 flex-wrap">
       <div className="flex items-center gap-2">
-        {!loading && (
+        {!isLoading && (
           <p className="text-sm text-muted-foreground">
             {contracts.length} contract{contracts.length !== 1 ? "s" : ""}
             {deployerFilter && " by you"}
@@ -417,13 +407,13 @@ function ContractsListTab() {
           </Button>
         )}
       </div>
-      <Button variant="ghost" size="sm" onClick={() => load(deployerFilter)}>
+      <Button variant="ghost" size="sm" onClick={() => refetch()}>
         Refresh
       </Button>
     </div>
   );
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="space-y-3">
         {toolbar}
@@ -455,13 +445,14 @@ function ContractsListTab() {
     );
   }
 
-  if (error) {
+  if (isError) {
     return (
       <div className="space-y-3">
         {toolbar}
         <div className="flex items-center gap-2 text-destructive py-8">
-          <AlertCircle className="w-4 h-4" /> {error}
-          <button onClick={() => load(deployerFilter)} className="ml-2 text-sm text-primary hover:underline">Retry</button>
+          <AlertCircle className="w-4 h-4" />
+          {error instanceof Error ? error.message : "Failed to load contracts"}
+          <button onClick={() => refetch()} className="ml-2 text-sm text-primary hover:underline">Retry</button>
         </div>
       </div>
     );
