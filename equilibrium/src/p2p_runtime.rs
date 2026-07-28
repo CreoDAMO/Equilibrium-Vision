@@ -565,7 +565,42 @@ async fn run_swarm(rx: mpsc::Receiver<Command>, listen_tcp: u16, listen_quic: u1
                                     } else { None },
                                 }
                             }
-                            // All other kinds are desktop-only (proofs require SMT)
+                            // Headers: serve block headers from the local ring.
+                            // `params.from` / `params.to` optionally filter by height.
+                            // Phones can answer this for the last BLOCK_RING_CAP blocks.
+                            "headers" => {
+                                let from_h = request.params["from"].as_u64().unwrap_or(0);
+                                let to_h   = request.params.get("to")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(u64::MAX);
+                                let ring = block_ring().lock().expect("block ring poisoned");
+                                let headers: Vec<Value> = ring.iter()
+                                    .filter_map(|body| serde_json::from_str::<Value>(body).ok())
+                                    .filter(|v| {
+                                        v["height"].as_u64()
+                                            .map(|h| h >= from_h && h <= to_h)
+                                            .unwrap_or(false)
+                                    })
+                                    .map(|v| serde_json::json!({
+                                        "hash":       v["hash"],
+                                        "height":     v["height"],
+                                        "prevHash":   v["prevHash"],
+                                        "timestamp":  v["timestamp"],
+                                        "difficulty": v["difficulty"],
+                                        "stateRoot":  v["stateRoot"],
+                                        "nonce":      v["nonce"],
+                                        "merkleRoot": v["merkleRoot"],
+                                    }))
+                                    .collect();
+                                let data = serde_json::json!({ "headers": headers });
+                                LightnodeResp {
+                                    id:    request.id.clone(),
+                                    ok:    true,
+                                    data:  Some(data),
+                                    error: None,
+                                }
+                            }
+                            // Proof requests require SMT — desktop-only.
                             _ => LightnodeResp {
                                 id:    request.id.clone(),
                                 ok:    false,

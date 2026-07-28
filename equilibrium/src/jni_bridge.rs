@@ -343,3 +343,52 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_gossipBlockBody(
         JNI_FALSE
     }
 }
+
+/// Push a block body JSON string into the local ring buffer without gossiping.
+/// Call this after accepting a block from any source (HTTP sync, RR fetch) so
+/// the phone can serve it to other peers via the sync RR protocol.
+///
+/// Unlike `gossipBlockBody`, this does NOT publish to Gossipsub — use it when
+/// the phone already learned about the block through another channel and only
+/// wants to make it available for peer-to-peer sync serving.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun pushBlockBody(bodyJson: String)
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_pushBlockBody(
+    mut env:   JNIEnv,
+    _obj:      JObject,
+    body_json: JString,
+) {
+    let Ok(json_str) = env.get_string(&body_json) else { return; };
+    p2p_runtime::push_block_body(json_str.to_str().unwrap_or_default());
+}
+
+/// Ask a connected peer for a range of block bodies via the sync RR protocol.
+/// Returns a JSON string `{"blocks":[...]}` containing all available blocks
+/// in the height range [fromHeight, toHeight], or an empty string on failure.
+///
+/// MiningWorker can call this during initial sync to fill the local block ring
+/// from a peer without requiring HTTP access to the API server.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun querySyncBlocks(fromHeight: Long, toHeight: Long): String
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_querySyncBlocks(
+    env:         JNIEnv,
+    _obj:        JObject,
+    from_height: jlong,
+    to_height:   jlong,
+) -> jstring {
+    let json = p2p_runtime::query_sync_blocks(
+        from_height.max(0) as u64,
+        to_height.max(0) as u64,
+    );
+    env.new_string(&json)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}

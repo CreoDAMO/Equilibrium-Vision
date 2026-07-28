@@ -102,6 +102,29 @@ object P2PNode {
     @JvmStatic
     external fun gossipBlockBody(bodyJson: String): Boolean
 
+    /**
+     * Push a block body JSON string into the local ring buffer without gossiping.
+     * Use this after fetching a block via HTTP or sync RR so the phone can serve
+     * it to other peers over the sync RR protocol.
+     *
+     * Unlike [gossipBlockBody], this does NOT publish to Gossipsub.
+     */
+    @JvmStatic
+    external fun pushBlockBody(bodyJson: String)
+
+    /**
+     * Request a range of block bodies from a connected peer by height via the
+     * sync RR protocol.
+     *
+     * Returns a JSON string `{"blocks":[...]}` with all available blocks in
+     * [fromHeight, toHeight], or an empty string on failure / timeout.
+     *
+     * Use during initial sync to fill the local block ring from a peer without
+     * requiring HTTP access to the API server.
+     */
+    @JvmStatic
+    external fun querySyncBlocks(fromHeight: Long, toHeight: Long): String
+
     fun startDefault(): Boolean = start(DEFAULT_TCP_PORT, DEFAULT_QUIC_PORT)
 
     /**

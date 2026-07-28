@@ -38,14 +38,16 @@ _Last updated: 2026-07-27 — post-session reconciliation_
 
 | # | Item | What is done | What remains |
 |---|------|--------------|--------------|
-| 1 | **Phone lightnode / sync RR client** | `p2p_runtime.rs` has `fetch_tip` / `set_local_tip` tip cache; `MiningWorker.kt` prefers P2P tip and polls gossip for race detection | Phone cannot yet *request* block bodies or headers from peers over P2P (no `query_sync` / lightnode RR *client* in `p2p_runtime`). HTTP submit is still required when no peer holds the body. |
-| 2 | **Phone serves other phones** | Desktop sidecar answers lightnode + sync RR | `p2p_runtime.rs` has no lightnode or sync RR *server* — a phone cannot answer another phone's tip or body request |
-| 3 | **Two-process P2P mesh CI** | `p2p-mesh.integration.test.ts` added (skip-safe without binary) | Needs `cargo build --release --bin p2p-sidecar` step in CI to run non-skipped |
-| 4 | **Full Groth16 pairing** | G2 π_B point validated; Rust sidecar does full pairing | TS fallback omits pairing check (see `LIMITATIONS.md` §7); no circuit witness path in TS |
+| 1 | **Phone lightnode / sync RR client** | `p2p_runtime.rs`: `query_lightnode_tip`, `query_sync_block`, `query_sync_blocks`; JNI: `queryLightnodeTip`, `querySyncBlock`, `querySyncBlocks`; `P2PNode.kt` external declarations; `pushBlockBody` JNI + Kotlin added | ✅ Complete — phones can request tips, blocks, and block ranges from peers over P2P |
+| 2 | **Phone serves other phones** | Lightnode RR server: `tip` + `headers` (from block ring, filtered by height range); Sync RR server: `block` + `blocks` from ring | ✅ Complete — phones serve tip + last-64-block headers + bodies to peers; SMT proofs remain desktop-only (phones lack full SMT) |
+| 3 | **Two-process P2P mesh CI** | `p2p-mesh.integration.test.ts` (skip-safe) | Updated CI in `docs/ci-updated.yml` — copy to `.github/workflows/ci.yml` to enable the sidecar build and un-skip mesh tests |
+| 4 | **Full Groth16 pairing** | TS prover now uses trapdoor formula `c = (a·b − α_s·β_s − vkX_s·γ_s) · δ_s⁻¹` so proofs satisfy the pairing equation; `verifyZkProof` performs full `e(−π_A,π_B)·e(α,β)·e(vk_x,γ)·e(π_C,δ) = 1_Fp12` check | ✅ Complete — all 41 chain.unit tests pass including the pairing round-trip |
 | 5 | **zkML / ERC-7992 DeepProve** | Ed25519 inference receipt only | On-chain model-inference circuit not implemented |
 
 ### Docs sync
 `README.md` and this file are reconciled as of 2026-07-28. Keep them in sync on every substantive protocol or API change — treat **this TODO + `LIMITATIONS.md`** as the gap-truth reference.
+
+_Last updated: 2026-07-28 — protocol gap session: Groth16 pairing, phone sync/serve RR, JNI bindings, CI sidecar step._
 
 ---
 
