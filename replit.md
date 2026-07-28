@@ -39,6 +39,16 @@ pnpm install
 bash scripts/start-postgres.sh   # then restart API Server + Explorer workflows
 ```
 
+### After a fresh GitHub import into Replit
+
+The `artifacts/api-server: API Server` artifact workflow uses Replit's **injected** `DATABASE_URL` (a managed cloud PostgreSQL), not the local Postgres instance started by `scripts/start-postgres.sh`. On a fresh import the managed database has no schema yet, causing `relation "blocks" does not exist` errors. Fix it with the one-shot setup script:
+
+```bash
+bash scripts/setup-replit.sh
+```
+
+This installs Node dependencies and pushes the Drizzle schema to the managed database. After it completes, start workflows in order: **Postgres → API Server → Explorer**.
+
 ---
 
 ## What Needs To Be Done

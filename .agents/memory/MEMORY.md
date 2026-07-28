@@ -9,3 +9,4 @@
 - [p2p-bridge callback wiring](p2p-bridge-callbacks.md) — onSyncRequest/onLightNodeRequest must be assigned in initChain(); they are undefined by default; skeleton pattern uses <Skeleton> from @/components/ui/skeleton (bg-primary/10)
 - [Fail-closed mining policy](mining-policy.md) — mining-policy.ts: fail-closed only in NODE_ENV=production; dev/test/unset all allow RNG fallback; REQUIRE_REAL_SOLVER=true locks any env; ALLOW_RANDOM_MINING=true always unlocks
 - [Phone P2P tip cache](phone-p2p-tip-cache.md) — p2p_runtime::fetch_tip/set_local_tip + JNI + P2PNode.kt/MiningWorker.kt; phone prefers P2P tip, HTTP is fallback; poll_gossip called before and after solve for race detection; full offline still needs sync RR client (open)
+- [Replit managed DB schema push](replit-managed-db.md) — artifact workflow uses Replit's helium DB (not local Postgres); run `pnpm --filter @workspace/db run push` after fresh import
