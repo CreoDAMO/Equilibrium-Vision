@@ -9,6 +9,7 @@ import {
   type StateSnapshotData,
 } from "./persistence.js";
 import type { ChainState } from "./state.js";
+import type { BlockRecord } from "./types.js";
 import type { GenesisDocument } from "@workspace/coinomics";
 import { addressFromSeed } from "./crypto.js";
 import { logger } from "../lib/logger.js";
@@ -439,6 +440,55 @@ export async function initChain(): Promise<void> {
       ok:    false,
       error: `Unknown query kind: ${kind}`,
     });
+  };
+
+  // ── onBlockBody: accept full block bodies gossiped from mobile miners ────────
+  // After a phone submits a block via HTTP and gets an accepted response, it
+  // gossips the full block body via the block-bodies topic.  This lets desktop
+  // nodes (and other phones) add the block to their chain without needing a
+  // separate sync RR request or direct HTTP submission.
+  p2pBridge.onBlockBody = (body, _peerId) => {
+    if (!chainState) return;
+
+    const hash       = typeof body['hash']       === 'string' ? body['hash']       : '';
+    const height     = typeof body['height']     === 'number' ? body['height']     : -1;
+    const prevHash   = typeof body['prevHash']   === 'string' ? body['prevHash']   : '';
+    const nonce      = typeof body['nonce']      === 'number' ? body['nonce']      : 0;
+    const residual   = typeof body['residual']   === 'number' ? body['residual']   : 1;
+    const timestamp  = typeof body['timestamp']  === 'number' ? body['timestamp']  : 0;
+    const miner      = typeof body['miner']      === 'string' ? body['miner']      : '';
+    const difficulty = typeof body['difficulty'] === 'number' ? body['difficulty'] : 1;
+
+    if (!hash || height < 0 || !prevHash) return;
+    // Skip if we already have this block (idempotent)
+    if (chainState.blocks.some((b) => b?.hash === hash)) return;
+
+    logger.info({ hash: hash.slice(0, 16), height }, 'p2p: received block body via gossip');
+
+    try {
+      const block: BlockRecord = {
+        hash,
+        height,
+        prevHash,
+        merkleRoot:     '0'.repeat(64), // phone omits merkle root; recomputed by state
+        timestamp,
+        nonce,
+        difficulty,
+        residual,
+        residualFp:     Math.floor(residual * 1e18),
+        recursionDepth: 2,
+        coinbaseReward: 50_000_000,
+        miner,
+        txCount:        0,
+        transactions:   [],
+      };
+      chainState.addBlock(block);
+      void p2pBridge.gossipBlock(hash); // propagate to other desktop peers
+      chainState.gossipBlock(hash);
+      logger.info({ hash: hash.slice(0, 16), height }, 'p2p: block from gossip body accepted');
+    } catch (err) {
+      logger.warn({ err, hash: hash.slice(0, 16) }, 'p2p: block body from gossip rejected');
+    }
   };
 }
 

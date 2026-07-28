@@ -1,0 +1,299 @@
+## Re-check: `main` @ `82f09f44` (2026-07-28)
+
+Latest commit: *“Update mining worker logic and add implementation details documentation”* (Replit Agent). README banner now says **10 test files**; mobile wiring is still incomplete.
+
+---
+
+### Gap 2 stack
+
+| Layer | Status |
+|-------|--------|
+| `p2p_runtime.rs` — `TipCache`, `fetch_tip`, `set_local_tip` | **OK** |
+| `jni_bridge.rs` — `fetchTip` / `setLocalTip` JNI | **OK** |
+| `P2PNode.kt` — `external fun fetchTip()` / `setLocalTip(...)` | **OK** |
+| Prefer P2P tip → HTTP fallback | **OK** (lines 105–120) |
+| `pollGossip()` before solve | **OK** (131–138) |
+| `pollGossip()` after solve | **OK** (167–174) |
+| `gossipBlock` after accept | **OK** |
+| `setLocalTip` after accept | **Broken** |
+
+---
+
+### Blocking bug (unchanged)
+
+In `submitBlock`:
+
+```kotlin
+private fun submitBlock(
+    nodeUrl: String,
+    miner: String,
+    prevHash: String,
+    nonce: Long,
+    residual: Double,
+    timestamp: Long,   // ← no difficulty
+): Result {
+    ...
+    P2PNode.setLocalTip(acceptedHeight.toLong(), blockHash, difficulty)  // ← unresolved name
+}
+```
+
+Call site also omits `difficulty`:
+
+```kotlin
+return submitBlock(
+    nodeUrl = nodeUrl,
+    miner = minerAddress,
+    prevHash = latestHash,
+    nonce = nonce,
+    residual = residual,
+    timestamp = timestamp,
+)
+```
+
+**Effect:** Kotlin does not compile; APK/JNI path for tip cache after accept cannot build as written.
+
+---
+
+### Smaller gaps still open
+
+| Item | Notes |
+|------|--------|
+| Tip seed after HTTP resolve | No `setLocalTip` when tip comes from HTTP, so next cycle may still hit HTTP until a successful submit (and submit path is currently broken) |
+| Class KDoc | Still describes only HTTP tip/submit; not “P2P-assisted miner + thin client” |
+| Full offline tip/body | Still open by design (lightnode/sync RR client+server) |
+
+---
+
+### Scorecard (this check)
+
+| Gap | Verdict |
+|-----|---------|
+| 1 Fail-closed mining | **Pass** (prior verify) |
+| 2 Phone tip/gossip path | **Almost** — logic present, **does not compile** |
+| 3 P2P mesh CI test | **Pass** (prior verify) |
+| 4 ZK G2 + WASM hosts | **Pass**; LIMITATIONS §7 may still be missing |
+
+---
+
+### One-line fix for Gap 2
+
+1. Add `difficulty: Long` to `submitBlock` parameters.  
+2. Pass `difficulty = difficulty` at the call site.  
+3. (Optional) After resolving tip from HTTP or P2P, call `P2PNode.setLocalTip(height.toLong(), latestHash, difficulty)` so cycle 2+ can use the cache even before a successful submit.
+
+Until that lands, Gap 2 is **not fully closed on `main`**.
+
+Recheck it again just those two
+
+## Those two — **PASS** on current `main`
+
+### 1. `difficulty` in `submitBlock` — **fixed**
+
+| Check | Result |
+|--------|--------|
+| Call site passes `difficulty = difficulty` | Yes (L196) |
+| Signature includes `difficulty: Long` | Yes (L247) |
+| `setLocalTip(..., difficulty)` uses the param | Yes (L275) |
+
+No unresolved `difficulty` reference. Compiles cleanly on this point.
+
+### 2. Tip seed after resolve — **fixed**
+
+| Check | Result |
+|--------|--------|
+| After tip normalize, seeds cache | Yes (L137–141) |
+| Runs for both P2P and HTTP sources | Yes (`latestHash` / `height` / `difficulty` from either path) |
+| Gated on `P2PNode.isRunning()` | Yes |
+
+Honest KDoc is also updated (“P2P-assisted miner + thin client”, full flow including `fetchTip` / `pollGossip` / submit).
+
+---
+
+**Gap 2 Kotlin close-out:** both remaining items are on `main`. Still open by design: lightnode/sync RR client/server and submit without HTTP.
+
+Still open by design: lightnode/sync RR client/server and submit without HTTP. Let's double check this then draft the close 
+
+## Confirmed open (TODO #1–2)
+
+| Capability | Desktop `p2p-sidecar` | Mobile `p2p_runtime` |
+|------------|----------------------|----------------------|
+| Gossipsub blocks/txs | Yes | Yes |
+| Tip cache | n/a (TS owns tip) | Yes (`fetch_tip` / `set_local_tip`) |
+| Lightnode RR **client** | Yes (`query_peer`) | **No** |
+| Lightnode RR **server** | Yes → TS `onLightNodeRequest` | **No** |
+| Sync RR **client** | Yes (`query_sync`) | **No** |
+| Sync RR **server** | Yes → TS `onSyncRequest` | **No** |
+| Block submit | HTTP + P2P body path via sidecar | **HTTP only** |
+
+Wire formats already defined in `p2p-sidecar.rs`:
+
+- **Lightnode** `/equilibrium/lightnode/1.0.0`  
+  Req: `{ id, kind: "tip"|"headers"|"sync"|"proof_account"|"proof_utxo", params }`  
+  Resp: `{ id, ok, data?, error? }`
+
+- **Sync** `/equilibrium/sync/1.0.0`  
+  Req: `{ id, kind: "block"|"blocks"|"tx"|"txs", params }`  
+  Resp: `{ id, ok, data?, error? }`
+
+Mobile swarm has **no** `request_response` behaviour — only gossip + identify + kad. That is the real gap.
+
+---
+
+## Close plan (phased)
+
+Goal: phone can **pull tip/headers/bodies from peers** and **accept solves without HTTP** when a peer (desktop or another phone) can validate/store the block. Cloud becomes optional, not required for a mining cycle among peers.
+
+### Phase A — Mobile RR **client** (closes TODO #1 tip/body pull)
+
+**A1. `p2p_runtime.rs`**
+
+1. Add deps usage: `libp2p::request_response`, `StreamProtocol`, `serde_json`.
+2. Extend `Behaviour`:
+   ```rust
+   lightnode: request_response::json::Behaviour<LightnodeReq, LightnodeResp>,
+   sync:      request_response::json::Behaviour<SyncReq, SyncResp>,
+   ```
+   Same structs as sidecar (`LightnodeReq/Resp`, `SyncReq/Resp`).
+3. Commands:
+   - `QueryLightnode { peer: Option<PeerId>, req: LightnodeReq, reply: oneshot }`
+   - `QuerySync { peer: Option<PeerId>, req: SyncReq, reply: oneshot }`
+4. Public API (blocking, matches existing style):
+   ```rust
+   pub fn query_lightnode_tip() -> Option<String>           // JSON tip
+   pub fn query_sync_block(hash: &str) -> Option<String>    // full block JSON
+   pub fn query_sync_blocks(from: u64, to: u64) -> Option<String>
+   ```
+   If `peer` is `None`, pick any connected peer (first in connected set). Timeout ~10s; return `None` on failure.
+
+5. On successful lightnode `tip`, call `set_local_tip` so the existing MiningWorker path stays hot.
+
+**A2. JNI + Kotlin**
+
+```kotlin
+// P2PNode.kt
+external fun queryLightnodeTip(): String          // "" if fail
+external fun querySyncBlock(hash: String): String
+```
+
+**A3. `MiningWorker.kt` tip path (priority order)**
+
+1. Local tip cache (`fetchTip`)
+2. **P2P lightnode tip** (`queryLightnodeTip`) → seed `setLocalTip`
+3. HTTP `/api/chain/status` (last resort)
+
+Still HTTP for submit in Phase A.
+
+---
+
+### Phase B — Mobile RR **server** (closes TODO #2 phone↔phone)
+
+**B1. Inbound handlers in `p2p_runtime`**
+
+On inbound lightnode/sync request:
+
+| kind | Response source (phone) |
+|------|-------------------------|
+| `tip` | `TIP_CACHE` |
+| `headers` / `proof_*` | Empty/`ok:false` until phone keeps a header/body store |
+| `block` / `blocks` | In-memory **accepted block ring** (Phase C fills it) |
+
+Start minimal: **serve tip only** + **serve blocks present in local ring**. Refuse proofs with `error: "not_supported_on_mobile"`.
+
+**B2. JNI optional callbacks** (if Kotlin holds more state later):
+
+```kotlin
+// Optional host hooks — default no-op in Rust if unset
+fun onLightnodeRequest(kind: String, paramsJson: String): String?
+fun onSyncRequest(kind: String, paramsJson: String): String?
+```
+
+Phase B can stay pure-Rust (tip + local ring) with no Kotlin callbacks.
+
+---
+
+### Phase C — Submit without HTTP (closes “cloud not required”)
+
+Two compatible paths; implement both, prefer P2P.
+
+**C1. Gossip full block payload (fast path for miners)**
+
+Today gossip is **hash-only**. Add optional topic or payload:
+
+- Keep `GOSSIP_BLOCKS` for hashes (race detection).
+- Add `GOSSIP_BLOCK_BODIES` = `equilibrium/block-bodies/1.0.0` publishing compact JSON:
+  ```json
+  { "hash", "height", "prevHash", "nonce", "residual", "timestamp", "miner", "difficulty", ... }
+  ```
+- On receive: validate residual (reuse JNI `verify` or lightweight fixed-point check), `set_local_tip`, push into local ring, **do not** require HTTP.
+
+**C2. Sync RR submit to a full peer (desktop / archive phone)**
+
+After solve:
+
+1. Prefer `query_sync` is for *fetch*; for *submit*, either:
+   - Publish body on block-bodies topic, **or**
+   - Add Sync kind `"submit_block"` answered only by full nodes that run `addBlock`-equivalent.
+
+Simplest honest design for mobile-first:
+
+```
+solve → gossipBlock(hash) → gossipBlockBody(json)
+       → if HTTP configured, also POST /api/blocks/submit (optional)
+```
+
+Desktop sidecar/TS already imports via gossip hash + sync body fetch; extend TS inbound path to accept body-from-gossip the same as sync RR `block` response.
+
+**C3. MiningWorker submit order**
+
+```text
+1. P2P gossip hash + body (if swarm running)
+2. HTTP submit if nodeUrl reachable (optional, not required for Result.success)
+3. setLocalTip + local ring insert on local accept of residual
+```
+
+`Result.success` if **either** P2P body publish succeeded **or** HTTP 2xx. Fail/retry only if both fail and no peers.
+
+---
+
+### Phase D — Tests & docs
+
+| Item | Action |
+|------|--------|
+| Unit | Tip/query timeout, set_local_tip from lightnode tip |
+| Integration | Two Android process **or** phone runtime ↔ `p2p-sidecar`: lightnode tip + sync block |
+| CI | Extend `p2p-mesh.integration.test.ts` or new `p2p-mobile-rr` (skipIf no binary) |
+| `TODO.md` | Move #1–2 to completed when Phases A–C land |
+| `README` / `LIMITATIONS` | State: phone is full mesh participant for tip/body; proofs still desktop-preferred |
+
+---
+
+## Suggested implement order
+
+1. **A1–A3** — RR client + MiningWorker tip chain (highest ROI; no protocol invention).  
+2. **C1** — block-body gossip (unlocks submit without HTTP among phones that share bodies).  
+3. **B1** — serve tip + local ring (phone↔phone tip).  
+4. **C2/C3** — optional HTTP; success if P2P body landed.  
+5. **D** — tests + TODO close.
+
+---
+
+## Scope guardrails
+
+- **Do not** reimplement SMT proofs on phone in v1 — refuse `proof_*` on mobile server.  
+- **Do not** change desktop protocol IDs or JSON shapes — reuse sidecar structs byte-for-byte.  
+- Keep fail-closed mining policy; P2P path only carries **real** fixed-point solutions.  
+- Local ring size bounded (e.g. last 64 blocks) to protect mobile memory.
+
+---
+
+## Definition of done (Gap “fully mobile”)
+
+A phone with **only** peer multiaddrs (QR/NFC), **no** `nodeUrl`:
+
+1. Obtains tip via lightnode RR or body-gossip.  
+2. Solves with JNI solver.  
+3. Publishes hash + body over P2P.  
+4. Peers update tip and can fetch body via sync RR or body topic.  
+5. HTTP is unused for that cycle.
+
+That is the close for TODO #1–2 and “VM/cloud optional.” I can turn Phase A into concrete file patches next if you want implementation-ready diffs.

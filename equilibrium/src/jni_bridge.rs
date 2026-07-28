@@ -271,3 +271,75 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_setLocalTip(
         JNI_FALSE
     }
 }
+
+/// Ask a connected peer for its chain tip via the lightnode RR protocol.
+/// Returns a JSON string `{"height":<Long>,"hash":"<hex>","difficulty":<Long>}`,
+/// or an empty string if no peer is reachable or the request times out (~5 s).
+///
+/// MiningWorker calls this as the second tier in the tip priority chain:
+///   1. `fetchTip()`           — local cache (instant)
+///   2. `queryLightnodeTip()`  — P2P lightnode RR (this)
+///   3. HTTP `/api/chain/status` — last resort
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun queryLightnodeTip(): String
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_queryLightnodeTip(
+    env: JNIEnv,
+    _obj: JObject,
+) -> jstring {
+    let json = p2p_runtime::query_lightnode_tip();
+    env.new_string(&json)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// Request a full block body from a connected peer by hash via the sync RR protocol.
+/// Also checks the local block ring first to avoid a network round-trip.
+/// Returns the block JSON string, or an empty string on failure / timeout.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun querySyncBlock(hash: String): String
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_querySyncBlock(
+    mut env: JNIEnv,
+    _obj:    JObject,
+    hash:    JString,
+) -> jstring {
+    let Ok(hash_str) = env.get_string(&hash) else {
+        return std::ptr::null_mut();
+    };
+    let json = p2p_runtime::query_sync_block(hash_str.to_str().unwrap_or_default());
+    env.new_string(&json)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// Publish a full block body JSON string to connected peers via Gossipsub.
+/// Also stores the body in the local block ring so peers can fetch it via sync RR.
+/// Returns JNI_TRUE if the body was queued for sending successfully.
+///
+/// MiningWorker calls this after a successful HTTP block submit so other phones
+/// can store the accepted block without needing their own HTTP node.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun gossipBlockBody(bodyJson: String): Boolean
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_gossipBlockBody(
+    mut env:   JNIEnv,
+    _obj:      JObject,
+    body_json: JString,
+) -> jboolean {
+    let Ok(json_str) = env.get_string(&body_json) else { return JNI_FALSE; };
+    if p2p_runtime::gossip_block_body(json_str.to_str().unwrap_or_default()) {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
+}

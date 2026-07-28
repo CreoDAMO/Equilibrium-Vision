@@ -114,6 +114,14 @@ class P2PBridge {
    * The handler should fetch the data and call respondToSyncRequest().
    */
   onSyncRequest?: (requestId: string, fromPeerId: string, kind: string, params: Record<string, unknown>) => void;
+  /**
+   * Called when a full block body is received via the block-bodies Gossipsub topic.
+   * Emitted by mobile miners after a successful HTTP submit so desktop nodes (and
+   * other phones) can accept the block without a separate sync RR fetch.
+   * The `body` object carries: hash, height, prevHash, nonce, residual,
+   * timestamp, miner, difficulty.
+   */
+  onBlockBody?: (body: Record<string, unknown>, peerId: string) => void;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -186,6 +194,24 @@ class P2PBridge {
   async gossipTx(txHash: string): Promise<void> {
     if (!this.isAvailable) return;
     await this.send({ method: 'gossip_tx', txHash }).catch(() => {/* fire and forget */});
+  }
+
+  /**
+   * Publish a full block body JSON to connected peers via the block-bodies
+   * Gossipsub topic, so mobile miners and desktop nodes can store and serve
+   * it via sync RR without an HTTP cloud node.
+   *
+   * @param bodyJson  JSON string with fields: hash, height, prevHash, nonce,
+   *                  residual, timestamp, miner, difficulty.
+   */
+  async gossipBlockBody(bodyJson: string): Promise<void> {
+    if (!this.isAvailable) return;
+    try {
+      const data = JSON.parse(bodyJson) as Record<string, unknown>;
+      await this.send({ method: 'gossip_block_body', data }).catch(() => {/* fire and forget */});
+    } catch {
+      logger.warn('p2p-bridge: gossipBlockBody called with invalid JSON — skipped');
+    }
   }
 
   async peers(): Promise<P2PPeer[]> {
@@ -431,6 +457,15 @@ class P2PBridge {
         const fromPeerId = String(evt['fromPeerId'] ?? '');
         const q          = (evt['query'] ?? {}) as { kind?: string; params?: Record<string, unknown> };
         this.onSyncRequest?.(requestId, fromPeerId, q.kind ?? 'block', q.params ?? {});
+        break;
+      }
+
+      // Inbound full block body gossiped from a mobile miner after HTTP submit.
+      // Allows the desktop node to accept the block without a sync RR round-trip.
+      case 'block_body': {
+        const body   = (evt['body'] ?? {}) as Record<string, unknown>;
+        const peerId = String(evt['peerId'] ?? '');
+        this.onBlockBody?.(body, peerId);
         break;
       }
 

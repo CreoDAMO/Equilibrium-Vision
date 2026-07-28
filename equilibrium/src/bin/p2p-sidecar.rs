@@ -62,8 +62,12 @@ use tokio::sync::mpsc;
 
 // ── Protocol IDs ───────────────────────────────────────────────────────────────
 
-const TOPIC_BLOCKS:    &str = "equilibrium/blocks/1.0.0";
-const TOPIC_TXS:       &str = "equilibrium/txs/1.0.0";
+const TOPIC_BLOCKS:       &str = "equilibrium/blocks/1.0.0";
+const TOPIC_TXS:          &str = "equilibrium/txs/1.0.0";
+/// Full block body gossip — phones publish after a successful HTTP submit so
+/// desktop nodes (and other phones) can accept the block body without a
+/// separate sync RR fetch or cloud HTTP request.
+const TOPIC_BLOCK_BODIES: &str = "equilibrium/block-bodies/1.0.0";
 const LIGHTNODE_PROTO: &str = "/equilibrium/lightnode/1.0.0";
 const SYNC_PROTO:      &str = "/equilibrium/sync/1.0.0";
 const IDENTIFY_PROTO:  &str = "/equilibrium/id/1.0.0";
@@ -222,8 +226,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let topic_blocks = gossipsub::IdentTopic::new(TOPIC_BLOCKS);
     let topic_txs    = gossipsub::IdentTopic::new(TOPIC_TXS);
+    let topic_bodies = gossipsub::IdentTopic::new(TOPIC_BLOCK_BODIES);
     gossipsub_beh.subscribe(&topic_blocks)?;
     gossipsub_beh.subscribe(&topic_txs)?;
+    gossipsub_beh.subscribe(&topic_bodies)?;
 
     // ── mDNS — zero-config LAN peer discovery ─────────────────────────────────
     let mdns_beh = mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer_id)?;
@@ -323,7 +329,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(line) = cmd_rx.recv() => {
                 let resp = handle_command(
                     &line, &mut swarm,
-                    &topic_blocks, &topic_txs,
+                    &topic_blocks, &topic_txs, &topic_bodies,
                     &mut ln_out, &mut ln_in,
                     &mut sync_out, &mut sync_in,
                 );
@@ -344,6 +350,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let peer_id = propagation_source.to_string();
                         let evt = if topic == TOPIC_BLOCKS {
                             serde_json::json!({ "event": "block", "blockHash": payload, "peerId": peer_id })
+                        } else if topic == TOPIC_BLOCK_BODIES {
+                            // Block body JSON — parse it so the TS layer receives a
+                            // structured object rather than a raw string.
+                            let body = serde_json::from_str::<serde_json::Value>(&payload)
+                                .unwrap_or(serde_json::Value::Null);
+                            serde_json::json!({ "event": "block_body", "body": body, "peerId": peer_id })
                         } else {
                             serde_json::json!({ "event": "tx", "txHash": payload, "peerId": peer_id })
                         };
@@ -583,6 +595,7 @@ fn handle_command(
     swarm:        &mut libp2p::Swarm<Behaviour>,
     topic_blocks: &gossipsub::IdentTopic,
     topic_txs:    &gossipsub::IdentTopic,
+    topic_bodies: &gossipsub::IdentTopic,
     ln_out:       &mut OutboundLN,
     ln_in:        &mut InboundLN,
     sync_out:     &mut OutboundSync,
@@ -607,6 +620,17 @@ fn handle_command(
         "gossip_tx" => {
             let hash = cmd.tx_hash.unwrap_or_default();
             match swarm.behaviour_mut().gossipsub.publish(topic_txs.clone(), hash.as_bytes().to_vec()) {
+                Ok(_)  => ok_resp(id),
+                Err(e) => err_resp(id, e),
+            }
+        }
+
+        // Publish a full block body JSON so mobile peers can store and serve it
+        // without needing an HTTP node.  `data` carries the block body object.
+        "gossip_block_body" => {
+            let body = cmd.data.unwrap_or(serde_json::Value::Null);
+            let json = serde_json::to_string(&body).unwrap_or_default();
+            match swarm.behaviour_mut().gossipsub.publish(topic_bodies.clone(), json.into_bytes()) {
                 Ok(_)  => ok_resp(id),
                 Err(e) => err_resp(id, e),
             }

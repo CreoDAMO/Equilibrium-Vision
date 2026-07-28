@@ -70,6 +70,38 @@ object P2PNode {
     @JvmStatic
     external fun setLocalTip(height: Long, hash: String, difficulty: Long): Boolean
 
+    /**
+     * Ask a connected peer for its chain tip via the lightnode RR protocol.
+     * Returns a JSON string `{"height":<Long>,"hash":"<hex>","difficulty":<Long>}`,
+     * or an empty string if no peer is reachable or the request times out (~5 s).
+     *
+     * MiningWorker uses this as the second tier in the tip priority chain:
+     *   1. `fetchTip()`           — local cache (instant, no network)
+     *   2. `queryLightnodeTip()`  — P2P lightnode RR (this, ~1–5 s)
+     *   3. HTTP `/api/chain/status` — last resort
+     */
+    @JvmStatic
+    external fun queryLightnodeTip(): String
+
+    /**
+     * Request a full block body from a connected peer by hash via the sync RR protocol.
+     * Also checks the local block ring first to avoid a network round-trip.
+     * Returns the block JSON string, or an empty string on failure / timeout.
+     */
+    @JvmStatic
+    external fun querySyncBlock(hash: String): String
+
+    /**
+     * Publish a full block body JSON string to connected peers via Gossipsub.
+     * Also stores the body in the local block ring so peers can fetch it via sync RR.
+     * Returns `true` if the body was queued for sending.
+     *
+     * MiningWorker calls this after a successful HTTP block submit so other phones
+     * can store the accepted block without needing their own HTTP connection.
+     */
+    @JvmStatic
+    external fun gossipBlockBody(bodyJson: String): Boolean
+
     fun startDefault(): Boolean = start(DEFAULT_TCP_PORT, DEFAULT_QUIC_PORT)
 
     /**

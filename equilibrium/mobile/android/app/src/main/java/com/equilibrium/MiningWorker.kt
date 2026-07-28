@@ -105,20 +105,33 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             )
         }
 
-        // ── 1. Fetch current chain tip ────────────────────────────────────────
-        // Prefer the P2P tip cache so we don't depend on the cloud HTTP node
-        // when peers are reachable.  Fall back to HTTP if P2P has no tip yet.
+        // ── 1. Fetch current chain tip ─────────────────────────────────────────
+        // Priority: (1) local P2P cache, (2) P2P lightnode RR from a peer,
+        // (3) HTTP /api/chain/status.  Only tier 3 requires the cloud node.
         val status: JSONObject = run {
+            // 1a. Local tip cache — instant, zero network
             if (P2PNode.isRunning()) {
                 val tipJson = P2PNode.fetchTip()
                 if (tipJson.isNotEmpty()) {
                     val p2pTip = runCatching { JSONObject(tipJson) }.getOrNull()
                     if (p2pTip != null) {
-                        Log.d(TAG, "Using P2P tip: ${p2pTip.optString("hash","?").take(16)}…")
+                        Log.d(TAG, "Tip from local cache: ${p2pTip.optString("hash","?").take(16)}…")
                         return@run p2pTip
                     }
                 }
             }
+            // 1b. P2P lightnode RR — ask a connected peer (~1–5 s, no HTTP)
+            if (P2PNode.isRunning()) {
+                val rrJson = P2PNode.queryLightnodeTip()
+                if (rrJson.isNotEmpty()) {
+                    val rrTip = runCatching { JSONObject(rrJson) }.getOrNull()
+                    if (rrTip != null) {
+                        Log.d(TAG, "Tip from P2P lightnode: ${rrTip.optString("hash","?").take(16)}…")
+                        return@run rrTip
+                    }
+                }
+            }
+            // 1c. HTTP fallback — last resort when no peers are reachable
             fetchChainStatus(nodeUrl) ?: run {
                 Log.w(TAG, "Could not reach node at $nodeUrl — will retry")
                 return Result.retry()
@@ -275,12 +288,29 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
                             P2PNode.setLocalTip(acceptedHeight.toLong(), blockHash, difficulty)
                         }
 
-                        // Propagate the solved block to connected peers so they
+                        // Propagate the solved block hash to connected peers so they
                         // can skip re-solving this height.  No-op when the P2P
                         // swarm is not running or no peers are connected.
                         if (blockHash.isNotEmpty() && P2PNode.isRunning()) {
                             val gossiped = P2PNode.gossipBlock(blockHash)
                             Log.d(TAG, "gossipBlock($blockHash): $gossiped")
+                        }
+
+                        // Gossip the full block body so other phones can store and
+                        // serve it via sync RR without needing an HTTP node.
+                        if (blockHash.isNotEmpty() && acceptedHeight >= 0 && P2PNode.isRunning()) {
+                            val bodyJson = buildBlockBodyJson(
+                                hash       = blockHash,
+                                height     = acceptedHeight,
+                                prevHash   = prevHash,
+                                nonce      = nonce,
+                                residual   = residual,
+                                timestamp  = timestamp,
+                                miner      = miner,
+                                difficulty = difficulty,
+                            )
+                            val sent = P2PNode.gossipBlockBody(bodyJson)
+                            Log.d(TAG, "gossipBlockBody(height=$acceptedHeight): $sent")
                         }
 
                         Result.success(
@@ -321,6 +351,34 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
     }
 
     // ── Utilities ─────────────────────────────────────────────────────────────
+
+    /**
+     * Build the compact block body JSON used for P2P body gossip (Phase C).
+     * Contains all fields peers need to validate the residual threshold and
+     * serve the block via the sync RR protocol to other phones.
+     *
+     * Does NOT include the Merkle root or transaction list — phones only need
+     * the mining-relevant fields, and the desktop node can recompute the rest.
+     */
+    private fun buildBlockBodyJson(
+        hash:       String,
+        height:     Int,
+        prevHash:   String,
+        nonce:      Long,
+        residual:   Double,
+        timestamp:  Long,
+        miner:      String,
+        difficulty: Long,
+    ): String = JSONObject().apply {
+        put("hash",       hash)
+        put("height",     height)
+        put("prevHash",   prevHash)
+        put("nonce",      nonce)
+        put("residual",   residual)
+        put("timestamp",  timestamp)
+        put("miner",      miner)
+        put("difficulty", difficulty)
+    }.toString()
 
     /**
      * Convert a hex string (with or without 0x prefix) to a 32-byte array.
