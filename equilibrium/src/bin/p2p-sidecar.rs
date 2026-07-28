@@ -42,7 +42,7 @@
 //
 // All log output goes to stderr so it never pollutes the JSON stdout stream.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, Write};
 use std::str::FromStr;
 use std::time::Duration;
@@ -146,6 +146,8 @@ struct Command {
     addr:       Option<String>,
     #[serde(rename = "peerId")]
     peer_id:    Option<String>,
+    /// Alias accepted by the test suite alongside `blockHash`.
+    hash:       Option<String>,
     query:      Option<Value>,
     #[serde(rename = "requestId")]
     request_id: Option<String>,
@@ -316,11 +318,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let stdout            = std::io::stdout();
-    let mut connected:    HashSet<PeerId> = HashSet::new();
-    let mut ln_out:       OutboundLN      = HashMap::new();
-    let mut ln_in:        InboundLN       = HashMap::new();
-    let mut sync_out:     OutboundSync    = HashMap::new();
-    let mut sync_in:      InboundSync     = HashMap::new();
+    let mut connected:    HashSet<PeerId>    = HashSet::new();
+    let mut ln_out:       OutboundLN         = HashMap::new();
+    let mut ln_in:        InboundLN          = HashMap::new();
+    let mut sync_out:     OutboundSync       = HashMap::new();
+    let mut sync_in:      InboundSync        = HashMap::new();
+    // Buffer for gossip block hashes received from peers.  Drained by the
+    // `poll_gossip` RPC so the test suite can pull-check received messages.
+    let mut gossip_queue: VecDeque<String>   = VecDeque::new();
 
     // ── Event loop ─────────────────────────────────────────────────────────────
     loop {
@@ -329,9 +334,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(line) = cmd_rx.recv() => {
                 let resp = handle_command(
                     &line, &mut swarm,
+                    local_peer_id,
                     &topic_blocks, &topic_txs, &topic_bodies,
                     &mut ln_out, &mut ln_in,
                     &mut sync_out, &mut sync_in,
+                    &mut gossip_queue,
                 );
                 emit(&stdout, &resp);
             }
@@ -348,6 +355,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let payload = std::str::from_utf8(&message.data)
                             .unwrap_or("").trim().to_string();
                         let peer_id = propagation_source.to_string();
+                        // Buffer block hashes so `poll_gossip` can drain them.
+                        if topic == TOPIC_BLOCKS && !payload.is_empty() {
+                            gossip_queue.push_back(payload.clone());
+                        }
                         let evt = if topic == TOPIC_BLOCKS {
                             serde_json::json!({ "event": "block", "blockHash": payload, "peerId": peer_id })
                         } else if topic == TOPIC_BLOCK_BODIES {
@@ -573,7 +584,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     SwarmEvent::NewListenAddr { address, .. } => {
-                        eprintln!("[p2p-sidecar] listening on {address}");
+                        eprintln!("[p2p-sidecar] Listening on {address}");
                         emit(&stdout, &serde_json::json!({
                             "event": "listen_addr",
                             "addr": address.to_string(),
@@ -591,15 +602,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[allow(clippy::too_many_arguments)]
 fn handle_command(
-    line:         &str,
-    swarm:        &mut libp2p::Swarm<Behaviour>,
-    topic_blocks: &gossipsub::IdentTopic,
-    topic_txs:    &gossipsub::IdentTopic,
-    topic_bodies: &gossipsub::IdentTopic,
-    ln_out:       &mut OutboundLN,
-    ln_in:        &mut InboundLN,
-    sync_out:     &mut OutboundSync,
-    sync_in:      &mut InboundSync,
+    line:          &str,
+    swarm:         &mut libp2p::Swarm<Behaviour>,
+    local_peer_id: PeerId,
+    topic_blocks:  &gossipsub::IdentTopic,
+    topic_txs:     &gossipsub::IdentTopic,
+    topic_bodies:  &gossipsub::IdentTopic,
+    ln_out:        &mut OutboundLN,
+    ln_in:         &mut InboundLN,
+    sync_out:      &mut OutboundSync,
+    sync_in:       &mut InboundSync,
+    gossip_queue:  &mut VecDeque<String>,
 ) -> Value {
     let cmd: Command = match serde_json::from_str(line) {
         Ok(c)  => c,
@@ -609,13 +622,30 @@ fn handle_command(
 
     match cmd.method.as_str() {
 
+        // Accept both `blockHash` (documented protocol) and `hash` (test alias).
         "gossip_block" => {
-            let hash = cmd.block_hash.unwrap_or_default();
+            let hash = cmd.block_hash.or(cmd.hash).unwrap_or_default();
             match swarm.behaviour_mut().gossipsub.publish(topic_blocks.clone(), hash.as_bytes().to_vec()) {
                 Ok(_)  => ok_resp(id),
                 Err(e) => err_resp(id, e),
             }
         }
+
+        // Return this node's peer ID.
+        "peer_id" => {
+            serde_json::json!({ "id": id, "ok": true, "peer_id": local_peer_id.to_string() })
+        }
+
+        // Drain one buffered gossip block hash (push-based sidecar; tests use this to poll).
+        "poll_gossip" => {
+            match gossip_queue.pop_front() {
+                Some(h) => serde_json::json!({ "id": id, "ok": true, "hash": h }),
+                None    => serde_json::json!({ "id": id, "ok": true, "hash": serde_json::Value::Null }),
+            }
+        }
+
+        // No-op: all topics are subscribed at startup.
+        "subscribe" => ok_resp(id),
 
         "gossip_tx" => {
             let hash = cmd.tx_hash.unwrap_or_default();

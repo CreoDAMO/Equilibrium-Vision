@@ -125,7 +125,7 @@ describe.skipIf(!binPresent)("p2p-sidecar mesh (binary required)", () => {
   it("starts and reports listen_addrs", async () => {
     proc1 = startSidecar(port1, quic1);
     // Wait for the sidecar to bind its TCP listener (logs "Listening on ...")
-    await waitForLog(proc1, "Listening on", 8000);
+    await waitForLog(proc1, "Listening on", 8000); // sidecar logs "Listening on <addr>" (capital L)
 
     const resp = await rpcCall(proc1, { id: "1", method: "listen_addrs" });
     expect(resp).toMatchObject({ ok: true });
