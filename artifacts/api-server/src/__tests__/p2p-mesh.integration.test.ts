@@ -53,7 +53,12 @@ function startSidecar(
   return spawn(SIDECAR_BIN, [], { env, stdio: ["pipe", "pipe", "pipe"] });
 }
 
-/** Send a JSON-RPC request to the sidecar's stdin and read one JSON line back. */
+/** Send a JSON-RPC request to the sidecar's stdin and read one JSON line back.
+ *
+ * The sidecar emits unsolicited event objects (e.g. `{"event":"listen_addr",...}`)
+ * to stdout alongside RPC responses.  This helper skips lines that carry an
+ * `"event"` key so it always returns the actual RPC response (`id` + `ok`).
+ */
 function rpcCall(
   proc: ChildProcess,
   request: Record<string, unknown>,
@@ -68,15 +73,23 @@ function rpcCall(
     let buf = "";
     const onData = (chunk: Buffer) => {
       buf += chunk.toString();
-      const newline = buf.indexOf("\n");
-      if (newline !== -1) {
+      // Process all complete lines; skip unsolicited event objects.
+      let newline: number;
+      while ((newline = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, newline);
+        buf = buf.slice(newline + 1);
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue; // malformed line — skip
+        }
+        // Unsolicited events have an "event" key; RPC responses have "ok".
+        if ("event" in parsed) continue;
         clearTimeout(timer);
         proc.stdout!.off("data", onData);
-        try {
-          resolve(JSON.parse(buf.slice(0, newline)));
-        } catch (e) {
-          reject(e);
-        }
+        resolve(parsed);
+        return;
       }
     };
 

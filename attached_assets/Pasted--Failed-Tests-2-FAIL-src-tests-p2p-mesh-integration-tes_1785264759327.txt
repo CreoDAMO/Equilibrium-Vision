@@ -1,0 +1,67 @@
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/__tests__/p2p-mesh.integration.test.ts > p2p-sidecar mesh (binary required) > starts and reports listen_addrs
+AssertionError: expected { …(2) } to match object { ok: true }
+(2 matching properties omitted from actual)
+- Expected
++ Received
+  {
+-   "ok": true,
++   "addr": "/ip4/127.0.0.1/udp/42126/quic-v1",
++   "event": "listen_addr",
+  }
+ ❯ src/__tests__/p2p-mesh.integration.test.ts:131:18
+    129|
+    130|     const resp = await rpcCall(proc1, { id: "1", method: "listen_addrs…
+    131|     expect(resp).toMatchObject({ ok: true });
+       |                  ^
+    132|     expect(Array.isArray((resp as any).addrs)).toBe(true);
+    133|     expect((resp as any).addrs.length).toBeGreaterThan(0);
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+ FAIL  src/__tests__/p2p-mesh.integration.test.ts > p2p-sidecar mesh (binary required) > node2 receives a gossiped block hash from node1
+AssertionError: expected undefined to be 'deadbeefdeadbeefdeadbeefdeadbeefdeadb…' // Object.is equality
+- Expected:
+"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
++ Received:
+undefined
+ ❯ src/__tests__/p2p-mesh.integration.test.ts:185:22
+    183|       await new Promise((r) => setTimeout(r, 300));
+    184|     }
+    185|     expect(received).toBe(fakeHash);
+       |                      ^
+    186|   }, 30_000);
+    187| });
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+ Test Files  1 failed | 9 passed (10)
+      Tests  2 failed | 259 passed (261)
+   Start at  18:28:24
+   Duration  1387.24s (transform 1.93s, setup 0ms, import 14.07s, tests 1542.38s, environment 1ms)
+Error: AssertionError: expected { …(2) } to match object { ok: true }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "ok": true,
++   "addr": "/ip4/127.0.0.1/udp/42126/quic-v1",
++   "event": "listen_addr",
+  }
+
+ ❯ src/__tests__/p2p-mesh.integration.test.ts:131:18
+
+
+Error: AssertionError: expected undefined to be 'deadbeefdeadbeefdeadbeefdeadbeefdeadb…' // Object.is equality
+
+- Expected:
+"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
++ Received:
+undefined
+
+ ❯ src/__tests__/p2p-mesh.integration.test.ts:185:22
+
+
+/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 test: `vitest run`
+Exit status 1
+Error: Process completed with exit code 1.
