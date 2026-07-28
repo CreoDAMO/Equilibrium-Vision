@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { execFileSync } from "child_process";
+import { Worker, MessageChannel, isMainThread } from "node:worker_threads";
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
@@ -24,6 +25,17 @@ function resolveCliBinary(name: string): string {
   return candidates.find(c => fs.existsSync(c)) ?? candidates[0]!;
 }
 const VAI_CLI_PATH = resolveCliBinary("variational-ai-cli");
+
+// Resolve the compiled Worker thread script for non-blocking WASM execution.
+// esbuild mirrors the source tree: src/chain/wasm-worker.ts → dist/chain/wasm-worker.mjs.
+// Falls back to "" (sync in-process path) when absent — e.g. vitest runs before a build.
+const WORKER_SCRIPT = (
+  [
+    path.resolve(process.cwd(), "dist/chain/wasm-worker.mjs"), // esbuild bundled (prod + dev)
+    path.resolve(__dirname, "chain/wasm-worker.mjs"),           // relative to dist/ (bundled)
+    path.resolve(__dirname, "wasm-worker.mjs"),                 // same dir as this file
+  ] as const
+).find(p => fs.existsSync(p)) ?? "";
 
 // ── WASM Smart Contract Execution Environment ──────────────────────────────────
 //
@@ -164,11 +176,21 @@ export class WasmVM {
   }
 
   /**
-   * Public entry point — kept `async` for API compatibility with callers
-   * (routes/contracts.ts, admin scripts). The implementation is fully
-   * synchronous under the hood (see `execCall`) so that `call_contract` can
-   * recurse into a nested contract call without needing Asyncify — WASM host
-   * imports must be synchronous, so nothing below this point may `await`.
+   * Public entry point for contract calls.
+   *
+   * When running on the main thread with a live host context, execution is
+   * dispatched to a Worker thread (dist/wasm-worker.mjs) so that long-running
+   * host imports like `verify_residual` (execFileSync → variational-ai-cli)
+   * do not block the main event loop.  Host-context operations (balance reads,
+   * credits/debits, DEX swaps, governance params) are proxied back to the main
+   * thread via synchronous MessagePort round-trips — the worker blocks briefly
+   * for each proxy call while the main thread handles it via its event loop.
+   *
+   * Falls back to synchronous in-process execution when:
+   *   - called from inside a worker thread (isMainThread === false) — prevents
+   *     cascading worker creation for call_contract recursion, and
+   *   - no host context is wired (e.g. unit tests), or
+   *   - the compiled worker script is not present (vitest without a prior build).
    */
   async call(
     address: string,
@@ -177,7 +199,96 @@ export class WasmVM {
     gasLimit = 1_000_000,
     callerAddr = "",
   ): Promise<CallResult> {
-    return this.execCall(address, methodId, args, gasLimit, callerAddr, 0);
+    // ── Synchronous fast-path ──────────────────────────────────────────────
+    if (!isMainThread || !this.hostCtx || !WORKER_SCRIPT) {
+      return this.execCall(address, methodId, args, gasLimit, callerAddr, 0);
+    }
+
+    // ── Worker dispatch ────────────────────────────────────────────────────
+    // Serialize the contracts snapshot and ship the call to a Worker thread.
+    const contracts = [...this.contracts.values()];
+    const { port1, port2 } = new MessageChannel();
+    const hostCtx = this.hostCtx;
+
+    return new Promise<CallResult>((resolve) => {
+      let settled = false;
+      const settle = (result: CallResult) => {
+        if (settled) return;
+        settled = true;
+        port2.close();
+        worker.terminate();
+        resolve(result);
+      };
+
+      const worker = new Worker(WORKER_SCRIPT, {
+        workerData: {
+          contracts,
+          blockHeight: this.blockHeight,
+          address, methodId, args, gasLimit, callerAddr,
+        },
+      });
+
+      // ── Host-context proxy ───────────────────────────────────────────────
+      // The worker calls receiveMessageOnPort(port1) synchronously for each
+      // host-context operation.  We respond here via the event loop so the
+      // main thread is never blocked.
+      port2.on("message", (msg: Record<string, unknown>) => {
+        switch (msg["type"]) {
+          case "getBalance":
+            port2.postMessage({ balance: hostCtx.getBalance(msg["addr"] as string) });
+            break;
+          case "credit":
+            hostCtx.credit(msg["addr"] as string, msg["amount"] as number);
+            port2.postMessage({});
+            break;
+          case "debit":
+            port2.postMessage({ ok: hostCtx.debit(msg["addr"] as string, msg["amount"] as number) });
+            break;
+          case "getGovParam":
+            port2.postMessage({ value: hostCtx.getGovParam(msg["name"] as string) });
+            break;
+          case "dexMultiSwap":
+            port2.postMessage({
+              result: hostCtx.dexMultiSwap(
+                msg["poolIds"] as string[], msg["tokenIn"] as string,
+                msg["amountIn"] as number, msg["trader"] as string,
+              ),
+            });
+            break;
+        }
+      });
+
+      // ── Worker result ────────────────────────────────────────────────────
+      worker.on("message", (msg: Record<string, unknown>) => {
+        if (msg["type"] !== "done") return;
+        // Apply storage + call-counter updates back to the live contract map.
+        const updates = msg["contractUpdates"] as Array<{
+          address: string; storage: Record<string, string>;
+          callCount: number; totalGasUsed: number; events?: string[];
+        }>;
+        for (const u of updates) {
+          const live = this.contracts.get(u.address);
+          if (live) {
+            live.storage      = u.storage;
+            live.callCount    = u.callCount;
+            live.totalGasUsed = u.totalGasUsed;
+            if (u.events) live.events = u.events;
+            this.firePersist(live);
+          }
+        }
+        settle(msg["result"] as CallResult);
+      });
+
+      worker.on("error", (err) => {
+        settle({ success: false, returnValue: null, gasUsed: 0, logs: [], error: String(err) });
+      });
+      worker.on("exit", (code) => {
+        if (code !== 0) settle({ success: false, returnValue: null, gasUsed: 0, logs: [], error: `Worker exited with code ${code}` });
+      });
+
+      // Transfer port1 to the worker for synchronous host-context RPC.
+      worker.postMessage({ port: port1 }, [port1]);
+    });
   }
 
   private execCall(
@@ -481,10 +592,11 @@ export class WasmVM {
         // This is the same check performed by the block-accept path.  Contracts
         // can use it to gate actions on verified PoS attestations.
         //
-        // NOTE: The TS verifier validates G1/G2 curve membership and the public
-        // residual/threshold statement (residualFp < thresholdFp).  Full
-        // pairing-check lives in the Rust sidecar (StationarityProof::verify).
-        // See LIMITATIONS §7.
+        // The TS verifier performs the full Groth16 pairing check:
+        // e(−π_A,π_B)·e(α,β)·e(vk_x,γ)·e(π_C,δ) = 1_Fp12, plus G1/G2 curve
+        // membership and the public residualFp < thresholdFp statement.
+        // Note: proofs are generated via the trapdoor formula (not a real
+        // circuit witness) — see LIMITATIONS §7 for what this means.
         verify_groth16_proof: (proofPtr: number, proofLen: number): number => {
           gasUsed += 10_000;
           checkGas();

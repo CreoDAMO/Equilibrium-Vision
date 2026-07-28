@@ -40,14 +40,14 @@ _Last updated: 2026-07-27 — post-session reconciliation_
 |---|------|--------------|--------------|
 | 1 | **Phone lightnode / sync RR client** | `p2p_runtime.rs`: `query_lightnode_tip`, `query_sync_block`, `query_sync_blocks`; JNI: `queryLightnodeTip`, `querySyncBlock`, `querySyncBlocks`; `P2PNode.kt` external declarations; `pushBlockBody` JNI + Kotlin added | ✅ Complete — phones can request tips, blocks, and block ranges from peers over P2P |
 | 2 | **Phone serves other phones** | Lightnode RR server: `tip` + `headers` (from block ring, filtered by height range); Sync RR server: `block` + `blocks` from ring | ✅ Complete — phones serve tip + last-64-block headers + bodies to peers; SMT proofs remain desktop-only (phones lack full SMT) |
-| 3 | **Two-process P2P mesh CI** | `p2p-mesh.integration.test.ts` (skip-safe) | Updated CI in `docs/ci-updated.yml` — copy to `.github/workflows/ci.yml` to enable the sidecar build and un-skip mesh tests |
+| 3 | **Two-process P2P mesh CI** | `p2p-mesh.integration.test.ts` (skip-safe) | ✅ Complete — `ci.yml` and `docs/ci-updated.yml` both include the equilibrium rust-cache + `cargo build --release --bin p2p-sidecar` step; mesh tests run (not skip) on every CI push |
 | 4 | **Full Groth16 pairing** | TS prover now uses trapdoor formula `c = (a·b − α_s·β_s − vkX_s·γ_s) · δ_s⁻¹` so proofs satisfy the pairing equation; `verifyZkProof` performs full `e(−π_A,π_B)·e(α,β)·e(vk_x,γ)·e(π_C,δ) = 1_Fp12` check | ✅ Complete — all 41 chain.unit tests pass including the pairing round-trip |
 | 5 | **zkML / ERC-7992 DeepProve** | Ed25519 inference receipt only | On-chain model-inference circuit not implemented |
 
 ### Docs sync
 `README.md` and this file are reconciled as of 2026-07-28. Keep them in sync on every substantive protocol or API change — treat **this TODO + `LIMITATIONS.md`** as the gap-truth reference.
 
-_Last updated: 2026-07-28 — protocol gap session: Groth16 pairing, phone sync/serve RR, JNI bindings, CI sidecar step._
+_Last updated: 2026-07-28 — verify_residual non-blocking (Worker thread), LIMITATIONS §7 updated (Groth16 pairing complete, trapdoor caveat documented), CI sidecar step landed in both ci.yml and docs/ci-updated.yml._
 
 ---
 

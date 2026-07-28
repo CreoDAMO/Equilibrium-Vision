@@ -15,7 +15,12 @@ async function buildAll() {
   await rm(distDir, { recursive: true, force: true });
 
   await esbuild({
-    entryPoints: [path.resolve(artifactDir, "src/index.ts")],
+    entryPoints: [
+      path.resolve(artifactDir, "src/index.ts"),
+      // Worker thread for non-blocking WASM contract execution.
+      // Emitted as dist/wasm-worker.mjs, loaded by WasmVM.call() at runtime.
+      path.resolve(artifactDir, "src/chain/wasm-worker.ts"),
+    ],
     platform: "node",
     bundle: true,
     format: "esm",
