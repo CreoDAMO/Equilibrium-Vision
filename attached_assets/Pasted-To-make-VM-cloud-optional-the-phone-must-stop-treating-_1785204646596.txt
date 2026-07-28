@@ -1,0 +1,182 @@
+To make **VM/cloud optional**, the phone must stop treating HTTP as the source of truth for tip and acceptance. Today it is a **real miner + gossip participant** that still leans on a full node for chain tip and block accept. Closing that gap is the priority.
+
+Here is the concrete path, ordered so each step removes dependency without waiting for the full stack.
+
+---
+
+## Target architecture (phone as peer)
+
+| Capability | Today | Target |
+|------------|--------|--------|
+| Tip | HTTP `/api/chain/status` | P2P lightnode `tip` (peers) → HTTP fallback |
+| Headers / bodies | None | Local SQLite + sync RR client |
+| Solve | JNI (done) | JNI + `pollGossip` mid-solve |
+| Accept / propagate | HTTP submit + optional gossip hash | Gossip hash **first**; peers fetch body via sync RR; HTTP only if no peers |
+| Serve others | No | Phone answers lightnode + sync RR |
+| Discovery | Dial bootstrap only | mDNS + Kad (already Server mode) |
+
+Cloud becomes a **bootstrap / archive / public seed**, not a requirement for mining or following the tip.
+
+---
+
+## Phase 1 — Closable in-repo now (HTTP optional when peers exist)
+
+### 1. Wire `pollGossip` in the mining loop
+
+`MiningWorker.kt` never calls `pollGossip()` today. Add it **before** solve and once after a long solve, before submit:
+
+```kotlin
+// Before solve — abort if a peer already won this tip race
+if (P2PNode.isRunning()) {
+    val competing = P2PNode.pollGossip()
+    if (competing.isNotEmpty()) {
+        Log.i(TAG, "Peer already gossiped $competing — skip this cycle")
+        return Result.success()
+    }
+}
+
+// ... solveBlock(...) ...
+
+// After solve, before submit — re-check race
+if (P2PNode.isRunning()) {
+    val competing = P2PNode.pollGossip()
+    if (competing.isNotEmpty()) {
+        Log.i(TAG, "Peer won while we solved ($competing) — skip submit")
+        return Result.success()
+    }
+}
+```
+
+### 2. Extend `p2p_runtime.rs` with lightnode tip RR (client + server)
+
+Desktop sidecar already has lightnode + sync RR. Mobile runtime does not. Minimal addition:
+
+- Protocol: `/equilibrium/lightnode/1.0.0`
+- Message kinds: `tip` → `{ height, hash, difficulty, stateRoot? }`
+- Client: `fetch_tip() -> Option<TipJson>`
+- Server: answer from a small in-process tip cache that Kotlin (or Rust) updates when a block is accepted / gossiped
+
+Also add:
+
+- `set_local_tip(height, hash, difficulty)` so the phone can advertise after it accepts a block
+- Optional `query_sync(hash) -> body bytes` later (Phase 2)
+
+JNI surface for Kotlin:
+
+```kotlin
+// P2PNode.kt
+external fun fetchTip(): String   // JSON or ""
+external fun setLocalTip(height: Long, hash: String, difficulty: Long): Boolean
+```
+
+### 3. Prefer P2P tip in `MiningWorker`
+
+```kotlin
+val status = when {
+    P2PNode.isRunning() -> {
+        val tipJson = P2PNode.fetchTip()
+        if (tipJson.isNotEmpty()) JSONObject(tipJson) else fetchChainStatus(nodeUrl)
+    }
+    else -> fetchChainStatus(nodeUrl)
+} ?: return Result.retry()
+```
+
+If tip comes from P2P and submit still needs a body server, keep HTTP submit **as fallback only**:
+
+```kotlin
+// Prefer: gossip hash; any peer with the body (or the miner itself via later sync RR) can validate
+if (P2PNode.isRunning() && blockHash.isNotEmpty()) {
+    P2PNode.gossipBlock(blockHash)
+}
+// HTTP submit only if no peers / policy requires it
+if (shouldHttpSubmit) submitBlock(...)
+```
+
+Honest interim product label: **“P2P-assisted miner + thin client”** until Phase 2 lands full offline tip+body.
+
+### 4. Fail-closed mining on the TS node (still required)
+
+Random residual fallback must die in production so phone-mined blocks are not competing with RNG “PoS” on the server path. Apply the `mining-policy.ts` + `mineNextBlockAsync` patch from the previous close-out. That keeps the network honest when phones are the real miners.
+
+---
+
+## Phase 2 — True offline / full peer (makes cloud optional)
+
+This is the real “fully mobile” bar.
+
+### A. Local chain store on device
+
+- SQLite (or Room): headers, block bodies (or compact), tip, difficulty, residualFp
+- On gossip hash: request body via sync RR from the peer that announced it
+- Validate residual with existing JNI solver path (fixed-point)
+- Update local tip only if valid and extends the best chain (lowest residual fork choice, same rules as desktop)
+
+### B. Full sync + lightnode on `p2p_runtime`
+
+Mirror desktop sidecar protocols:
+
+| Protocol | Mobile role |
+|----------|-------------|
+| Gossipsub blocks/txs | Already present |
+| lightnode RR | Tip, headers, state proofs (Phase 2b) |
+| sync RR | Block body by hash |
+| mDNS | LAN discovery without QR |
+| Kad Server | Already on |
+
+Phone can then **serve** other phones: no central node required for a local mesh.
+
+### C. Bootstrap without cloud
+
+Already partly there (`equilibrium://bootstrap?addr=...` QR/NFC). Strengthen:
+
+- Persist last-known multiaddrs
+- mDNS first, then bootstrap list, then optional public seeds
+- First install: QR from a friend’s phone or a seed once; after that, pure P2P
+
+### D. Optional SPV-style mode
+
+If full bodies are too heavy for low-end devices:
+
+- Headers + residual commitments only
+- Sample body fetches
+- Trust-minimized tip from multiple peers (N-of-M tip agreement)
+
+Still better than trusting a single HTTP URL.
+
+---
+
+## Phase 3 — Hardening (not blocking “mobile first”)
+
+- Wire `REQUIRE_REAL_SOLVER` / fail-closed on TS auto-miner  
+- CI: two `p2p-sidecar` processes + gossip/sync (desktop path)  
+- Later: same mesh test with Android emulator ↔ sidecar  
+- G2 validity + prefer Rust ZK verify; keep zkML out of claims  
+- Update `LIMITATIONS.md` + `TODO.md`: reopen **phone lightnode/sync RR** and **HTTP-optional tip** as open until Phase 2 ships  
+
+---
+
+## Recommended apply order (Replit / local)
+
+1. **`pollGossip` in `MiningWorker.kt`** — one hour, real race handling  
+2. **`mining-policy.ts` + fail-closed `mineNextBlockAsync`** — protocol honesty  
+3. **`p2p_runtime` lightnode tip RR + JNI + `fetchTip` / `setLocalTip`** — first real cut of HTTP dependency  
+4. **MiningWorker prefers P2P tip; HTTP submit as fallback**  
+5. **Local header DB + sync RR client** — bodies without HTTP  
+6. **Phone answers lightnode/sync** — mesh of phones  
+7. **mDNS + docs/branding** — “full peer / cloud optional”
+
+---
+
+## Bottom line
+
+| Claim | After Phase 1 | After Phase 2 |
+|-------|----------------|----------------|
+| Phone mines with real solver | Yes | Yes |
+| Phone gossips solutions | Yes | Yes |
+| Tip without HTTP when peers up | Yes | Yes |
+| Accept / follow chain without any full node | No (submit/body still lean on HTTP or a peer with bodies) | **Yes** |
+| Cloud/VM required | Optional for tip; still useful for submit | **Optional** (bootstrap/seeds only) |
+
+Phase 1 is the right immediate double-down: **wire gossip races, expose tip over P2P, fail-closed server mining**. Phase 2 is what actually makes “fully mobile / eliminate VMs” true rather than aspirational.
+
+GitHub write is still blocked from this side. Paste the Phase 1 patches on Replit (or grant write scope), then we can re-audit `main` against the checklist and start Phase 2 (local store + sync RR) on the same track.

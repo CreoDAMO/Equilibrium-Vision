@@ -22,7 +22,7 @@ _Last updated: 2026-07-27 — post-session reconciliation_
 | Durable snapshots + safe pruning | `persistence.ts`: `saveStateSnapshot` / `loadLatestSnapshot` / `pruneOldBlocks` (requires snapshot coverage). `chain/index.ts`: snapshot fast-path in `initChain` (restore ledger+UTXO from snapshot, replay only post-snapshot blocks), periodic snapshots every 100 blocks in mining loop, `safelyPruneOldBlocks()` export |
 | Kinetic Block Timeline | `/matrix` — live 3D block visualisation (Three.js/R3F) with WebGL guard |
 | Grafana stack | `docs/grafana/docker-compose.yml` — Prometheus + Grafana auto-provisioned |
-| CI | `ci.yml`: typecheck + TS tests (8 files, 245 tests) + Rust clippy/check on every push |
+| CI | `ci.yml`: typecheck + TS tests (10 files, 257+ tests) + Rust clippy/check on every push |
 | Android APK CI | `android-apk-ci.yml` builds a signed sideload APK on GitHub Actions |
 | Operator docs | `docs/validator-setup.md`, `docs/delegator-guide.md`, `docs/architecture.md` |
 | Load-test baseline | 149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted (k6, 50 VUs) |
@@ -36,10 +36,16 @@ _Last updated: 2026-07-27 — post-session reconciliation_
 
 ## 🟡 Open (in-repo)
 
-No open in-repo items. All previously listed items are complete — see ✅ Completed table above.
+| # | Item | What is done | What remains |
+|---|------|--------------|--------------|
+| 1 | **Phone lightnode / sync RR client** | `p2p_runtime.rs` has `fetch_tip` / `set_local_tip` tip cache; `MiningWorker.kt` prefers P2P tip and polls gossip for race detection | Phone cannot yet *request* block bodies or headers from peers over P2P (no `query_sync` / lightnode RR *client* in `p2p_runtime`). HTTP submit is still required when no peer holds the body. |
+| 2 | **Phone serves other phones** | Desktop sidecar answers lightnode + sync RR | `p2p_runtime.rs` has no lightnode or sync RR *server* — a phone cannot answer another phone's tip or body request |
+| 3 | **Two-process P2P mesh CI** | `p2p-mesh.integration.test.ts` added (skip-safe without binary) | Needs `cargo build --release --bin p2p-sidecar` step in CI to run non-skipped |
+| 4 | **Full Groth16 pairing** | G2 π_B point validated; Rust sidecar does full pairing | TS fallback omits pairing check (see `LIMITATIONS.md` §7); no circuit witness path in TS |
+| 5 | **zkML / ERC-7992 DeepProve** | Ed25519 inference receipt only | On-chain model-inference circuit not implemented |
 
 ### Docs sync
-`README.md` and this file are reconciled as of 2026-07-27. Keep them in sync on every substantive protocol or API change — treat **this TODO + `LIMITATIONS.md`** as the gap-truth reference.
+`README.md` and this file are reconciled as of 2026-07-28. Keep them in sync on every substantive protocol or API change — treat **this TODO + `LIMITATIONS.md`** as the gap-truth reference.
 
 ---
 

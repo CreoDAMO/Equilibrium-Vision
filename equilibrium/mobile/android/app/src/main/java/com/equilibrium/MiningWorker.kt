@@ -100,18 +100,42 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         }
 
         // ── 1. Fetch current chain tip ────────────────────────────────────────
-        val status = fetchChainStatus(nodeUrl) ?: run {
-            Log.w(TAG, "Could not reach node at $nodeUrl — will retry")
-            return Result.retry()
+        // Prefer the P2P tip cache so we don't depend on the cloud HTTP node
+        // when peers are reachable.  Fall back to HTTP if P2P has no tip yet.
+        val status: JSONObject = run {
+            if (P2PNode.isRunning()) {
+                val tipJson = P2PNode.fetchTip()
+                if (tipJson.isNotEmpty()) {
+                    val p2pTip = runCatching { JSONObject(tipJson) }.getOrNull()
+                    if (p2pTip != null) {
+                        Log.d(TAG, "Using P2P tip: ${p2pTip.optString("hash","?").take(16)}…")
+                        return@run p2pTip
+                    }
+                }
+            }
+            fetchChainStatus(nodeUrl) ?: run {
+                Log.w(TAG, "Could not reach node at $nodeUrl — will retry")
+                return Result.retry()
+            }
         }
 
-        val latestHash      = status.getString("latestHash")
+        // Normalise key names: P2P tip uses "hash", HTTP status uses "latestHash".
+        val latestHash      = status.optString("hash").ifEmpty { status.getString("latestHash") }
         val difficulty      = status.getLong("difficulty")
         val height          = status.getInt("height")
         val mempoolPressure = status.optDouble("mempoolPressure", 0.0)
         val cumulativeWork  = difficulty * height.toLong()
 
         Log.d(TAG, "Chain tip: height=$height hash=${latestHash.take(16)}…")
+
+        // ── 1b. Abort early if a peer already won this height ─────────────────
+        if (P2PNode.isRunning()) {
+            val competing = P2PNode.pollGossip()
+            if (competing.isNotEmpty()) {
+                Log.i(TAG, "Peer already gossiped block at this height ($competing) — skip cycle")
+                return Result.success()
+            }
+        }
 
         // ── 2. Run the Rust stationarity solver ───────────────────────────────
         val prevHashBytes   = hexToByteArray(latestHash)
@@ -139,6 +163,15 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         // happened inside the Rust solver using pure fixed-point i64 arithmetic.
         val residual   = residualFp.toDouble() / RESIDUAL_SCALE
         Log.i(TAG, "Solution found: nonce=$nonce residual=$residual (fixed-point=$residualFp)")
+
+        // ── 2b. Re-check race after a long solve ──────────────────────────────
+        if (P2PNode.isRunning()) {
+            val competing = P2PNode.pollGossip()
+            if (competing.isNotEmpty()) {
+                Log.i(TAG, "Peer won while we solved ($competing) — discarding stale solution")
+                return Result.success()
+            }
+        }
 
         // ── 3. Submit solved block to the node ────────────────────────────────
         return submitBlock(
@@ -221,6 +254,12 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
                         val acceptedHeight = json?.optInt("height", -1) ?: -1
                         val blockHash      = json?.optString("hash") ?: ""
                         Log.i(TAG, "Block accepted at height $acceptedHeight")
+
+                        // Update the local P2P tip cache so subsequent cycles
+                        // can use P2P tip without hitting the HTTP node.
+                        if (blockHash.isNotEmpty() && acceptedHeight >= 0) {
+                            P2PNode.setLocalTip(acceptedHeight.toLong(), blockHash, difficulty)
+                        }
 
                         // Propagate the solved block to connected peers so they
                         // can skip re-solving this height.  No-op when the P2P

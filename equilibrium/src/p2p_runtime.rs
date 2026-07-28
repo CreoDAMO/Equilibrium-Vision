@@ -31,7 +31,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Sender},
-        Mutex, OnceLock,
+        Mutex, OnceLock, RwLock,
     },
     thread,
 };
@@ -42,6 +42,25 @@ const IDENTIFY_PROTO: &str = "/equilibrium/id/1.0.0";
 
 /// Maximum inbound block hashes buffered before the oldest is dropped.
 const GOSSIP_QUEUE_CAP: usize = 128;
+
+// ── Local tip cache ────────────────────────────────────────────────────────────
+//
+// Stored whenever the Kotlin host accepts a block (via set_local_tip) or
+// receives one from a peer. Kotlin reads it via fetch_tip to avoid an HTTP
+// round-trip to the cloud node when at least one peer is reachable.
+
+#[derive(Clone, Default)]
+struct TipCache {
+    height:     u64,
+    hash:       String,
+    difficulty: u64,
+}
+
+static TIP_CACHE: OnceLock<RwLock<TipCache>> = OnceLock::new();
+
+fn tip_cache() -> &'static RwLock<TipCache> {
+    TIP_CACHE.get_or_init(|| RwLock::new(TipCache::default()))
+}
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -258,4 +277,44 @@ pub fn poll_gossip() -> Option<String> {
         .lock()
         .expect("gossip queue poisoned")
         .pop_front()
+}
+
+// ── Tip cache public API ───────────────────────────────────────────────────────
+
+/// Return the latest locally-cached chain tip as a JSON string, or an empty
+/// string if no tip has been stored yet (i.e. no block has been accepted or
+/// gossiped since start).
+///
+/// JSON format: `{"height":<u64>,"hash":"<hex>","difficulty":<u64>}`
+///
+/// Kotlin calls this before `fetchChainStatus(nodeUrl)` so that, when peers
+/// are reachable, the mining loop never needs the cloud HTTP node for tip data.
+pub fn fetch_tip() -> String {
+    let cache = tip_cache().read().expect("tip cache read poisoned");
+    if cache.hash.is_empty() {
+        return String::new();
+    }
+    format!(
+        r#"{{"height":{},"hash":"{}","difficulty":{}}}"#,
+        cache.height, cache.hash, cache.difficulty,
+    )
+}
+
+/// Update the local tip cache.  Call this after any block is accepted (by the
+/// phone solver or received via gossip) so future `fetch_tip()` calls reflect
+/// the latest known chain state without hitting the HTTP node.
+///
+/// Returns `true` if the height is strictly greater than the stored height
+/// (i.e. the tip actually advanced).
+pub fn set_local_tip(height: u64, hash: &str, difficulty: u64) -> bool {
+    let mut cache = tip_cache().write().expect("tip cache write poisoned");
+    if height > cache.height {
+        cache.height     = height;
+        cache.hash       = hash.to_string();
+        cache.difficulty = difficulty;
+        eprintln!("[p2p-runtime] tip updated: height={height} hash={hash}");
+        true
+    } else {
+        false
+    }
 }

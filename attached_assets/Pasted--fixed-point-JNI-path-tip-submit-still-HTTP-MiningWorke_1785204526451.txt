@@ -1,0 +1,426 @@
+** fixed-point JNI path; tip/submit still **HTTP** | `MiningWorker.kt` |
+| Sync `mineNextBlock()` | Still pure random residual | `state.ts` ~L1567 |
+| Genesis / seed history | Random residuals for demo blocks | `buildGenesisChain` loops |
+| Fixed-point residual storage | **Done** (`residualFp`, scale 1e18) | `persistence.ts`, `chain_state.rs` |
+| Adaptive difficulty | **Done** | `state.ts` |
+| BFT finality | **Simulated gadget** in TS (not a production BFT protocol) | README/state finality rounds |
+
+**Severity — High for protocol honesty:** On any deploy where the VAI/consensus solver binary is missing, the live chain produces **random residuals that still look like PoS blocks**. Mobile path is stricter (real solver); the **15s auto-miner is not**.
+
+**Mitigation already partial:** Prefer `mineNextBlockAsync` + fail closed if `solveBlock` returns null (no random fallback in production).
+
+---
+
+### 3.2 State commitment (SMT)
+
+| Item | Status |
+|------|--------|
+| `smt.ts` 256-bit domain-separated tree | **DONE** |
+| `addBlock` writes `block.stateRoot`, caches `_stateSmt` | **DONE** |
+| Postgres `state_root` column | **DONE** (persist/load) |
+| `getVerifiedStateRoot` rejects zero/missing/mismatch | **DONE** (`state-root.ts`) |
+| HTTP lightnode proofs use guard | **DONE** (per routes + TODO) |
+| P2P `proof_account` uses same guard | **DONE** (`chain/index.ts` handler) |
+| Failure path | If SMT build throws, root may be **skipped** (warn only) |
+
+**Severity — Medium:** Guard is correct when root exists. Cold chains / failed SMT computation can leave proofs 503 — intentional. Ensure production never ships blocks without a successful `stateRoot`.
+
+---
+
+### 3.3 P2P networking
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `p2p-sidecar.rs` (~35KB) | **DONE** | Gossipsub, mDNS, Identify, Kad **Server**, lightnode RR, sync RR, **OrTransport QUIC+TCP** |
+| Env | `P2P_PORT`, `P2P_QUIC_PORT`, **`P2P_BOOTSTRAP`** | README saying `BOOTSTRAP_PEERS` is **wrong** |
+| `p2p-bridge.ts` | **DONE** | Correlation IDs, gossip, RR respond |
+| `initChain` wires `onSyncRequest` / `onLightNodeRequest` | **DONE** |
+| Mining gossips via bridge | **DONE** | `p2pBridge.gossipBlock` after mine |
+| `chainState.gossipBlock` | Still maintains explorer **log** (not “fake network” as sole path) | OK if primary is bridge |
+| CI test `p2p-sync.integration.test.ts` | **Handler unit/integration only** | Sidecar **not** spawned; mocks `respond*` |
+| Live multi-peer mesh | **Not proven in CI** | Depends on built binary + process manager |
+
+**Severity — Medium:** Design is production-shaped; **verification is TS-handler-only**. No automated two-process gossip/sync test.
+
+---
+
+### 3.4 Mobile
+
+| Piece | Status |
+|-------|--------|
+| `solveBlock` JNI → real solver | **DONE** |
+| Submit via `POST /api/blocks/submit` | **DONE** (trusted API dependency) |
+| `p2p_runtime` + `P2PNode.kt` | **DONE** — TCP/QUIC, gossip, dial, poll queue |
+| `gossipBlock` after accept | **DONE** in `MiningWorker` |
+| **`pollGossip` during solve** | **JNI exists; MiningWorker does not poll mid-solve** | README/TODO **overclaim** |
+| QR bootstrap (`BootstrapQrActivity`, `equilibrium://bootstrap`) | **Present** |
+| Phone light-node / headers / SMT verify offline | **Not in APK path** | HTTP tip only |
+| Phone = full peer (sync bodies, serve proofs) | **No** | `p2p_runtime` lacks lightnode/sync RR and mDNS |
+
+**Severity — High vs “world’s first fully mobile / no VM” narrative:**  
+Phones are **real miners + optional gossip participants**, still **clients of an HTTP full node** for chain tip and block acceptance.
+
+---
+
+### 3.5 WASM contracts & host
+
+| Contract | Present |
+|----------|---------|
+| `contracts/arbitrage` | Yes |
+| `contracts/model_registry` | Yes |
+| `contracts/cross_chain_relay` | Yes |
+
+| Host capability | Status |
+|-----------------|--------|
+| `verify_residual` (sync CLI, 1×/call, 10s) | **DONE** |
+| `dex_multi_swap`, `bond` / `payout` | **DONE** (per LIMITATIONS) |
+| `slash_account` / generic `transfer` | **Absent** (documented) |
+| `get_verifying_key` / `verify_groth16_proof` | **Not found** in `wasm.ts` matches |
+
+**Arbitrage:** Execute path is real with caps/circuit breaker; `minProfit` **does not roll back** swaps (`LIMITATIONS.md` §1) — critical for anyone treating it as atomic DeFi.
+
+**ModelRegistry:** Inference attestation = **Ed25519 receipt**, not zkML (`LIMITATIONS.md` §1b) — docs honest; any ERC-7992/DeepProve “complete” story is **not** in this tree.
+
+---
+
+### 3.6 ZK proofs of stationarity
+
+| Aspect | Status |
+|--------|--------|
+| TS prover + `zk-encoding` fixed-point public inputs | **Present** |
+| Rust `consensus-api` optional sidecar | **Present** (fallback to TS) |
+| Full Groth16 pairing verify | **Incomplete** (README: G2/`pi_b` dummy) |
+| On-chain DeepProve | **Not implemented** |
+
+Treat ZK as **commitment / shape / engineering scaffold**, not audit-grade SNARK consensus.
+
+---
+
+### 3.7 Persistence & pruning
+
+| Feature | Status |
+|---------|--------|
+| Blocks/txs/contracts in Postgres | **DONE** |
+| Contiguous chain truncate on gaps | **DONE** |
+| State snapshots table + load/save | **DONE** |
+| Snapshot fast-path in `initChain` with hash checks | **DONE** |
+| `pruneOldBlocks` requires snapshot coverage | **DONE** |
+| `safelyPruneOldBlocks` | **DONE** |
+| Periodic snapshot every 100 blocks | **DONE** |
+| DEX pools | **In-memory only** (LIMITATIONS §2) — restart loses runtime pools |
+| Contract storage on restart | Loaded from DB | OK |
+
+**Severity — Low–Medium:** Pruning story is coherent. DEX non-persistence is a known economic discontinuity after restart.
+
+---
+
+### 3.8 Security surface (code-level)
+
+| Control | Status |
+|---------|--------|
+| Rate limits, CORS allowlist, admin key | Documented + present in routes |
+| Contract caller Ed25519 when `caller` set | Claimed + tests |
+| Stratum per-IP limits | Documented |
+| Arbitrage route rate limit | Documented |
+| WASM `call_contract` no child rollback | LIMITATIONS §6 |
+| `verify_residual` blocks event loop | LIMITATIONS §5 |
+| Peer trust for mobile tip | **Implicit trust in HTTP node** |
+
+No substitute for an external audit before mainnet.
+
+---
+
+### 3.9 Testing & CI
+
+| Artifact | Reality |
+|----------|---------|
+| TS tests under `__tests__/` | **9 files** including `p2p-sync` + `arbitrage.stress` |
+| CI `ts-test` comment | Still says **“8 files, 245+”** — **stale** |
+| README banner | 290 / 257 / 9 — **may be aspirational**; not re-counted here from a live `vitest` run |
+| CI rebuilds WASM + VAI CLIs | **Yes** |
+| CI runs real `p2p-sidecar` multi-peer | **No** |
+| CI runs Android emulator / device | **No** (APK workflow separate) |
+| Rust check/clippy/test for equilibrium + VAI | **Yes** |
+
+---
+
+### 3.10 Documentation consistency
+
+| Doc | Assessment |
+|-----|------------|
+| `LIMITATIONS.md` | **Best truth source** — keep it authoritative |
+| `TODO.md` “no open in-repo items” | **Optimistic** — several **in-repo** honesty/gaps remain (random mining fallback, mobile HTTP, P2P CI depth, ZK, phone RR) |
+| README status banner | Mostly aligned |
+| README test counts / layout / `BOOTSTRAP_PEERS` / “full swarm” / poll during solve | **Drift** |
+| “Rust crate not connected” line | **False** relative to sidecar |
+
+---
+
+## 4. Risk register (prioritized)
+
+### P0 — Protocol / safety honesty
+
+1. **Random residual fallback** on `mineNextBlockAsync` when solver missing.  
+2. **Arbitrage non-atomic `minProfit`** (funds can move under target).  
+3. **Mobile tip/submit trust** in arbitrary HTTP node (no SPV path in APK).
+
+### P1 — Architecture vs vision
+
+4. Phone swarm ≠ sidecar (no mDNS, lightnode RR, sync RR).  
+5. No CI proof of real libp2p mesh.  
+6. ZK not full; zkML not present — avoid product claims.
+
+### P2 — Ops / mainnet
+
+7. Single-region Postgres, no HA, no edge DDoS, no external audit.  
+8. DEX state not durable.  
+9. Event-loop blocking residual verify under load.
+
+### P3 — Hygiene
+
+10. Env name `P2P_BOOTSTRAP` vs README.  
+11. Test count strings.  
+12. `pollGossip` unused in mining loop.
+
+---
+
+## 5. What “done” actually means (corrected map)
+
+| Goal | Accurate status |
+|------|-----------------|
+| Runnable L1-like testnet with explorer/wallet/DEX/contracts | **Yes** |
+| Deterministic residual *verification* path (CLI / fixed-point) | **Yes** |
+| Cryptographic state root + offline-verifiable proofs (API/P2P handlers) | **Yes** (when root computed) |
+| Real libp2p stack for desktop node | **Yes** (if binary deployed) |
+| Server-less phone full node | **No** |
+| Always-on real PoS for every mined block without binaries | **No** (random fallback) |
+| zkML / ERC-7992 DeepProve on-chain | **No** |
+| Mainnet-ready ops | **No** |
+
+---
+
+## 6. Recommended close-out order (in-repo first)
+
+1. **Fail closed on mining:** no `Math.random` residual in production (`NODE_ENV=production` or `REQUIRE_REAL_SOLVER=1`).  
+2. **Wire `pollGossip` in `MiningWorker`** before/during solve; document remaining HTTP dependency.  
+3. **CI job:** spawn two `p2p-sidecar` processes, gossip hash, sync block body.  
+4. **README/TODO:** open items for mobile SPV, random-fallback ban, ZK completeness; fix `P2P_BOOTSTRAP`.  
+5. **Optional:** extend `p2p_runtime` with lightnode RR *or* explicitly brand APK as “miner + thin client.”  
+6. **Ops:** HA Postgres, multi-region seeds, external audit.
+
+---
+
+## 7. Bottom line
+
+The repository is **far beyond a whitepaper**: SMT, root guards, dual-transport sidecar, contract suite, mobile JNI mining, snapshots/pruning, and a large TS test corpus are **real**.
+
+It is **not** yet the system implied by “fully mobile blockchain / eliminate VMs / all in-repo work complete.” The largest **code** gaps are (1) **random mining fallback**, (2) **phone still HTTP-dependent**, (3) **P2P proven only at the handler layer**, (4) **ZK/zkML honestly incomplete**. The largest **ops** gaps remain HA, edge protection, and audit.
+
+Use **`LIMITATIONS.md` + this audit** as the gap-truth source; treat README Remaining Work “all complete ✅” as **over-closed**.
+
+GitHub write is blocked (403 on push). Below is the full close-out for the four gaps — apply on Replit (or reconnect GitHub with write scope).
+
+---
+
+## Gap 1 — Random mining fallback → fail-closed
+
+**New file** `artifacts/api-server/src/chain/mining-policy.ts`:
+
+```ts
+/**
+ * Production / mainnet-shaped runs MUST use the real PoS solver.
+ * NODE_ENV=test → fallback allowed (CI).
+ * ALLOW_RANDOM_MINING=true or REQUIRE_REAL_SOLVER=false → explicit opt-in.
+ */
+export function allowRandomMiningFallback(): boolean {
+  if (process.env["NODE_ENV"] === "test") return true;
+  if (process.env["ALLOW_RANDOM_MINING"] === "true") return true;
+  if (process.env["REQUIRE_REAL_SOLVER"] === "false") return true;
+  return false;
+}
+
+export function requireRealSolver(): boolean {
+  return !allowRandomMiningFallback();
+}
+```
+
+**Patch** `mineNextBlockAsync` in `state.ts` (replace the solver block ~1465–1496):
+
+```ts
+import { allowRandomMiningFallback } from "./mining-policy.js";
+
+  // ── Real PoS solver (fail-closed unless policy allows random) ─────────────
+  let nonce = 0;
+  let residual = 0;
+  let usedSolver = false;
+  try {
+    const solution = await solveBlock({
+      prevHash: prev.hash,
+      merkleRoot: mr,
+      timestamp: now,
+      difficulty: state.currentDifficulty,
+      maxIter: 500,
+      mempoolPressure: state.mempool.pressure,
+      cumulativeWork: state.blocks.length,
+    }, 20_000);
+    if (solution?.ok) {
+      nonce = solution.nonce;
+      residual = solution.residual;
+      usedSolver = true;
+      const margin = solution.thermal_margin ?? 1.0;
+      try {
+        const { contributionTracker } = await import("./contribution.js");
+        contributionTracker.reportLocalThermal(margin);
+      } catch { /* non-fatal */ }
+    }
+  } catch (err) {
+    logger.warn({ err }, "PoS solver call failed");
+  }
+
+  if (!usedSolver) {
+    if (!allowRandomMiningFallback()) {
+      throw new Error(
+        "REQUIRE_REAL_SOLVER: consensus-api solveBlock unavailable. " +
+        "Build equilibrium consensus-api, or set ALLOW_RANDOM_MINING=true for demos only.",
+      );
+    }
+    nonce = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+    residual = Math.random() * 5e-9 + 1e-10;
+    logger.warn({ height }, "ALLOW_RANDOM_MINING: using RNG residual (not production-safe)");
+  }
+```
+
+**CI / local test:** keep `NODE_ENV=test` so Vitest still mines without the binary.  
+**Production:** default fails if solver missing.
+
+Also mark sync `mineNextBlock()` as **genesis/demo only** (or route it through the same policy). Prefer not calling it from the live mining loop (already true — loop uses async).
+
+---
+
+## Gap 2 — Phone still HTTP-dependent
+
+Full “no HTTP” needs light-node RR + local validation on device. Closable **now**:
+
+### A. Wire `pollGossip` during solve (`MiningWorker.kt`)
+
+Inside `doWork()`, **before** `solveBlock`, and optionally in a short loop:
+
+```kotlin
+// Abort if a peer already announced a block for this tip race
+if (P2PNode.isRunning()) {
+    val competing = P2PNode.pollGossip()
+    if (competing.isNotEmpty()) {
+        Log.i(TAG, "Peer already gossiped $competing — skip this cycle")
+        return Result.success()
+    }
+}
+```
+
+After a long solve, poll again before submit.
+
+### B. Prefer P2P tip when peers exist
+
+Add a small path: if `P2PNode.isRunning()`, dial bootstrap, then you still need **body** from somewhere. Until phone implements sync RR client:
+
+| Step | Today | Target |
+|------|--------|--------|
+| Tip | HTTP `/api/chain/status` | P2P lightnode `tip` (extend `p2p_runtime`) |
+| Solve | JNI | JNI (done) |
+| Submit | HTTP POST | P2P gossip hash + peer fetches body via sync RR **or** HTTP as last resort |
+
+**Minimal extension to `p2p_runtime.rs`:** request-response client for `/equilibrium/lightnode/1.0.0` kind `tip` — then Kotlin can call `P2PNode.fetchTip(): String` (JSON). Submit can stay HTTP until you add outbound `query_sync` from the phone.
+
+Honest label for the APK until that ships: **“P2P-assisted miner + thin client”**, not full node.
+
+---
+
+## Gap 3 — P2P proven only at handler layer
+
+Add `artifacts/api-server/src/__tests__/p2p-mesh.integration.test.ts` that:
+
+1. Locates `equilibrium/target/release/p2p-sidecar` (or `P2P_SIDECAR_PATH`).
+2. **`describe.skipIf(!bin)`** spawns the process with `P2P_PORT` / `P2P_QUIC_PORT`.
+3. Sends `{"id":"1","method":"listen_addrs"}` and asserts `ok: true`.
+4. Optional: two processes, `connect` multiaddr, `gossip_block`, expect `event: block` on the other.
+
+**CI:** add a job (or step in `ts-test`) after `cargo build --release --bin p2p-sidecar` so the suite is not always skipped.
+
+Existing `p2p-sync.integration.test.ts` stays as handler coverage.
+
+---
+
+## Gap 4 — ZK / zkML honestly incomplete
+
+### What to implement (truthful, not fake DeepProve)
+
+**A. Harden TS verify (`zkproof.ts`):**
+
+```ts
+function isValidG2(p: G2Point): boolean {
+  try {
+    const x = { c0: BigInt(p.x[0]), c1: BigInt(p.x[1]) };
+    const y = { c0: BigInt(p.y[0]), c1: BigInt(p.y[1]) };
+    bn254.G2.Point.fromAffine({ x, y }).assertValidity();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// in verifyZkProof:
+if (!isValidG2(zkp.proof.pi_b)) return false;
+```
+
+**B. Prefer Rust path:** on block accept, if `consensusBridge.isAvailable`, use `verify()` with **pairing**; reject TS-only proofs when `REQUIRE_RUST_ZK=true`.
+
+**C. `LIMITATIONS.md` add §7:**
+
+```markdown
+## 7. TS ZK proofs are not full Groth16 circuit proofs
+
+The TypeScript `generateZkProof` derives real BN254 points without a witness.
+Full pairing verification lives in Rust `StationarityProof::verify` (ark-groth16).
+ModelRegistry inference attestation is Ed25519 attribution only — not zkML.
+DeepProve / ERC-7992 circuit verification is future work.
+```
+
+**D. WASM host (optional scaffolding, not zkML):**
+
+```ts
+get_verifying_key: (...) => { /* return STATIONARITY_VK bytes or 1 if missing */ },
+verify_groth16_proof: (vkPtr, vkLen, inputsPtr, inputsLen, proofPtr, proofLen): number => {
+  // Parse JSON; call verifyZkProof; return 1/0
+  // Does NOT claim model inference correctness
+},
+```
+
+Do **not** claim ERC-7992 complete until a real circuit + witness path exists.
+
+Rust `zk_proof.rs` already has real Groth16 prove/verify — the gap is **wiring TS blocks to require it** and **not** overselling the TS fallback.
+
+---
+
+## Apply order on Replit
+
+1. Add `mining-policy.ts` + unit test.  
+2. Patch `mineNextBlockAsync` (fail-closed).  
+3. Patch `MiningWorker.kt` (`pollGossip`).  
+4. Add `p2p-mesh.integration.test.ts` + optional CI build of sidecar.  
+5. G2 check + LIMITATIONS §7 + optional WASM hosts.  
+6. Update `TODO.md`: list remaining phone lightnode RR + DeepProve as **open**.
+
+---
+
+## After these land
+
+| Gap | Closed? |
+|-----|---------|
+| (1) Random mining | **Yes** (production fail-closed; test still allowed) |
+| (2) Phone HTTP | **Reduced** (gossip race handled); full offline tip/submit still needs `p2p_runtime` lightnode/sync client |
+| (3) P2P proof depth | **Yes** when binary built; skip-safe otherwise |
+| (4) ZK/zkML | **Honesty + stronger verify**; full zkML **not** finished by design until circuit work |
+
+GitHub connector lacks **contents write**. Reconnect with write permission, or paste these patches on Replit and commit from there — then I can re-audit `main` against this checklist.
+
+
+Let's double down on closing those gaps, I want this to be fully mobile to the point where VM or Cloud becomes an option not a necessity

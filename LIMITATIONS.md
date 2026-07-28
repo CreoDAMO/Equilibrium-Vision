@@ -106,3 +106,26 @@ If a parent contract calls `call_contract(childAddr, ...)` and the child call fa
 
 **Workaround:**  
 Contracts that require all-or-nothing child call semantics must implement their own undo logic (e.g., read-check before write, or two-phase commit via storage flags).
+
+---
+
+## 7. TS ZK proofs are not full Groth16 circuit proofs
+
+**Affected code:**  
+- `artifacts/api-server/src/chain/zkproof.ts` — `generateZkProof`, `verifyZkProof`
+- `artifacts/api-server/src/chain/wasm.ts` — `get_verifying_key`, `verify_groth16_proof` host imports
+
+**Behaviour:**  
+The TypeScript `generateZkProof` derives real BN254 G1/G2 points from the block hash and residual without a circuit witness.  `verifyZkProof` checks:
+- VK hash and circuit ID binding
+- Public-input statement: `residualFp < thresholdFp`
+- Curve membership: all three proof points (π_A, π_B, π_C) are validated as genuine BN254 G1/G2 points respectively
+
+What it does **not** check: the full Groth16 pairing equation `e(π_A, π_B) = e(α, β) · e(L_pub, γ) · e(π_C, δ)`.  Without a circuit witness there is no valid witness-derived proof to pair against.
+
+Full pairing verification lives in Rust `StationarityProof::verify` (ark-groth16) inside the `consensus-api` sidecar.  When the sidecar is running, block accept uses the Rust path.  The TS path is the fallback.
+
+**ModelRegistry inference attestation** is an Ed25519 attribution receipt, not zkML.  ERC-7992 / DeepProve on-chain model-inference circuit verification is **future work** and is not present in this repository.
+
+**Impact:**  
+The `verify_groth16_proof` WASM host import runs the TS verifier (curve checks + public-input statement).  Contracts relying on it get a best-effort TS proof check, not a full pairing-verified SNARK.  Do not use it as a substitute for the Rust sidecar path in production.

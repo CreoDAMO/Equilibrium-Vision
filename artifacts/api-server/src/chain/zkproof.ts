@@ -192,6 +192,17 @@ function isValidG1(p: G1Point): boolean {
   }
 }
 
+function isValidG2(p: G2Point): boolean {
+  try {
+    const x: Fp2 = { c0: BigInt(p.x[0]), c1: BigInt(p.x[1]) };
+    const y: Fp2 = { c0: BigInt(p.y[0]), c1: BigInt(p.y[1]) };
+    bn254.G2.Point.fromAffine({ x, y }).assertValidity();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function verifyZkProof(zkp: ZkProof, threshold = DEFAULT_THRESHOLD): boolean {
   if (zkp.vkHash    !== VK_HASH)    return false;
   if (zkp.circuitId !== CIRCUIT_ID) return false;
@@ -204,8 +215,9 @@ export function verifyZkProof(zkp: ZkProof, threshold = DEFAULT_THRESHOLD): bool
   const residual = Number(BigInt(zkp.publicInputs.residual)) / 1e18;
   if (residual >= threshold) return false;
 
-  // Validate proof points are genuine BN254 G1 points
+  // Validate proof points — G1 for π_A / π_C, G2 for π_B
   if (!isValidG1(zkp.proof.pi_a)) return false;
+  if (!isValidG2(zkp.proof.pi_b)) return false;
   if (!isValidG1(zkp.proof.pi_c)) return false;
 
   return true;

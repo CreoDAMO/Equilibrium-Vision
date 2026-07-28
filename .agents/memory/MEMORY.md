@@ -7,3 +7,5 @@
 - [libp2p-yamux compat shim](libp2p-yamux-compat-shim.md) — yamux 0.12.1 stays in lock by design; Config::default() uses 0.13.x; CVE not reachable via our code
 - [GitHub CI environment](github-ci-environment.md) — CI must use explicit runner PostgreSQL credentials; chain-window tests need more than the default 20s timeout
 - [p2p-bridge callback wiring](p2p-bridge-callbacks.md) — onSyncRequest/onLightNodeRequest must be assigned in initChain(); they are undefined by default; skeleton pattern uses <Skeleton> from @/components/ui/skeleton (bg-primary/10)
+- [Fail-closed mining policy](mining-policy.md) — mining-policy.ts: fail-closed only in NODE_ENV=production; dev/test/unset all allow RNG fallback; REQUIRE_REAL_SOLVER=true locks any env; ALLOW_RANDOM_MINING=true always unlocks
+- [Phone P2P tip cache](phone-p2p-tip-cache.md) — p2p_runtime::fetch_tip/set_local_tip + JNI + P2PNode.kt/MiningWorker.kt; phone prefers P2P tip, HTTP is fallback; poll_gossip called before and after solve for race detection; full offline still needs sync RR client (open)

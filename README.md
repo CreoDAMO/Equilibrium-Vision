@@ -434,7 +434,7 @@ The `equilibrium/src/bin/p2p-sidecar.rs` binary runs as a subprocess of the API 
 | **Sync RR** | Remote peers can request block headers and bodies |
 | **TCP + QUIC** (`OrTransport`) | Dual transport; QUIC port is `P2P_PORT + 1` by default |
 
-Bootstrap peers are configured via `BOOTSTRAP_PEERS` (multiaddr list). The sidecar emits `listen_addr` events so the TS layer can log and expose advertised addresses.
+Bootstrap peers are configured via `P2P_BOOTSTRAP` (multiaddr list). The sidecar emits `listen_addr` events so the TS layer can log and expose advertised addresses.
 
 ### Transaction Gossip
 
@@ -736,16 +736,30 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
 
 ## Remaining Work
 
-_Reconciled against `main` on 2026-07-27 — see `TODO.md` for full detail and file pointers._
+_Reconciled against `main` on 2026-07-28 — see `TODO.md` for full detail and file pointers._
 
-### In-repo — all previously open items are now complete ✅
+### In-repo — recently closed
 
 | Item | Resolved |
 |---|---|
-| **Android in-process swarm** | `p2p_runtime.rs` → `P2PNode.kt` wired; `MiningWorker.kt` polls gossip from peers during solve |
-| **Inbound P2P sync CI** | `p2pBridge.onSyncRequest` / `onLightNodeRequest` wired in `initChain()`; covered by `p2p-sync.integration.test.ts` (9th test file, 12 new tests) |
-| **Durable snapshots → safe pruning** | `safelyPruneOldBlocks()` takes a verified snapshot before pruning; `initChain()` snapshot fast-path restores ledger+UTXO and replays only post-snapshot blocks |
-| **Explorer UI polish** | Block rewards consistent (`formatAmount` everywhere); loading skeletons (`<Skeleton>`) applied in Dashboard chart area, ValidatorDetail delegators table, DEX Arbitrage panel, and DEX Pools table; `ContractDetail.tsx` refactored (POST calls use `useMutation`; GET calls use `useQuery` — no generated hooks exist for these endpoints) |
+| **Android in-process swarm** | `p2p_runtime.rs` → `P2PNode.kt` wired; `MiningWorker.kt` polls gossip for race detection; prefers P2P tip cache (`fetchTip`) over HTTP when peers up |
+| **Inbound P2P sync CI** | `p2pBridge.onSyncRequest` / `onLightNodeRequest` wired in `initChain()`; covered by `p2p-sync.integration.test.ts` (12 tests) |
+| **Durable snapshots → safe pruning** | `safelyPruneOldBlocks()` + snapshot fast-path in `initChain()` |
+| **Explorer UI polish** | Block rewards consistent; loading `<Skeleton>` components throughout; `ContractDetail.tsx` on React Query |
+| **Fail-closed TS mining** | `mining-policy.ts`: `NODE_ENV=production` or `REQUIRE_REAL_SOLVER=true` throws rather than emitting RNG residuals |
+| **G2 proof point validation** | `zkproof.ts`: `isValidG2` validates π_B as a genuine BN254 G2 point; `get_verifying_key` + `verify_groth16_proof` WASM host imports added |
+| **P2P mesh CI test** | `p2p-mesh.integration.test.ts` (skip-safe without binary; requires `cargo build --release --bin p2p-sidecar` in CI) |
+| **`P2P_BOOTSTRAP` env name** | README corrected; was incorrectly documented as `BOOTSTRAP_PEERS` |
+
+### In-repo — open
+
+| # | Item | What remains |
+|---|------|--------------|
+| 1 | **Phone lightnode / sync RR client** | `p2p_runtime.rs` has tip cache + JNI; phone cannot yet *request* block bodies from peers — HTTP submit still needed when no peer holds the body |
+| 2 | **Phone serves other phones** | `p2p_runtime.rs` has no lightnode or sync RR *server* — a phone can't answer another phone's requests |
+| 3 | **P2P mesh CI binary** | `p2p-mesh.integration.test.ts` exists and is skip-safe; needs `cargo build --release --bin p2p-sidecar` CI step to run non-skipped |
+| 4 | **Full Groth16 pairing** | TS verifier checks curve membership + public inputs; full pairing lives in Rust sidecar only (see `LIMITATIONS.md` §7) |
+| 5 | **zkML / ERC-7992 DeepProve** | Ed25519 inference receipt only; on-chain model-inference circuit not implemented |
 
 ### External infrastructure and ops
 

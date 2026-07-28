@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { verifyZkProof, getVerificationKey } from "./zkproof.js";
 
 // Resolve CLI binary once at module load — same helper used by bridge.ts.
 //
@@ -451,6 +452,48 @@ export class WasmVM {
             return scaled.length;
           } catch {
             return -1;
+          }
+        },
+
+        // Returns the canonical BN254 Groth16 verification key for the
+        // Proof-of-Stationarity circuit as a JSON byte blob.  Contracts can
+        // call this to independently verify that a block residual was attested
+        // by the Rust circuit rather than the TS fallback.
+        //
+        // Returns 0 if no VK is available (sidecar not running).  Does NOT
+        // claim zkML / ERC-7992 model-inference correctness — see LIMITATIONS §7.
+        get_verifying_key: (outPtr: number): number => {
+          gasUsed += 500;
+          checkGas();
+          try {
+            const vkJson = JSON.stringify(getVerificationKey());
+            writeString(memory, outPtr, vkJson);
+            return vkJson.length;
+          } catch {
+            return 0;
+          }
+        },
+
+        // Verify a Groth16-shaped PoS proof against the TS verification key.
+        // Reads a JSON-encoded ZkProof from WASM memory.  Returns 1 if the
+        // proof passes verifyZkProof(), 0 otherwise.
+        //
+        // This is the same check performed by the block-accept path.  Contracts
+        // can use it to gate actions on verified PoS attestations.
+        //
+        // NOTE: The TS verifier validates G1/G2 curve membership and the public
+        // residual/threshold statement (residualFp < thresholdFp).  Full
+        // pairing-check lives in the Rust sidecar (StationarityProof::verify).
+        // See LIMITATIONS §7.
+        verify_groth16_proof: (proofPtr: number, proofLen: number): number => {
+          gasUsed += 10_000;
+          checkGas();
+          try {
+            const proofJson = readString(memory, proofPtr, proofLen);
+            const zkp = JSON.parse(proofJson) as unknown;
+            return verifyZkProof(zkp as Parameters<typeof verifyZkProof>[0]) ? 1 : 0;
+          } catch {
+            return 0;
           }
         },
 

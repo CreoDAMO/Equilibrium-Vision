@@ -47,6 +47,29 @@ object P2PNode {
     @JvmStatic
     external fun isRunning(): Boolean
 
+    /**
+     * Return the latest locally-cached chain tip as a JSON string, or an empty
+     * string if no tip is known yet.
+     *
+     * JSON: `{"height":<Long>,"hash":"<hex>","difficulty":<Long>}`
+     *
+     * Call this before the HTTP fallback in MiningWorker so that, when peers
+     * are reachable, the mining loop is independent of the cloud node for tip
+     * data.
+     */
+    @JvmStatic
+    external fun fetchTip(): String
+
+    /**
+     * Update the local tip cache after a block is accepted or received from
+     * a peer.  Returns `true` if the height advanced.
+     *
+     * MiningWorker calls this after every successful submit so subsequent
+     * cycles can use the P2P tip path immediately.
+     */
+    @JvmStatic
+    external fun setLocalTip(height: Long, hash: String, difficulty: Long): Boolean
+
     fun startDefault(): Boolean = start(DEFAULT_TCP_PORT, DEFAULT_QUIC_PORT)
 
     /**

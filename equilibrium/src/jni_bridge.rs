@@ -222,3 +222,52 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_isRunning(
 ) -> jboolean {
     if p2p_runtime::is_running() { JNI_TRUE } else { JNI_FALSE }
 }
+
+/// Return the latest locally-cached chain tip as a JSON string, or an empty
+/// string if no tip has been stored yet (i.e. the phone hasn't accepted or
+/// received a block since the swarm started).
+///
+/// MiningWorker calls this before the HTTP fallback so that when peers are
+/// reachable the cloud node is not required for tip data.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun fetchTip(): String
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_fetchTip(
+    env: JNIEnv,
+    _obj: JObject,
+) -> jstring {
+    let json = p2p_runtime::fetch_tip();
+    env.new_string(&json)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// Update the local tip cache after a block is accepted or received from a
+/// peer.  Returns JNI_TRUE if the height advanced (tip is newer).
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun setLocalTip(height: Long, hash: String, difficulty: Long): Boolean
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_setLocalTip(
+    mut env: JNIEnv,
+    _obj:    JObject,
+    height:     jlong,
+    hash:       JString,
+    difficulty: jlong,
+) -> jboolean {
+    let Ok(hash_str) = env.get_string(&hash) else { return JNI_FALSE; };
+    if p2p_runtime::set_local_tip(
+        height.max(0) as u64,
+        hash_str.to_str().unwrap_or_default(),
+        difficulty.max(0) as u64,
+    ) {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
+}

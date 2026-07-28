@@ -6,6 +6,7 @@ import type {
 import { SparseMerkleTree, smtKey, smtValue } from "./smt.js";
 import { merkleRoot, randomHex, addressFromSeed, hash256 } from "./crypto.js";
 import { solveBlock } from "../variational-ai/bridge.js";
+import { allowRandomMiningFallback } from "./mining-policy.js";
 import { logger } from "../lib/logger.js";
 import { GovernanceModule } from "./governance.js";
 import { UTXOSet } from "./utxo.js";
@@ -1462,13 +1463,21 @@ export async function mineNextBlockAsync(
   const txHashes = selected.map((t) => t.hash);
   const mr = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
 
-  // ── Real PoS solver ──────────────────────────────────────────────────────────
+  // ── Real PoS solver (fail-closed in production) ──────────────────────────────
   //
   // Calls the Rust consensus-api binary which runs the actual Lagrangian
   // stationarity solver (Newton-CG / L-BFGS) to find an optimal nonce.
-  // Falls back to Math.random() when the binary isn't compiled yet.
-  let nonce   = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
-  let residual = Math.random() * 5e-9 + 1e-10;
+  //
+  // If the binary is unavailable and allowRandomMiningFallback() is false
+  // (the default in production), we throw rather than emit a block whose
+  // residual was drawn from Math.random(). That would be indistinguishable
+  // from a real PoS block to observers but would not satisfy any real
+  // stationarity constraint.
+  //
+  // Escape hatches: NODE_ENV=test | ALLOW_RANDOM_MINING=true | REQUIRE_REAL_SOLVER=false
+  let nonce    = 0;
+  let residual = 0;
+  let usedSolver = false;
   try {
     const solution = await solveBlock({
       prevHash:        prev.hash,
@@ -1480,8 +1489,9 @@ export async function mineNextBlockAsync(
       cumulativeWork:  state.blocks.length,
     }, 20_000);
     if (solution?.ok) {
-      nonce    = solution.nonce;
-      residual = solution.residual; // f64 from Rust solver
+      nonce      = solution.nonce;
+      residual   = solution.residual; // f64 from Rust solver
+      usedSolver = true;
       // Report thermal margin to the contribution tracker so the network
       // can observe per-device health. Value ∈ [0,1]; 1 = cool, 0 = hot.
       const margin = solution.thermal_margin ?? 1.0;
@@ -1491,8 +1501,21 @@ export async function mineNextBlockAsync(
       } catch { /* non-fatal if module not yet loaded */ }
       logger.debug({ height, nonce, residual, thermalMargin: margin }, "PoS solver found solution");
     }
-  } catch {
-    // Solver unavailable — random fallback is acceptable for dev/testnet
+  } catch (err) {
+    logger.warn({ err }, "PoS solver call failed");
+  }
+
+  if (!usedSolver) {
+    if (!allowRandomMiningFallback()) {
+      throw new Error(
+        "REQUIRE_REAL_SOLVER: consensus-api solveBlock is unavailable. " +
+        "Build the equilibrium consensus-api binary, or set " +
+        "ALLOW_RANDOM_MINING=true / NODE_ENV=test for non-production use only.",
+      );
+    }
+    nonce    = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+    residual = Math.random() * 5e-9 + 1e-10;
+    logger.warn({ height }, "ALLOW_RANDOM_MINING: using RNG residual (not production-safe)");
   }
 
   const quality  = 1.0 / (residual + 1e-6);
