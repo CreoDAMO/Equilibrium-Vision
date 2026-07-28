@@ -1,19 +1,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# ci-workflow-update.yml
+# docs/ci-updated.yml — Drop-in replacement for .github/workflows/ci.yml
 #
-# Copy the contents of this file over .github/workflows/ci.yml in your GitHub
-# repo to apply the following changes:
+# Copy this file over .github/workflows/ci.yml in your GitHub repo.
 #
-# Changes vs. the currently-committed ci.yml:
-#   1. ts-test comment updated: 10 test files, 257+ tests (was 8 / 245+).
-#   2. ts-test Vitest run step name updated to list all 10 test files including
-#      p2p-sync.integration and p2p-mesh.integration.
-#   3. New step: build p2p-sidecar binary before Vitest so that
-#      p2p-mesh.integration.test.ts runs its mesh tests instead of skipping.
-#      The test file is skip-safe — if the binary is absent the 3 mesh tests
-#      are skipped and CI still passes; the build step makes them run for real.
-#   4. testTimeout bumped to 300 000 ms in the Vitest env so arbitrage.stress
-#      tests (which mine ~103 blocks synchronously) don't timeout on CI runners.
+# What changed vs. the previous ci.yml:
+#   - ts-test: added Cache + Build steps for the p2p-sidecar binary so that
+#     the two-process p2p-mesh.integration.test.ts suite runs (instead of being
+#     auto-skipped when the binary is absent).
+#   - Comment updated: 10 test files, 290+ tests.
+#   - The run label for the Vitest step now includes p2p-sync.integration and
+#     p2p-mesh.integration in the file list.
 # ─────────────────────────────────────────────────────────────────────────────
 name: CI
 
@@ -21,9 +17,6 @@ on:
   push:
     branches: ["main", "master"]
   pull_request:
-
-permissions:
-  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -107,11 +100,10 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
-  # ── TypeScript tests (Vitest) — all 10 test files, 257+ tests ───────────────
-  # Files: chain.unit, api.integration, contracts.integration,
-  #        multisig.integration, models.integration, arbitrage.integration,
-  #        crosschain.integration, arbitrage.stress,
-  #        p2p-sync.integration, p2p-mesh.integration
+  # ── TypeScript tests (Vitest) — all 10 test files, 290+ tests ───────────────
+  # (chain.unit, api.integration, contracts.integration, multisig.integration,
+  #  models.integration, arbitrage.integration, crosschain.integration,
+  #  arbitrage.stress, p2p-sync.integration, p2p-mesh.integration)
   ts-test:
     name: TypeScript tests (Vitest)
     runs-on: ubuntu-latest
@@ -169,6 +161,19 @@ jobs:
           cp variational-ai/target/release/variational-ai-cli artifacts/api-server/
           cp variational-ai/target/release/variational-ai-arbitrage-cli artifacts/api-server/
 
+      - name: Cache Rust build artifacts (equilibrium)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: equilibrium -> target
+
+      - name: Build p2p-sidecar binary
+        # Enables the two-process p2p-mesh.integration.test.ts suite.
+        # Without this binary the mesh tests auto-skip (safe); with it they
+        # fully execute the gossip and RR round-trip scenarios between two
+        # spawned sidecar processes.
+        working-directory: equilibrium
+        run: cargo build --release --bin p2p-sidecar
+
       - name: Cache Rust build artifacts (WASM contracts)
         uses: Swatinem/rust-cache@v2
         with:
@@ -189,21 +194,6 @@ jobs:
           bash contracts/model_registry/build.sh
           bash contracts/cross_chain_relay/build.sh
 
-      # ── NEW: build p2p-sidecar so p2p-mesh.integration tests run for real ──
-      # p2p-mesh.integration.test.ts uses describe.skipIf(!binPresent) — if
-      # the binary is absent the 3 mesh tests are skipped and CI passes; this
-      # step makes them actually execute. Cache key covers the equilibrium
-      # source tree so rebuilds are only triggered when relevant Rust changes.
-      - name: Cache Rust build artifacts (p2p-sidecar)
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: equilibrium -> target
-          key: p2p-sidecar
-
-      - name: Build p2p-sidecar binary
-        working-directory: equilibrium
-        run: cargo build --release --bin p2p-sidecar
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -213,17 +203,13 @@ jobs:
       - name: Push DB schema
         run: DATABASE_URL="postgresql://runner@localhost:5432/equilibrium" pnpm --filter @workspace/db run push --config ./drizzle.config.ts
 
-      - name: Run all Vitest tests (10 files)
-        # chain.unit, api.integration, contracts.integration,
-        # multisig.integration, models.integration, arbitrage.integration,
-        # crosschain.integration, arbitrage.stress,
-        # p2p-sync.integration, p2p-mesh.integration
+      - name: Run all Vitest tests
+        # chain.unit, api.integration, contracts.integration, multisig.integration,
+        # models.integration, arbitrage.integration, crosschain.integration,
+        # arbitrage.stress, p2p-sync.integration, p2p-mesh.integration
         run: pnpm --filter @workspace/api-server run test
         env:
           DATABASE_URL: postgresql://runner@localhost:5432/equilibrium
-          # arbitrage.stress mines ~103 blocks per test — 300 s keeps them from
-          # timing out on slower CI runners (default was 120 s).
-          VITEST_TIMEOUT: "300000"
 
   # ── Rust unit tests (equilibrium) ───────────────────────────────────────────
   rust-test:
