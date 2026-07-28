@@ -14,10 +14,16 @@ import java.util.concurrent.TimeUnit
  * MiningWorker — WorkManager worker that runs one Proof-of-Stationarity
  * mining cycle per invocation.
  *
+ * Role: **P2P-assisted miner + thin client** (not a full offline node).
+ *
  * Flow per cycle:
- *   1. GET  /api/chain/status  → fetch current tip hash, difficulty, height
- *   2. solveBlock()            → Rust JNI call via libequilibrium_core.so
- *   3. POST /api/blocks/submit → submit nonce + residual to the node API
+ *   1. Prefer P2P tip cache (`P2PNode.fetchTip`); fall back to HTTP
+ *      GET /api/chain/status when the cache is empty
+ *   2. pollGossip() — abort if a peer already announced this height
+ *   3. solveBlock() — Rust JNI via libequilibrium_core.so
+ *   4. pollGossip() again — discard stale solution if a peer won mid-solve
+ *   5. POST /api/blocks/submit — still required for body acceptance until
+ *      phone implements sync RR; then setLocalTip + gossipBlock
  *
  * Input data keys (set by MiningService):
  *   [KEY_NODE_URL]       — base URL of the Equilibrium node  (default: emulator localhost)
@@ -128,6 +134,12 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
 
         Log.d(TAG, "Chain tip: height=$height hash=${latestHash.take(16)}…")
 
+        // Seed / refresh local tip from whatever source we used (P2P or HTTP)
+        // so the next cycle can prefer the P2P path even if this cycle used HTTP.
+        if (P2PNode.isRunning() && latestHash.isNotEmpty()) {
+            P2PNode.setLocalTip(height.toLong(), latestHash, difficulty)
+        }
+
         // ── 1b. Abort early if a peer already won this height ─────────────────
         if (P2PNode.isRunning()) {
             val competing = P2PNode.pollGossip()
@@ -181,6 +193,7 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             nonce        = nonce,
             residual     = residual,
             timestamp    = timestamp,
+            difficulty   = difficulty,
         )
     }
 
@@ -225,12 +238,13 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
      * HTTP 5xx / network error → retry
      */
     private fun submitBlock(
-        nodeUrl:   String,
-        miner:     String,
-        prevHash:  String,
-        nonce:     Long,
-        residual:  Double,
-        timestamp: Long,
+        nodeUrl:    String,
+        miner:      String,
+        prevHash:   String,
+        nonce:      Long,
+        residual:   Double,
+        timestamp:  Long,
+        difficulty: Long,
     ): Result {
         val payload = JSONObject().apply {
             put("miner",     miner)
