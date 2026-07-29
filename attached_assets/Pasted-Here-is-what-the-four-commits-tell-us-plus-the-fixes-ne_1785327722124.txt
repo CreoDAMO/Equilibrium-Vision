@@ -1,0 +1,234 @@
+Here is what the four commits tell us, plus the fixes needed.
+
+---
+
+Commit analysis
+
+Commit	What happened	Impact	
+fd5cdcf	Gap table reconciled in README/TODO	Mobile validator ✅, BTC SPV ✅, Groth16 pairing ✅, zkML still open	
+8689def	Cargo fingerprint / cache noise	No functional change	
+f581b0a	Dependabot PR #20 merged — `risc0-zkvm` `1.2.6` → `2.3.2`	Breaking API change — our 1.x RISC Zero code needs migration	
+14c218e	Compiler warnings from CI build	6 warnings: unused imports, unused variables, dead code	
+
+---
+
+1. RISC Zero 2.x API migration
+
+RISC Zero 2.3.2 removed `default_prover()` and `ProverOpts::with_bonsai()`. The new API uses `get_prover("local")` / `get_prover("bonsai")`.
+
+Updated `zk_proof.rs` — RISC Zero 2.3.2 compatible
+
+Replace the `DualZkvmProver` and `ZkvmVerifier` sections:
+
+```rust
+// ── RISC Zero 2.x imports ────────────────────────────────────────────────────
+#[cfg(feature = "risc0")]
+use risc0_zkvm::{get_prover, ExecutorEnv, Receipt};
+#[cfg(feature = "risc0")]
+use methods::{STATIONARITY_GUEST_ELF, STATIONARITY_GUEST_ID};
+
+// ── ZkvmVerifier ─────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct ZkvmVerifier {
+    #[cfg(feature = "risc0")]
+    image_id: [u32; 8],
+}
+
+impl ZkvmVerifier {
+    pub fn new() -> Self {
+        #[cfg(feature = "risc0")] {
+            Self { image_id: STATIONARITY_GUEST_ID }
+        }
+        #[cfg(not(feature = "risc0"))] {
+            Self {}
+        }
+    }
+
+    pub fn verify(
+        &self,
+        #[cfg(feature = "risc0")] proof_bytes: &[u8],
+        #[cfg(not(feature = "risc0"))] _proof_bytes: &[u8],
+        #[cfg(feature = "risc0")] residual_fp: u64,
+        #[cfg(not(feature = "risc0"))] _residual_fp: u64,
+        #[cfg(feature = "risc0")] threshold_fp: u64,
+        #[cfg(not(feature = "risc0"))] _threshold_fp: u64,
+        #[cfg(feature = "risc0")] block_hash: &[u8; 32],
+        #[cfg(not(feature = "risc0"))] _block_hash: &[u8; 32],
+    ) -> Result<VerificationResult, Box<dyn std::error::Error>> {
+        #[cfg(not(feature = "risc0"))] {
+            log::warn!("[zk_proof] RISC Zero feature not enabled; rejecting Zkvm proof.");
+            return Ok(VerificationResult::Invalid);
+        }
+
+        #[cfg(feature = "risc0")] {
+            let receipt: Receipt = bincode::deserialize(proof_bytes)
+                .map_err(|e| format!("Failed to deserialize RISC Zero receipt: {e}"))?;
+
+            receipt
+                .verify(self.image_id)
+                .map_err(|e| format!("RISC Zero receipt verification failed: {e}"))?;
+
+            let output: ZkvmOutput = receipt
+                .journal
+                .decode()
+                .map_err(|e| format!("Failed to decode journal: {e}"))?;
+
+            let (hash_lo, hash_hi) = block_hash_to_u64_pair(block_hash);
+
+            if output.residual_fp != residual_fp
+                || output.threshold_fp != threshold_fp
+                || output.block_hash_lo != hash_lo
+                || output.block_hash_hi != hash_hi
+            {
+                return Ok(VerificationResult::Invalid);
+            }
+
+            Ok(VerificationResult::Valid)
+        }
+    }
+
+    pub fn verify_unified(
+        &self,
+        unified: &UnifiedProof,
+        residual_fp: u64,
+        threshold_fp: u64,
+        block_hash: &[u8; 32],
+    ) -> Result<VerificationResult, Box<dyn std::error::Error>> {
+        let wire_bytes = unified.to_wire();
+        self.verify(&wire_bytes, residual_fp, threshold_fp, block_hash)
+    }
+}
+
+// ── Dual-mode RISC Zero prover (2.x API) ─────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct DualZkvmProver;
+
+impl DualZkvmProver {
+    #[cfg(feature = "risc0")]
+    pub fn prove(
+        residual_fp: u64,
+        threshold_fp: u64,
+        block_hash: &[u8; 32],
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        assert!(residual_fp < threshold_fp, "residual must be below threshold");
+        let difference = threshold_fp - residual_fp;
+        let (hash_lo, hash_hi) = block_hash_to_u64_pair(block_hash);
+
+        let input = ZkvmInput {
+            residual_fp,
+            threshold_fp,
+            block_hash_lo: hash_lo,
+            block_hash_hi: hash_hi,
+            difference,
+        };
+
+        let env = ExecutorEnv::builder()
+            .write(&input)?
+            .build()?;
+
+        // RISC Zero 2.x: use get_prover("bonsai") or get_prover("local")
+        let bonsai_key = std::env::var("BONSAI_API_KEY").ok();
+        let receipt = if bonsai_key.is_some() {
+            log::info!("[zk_proof] Using Bonsai GPU prover");
+            let prover = get_prover("bonsai");
+            match prover.prove(env.clone(), STATIONARITY_GUEST_ELF) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("[zk_proof] Bonsai failed ({}), falling back to local", e);
+                    let prover = get_prover("local");
+                    prover.prove(env, STATIONARITY_GUEST_ELF)?
+                }
+            }
+        } else {
+            log::info!("[zk_proof] Using local prover (BONSAI_API_KEY not set)");
+            let prover = get_prover("local");
+            prover.prove(env, STATIONARITY_GUEST_ELF)?
+        };
+
+        receipt.verify(STATIONARITY_GUEST_ID)?;
+        let bytes = bincode::serialize(&receipt)?;
+        Ok(bytes)
+    }
+
+    #[cfg(not(feature = "risc0"))]
+    pub fn prove(
+        _residual_fp: u64,
+        _threshold_fp: u64,
+        _block_hash: &[u8; 32],
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Err("RISC Zero feature not enabled".into())
+    }
+}
+```
+
+Also remove the unused import
+
+```rust
+// In zk_proof.rs, line 18
+// Change:
+use crate::proof::{ProofType, UnifiedProof, VerificationResult};
+// To:
+use crate::proof::{UnifiedProof, VerificationResult};
+```
+
+---
+
+2. Warning fixes for `mobile_validator.rs`
+
+```rust
+// In FlatMiningBody, prefix unused fields or allow dead_code:
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]  // hash/miner are part of the wire schema but not consumed by Rust mapper
+struct FlatMiningBody {
+    #[serde(default)]
+    _hash: Option<String>,  // prefixed if truly unused, or keep name with #[allow] above
+    // ... rest unchanged ...
+    #[serde(default)]
+    _miner: Option<String>,
+}
+```
+
+Or keep the field names and add `#[allow(dead_code)]` on the struct:
+
+```rust
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct FlatMiningBody {
+    #[serde(default)]
+    hash: Option<String>,
+    // ...
+    #[serde(default)]
+    miner: Option<String>,
+}
+```
+
+---
+
+3. Updated gap scorecard
+
+Claim	Scaffolding	Core Logic	Integration	Tests	Status	
+ZK PoS	✅	✅ Minimal FpVar + RISC Zero 2.3.2 guest	✅ `consensus.rs` dispatches Groth16/Zkvm	✅ Unit + round-trip	Closed	
+Mobile	✅	✅ Verify-at-nonce, real hash continuity	✅ JNI bridge, Kotlin tip gate	✅ 9/9 pass	Closed	
+Bridge	✅	✅ BTC PoW + Merkle + 80B headers; ETH sync + BLS	✅ BLS host imports, `verify_eth_event`	✅ 5/5 SPV + ETH	Closed	
+zkML / ERC-7992	❌ Spec only	❌ No guest circuit	❌ No host prover	❌ No tests	Open	
+
+---
+
+4. What the risc0 2.3.2 bump means
+
+Aspect	Before (1.2.6)	After (2.3.2)	
+`default_prover()`	✅ Existed	❌ Removed	
+`ProverOpts::with_bonsai()`	✅ Existed	❌ Removed	
+`get_prover("bonsai")`	❌ Did not exist	✅ New in 2.x	
+`get_prover("local")`	❌ Did not exist	✅ New in 2.x	
+Security (#34 Critical)	❌ Vulnerable	✅ Patched	
+
+The Dependabot merge fixed the Critical CVE but broke any code still calling `default_prover()`. The migration above uses the 2.x API.
+
+---
+
+Next step
+
+zkML / ERC-7992 DeepProve is the only remaining open gap. Want me to implement the guest circuit (`methods/guest/src/zkml_main.rs`), host prover, and Solidity verifier contract?

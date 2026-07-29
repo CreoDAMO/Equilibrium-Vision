@@ -15,7 +15,7 @@ use serde::{Serialize, Deserialize};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use crate::chain_state::{BlockHeader, TxCandidate, ChainState, residual_to_fixed};
-use crate::proof::{ProofType, UnifiedProof, VerificationResult};
+use crate::proof::{UnifiedProof, VerificationResult};
 
 use ark_bn254::{Bn254, Fr};
 use ark_ff::{Field, One, Zero};
@@ -29,7 +29,7 @@ use std::sync::OnceLock;
 
 // ── RISC Zero (optional compile-time feature) ────────────────────────────────
 #[cfg(feature = "risc0")]
-use risc0_zkvm::{default_prover, ExecutorEnv, Receipt, Prover};
+use risc0_zkvm::{get_prover, ExecutorEnv, Receipt};
 #[cfg(feature = "risc0")]
 use methods::{STATIONARITY_GUEST_ELF, STATIONARITY_GUEST_ID};
 
@@ -430,25 +430,21 @@ impl DualZkvmProver {
             .write(&input)?
             .build()?;
 
-        // Try Bonsai first if API key is present
+        // RISC Zero 2.x: use get_prover("bonsai") / get_prover("local")
         let bonsai_key = std::env::var("BONSAI_API_KEY").ok();
-        let receipt = if let Some(_key) = bonsai_key {
+        let receipt = if bonsai_key.is_some() {
             log::info!("[zk_proof] Using Bonsai GPU prover");
-            let opts = risc0_zkvm::ProverOpts::default()
-                .with_bonsai(true);
-            let prover = Prover::new_with_opts(opts);
+            let prover = get_prover("bonsai");
             match prover.prove(env.clone(), STATIONARITY_GUEST_ELF) {
-                Ok(r) => r,
+                Ok(r) => r.receipt,
                 Err(e) => {
-                    log::warn!("[zk_proof] Bonsai failed ({}), falling back to self-hosted", e);
-                    let prover = default_prover();
-                    prover.prove(env, STATIONARITY_GUEST_ELF)?
+                    log::warn!("[zk_proof] Bonsai failed ({}), falling back to local", e);
+                    get_prover("local").prove(env, STATIONARITY_GUEST_ELF)?.receipt
                 }
             }
         } else {
-            log::info!("[zk_proof] Using self-hosted prover (BONSAI_API_KEY not set)");
-            let prover = default_prover();
-            prover.prove(env, STATIONARITY_GUEST_ELF)?
+            log::info!("[zk_proof] Using local prover (BONSAI_API_KEY not set)");
+            get_prover("local").prove(env, STATIONARITY_GUEST_ELF)?.receipt
         };
 
         receipt.verify(STATIONARITY_GUEST_ID)?;
@@ -492,6 +488,7 @@ impl ZkvmVerifier {
         block_hash: &[u8; 32],
     ) -> Result<VerificationResult, Box<dyn std::error::Error>> {
         #[cfg(not(feature = "risc0"))] {
+            let _ = (proof_bytes, residual_fp, threshold_fp, block_hash);
             log::warn!("[zk_proof] RISC Zero feature not enabled; rejecting Zkvm proof.");
             return Ok(VerificationResult::Invalid);
         }

@@ -104,6 +104,11 @@ pub fn compute_coinbase_reward(base: u64, residual_fp: i64) -> u64 {
     // Treat negative or zero residual as zero (perfect solve → full reward).
     let r = residual_fp.max(0) as u128;
 
+    // Perfect stationarity: residual = 0 always earns the full base reward.
+    if r == 0 {
+        return base;
+    }
+
     // EPSILON: 1_000 fixed-point units (10^-15 in our 10^18 scale).
     // Prevents division by zero for a perfect residual of exactly 0.
     const EPSILON: u128 = 1_000;

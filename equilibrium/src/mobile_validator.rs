@@ -330,6 +330,7 @@ pub struct GossipedBlock {
 
 /// Flat wire format emitted by MiningWorker.buildBlockBodyJson.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)] // hash/miner are part of the wire schema but not consumed by the Rust mapper
 struct FlatMiningBody {
     #[serde(default)]
     hash: Option<String>,
