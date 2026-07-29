@@ -81,10 +81,11 @@ mod tests {
                 raw:  vec![],
             },
             public_inputs: StationarityPublicInputs {
-                residual_fp:   [0u8; 32],
-                threshold_fp:  [0u8; 32],
-                block_hash_lo: [0u8; 32],
-                block_hash_hi: [0u8; 32],
+                prev_hash:           [0u8; 32],
+                difficulty:          0u64,
+                threshold_fp:        [0u8; 32],
+                timestamp:           0u64,
+                mempool_pressure_fp: [0u8; 32],
             },
             vk_hash:      [0u8; 32],   // deliberately wrong — triggers fast rejection
             valid:        false,

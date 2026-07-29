@@ -22,6 +22,15 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Result of running a proof verifier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VerificationResult {
+    /// Proof is cryptographically valid.
+    Valid,
+    /// Proof is invalid (wrong public inputs, bad pairing, etc.).
+    Invalid,
+}
+
 /// Identifies which proof system produced a `UnifiedProof`.
 ///
 /// Stored as the first byte of the wire encoding so verifiers can dispatch

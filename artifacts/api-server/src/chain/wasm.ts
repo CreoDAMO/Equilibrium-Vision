@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { bls12_381 } from "@noble/curves/bls12-381.js";
 import { verifyZkProof, getVerificationKey } from "./zkproof.js";
 
 // Resolve CLI binary once at module load — same helper used by bridge.ts.
@@ -647,6 +648,63 @@ export class WasmVM {
         // usage is charged to the parent's remaining budget. Returns the
         // child's i32 return value, or -1 on any failure (unknown contract,
         // max depth exceeded, out of gas, or the child call itself failing).
+        // Aggregate BLS12-381 public keys (ETH2 / sync-committee style).
+        // Reads `n` concatenated compressed G1 pubkeys (48 bytes each) from `pubkeysPtr`.
+        // Writes the 48-byte compressed aggregate G1 pubkey to `outPtr`.
+        // Returns 1 on success, 0 on failure (invalid input, wrong count, etc).
+        // Used by the eth_sync_bridge contract to aggregate sync committee keys.
+        bls_aggregate_pubkeys: (pubkeysPtr: number, n: number, outPtr: number): number => {
+          gasUsed += 5_000 * n; // O(n) aggregation cost
+          checkGas();
+          try {
+            if (n <= 0 || n > 512) return 0; // Sync committee max size
+            const totalLen = n * 48;
+            const pubkeysBytes = new Uint8Array(memory.buffer, pubkeysPtr, totalLen);
+            const pubkeys: Uint8Array[] = [];
+            for (let i = 0; i < n; i++) {
+              pubkeys.push(pubkeysBytes.slice(i * 48, (i + 1) * 48));
+            }
+            // longSignatures mode: G1 pubkeys (48 bytes) + G2 sigs (96 bytes)
+            const sigs = bls12_381.longSignatures;
+            const aggPoint = sigs.aggregatePublicKeys(pubkeys);
+            const aggBytes = aggPoint.toRawBytes(true); // compressed
+            const outView = new Uint8Array(memory.buffer, outPtr, 48);
+            outView.set(aggBytes);
+            return 1;
+          } catch {
+            return 0;
+          }
+        },
+
+        // Verify a BLS12-381 signature (ETH2 / sync-committee style).
+        // `pubkeyPtr` → 48-byte compressed G1 pubkey
+        // `msgPtr` → message bytes (typically 32-byte signing root)
+        // `msgLen` → message length in bytes
+        // `sigPtr` → 96-byte compressed G2 signature
+        // Returns 1 if valid, 0 if invalid or on any error.
+        // Gas: 15,000 per call (one pairing check). Fail-closed on any exception.
+        bls_verify: (pubkeyPtr: number, msgPtr: number, msgLen: number, sigPtr: number): number => {
+          gasUsed += 15_000; // Pairing check is expensive
+          checkGas();
+          try {
+            const pubkeyBytes = new Uint8Array(memory.buffer, pubkeyPtr, 48).slice();
+            const msg = new Uint8Array(memory.buffer, msgPtr, msgLen).slice();
+            const sigBytes = new Uint8Array(memory.buffer, sigPtr, 96).slice();
+            // longSignatures mode: G1 pubkeys (48 bytes) + G2 sigs (96 bytes)
+            const sigs = bls12_381.longSignatures;
+            // Hash message onto G2 (signature group for longSignatures)
+            // bls12_381.G2 has hashToCurve via the hash-to-curve spec (RFC 9380)
+            const G2 = (bls12_381 as unknown as { G2: { hashToCurve(msg: Uint8Array): unknown } }).G2;
+            const msgPoint = G2.hashToCurve(msg);
+            // sig and pubkey accepted as BLSInput (Uint8Array); message must be WeierstrassPoint
+            return (sigs.verify as (s: Uint8Array, m: unknown, p: Uint8Array) => boolean)(
+              sigBytes, msgPoint, pubkeyBytes
+            ) ? 1 : 0;
+          } catch {
+            return 0;
+          }
+        },
+
         call_contract: (
           addrPtr: number, addrLen: number,
           childMethodId: number,

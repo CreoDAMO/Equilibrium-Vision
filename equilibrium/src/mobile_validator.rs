@@ -27,6 +27,7 @@
 // Kotlin:     P2PNode.startValidator() / submitBlockForValidation(json, fromPeer)
 
 use std::sync::mpsc::{channel, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
@@ -56,6 +57,15 @@ pub enum ValidationDecision {
     Deferred,
 }
 
+/// Result of a completed validation, available via `MobileValidator::poll_result()`.
+/// Used by the JNI bridge to surface outcomes to Kotlin without blocking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ValidationResult {
+    Accept { hash: String, height: u64 },
+    Reject { hash: String, reason: String, ban_peer: bool },
+    Deferred { hash: String, reason: String },
+}
+
 /// A job dispatched to the background validation thread.
 pub enum ValidationJob {
     /// Validate a single block received from gossip.
@@ -63,6 +73,13 @@ pub enum ValidationJob {
         block: GossipedBlock,
         from_peer: bool,
         reply: std::sync::mpsc::SyncSender<ValidationDecision>,
+    },
+    /// Fire-and-forget: parse JSON, validate, store result in last_result.
+    /// Used by the JNI bridge (submitBlockForValidation).
+    ValidateJson {
+        json: String,
+        from_peer: bool,
+        last_result: Arc<Mutex<Option<ValidationResult>>>,
     },
     /// Validate a batch of blocks (charging session catch-up).
     ValidateBatch {
@@ -168,7 +185,7 @@ impl ValidationEngine {
         match solver.optimize_full(block.header.clone(), vec![], &state) {
             Some((solution, _)) => {
                 // The residual must match within 1 ULP of the fixed-point value
-                let recomputed_fp = crate::chain_state::residual_to_fixed(solution.residual);
+                let recomputed_fp = crate::chain_state::residual_to_fixed(solution.residual as f64);
                 let claimed_fp = block.header.residual;
                 let delta = (recomputed_fp - claimed_fp).abs();
                 // Allow ±1 ULP (rounding at the solver boundary)
@@ -279,12 +296,18 @@ fn should_validate_now() -> bool {
 /// ```
 pub struct MobileValidator {
     tx: Sender<ValidationJob>,
+    /// Shared storage for the most recent validation result (set by worker thread).
+    /// Polled by `poll_result()` from the JNI bridge.
+    last_result: Arc<Mutex<Option<ValidationResult>>>,
 }
 
 impl MobileValidator {
     /// Spawn the background validation thread and return a handle.
     pub fn start() -> Self {
         let (tx, rx) = channel::<ValidationJob>();
+        let last_result: Arc<Mutex<Option<ValidationResult>>> = Arc::new(Mutex::new(None));
+        let last_result_worker = Arc::clone(&last_result);
+
         thread::Builder::new()
             .name("equilibrium-validator".to_string())
             .stack_size(2 * 1024 * 1024) // 2 MB stack (mobile budget)
@@ -301,7 +324,58 @@ impl MobileValidator {
                             if decision == ValidationDecision::Accept {
                                 engine.accept(&block);
                             }
+                            // Store result for polling (JNI / non-blocking callers)
+                            let hash = hex::encode(&block.header.prev_hash[..8]);
+                            let height = block.header.recursion_depth as u64;
+                            let vr = match &decision {
+                                ValidationDecision::Accept => ValidationResult::Accept { hash, height },
+                                ValidationDecision::Reject { reason } => ValidationResult::Reject {
+                                    hash, reason: reason.clone(), ban_peer: from_peer,
+                                },
+                                ValidationDecision::Deferred => ValidationResult::Deferred {
+                                    hash, reason: "battery/thermal defer".to_string(),
+                                },
+                            };
+                            if let Ok(mut guard) = last_result_worker.lock() {
+                                *guard = Some(vr);
+                            }
                             let _ = reply.send(decision); // ignore if caller dropped
+                        }
+
+                        ValidationJob::ValidateJson { json, from_peer, last_result: lr } => {
+                            // Parse JSON into GossipedBlock; validation result stored in lr.
+                            match serde_json::from_str::<GossipedBlock>(&json) {
+                                Ok(block) => {
+                                    let decision = if should_validate_now() {
+                                        engine.validate(&block, from_peer)
+                                    } else {
+                                        ValidationDecision::Deferred
+                                    };
+                                    if decision == ValidationDecision::Accept {
+                                        engine.accept(&block);
+                                    }
+                                    let hash = hex::encode(&block.header.prev_hash[..8]);
+                                    let height = block.header.recursion_depth as u64;
+                                    let vr = match &decision {
+                                        ValidationDecision::Accept => ValidationResult::Accept { hash, height },
+                                        ValidationDecision::Reject { reason } => ValidationResult::Reject {
+                                            hash, reason: reason.clone(), ban_peer: from_peer,
+                                        },
+                                        ValidationDecision::Deferred => ValidationResult::Deferred {
+                                            hash, reason: "battery/thermal defer".to_string(),
+                                        },
+                                    };
+                                    if let Ok(mut guard) = lr.lock() { *guard = Some(vr); }
+                                }
+                                Err(e) => {
+                                    let vr = ValidationResult::Reject {
+                                        hash: "unknown".to_string(),
+                                        reason: format!("json parse error: {e}"),
+                                        ban_peer: from_peer,
+                                    };
+                                    if let Ok(mut guard) = lr.lock() { *guard = Some(vr); }
+                                }
+                            }
                         }
 
                         ValidationJob::ValidateBatch { blocks } => {
@@ -329,7 +403,7 @@ impl MobileValidator {
                 }
             })
             .expect("validator thread spawn failed");
-        Self { tx }
+        Self { tx, last_result }
     }
 
     /// Submit a gossiped block for background validation.
@@ -358,6 +432,27 @@ impl MobileValidator {
     /// Shut down the validator thread.
     pub fn shutdown(&self) {
         let _ = self.tx.send(ValidationJob::Shutdown);
+    }
+
+    /// Submit a block JSON string for background validation (fire-and-forget).
+    ///
+    /// Used by the JNI bridge (`submitBlockForValidation`). The block is parsed
+    /// and validated asynchronously; use `poll_result()` to retrieve the outcome.
+    pub fn submit_json(&self, json: String, from_peer: bool) {
+        let _ = self.tx.send(ValidationJob::ValidateJson {
+            json,
+            from_peer,
+            last_result: Arc::clone(&self.last_result),
+        });
+    }
+
+    /// Poll for the most recent validation result without blocking.
+    ///
+    /// Returns `Some(ValidationResult)` if a validation has completed since
+    /// the last call, `None` if no result is available yet. Consumes the
+    /// stored result (next call returns `None` until another validation completes).
+    pub fn poll_result(&self) -> Option<ValidationResult> {
+        self.last_result.lock().ok().and_then(|mut g| g.take())
     }
 }
 

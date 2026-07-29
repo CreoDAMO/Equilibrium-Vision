@@ -406,3 +406,157 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_querySyncBlocks(
         .map(|s| s.into_raw())
         .unwrap_or(std::ptr::null_mut())
 }
+
+// ── Mobile Validator JNI bridge ─────────────────────────────────────────────
+//
+// Exposes com.equilibrium.P2PNode.startValidator / submitBlockForValidation /
+// getValidationResult / shouldValidateNow / stopValidator to the JVM.
+//
+// These make the "fully mobile blockchain" claim real: phones are full
+// validators that independently verify residuals, Merkle roots, timestamps,
+// and signatures — not light clients that blindly trust gossip.
+
+use std::sync::OnceLock;
+use crate::mobile_validator::{MobileValidator, ValidationResult};
+
+/// Global validator instance. Initialized on first startValidator() call.
+static VALIDATOR: OnceLock<MobileValidator> = OnceLock::new();
+
+/// Start the background mobile validation thread.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun startValidator(): Boolean
+/// ```
+/// Returns true if the validator was started (or was already running).
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_startValidator(
+    _env: JNIEnv,
+    _obj: JObject,
+) -> jboolean {
+    if VALIDATOR.get().is_some() {
+        return JNI_TRUE; // Already running — idempotent
+    }
+    let validator = MobileValidator::start();
+    match VALIDATOR.set(validator) {
+        Ok(_) => JNI_TRUE,
+        Err(_) => JNI_TRUE, // Race — another thread beat us, still running
+    }
+}
+
+/// Stop the background mobile validation thread.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun stopValidator(): Boolean
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_stopValidator(
+    _env: JNIEnv,
+    _obj: JObject,
+) -> jboolean {
+    if let Some(v) = VALIDATOR.get() {
+        v.shutdown();
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
+}
+
+/// Submit a block JSON string for background validation (fire-and-forget).
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun submitBlockForValidation(blockJson: String, fromPeer: Boolean): Boolean
+/// ```
+///
+/// The block is asynchronously:
+///   1. Parsed from JSON into a GossipedBlock
+///   2. Chain-continuity checked (prev_hash, height)
+///   3. Timestamp-sanity checked (±2 hours)
+///   4. Lagrangian residual re-verified via StationarySolver
+///   5. Merkle root recomputed from tx hashes
+///
+/// Use getValidationResult() to poll for the outcome.
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_submitBlockForValidation(
+    mut env: JNIEnv,
+    _obj: JObject,
+    block_json: JString,
+    from_peer: jboolean,
+) -> jboolean {
+    let Ok(json_str) = env.get_string(&block_json) else {
+        return JNI_FALSE;
+    };
+    let Some(validator) = VALIDATOR.get() else {
+        return JNI_FALSE;
+    };
+    validator.submit_json(json_str.to_string_lossy().to_string(), from_peer == JNI_TRUE);
+    JNI_TRUE
+}
+
+/// Poll for the most recent validation result.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun getValidationResult(): String
+/// ```
+///
+/// Returns a JSON string:
+/// ```json
+/// {"status":"accept","hash":"abc...","height":123}
+/// {"status":"reject","hash":"abc...","reason":"residual mismatch","banPeer":true}
+/// {"status":"deferred","hash":"abc...","reason":"battery low","banPeer":false}
+/// ```
+/// Returns an empty string if no validation has completed yet (polling API).
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_getValidationResult(
+    env: JNIEnv,
+    _obj: JObject,
+) -> jstring {
+    let Some(validator) = VALIDATOR.get() else {
+        return env.new_string("").map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut());
+    };
+
+    let json = match validator.poll_result() {
+        Some(ValidationResult::Accept { hash, height }) => {
+            format!(r#"{{"status":"accept","hash":"{}","height":{}}}"#, hash, height)
+        }
+        Some(ValidationResult::Reject { hash, reason, ban_peer }) => {
+            format!(
+                r#"{{"status":"reject","hash":"{}","reason":"{}","banPeer":{}}}"#,
+                hash, reason.replace('"', "'"), ban_peer
+            )
+        }
+        Some(ValidationResult::Deferred { hash, reason }) => {
+            format!(
+                r#"{{"status":"deferred","hash":"{}","reason":"{}","banPeer":false}}"#,
+                hash, reason.replace('"', "'")
+            )
+        }
+        None => String::new(),
+    };
+
+    env.new_string(&json)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// Check whether device conditions allow validation right now.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun shouldValidateNow(): Boolean
+/// ```
+///
+/// Returns true if the device is charging OR battery > 50% at nominal thermals.
+/// The Rust side always returns true; the actual battery/thermal gate lives in
+/// Kotlin (ThermalGuard.kt) which decides whether to call submitBlockForValidation.
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_shouldValidateNow(
+    _env: JNIEnv,
+    _obj: JObject,
+) -> jboolean {
+    // Thermal/battery check is delegated to Kotlin — see ThermalGuard.kt.
+    JNI_TRUE
+}

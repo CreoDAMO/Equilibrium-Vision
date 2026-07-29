@@ -1,0 +1,125 @@
+﻿Commit `0d6cbe90` is massive. It landed the remaining 2 patches AND the scaffolding for all 3 claims.
+
+
+---
+
+
+What Landed
+
+
+✅ Patch 05 — Persistence (SMT + DEX Pools)
+Files: `state.ts`, `persistence.ts`, `index.ts`, `lib/db/src/schema/dex-pools.ts`, `lib/db/src/schema/smt-roots.ts`
+
+
+- `setDbPool()` injects raw `pg.Pool` into `ChainState`
+- `_persistSmtRoot()` — fire-and-forget on every `addBlock()`
+- `_persistPool()` — fire-and-forget on `createPool()`, `swap()`, `addLiquidity()`
+- `_loadPersistedState()` — restores DEX pools + logs latest SMT root on startup
+- Drizzle schema files for both tables
+
+
+✅ Patch 09 — Fixed-Point Reward
+File: `equilibrium/src/chain_state.rs`
+
+
+- `compute_coinbase_reward` is now pure `u128` integer arithmetic
+- No `f64`. No `1.0 / (residual + 1e-6)`. No `.min(1.0)`.
+- Formula: `base * SCALE / (residual_fp + EPSILON)`, capped at `SCALE`
+- 4 new tests: determinism, zero residual, high residual, negative residual
+
+
+---
+
+
+Claim Scaffolding — All 3
+
+
+Claim 1: ZK PoS — `proof/mod.rs` + `zk_proof.rs`
+New: `equilibrium/src/proof/mod.rs`
+- `ProofType` enum: `Groth16 = 0x01`, `Zkvm = 0x02`
+- `UnifiedProof` struct with `to_wire()` / `from_wire_groth16()`
+- `AuditResult` enum for cross-checking
+- `accepted_proof_types(mask: u8)` governance helper
+
+
+Modified: `equilibrium/src/zk_proof.rs`
+- Production path: Loads `proving_key.bin` + `verification_key.bin` from `PROVING_KEY_DIR`. Panics at startup if missing when `NODE_ENV=production` or `EQUILIBRIUM_ENV=mainnet`.
+- Testnet path: Falls back to `0xCAFE_BABE_DEAD_BEEF` with a loud `log::warn!` that says "This is NOT zero-knowledge."
+- Clear documentation on how to convert snarkjs zkey output to ark-groth16 format
+
+
+Claim 2: Mobile Blockchain — `mobile_validator.rs`
+New: `equilibrium/src/mobile_validator.rs`
+- `MobileValidator` spawns background thread with 2MB stack
+- `ValidationEngine` with full validation pipeline:
+  1. Chain continuity (prev_hash, height)
+  2. Timestamp sanity (±2 hours)
+  3. Residual re-verification via `StationarySolver::optimize_full()` in verify mode (1,000 iterations, not 500,000)
+  4. Merkle root recomputation from tx hashes
+  5. BFT vote verification (stubbed, delegated to JNI side)
+- `ValidationDecision::Accept / Reject / Deferred`
+- Battery/thermal deferral stubs (`should_validate_now()`)
+- `merkle_root_from_hashes()` with Bitcoin-style odd-length duplication
+- Full test suite: empty root, single tx, two txs, bad timestamp, spawn/shutdown
+
+
+Claim 3: Trustless Bridge — `btc_spv_bridge` + `eth_sync_bridge`
+New: `contracts/btc_spv_bridge/src/lib.rs`
+- Full Bitcoin SPV: `BtcHeader` parsing, `sha256d`, `bits_to_target`, `verify_btc_pow`
+- `verify_merkle_proof()` with double-SHA256 pairwise hashing
+- `submit_btc_header()` — PoW + chain continuity check
+- `verify_btc_transfer()` — confirmation check + Merkle proof (placeholder for full header storage)
+- Tests: genesis header PoW valid, bad PoW rejected, bits-to-target, single-tx Merkle proof, SHA256d known vector
+
+
+New: `contracts/eth_sync_bridge/src/lib.rs`
+- Full Ethereum sync committee: `LightClientHeader` parsing, `count_participants()`, `hash_header()`
+- `bootstrap()` — stores aggregate BLS pubkey
+- `submit_header()` — checks supermajority (342/512), verifies BLS signature via host import
+- Tests: bootstrap idempotency, full committee count, supermajority threshold, no-bootstrap rejection, below-quorum rejection, deterministic header hash
+
+
+---
+
+
+What's Still Missing (The Gaps)
+
+
+Item        Status        What's Needed        
+R1CS circuit        ❌ Not present        `stationarity_circuit.rs` — the actual ark-r1cs-std constraints        
+Groth16 prover integration        ❌ Not present        Wire `UnifiedProof` into `consensus.rs` `validate_block()`        
+RISC Zero guest        ❌ Not present        `methods/guest/src/main.rs` + host prover        
+MPC ceremony        ❌ Not present        Run it, generate `proving_key.bin` + `verification_key.bin`        
+Mobile JNI bridge        ❌ Documented only        Actual `Java_com_equilibrium_P2PNode_startValidator` + `submitBlockForValidation` in `jni_bridge.rs`        
+BLS host imports        ❌ Not present        `bls_aggregate_pubkeys` + `bls_verify` in `wasm.ts` host imports        
+BTC full header storage        ⚠️ Partial        Currently stores 32-byte hash only; needs 80-byte header for Merkle root retrieval        
+ETH receipt proof        ❌ Not present        `verify_eth_event()` with SSZ Merkle proof of receipt inclusion        
+
+
+---
+
+
+Updated Scorecard
+
+
+Patches: 14/14 ✅ ALL LANDED
+
+
+Claims:
+
+
+Claim        Scaffolding        Core Logic        Integration        Tests        
+ZK PoS        ✅ `proof/mod.rs`, `zk_proof.rs` key loading        ❌ No R1CS circuit        ❌ No consensus dispatch        ✅ Unit tests for proof types        
+Mobile        ✅ `mobile_validator.rs` full engine        ⚠️ Solver verify mode works        ❌ No JNI bridge        ✅ Merkle, timestamp, spawn        
+Bridge        ✅ Both contracts fully written        ⚠️ BTC PoW + Merkle work        ❌ No host imports        ✅ Genesis header, committee count        
+
+
+Next concrete steps:
+1. Write `stationarity_circuit.rs` (R1CS constraints)
+2. Run MPC ceremony (or use RISC Zero as primary for now)
+3. Implement JNI bridge in `jni_bridge.rs`
+4. Add BLS host imports to `wasm.ts`
+5. Wire `UnifiedProof` into `consensus.rs`
+
+
+The foundation is now real code in real files, not just plans.
