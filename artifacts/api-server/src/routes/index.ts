@@ -20,6 +20,8 @@ import arbitrageRouter from "./arbitrage.js";
 import modelsRouter from "./models.js";
 import crossChainRelayRouter from "./crossChainRelay.js";
 import lightnodeRouter from "./lightnode.js";
+import governanceContractRouter from "./governanceContract.js";
+import stakingContractRouter from "./stakingContract.js";
 
 const router: IRouter = Router();
 
@@ -44,5 +46,7 @@ router.use(arbitrageRouter);
 router.use(modelsRouter);
 router.use(crossChainRelayRouter);
 router.use(lightnodeRouter);
+router.use(governanceContractRouter);
+router.use(stakingContractRouter);
 
 export default router;
