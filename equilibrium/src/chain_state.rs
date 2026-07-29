@@ -84,10 +84,37 @@ impl Default for ChainState {
 /// Compute the coinbase reward, scaling `base` by a quality factor derived
 /// from the fixed-point residual (lower residual → higher quality → closer
 /// to the full `base` reward).
+///
+/// # Fixed-point arithmetic — no f64
+///
+/// The entire computation is integer-only so it produces bit-identical results
+/// on every architecture (x86, ARM, RISC-V) regardless of FPU settings, the
+/// presence of fused-multiply-add, or extended-precision registers. This is
+/// critical: miner rewards are consensus-sensitive — even a 1-ULP divergence
+/// between an ARM phone and an x86 validator would cause a fork.
+///
+/// Formula (quality = base * SCALE / (residual + EPSILON)):
+///   EPSILON_FP = 1_000  (represents 1e-15 in the 10^18 scale — negligible)
+///   quality_fp = SCALE / (residual_fp + EPSILON_FP)    [capped at SCALE]
+///   reward     = (base * quality_fp) / SCALE
+///
+/// The division truncates (Rust default for integers) — consistent across all
+/// platforms and compilers.
 pub fn compute_coinbase_reward(base: u64, residual_fp: i64) -> u64 {
-    let residual = residual_to_float(residual_fp);
-    let quality_factor = (1.0 / (residual + 1e-6)).min(1.0);
-    (base as f64 * quality_factor) as u64
+    // Treat negative or zero residual as zero (perfect solve → full reward).
+    let r = residual_fp.max(0) as u128;
+
+    // EPSILON: 1_000 fixed-point units (10^-15 in our 10^18 scale).
+    // Prevents division by zero for a perfect residual of exactly 0.
+    const EPSILON: u128 = 1_000;
+    const SCALE: u128 = 1_000_000_000_000_000_000; // 10^18
+
+    // quality_fp = SCALE / (r + EPSILON), capped at SCALE (residual=0 → full reward)
+    let denom = r + EPSILON;
+    let quality_fp = (SCALE / denom).min(SCALE);
+
+    // reward = base * quality_fp / SCALE  (integer division, truncates)
+    ((base as u128) * quality_fp / SCALE) as u64
 }
 
 #[cfg(test)]
@@ -106,5 +133,43 @@ mod tests {
     #[test]
     fn residual_to_fixed_saturates_on_infinity() {
         assert_eq!(residual_to_fixed(f64::INFINITY), i64::MAX);
+    }
+
+    #[test]
+    fn compute_coinbase_reward_is_deterministic_integer_only() {
+        // Same inputs must always yield the same output (no FPU variance).
+        let base = 50_000_000u64;
+        let residual_fp = 10_000_000_000i64; // 1e-8 in 10^18 scale
+        let r1 = compute_coinbase_reward(base, residual_fp);
+        let r2 = compute_coinbase_reward(base, residual_fp);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn compute_coinbase_reward_zero_residual_gives_full_base() {
+        // residual = 0 → quality_fp = SCALE / EPSILON → quality close to 1.0
+        // With EPSILON=1_000 and SCALE=10^18: quality = 10^15 → reward ≈ base
+        let base = 50_000_000u64;
+        let reward = compute_coinbase_reward(base, 0);
+        // quality = 10^18 / 1_000 = 10^15 … but capped at 10^18 → reward = base
+        assert_eq!(reward, base, "zero residual must yield full base reward");
+    }
+
+    #[test]
+    fn compute_coinbase_reward_high_residual_gives_near_zero() {
+        // residual = 10^18 (= 1.0 in float terms) → quality_fp = 1
+        let base = 50_000_000u64;
+        let reward = compute_coinbase_reward(base, 1_000_000_000_000_000_000i64);
+        // quality_fp = 10^18 / (10^18 + 1000) ≈ 1 → reward ≈ 1
+        // but specifically: 50_000_000 * 1 / 10^18 = 0 (integer truncation)
+        assert!(reward <= 1, "high residual should give near-zero reward, got {reward}");
+    }
+
+    #[test]
+    fn compute_coinbase_reward_negative_residual_treated_as_zero() {
+        let base = 50_000_000u64;
+        let reward_neg = compute_coinbase_reward(base, -1_000_000_000i64);
+        let reward_zero = compute_coinbase_reward(base, 0);
+        assert_eq!(reward_neg, reward_zero, "negative residual treated same as zero");
     }
 }

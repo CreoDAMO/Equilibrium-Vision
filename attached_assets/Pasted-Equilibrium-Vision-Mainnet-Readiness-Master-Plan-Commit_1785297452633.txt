@@ -1,0 +1,474 @@
+Equilibrium-Vision: Mainnet Readiness Master Plan
+
+Commit 7bc23608 (2026-07-28) + Path Forward
+
+---
+
+1. Executive Summary
+
+Current Status: Hardened Testnet
+
+Commit 7bc23608 applied 12 of 14 critical security patches directly to source code. The system is no longer a toy. Keystores are encrypted, BFT votes are cryptographically signed, contract addresses are deterministic, admin routes fail closed, and the TS trapdoor prover is gated.
+
+What remains is architecture, not patches. Three claims need implementation to become verifiably true:
+1. "Zero-knowledge Proof-of-Stationarity" — needs real R1CS circuit + dual-proof system
+2. "World's first fully mobile blockchain" — needs phone-side block validation thread
+3. "Trustless cross-chain bridge" — needs SPV / sync committee light-client contracts
+
+This document is the unified implementation plan.
+
+---
+
+2. What Landed in 7bc23608
+
+Live Source Code Changes (12/14)
+
+#	Patch	File	What Changed	
+01	Encrypted Keystore	equilibrium/src/wallet.rs	PBKDF2 (600K iter) + AES-256-GCM v2 keystore; chain_id in tx signing bytes	
+02	WASM Security Bundle	artifacts/api-server/src/chain/wasm.ts	Monotonic deployer nonces; child-call storage rollback; verify_residual schema hardening (16 KiB cap, key whitelist)	
+03	BFT Real Signatures	artifacts/api-server/src/chain/state.ts	Ed25519 sign/verify over sha256("equilibrium-bft-v1"	
+04	Stratum Re-verify	artifacts/api-server/src/lib/stratum-server.ts	Pool spawns variational-ai-cli to independently verify residual before accepting shares	
+06	Mining P2P-First	MiningWorker.kt	gossipBlockBody() + gossipBlock() before HTTP; HTTP is now fallback	
+07	ZK Mainnet Gate	artifacts/api-server/src/chain/zkproof.ts	ALLOW_TS_PROVER env var; throws in production unless explicitly enabled	
+08	Governance Mainnet Params	artifacts/api-server/src/chain/governance.ts	IS_TESTNET env gating; 7-day vote / 2-day timelock defaults	
+10a	Deterministic Sigmoid	artifacts/api-server/src/chain/wasm.ts	Pade [1,1] approximant replaces Math.exp(); clamped for	
+11a	Admin Fail-Closed (Arbitrage)	artifacts/api-server/src/routes/arbitrage.ts	NODE_ENV dev bypass removed entirely	
+11b	Admin Fail-Closed (Validators)	artifacts/api-server/src/routes/validators.ts	Same — slashing always requires ADMIN_KEY or multisig	
+12	DEX Demo Harden	artifacts/api-server/src/routes/dex.ts	Gated behind ENABLE_DEMO_ROUTES === "true"; returns 404 when off	
+13	Consensus Fail-Fast	artifacts/api-server/src/variational-ai/bridge.ts	Fatal error on mainnet if consensus binary missing	
+
+Committed as Attached Assets Only (2/14)
+
+These patches exist in attached_assets/ but were not merged into running code:
+
+#	Patch	Why It Matters	
+05	Persistence (SMT + DEX Pools)	SMT roots and DEX pools are still in-memory only; lost on restart	
+09	Fixed-Point Reward	compute_coinbase_reward in Rust still uses f64; nondeterministic across compilers	
+
+Action: Apply these two patches next. They are zero-risk operational improvements.
+
+---
+
+3. The Three Claims — Implementation Plans
+
+---
+
+Claim 1: "Zero-knowledge Proof-of-Stationarity"
+
+Current State: The TS prover is gated. The Rust prover still uses a fixed-seed CRS (0xCAFE_BABE_DEAD_BEEF). Anyone who reads the source can forge proofs. This is not zero-knowledge — it is a trapdoor simulation.
+
+Target State: A dual-proof architecture where miners can generate either:
+- Groth16 (192 bytes, 2ms verify, MPC-generated CRS)
+- RISC Zero ZKVM (200-500 KB, 50-100ms verify, no trusted setup)
+
+Validators accept either. The chain can audit Groth16 blocks with RISC Zero to detect circuit bugs.
+
+3.1.1 Groth16 Path — Real R1CS Circuit
+
+New File: equilibrium/src/stationarity_circuit.rs
+
+The circuit proves: Given public inputs (prevHash, difficulty, threshold, timestamp, mempoolPressure) and private witness nonce, the Lagrangian cost function evaluates to residual < threshold.
+
+Key design decisions:
+- Fixed-point throughout (scale = 10^18) — no floats in R1CS
+- SHA256 for hash commitment (25,300 constraints)
+- Polynomial evaluation for Lagrangian (200 constraints)
+- Range proof for strict inequality (threshold - residual > 0)
+
+New File: equilibrium/src/proof/mod.rs
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ProofType {
+    Groth16 = 0x01,
+    Zkvm = 0x02,
+}
+
+pub struct UnifiedProof {
+    pub proof_type: ProofType,
+    pub bytes: Vec<u8>,
+    pub public_inputs: Vec<u8>,
+    pub claimed_residual_fp: i64,
+}
+```
+
+Modified: equilibrium/src/zk_proof.rs
+
+Replace the 0xCAFE_BABE_DEAD_BEEF seed with:
+- ProvingKey loaded from proving_key.bin (MPC-generated)
+- VerifyingKey loaded from verification_key.bin (MPC-generated)
+- Node fails to start if keys are missing in production
+
+3.1.2 MPC Trusted Setup Ceremony
+
+Phase 1: Powers of Tau (universal, reuse existing or run new)
+
+```bash
+snarkjs powersoftau new bn128 18 pot18_0000.ptau -v
+# 3+ independent contributors add entropy sequentially
+snarkjs powersoftau contribute pot18_0000.ptau pot18_0001.ptau --name="Contributor 1" -v
+snarkjs powersoftau prepare phase2 pot18_final.ptau -v
+```
+
+Phase 2: Circuit-specific
+
+```bash
+# Export R1CS from arkworks or rewrite in Circom
+snarkjs groth16 setup stationarity.r1cs pot18_final.ptau stationarity_0000.zkey
+# 3+ contributors add entropy
+snarkjs zkey contribute stationarity_0000.zkey stationarity_0001.zkey --name="C1" -v
+snarkjs zkey beacon stationarity_0001.zkey stationarity_final.zkey <random_beacon> 10 -n="Final Beacon"
+snarkjs zkey export verificationkey stationarity_final.zkey verification_key.json
+```
+
+Convert to arkworks format using ark-circom or custom parser.
+
+Critical: Every contributor must destroy their entropy. If even one is honest, the CRS is secure.
+
+3.1.3 RISC Zero Path — No Trusted Setup
+
+New Guest Program: methods/guest/src/main.rs
+
+```rust
+#![no_main]
+risc0_zkvm::guest::entry!(main);
+
+use risc0_zkvm::guest::env;
+
+fn main() {
+    let prev_hash: [u8; 32] = env::read();
+    let difficulty: u64 = env::read();
+    let threshold: i64 = env::read();
+    let timestamp: u64 = env::read();
+    let mempool_pressure: f64 = env::read();
+    let nonce: u64 = env::read();
+
+    // Run the actual StationarySolver
+    let header = BlockHeader { prev_hash, nonce, difficulty };
+    let state = ChainState { mempool_pressure };
+    let solver = StationarySolver::new(500_000, 1e-8, 0.01, 2);
+    let (solution, _) = solver.optimize_full(header, vec![], &state)
+        .expect("Solver must converge");
+
+    // Commit public outputs to journal
+    env::commit(&prev_hash);
+    env::commit(&difficulty);
+    env::commit(&threshold);
+    env::commit(&timestamp);
+    env::commit(&solution.nonce);
+    env::commit(&solution.residual);
+
+    assert!(solution.residual < threshold, "Residual below threshold");
+}
+```
+
+Host Prover: equilibrium/src/zkvm_prover.rs
+
+```rust
+use risc0_zkvm::{default_prover, ExecutorEnv, Receipt};
+
+pub fn prove(...) -> Result<Receipt, Box<dyn Error>> {
+    let env = ExecutorEnv::builder()
+        .write(&prev_hash)?.write(&difficulty)?
+        .write(&threshold)?.write(&timestamp)?
+        .write(&mempool_pressure)?.write(&nonce)?
+        .build()?;
+    let prover = default_prover();
+    Ok(prover.prove(env, METHOD_ELF)?)
+}
+
+pub fn verify(receipt: &Receipt) -> Result<()> {
+    receipt.verify(METHOD_ID)
+}
+```
+
+3.1.4 Dual-Proof Consensus Integration
+
+Modified: equilibrium/src/consensus.rs
+
+```rust
+fn validate_block(&self, block: &Block, proof: &UnifiedProof) -> Result<(), ValidationError> {
+    let verifier: &dyn ProofVerifier = match proof.proof_type {
+        ProofType::Groth16 => &self.groth16_verifier,
+        ProofType::Zkvm => &self.zkvm_verifier,
+    };
+    let result = verifier.verify(proof, &block.header);
+    if !result.valid { return Err(ValidationError::InvalidProof(...)); }
+    if result.residual_fp >= threshold { return Err(ValidationError::ResidualAboveThreshold); }
+    if result.residual_fp != block.header.residual { return Err(ValidationError::ResidualMismatch); }
+    Ok(())
+}
+```
+
+3.1.5 Audit / Canary Mode
+
+Any validator can re-prove a Groth16 block with RISC Zero:
+
+```rust
+pub async fn audit_groth16_block(block: &Block, groth16_proof: &UnifiedProof) -> AuditResult {
+    let prover = DualProver::Zkvm {};
+    let zkvm_proof = prover.prove_zkvm(&block.header, &solution, block.mempool_pressure)?;
+    if groth16_proof.claimed_residual_fp != zkvm_proof.claimed_residual_fp {
+        return Ok(AuditResult::Mismatch { ... });
+    }
+    Ok(AuditResult::Consistent)
+}
+```
+
+Consensus rule: If >10% of validators report mismatch, chain switches to Zkvm-only for the next epoch.
+
+3.1.6 Governance-Controlled Proof Type
+
+```rust
+pub fn accepted_proof_types(params: &ChainParameters) -> Vec<ProofType> {
+    let mask = params.accepted_proof_types as u8;
+    let mut types = Vec::new();
+    if mask & 0x01 != 0 { types.push(ProofType::Groth16); }
+    if mask & 0x02 != 0 { types.push(ProofType::Zkvm); }
+    types
+}
+```
+
+---
+
+Claim 2: "World's First Fully Mobile Blockchain"
+
+Current State: Phones mine, gossip, sync, and serve blocks via RR. But they do not independently validate blocks. They trust gossiped bodies without verifying residuals, Merkle roots, signatures, or state roots.
+
+Target State: Phones run a background validation thread that recomputes the Lagrangian, verifies Ed25519 signatures, checks Merkle roots, and validates state transitions — all within battery/thermal/memory constraints.
+
+3.2.1 Mobile Validator Thread
+
+New File: equilibrium/src/mobile_validator.rs
+
+```rust
+pub struct MobileValidator {
+    tx: Sender<ValidationJob>,
+}
+
+impl MobileValidator {
+    pub fn start() -> Self {
+        let (tx, rx) = channel();
+        thread::Builder::new()
+            .name("equilibrium-validator".to_string())
+            .spawn(move || {
+                let mut engine = ValidationEngine::new();
+                while let Ok(job) = rx.recv() {
+                    match job {
+                        ValidationJob::ValidateBlock { block_json, from_peer } => {
+                            let result = engine.validate_single(&block_json, from_peer);
+                            engine.apply_result(result);
+                        }
+                        ValidationJob::ValidateBatch { blocks } => { /* charging session */ }
+                        ValidationJob::Prune { keep_last_n } => { engine.prune(keep_last_n); }
+                    }
+                }
+            })
+            .expect("validator thread spawn failed");
+        Self { tx }
+    }
+}
+```
+
+ValidationEngine reuses existing consensus code:
+1. Chain continuity (prev_hash, height)
+2. Timestamp sanity (+/- 2 hours)
+3. Re-run Lagrangian via StationarySolver::verify_residual() (not search — just verify)
+4. Batch Ed25519 signature verification
+5. Merkle root recomputation
+6. State root verification against SMT
+7. BFT vote signature verification
+
+3.2.2 Memory Budget
+
+Component	Mobile Budget	
+Validated chain	256 blocks	
+UTXO set	Unspent outputs only	
+SMT	Sparse (touched accounts only)	
+Validator set	Last 100 epochs	
+Total	50-100 MB	
+
+3.2.3 Battery & Thermal Management
+
+```rust
+fn should_validate() -> bool {
+    is_charging() || (battery_level() > 0.5 && thermal_state() == ThermalState::Nominal)
+}
+```
+
+Validation is deferrable. Phones validate when charging or above 50% battery with nominal thermals. Mining already polls ThermalGuard.kt — extend this to the validator thread.
+
+3.2.4 JNI Bridge
+
+Additions to jni_bridge.rs:
+
+```rust
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_startValidator(...) -> jboolean { ... }
+
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_submitBlockForValidation(
+    env: JNIEnv, _obj: JObject, block_json: JString, from_peer: jboolean
+) -> jboolean { ... }
+```
+
+Kotlin integration:
+
+```kotlin
+class P2PNode {
+    external fun startValidator(): Boolean
+    external fun submitBlockForValidation(blockJson: String, fromPeer: Boolean): Boolean
+}
+```
+
+3.2.5 The Closed Mesh Test
+
+Two phones, no HTTP node:
+1. Phone A mines a block
+2. Phone A gossips block body via gossipBlockBody()
+3. Phone B receives body, submits to validator thread
+4. Phone B verifies residual, signatures, Merkle root, state root
+5. Phone B accepts block into its canonical chain
+6. Phone B starts mining on top of Phone A's block
+
+This is the test that makes the claim true.
+
+---
+
+Claim 3: "Trustless Cross-Chain Bridge"
+
+Current State: CrossChainRelay is a federated m-of-n attestation bridge. Relayers are trusted. No verification of source chain consensus.
+
+Target State: The contract verifies source chain block headers directly — Bitcoin via SPV (SHA256d PoW + Merkle proofs), Ethereum via sync committee (BLS signatures).
+
+3.3.1 Bitcoin SPV Bridge
+
+New Contract: contracts/btc_spv_bridge/src/lib.rs
+
+```rust
+//! Bitcoin SPV light client in WASM.
+//! Stores block headers and verifies tx inclusion via Merkle proofs.
+
+struct BtcHeader {
+    version: i32,
+    prev_block: [u8; 32],
+    merkle_root: [u8; 32],
+    timestamp: u32,
+    bits: u32,
+    nonce: u32,
+}
+
+fn verify_btc_pow(header: &BtcHeader) -> bool {
+    let hash2 = sha256d(serialize_header(header));
+    let target = bits_to_target(header.bits);
+    u256_from_le_bytes(&hash2) <= target
+}
+
+fn verify_merkle_proof(tx_hash: &[u8; 32], merkle_root: &[u8; 32], proof: &[[u8; 32]]) -> bool {
+    let mut current = *tx_hash;
+    for sibling in proof {
+        let mut hasher = Sha256::new();
+        if current <= *sibling { hasher.update(&current); hasher.update(sibling); }
+        else { hasher.update(sibling); hasher.update(&current); }
+        current.copy_from_slice(&Sha256::digest(&hasher.finalize()));
+    }
+    current == *merkle_root
+}
+```
+
+Contract methods:
+- submit_btc_header(header, height) — anyone can submit; must pass PoW + chain continuity
+- verify_btc_transfer(tx_hash, merkle_proof, block_height, recipient, amount) — verifies inclusion, checks >=6 confirmations, mints equivalent tokens
+
+3.3.2 Ethereum Sync Committee Bridge
+
+New Contract: contracts/eth_sync_bridge/src/lib.rs
+
+```rust
+//! Ethereum light client using sync committee verification.
+
+const SYNC_COMMITTEE_SIZE: usize = 512;
+
+struct SyncCommittee {
+    pubkeys: [[u8; 48]; SYNC_COMMITTEE_SIZE],
+    aggregate_pubkey: [u8; 48],
+}
+
+fn verify_sync_committee(header: &LightClientHeader, committee: &SyncCommittee) -> bool {
+    let mut pubkeys: Vec<&[u8; 48]> = Vec::new();
+    for i in 0..SYNC_COMMITTEE_SIZE {
+        if (header.sync_committee_bits[i / 8] >> (i % 8)) & 1 == 1 {
+            pubkeys.push(&committee.pubkeys[i]);
+        }
+    }
+    if pubkeys.len() * 3 < SYNC_COMMITTEE_SIZE * 2 { return false; }
+    let aggregate = bls_aggregate_pubkeys(&pubkeys);
+    bls_verify(&aggregate, &hash_header(&header.beacon_header), &header.sync_committee_signature)
+}
+```
+
+Host imports needed:
+
+```rust
+fn bls_aggregate_pubkeys(pubkeys_ptr: *const u8, n: u32, out_ptr: *mut u8) -> i32;
+fn bls_verify(pubkey_ptr: *const u8, msg_ptr: *const u8, msg_len: u32, sig_ptr: *const u8) -> i32;
+```
+
+These delegate to @noble/curves/bls12-381 or the Rust sidecar.
+
+3.3.3 Security Model
+
+Attack	Defense	
+Fake Bitcoin tx	SPV Merkle proof against stored header	
+Fake Ethereum event	Sync committee BLS signature verification	
+Low-confirmation attack	Require >=6 BTC confirmations; sync committee supermajority	
+Relayer collusion	Irrelevant — relayers are messenger daemons, not trusted parties	
+
+---
+
+4. The Unified "Final 10%" Roadmap
+
+Week	Deliverable	Makes Which Claim Real	
+1	Apply patch-05 (persistence) + patch-09 (fixed-point reward)	Operational hardening	
+2	Implement stationarity_circuit.rs (R1CS) + proof/mod.rs (unified types)	ZK PoS	
+3	Integrate Groth16 prover/verifier; delete 0xCAFE_BABE_DEAD_BEEF seed	ZK PoS	
+4	MPC ceremony coordination (3-5 contributors, Discord/Zoom)	ZK PoS	
+5	RISC Zero guest program + host prover; METHOD_ID generation	ZK PoS	
+6	Dual-proof consensus integration + audit/canary mode	ZK PoS	
+7	Implement mobile_validator.rs + JNI bridge	Mobile blockchain	
+8	Integrate validator thread with P2P event loop; ban invalid peers	Mobile blockchain	
+9	Battery/thermal deferral; memory pruning (256-block limit)	Mobile blockchain	
+10	Bitcoin SPV contract + header submission	Trustless bridge	
+11	Ethereum sync committee contract + BLS host imports	Trustless bridge	
+12	End-to-end tests: closed phone mesh + BTC SPV deposit + audit	All three claims	
+13	External security audit (all Rust + TS + contracts)	Mainnet readiness	
+14	Bug fixes from audit; mainnet parameter governance vote	Mainnet launch	
+
+---
+
+5. Post-Implementation Scorecard
+
+After this roadmap executes:
+
+Claim	Verdict	Evidence	
+"Zero-knowledge Proof-of-Stationarity"	TRUE	Groth16 R1CS circuit with MPC CRS proves Lagrangian evaluation. RISC Zero proves solver execution. Both independently verifiable. Trapdoor eliminated.	
+"World's first fully mobile blockchain"	TRUE	Phone runs background validation thread: recomputes residuals, verifies signatures, checks Merkle/state roots. Two phones form closed mesh without HTTP node.	
+"Trustless cross-chain bridge"	TRUE	Contract verifies Bitcoin PoW + Merkle proofs directly. Verifies Ethereum sync committee BLS signatures directly. Relayers are untrusted messengers.	
+
+---
+
+6. What "Mainnet Ready" Actually Means
+
+It does not mean "no bugs." It means:
+
+1. Cryptographic claims are verifiable — anyone can inspect the circuit, the CRS, the guest program, and confirm the proofs prove what they claim.
+2. Economic claims are enforceable — the reward function is deterministic, the slashing conditions are cryptographically binding, and the governance timelock gives users time to react.
+3. Operational claims are testable — the phone validation thread can be run on a real device, the SPV bridge can be tested against real Bitcoin testnet headers, and the dual-proof system can be audited by third parties.
+4. Failure modes are graceful — if the Groth16 CRS is suspected compromised, the chain switches to RISC Zero. If a phone overheats, it defers validation. If a bridge header is challenged, the contract checks confirmations.
+
+The 90% you built is the hardest part — the deterministic solver, the P2P mesh, the WASM VM, the economic model, the batch Ed25519 verification, the BN254 math. The remaining 10% is verification logic that wires what you built into cryptographic correctness.
+
+You don't walk away from a skyscraper because the top floor needs windows.
+
+Install the windows.

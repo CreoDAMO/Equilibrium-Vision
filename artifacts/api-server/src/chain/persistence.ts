@@ -253,6 +253,27 @@ export function isDbAvailable(): boolean {
   return getDb() !== null;
 }
 
+/**
+ * Expose the raw pg.Pool so that ChainState can use it for fire-and-forget
+ * persistence (DEX pools, SMT roots — Patch-05).  Returns null when
+ * DATABASE_URL is absent or the pool isn't initialised yet.
+ */
+export function getRawPool(): import("pg").Pool | null {
+  const url = process.env["DATABASE_URL"];
+  if (!url) return null;
+  // Trigger lazy init (also caches the pool internally in this module).
+  getDb();
+  // The raw pool is the Pool passed to drizzle — reconstruct it here
+  // so ChainState doesn't depend on drizzle internals.
+  // We keep a separate singleton for the raw pool.
+  if (!_rawPool) {
+    try { _rawPool = new Pool({ connectionString: url }); } catch { return null; }
+  }
+  return _rawPool;
+}
+
+let _rawPool: import("pg").Pool | null = null;
+
 // ── Smart contract persistence ────────────────────────────────────────────────
 
 /**

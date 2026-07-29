@@ -4,7 +4,20 @@ import type {
   DexPool, LiquidityPosition, SwapEvent, StakeRecord, UnbondingEntry, GossipEvent,
 } from "./types.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import { hexToBytes, bytesToHex } from "@noble/curves/abstract/utils.js";
+
+// Inline hex helpers — @noble/curves/abstract/utils.js is an internal path
+// not exported by the package; other files (utxo.ts, wasm.ts) use the same pattern.
+function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) hex = "0" + hex;
+  const arr = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < arr.length; i++) {
+    arr[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return arr;
+}
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 import { SparseMerkleTree, smtKey, smtValue } from "./smt.js";
 import { merkleRoot, randomHex, addressFromSeed, hash256 } from "./crypto.js";
 import { solveBlock } from "../variational-ai/bridge.js";
@@ -195,6 +208,104 @@ export class ChainState {
 
   /** Cached Sparse Merkle Tree for the current chain tip. Rebuilt on each addBlock(). */
   _stateSmt: SparseMerkleTree | null = null;
+
+  // ── Patch-05: DEX pool + SMT root persistence ─────────────────────────────
+  // Optional raw pg.Pool for fire-and-forget persistence of DEX pool state and
+  // SMT roots. Injected after construction via setDbPool() so that the
+  // zero-arg `new ChainState()` constructor still works for tests.
+  private _dbPool: import("pg").Pool | undefined;
+
+  /** Inject a pg.Pool so addBlock / createPool / swap / addLiquidity persist
+   *  their mutations to the `dex_pools` and `smt_roots` Postgres tables. */
+  setDbPool(pool: import("pg").Pool): void {
+    this._dbPool = pool;
+    // Load persisted state on first inject (async, non-blocking)
+    this._loadPersistedState().catch((e) =>
+      logger.warn({ err: e }, "[ChainState] loadPersistedState failed"),
+    );
+  }
+
+  private async _persistSmtRoot(block: { height: number; hash: string }): Promise<void> {
+    if (!this._dbPool || !this._stateSmt) return;
+    const root = this._stateSmt.root();
+    await this._dbPool.query(
+      `INSERT INTO smt_roots (height, block_hash, state_root, created_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (height) DO UPDATE
+         SET state_root = EXCLUDED.state_root, created_at = NOW()`,
+      [block.height, block.hash, root],
+    );
+  }
+
+  private async _persistPool(pool: DexPool): Promise<void> {
+    if (!this._dbPool) return;
+    await this._dbPool.query(
+      `INSERT INTO dex_pools
+         (id, token_a, token_b, reserve_a, reserve_b, total_liquidity, fee,
+          volume_a, volume_b, tx_count, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         reserve_a      = EXCLUDED.reserve_a,
+         reserve_b      = EXCLUDED.reserve_b,
+         total_liquidity= EXCLUDED.total_liquidity,
+         fee            = EXCLUDED.fee,
+         volume_a       = EXCLUDED.volume_a,
+         volume_b       = EXCLUDED.volume_b,
+         tx_count       = EXCLUDED.tx_count,
+         updated_at     = NOW()`,
+      [
+        pool.id, pool.tokenA, pool.tokenB,
+        pool.reserveA, pool.reserveB, pool.totalLiquidity,
+        pool.fee ?? DEX_FEE,
+        pool.volumeA ?? 0, pool.volumeB ?? 0, pool.txCount ?? 0,
+      ],
+    );
+  }
+
+  private async _loadPersistedState(): Promise<void> {
+    if (!this._dbPool) return;
+    try {
+      // Restore DEX pools that were mutated at runtime (beyond genesis seeds)
+      const poolsRes = await this._dbPool.query<{
+        id: string; token_a: string; token_b: string;
+        reserve_a: string; reserve_b: string; total_liquidity: string;
+        fee: string; volume_a: string; volume_b: string; tx_count: string;
+      }>(`SELECT * FROM dex_pools`);
+      let restored = 0;
+      for (const row of poolsRes.rows) {
+        this.dexPools.set(row.id, {
+          id: row.id,
+          tokenA: row.token_a,
+          tokenB: row.token_b,
+          reserveA: Number(row.reserve_a),
+          reserveB: Number(row.reserve_b),
+          totalLiquidity: Number(row.total_liquidity),
+          fee: Number(row.fee),
+          volumeA: Number(row.volume_a),
+          volumeB: Number(row.volume_b),
+          txCount: Number(row.tx_count),
+          createdAt: 0,
+        });
+        restored++;
+      }
+      if (restored > 0) {
+        logger.info({ restored }, "[ChainState] Restored DEX pools from Postgres");
+      }
+
+      // Log the latest persisted SMT root for cross-check
+      const smtRes = await this._dbPool.query<{ height: number; state_root: string }>(
+        `SELECT height, state_root FROM smt_roots ORDER BY height DESC LIMIT 1`,
+      );
+      if (smtRes.rows.length > 0) {
+        logger.info(
+          { height: smtRes.rows[0]!.height, root: smtRes.rows[0]!.state_root.slice(0, 16) + "…" },
+          "[ChainState] Latest persisted SMT root loaded",
+        );
+      }
+    } catch (e) {
+      logger.warn({ err: e }, "[ChainState] loadPersistedState failed — Postgres may not have schema yet");
+    }
+  }
 
   // On-chain governance (proposals, voting, parameter changes)
   governance = new GovernanceModule(
@@ -422,6 +533,11 @@ export class ChainState {
 
       block.stateRoot = smt.root();
       this._stateSmt = smt;
+
+      // Patch-05: persist SMT root to Postgres (fire-and-forget)
+      this._persistSmtRoot({ height: block.height, hash: block.hash }).catch((e) =>
+        logger.warn({ err: e, height: block.height }, "[ChainState] persistSmtRoot failed"),
+      );
     } catch (err) {
       logger.warn({ err, height: block.height }, "State root computation failed — skipping");
     }
@@ -911,6 +1027,11 @@ export class ChainState {
     // Credit trader with output tokens (simplified: EQU-denominated)
     this.ledger.credit(trader, amountOut);
 
+    // Patch-05: persist updated pool reserves
+    this._persistPool(pool).catch((e) =>
+      logger.warn({ err: e, poolId }, "[ChainState] persistPool(swap) failed"),
+    );
+
     const event: SwapEvent = {
       poolId,
       trader,
@@ -949,6 +1070,11 @@ export class ChainState {
     pool.reserveB += amountB;
     pool.totalLiquidity += liquidity;
 
+    // Patch-05: persist updated pool state
+    this._persistPool(pool).catch((e) =>
+      logger.warn({ err: e, poolId }, "[ChainState] persistPool(addLiquidity) failed"),
+    );
+
     const existing = this.liquidityPositions.find(p => p.poolId === poolId && p.provider === provider);
     if (existing) {
       existing.liquidity += liquidity;
@@ -983,7 +1109,7 @@ export class ChainState {
     if (this.dexPools.has(id)) return "pool already exists";
     if (reserveA <= 0 || reserveB <= 0) return "reserves must be positive";
 
-    this.dexPools.set(id, {
+    const newPool: DexPool = {
       id,
       tokenA,
       tokenB,
@@ -995,7 +1121,14 @@ export class ChainState {
       volumeB: 0,
       txCount: 0,
       createdAt: Math.floor(Date.now() / 1000),
-    });
+    };
+    this.dexPools.set(id, newPool);
+
+    // Patch-05: persist new pool to Postgres
+    this._persistPool(newPool).catch((e) =>
+      logger.warn({ err: e, poolId: id }, "[ChainState] persistPool(createPool) failed"),
+    );
+
     return { created: true };
   }
 

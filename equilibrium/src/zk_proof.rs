@@ -98,11 +98,75 @@ unsafe impl Sync for Groth16Keys {}
 static KEYS: OnceLock<Groth16Keys> = OnceLock::new();
 
 /// Returns the cached proving/verifying keys.
-/// On first call, generates a test CRS from a fixed seed (~100 ms on first run).
 ///
-/// ⚠ TESTNET ONLY — replace with a proper MPC ceremony output before mainnet.
+/// # Key loading policy
+///
+/// 1. **Mainnet** (`EQUILIBRIUM_ENV=mainnet` OR `NODE_ENV=production`):
+///    Loads `proving_key.bin` and `verification_key.bin` from `PROVING_KEY_DIR`
+///    (or the working directory). **Panics at startup if either file is absent.**
+///    These files must come from the MPC ceremony (see `docs/mpc-ceremony.md`).
+///
+/// 2. **Testnet / Dev / CI** (any other environment):
+///    Falls back to a deterministic test CRS generated from a fixed seed.
+///    ⚠ This is a trapdoor — anyone who reads the source can forge proofs.
+///    It is intentionally broken for security; it only works for functional testing.
+///
+/// # MPC ceremony files
+///
+/// After the Phase-2 ceremony (see docs/mpc-ceremony.md):
+/// ```bash
+/// # Convert snarkjs output to ark-groth16 format:
+/// # equilibrium/scripts/convert_zkey_to_ark.py stationarity_final.zkey proving_key.bin verification_key.bin
+/// cp proving_key.bin verification_key.bin $PROVING_KEY_DIR/
+/// ```
 fn keys() -> &'static Groth16Keys {
     KEYS.get_or_init(|| {
+        // Check if we should require MPC keys (production / mainnet mode)
+        let is_production = std::env::var("NODE_ENV").as_deref() == Ok("production")
+            || std::env::var("EQUILIBRIUM_ENV").as_deref() == Ok("mainnet");
+
+        // Try to load from files (mainnet path or dev convenience)
+        let key_dir = std::env::var("PROVING_KEY_DIR").unwrap_or_else(|_| ".".to_string());
+        let pk_path = format!("{key_dir}/proving_key.bin");
+        let vk_path = format!("{key_dir}/verification_key.bin");
+
+        if std::path::Path::new(&pk_path).exists() && std::path::Path::new(&vk_path).exists() {
+            let pk_bytes = std::fs::read(&pk_path)
+                .unwrap_or_else(|e| panic!("Failed to read proving_key.bin: {e}"));
+            let vk_bytes = std::fs::read(&vk_path)
+                .unwrap_or_else(|e| panic!("Failed to read verification_key.bin: {e}"));
+
+            let pk = ProvingKey::<Bn254>::deserialize_compressed(&*pk_bytes)
+                .unwrap_or_else(|e| panic!("Failed to deserialize proving key: {e}"));
+            let vk_raw = ark_groth16::VerifyingKey::<Bn254>::deserialize_compressed(&*vk_bytes)
+                .unwrap_or_else(|e| panic!("Failed to deserialize verifying key: {e}"));
+            let pvk = prepare_verifying_key(&vk_raw);
+
+            log::info!(
+                "[zk_proof] Loaded MPC proving key from {pk_path} ({} bytes)",
+                pk_bytes.len()
+            );
+            return Groth16Keys { pk, pvk };
+        }
+
+        // No key files found — in production this is a fatal error
+        if is_production {
+            panic!(
+                "[zk_proof] FATAL: NODE_ENV=production but proving_key.bin / \
+                 verification_key.bin not found in PROVING_KEY_DIR={key_dir:?}. \
+                 Run the MPC ceremony and place the output files there. \
+                 See docs/mpc-ceremony.md."
+            );
+        }
+
+        // ── Testnet / dev fallback: fixed-seed trapdoor CRS ──────────────────
+        // ⚠ This CRS is INSECURE — anyone who reads the source can forge proofs.
+        // It exists solely for functional testing. Never use on mainnet.
+        log::warn!(
+            "[zk_proof] Using fixed-seed testnet CRS (0xCAFE_BABE_DEAD_BEEF). \
+             This is NOT zero-knowledge. See docs/mpc-ceremony.md for mainnet setup."
+        );
+
         let mut rng = StdRng::seed_from_u64(0xCAFE_BABE_DEAD_BEEF);
         // Use a satisfiable witness for setup
         let circuit = StationarityCircuit {

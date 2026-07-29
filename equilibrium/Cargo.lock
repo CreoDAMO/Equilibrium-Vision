@@ -957,6 +957,7 @@ dependencies = [
  "hex",
  "jni",
  "libp2p",
+ "log",
  "pbkdf2",
  "rand 0.8.7",
  "serde",

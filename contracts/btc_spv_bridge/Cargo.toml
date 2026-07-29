@@ -1,0 +1,16 @@
+[package]
+name = "btc_spv_bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+
+[dependencies]
+# no_std SHA-256 for WASM (double-SHA for Bitcoin PoW)
+sha2 = { version = "0.10", default-features = false }

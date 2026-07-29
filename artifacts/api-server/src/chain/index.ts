@@ -6,6 +6,7 @@ import {
   loadBlocksFromDb, persistBlock, persistBlocks,
   loadLatestSnapshot, saveStateSnapshot, loadAllBlocksRaw,
   pruneOldBlocks, DEFAULT_PRUNE_KEEP,
+  getRawPool,
   type StateSnapshotData,
 } from "./persistence.js";
 import type { ChainState } from "./state.js";
@@ -277,6 +278,16 @@ export async function initChain(): Promise<void> {
         logger.warn({ err }, "Genesis persistence failed — continuing in-memory");
       }
     }
+  }
+
+  // ── Patch-05: DEX pool + SMT root persistence ─────────────────────────────
+  // Inject a raw pg.Pool into ChainState so that swap / addLiquidity /
+  // createPool persist their mutations and addBlock persists the SMT root.
+  // No-op when DATABASE_URL is absent (in-memory mode unchanged).
+  const rawPool = getRawPool();
+  if (rawPool) {
+    chainState.setDbPool(rawPool);
+    logger.info("ChainState pool persistence enabled (DEX pools + SMT roots)");
   }
 
   // ── Smart contract boot ────────────────────────────────────────────────────
