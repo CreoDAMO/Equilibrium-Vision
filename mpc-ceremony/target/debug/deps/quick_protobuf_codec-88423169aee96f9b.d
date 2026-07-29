@@ -1,7 +1,0 @@
-/home/runner/workspace/mpc-ceremony/target/debug/deps/quick_protobuf_codec-88423169aee96f9b.d: /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quick-protobuf-codec-0.3.1/src/lib.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quick-protobuf-codec-0.3.1/src/generated/mod.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quick-protobuf-codec-0.3.1/src/generated/test.rs
-
-/home/runner/workspace/mpc-ceremony/target/debug/deps/libquick_protobuf_codec-88423169aee96f9b.rmeta: /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quick-protobuf-codec-0.3.1/src/lib.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quick-protobuf-codec-0.3.1/src/generated/mod.rs /home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quick-protobuf-codec-0.3.1/src/generated/test.rs
-
-/home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quick-protobuf-codec-0.3.1/src/lib.rs:
-/home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quick-protobuf-codec-0.3.1/src/generated/mod.rs:
-/home/runner/workspace/.local/share/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quick-protobuf-codec-0.3.1/src/generated/test.rs:

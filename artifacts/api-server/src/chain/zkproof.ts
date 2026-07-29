@@ -286,16 +286,23 @@ export function generateZkProof(
 
 // ── Verification ─────────────────────────────────────────────────────────────
 //
-// Full Groth16 pairing check:
+// Full Groth16 pairing check via multi-pairing:
 //   e(−π_A, π_B) · e(α, β) · e(vk_x, γ) · e(π_C, δ) = 1_Fp12
 //
 // Where vk_x = IC[0] + Σ(pubInput_i · IC[i+1])  (G1 accumulator).
+//
+// Uses bn254.pairingBatch so all four Miller loops share a single final
+// exponentiation — roughly 4× faster than four separate bn254.pairing calls.
 //
 // Verifies proofs from both the TS trapdoor prover and the Rust consensus-api
 // sidecar, provided both use the same seed-derived VK.
 
 /**
- * Full Groth16 pairing check against STATIONARITY_VK.
+ * Full Groth16 multi-pairing check against STATIONARITY_VK.
+ *
+ * Runs the four Miller loops in a single batch and applies one final
+ * exponentiation, then checks the result equals 1 in Fp12.
+ *
  * Returns true iff e(−π_A,π_B)·e(α,β)·e(vk_x,γ)·e(π_C,δ) = 1_Fp12.
  */
 function verifyPairing(proof: Groth16Proof, publicInputValues: bigint[]): boolean {
@@ -317,15 +324,17 @@ function verifyPairing(proof: Groth16Proof, publicInputValues: bigint[]): boolea
       }
     }
 
-    // e(−π_A,π_B) · e(α,β) · e(vk_x,γ) · e(π_C,δ)
-    const Fp12    = bn254.fields.Fp12;
-    const e1      = bn254.pairing(piA.negate(), piB);
-    const e2      = bn254.pairing(alpha,         beta);
-    const e3      = bn254.pairing(vkX,           gamma);
-    const e4      = bn254.pairing(piC,           delta);
-    const product = Fp12.mul(Fp12.mul(Fp12.mul(e1, e2), e3), e4);
+    // Multi-pairing: four Miller loops + one final exponentiation.
+    // bn254.pairingBatch(pairs, withFinalExponent=true) returns
+    // finalExp( ∏ millerLoop(g1_i, g2_i) ) which must equal Fp12.ONE.
+    const result = bn254.pairingBatch([
+      { g1: piA.negate(), g2: piB   },
+      { g1: alpha,        g2: beta  },
+      { g1: vkX,         g2: gamma },
+      { g1: piC,         g2: delta },
+    ]);
 
-    return Fp12.eql(product, Fp12.ONE);
+    return bn254.fields.Fp12.eql(result, bn254.fields.Fp12.ONE);
   } catch {
     return false;
   }
