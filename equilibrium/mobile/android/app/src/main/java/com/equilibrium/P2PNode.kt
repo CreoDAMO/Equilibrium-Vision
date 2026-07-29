@@ -129,6 +129,46 @@ object P2PNode {
     @JvmStatic
     external fun getConnectedPeerCount(): Int
 
+    // ── Mobile Validator ──────────────────────────────────────────────────────
+
+    /**
+     * Spawn the background Rust validation thread (idempotent).
+     * Must be called before [submitBlockForValidation].
+     */
+    @JvmStatic
+    external fun startValidator(): Boolean
+
+    /** Stop the background validation thread cleanly. */
+    @JvmStatic
+    external fun stopValidator(): Boolean
+
+    /**
+     * Submit a block body JSON for async background validation.
+     * Results are retrieved via [getValidationResult].
+     * @param fromPeer true if received from a peer (ban on reject), false for self-mined.
+     */
+    @JvmStatic
+    external fun submitBlockForValidation(blockJson: String, fromPeer: Boolean): Boolean
+
+    /**
+     * Poll for the most recent validation result (non-blocking).
+     * Returns a JSON string:
+     *   `{"status":"accept","hash":"…","height":N}`
+     *   `{"status":"reject","hash":"…","reason":"…","banPeer":true|false}`
+     *   `{"status":"deferred","hash":"…","reason":"…","banPeer":false}`
+     * Returns an empty string if no result is ready yet.
+     */
+    @JvmStatic
+    external fun getValidationResult(): String
+
+    /**
+     * Returns true if device conditions (battery ≥ 50%, nominal thermals) allow
+     * validation right now.  The Rust side always returns true; the real gate lives
+     * in ThermalGuard.kt which decides whether to call [submitBlockForValidation].
+     */
+    @JvmStatic
+    external fun shouldValidateNow(): Boolean
+
     fun startDefault(): Boolean = start(DEFAULT_TCP_PORT, DEFAULT_QUIC_PORT)
 
     /**

@@ -33,9 +33,14 @@
 //! verify_btc_transfer:[tx_hash:32][proof_len:4 LE][proof_entries:32*proof_len][block_height:4 LE]
 //!                     [recipient:40][amount:8 LE]
 
-#![no_std]
+// no_std only when building for WASM; native builds (tests, benchmarks) use std.
+#![cfg_attr(target_arch = "wasm32", no_std)]
+#[cfg(target_arch = "wasm32")]
 extern crate alloc;
+#[cfg(target_arch = "wasm32")]
 use alloc::vec::Vec;
+#[cfg(not(target_arch = "wasm32"))]
+use std::vec::Vec;
 use sha2::{Sha256, Digest};
 
 // ── Host imports (provided by Equilibrium WASM VM) ────────────────────────────
@@ -207,9 +212,12 @@ const MIN_CONFIRMATIONS: u32 = 6;
 // For testnet we use static arrays — acceptable because the WASM module
 // is single-threaded and lives for the lifetime of the node process.
 //
-// [u8; 32] × 2016 headers = 64 KB — well within mobile memory budget.
-static mut HEADER_HASHES: [[u8; 32]; MAX_HEADERS] = [[0u8; 32]; MAX_HEADERS];
-static mut HEADER_HEIGHTS: [u32; MAX_HEADERS] = [0u32; MAX_HEADERS];
+// [u8; 32] × 2016 = 64 KB (hashes for chain continuity + query)
+// [u8; 80] × 2016 = 161 KB (full headers for Merkle-root retrieval)
+// Total: 225 KB — within the 256 KB WASM linear memory budget.
+static mut HEADER_HASHES:  [[u8; 32]; MAX_HEADERS] = [[0u8; 32]; MAX_HEADERS];
+static mut HEADER_HEIGHTS: [u32;     MAX_HEADERS] = [0u32;      MAX_HEADERS];
+static mut HEADER_DATA:    [[u8; 80]; MAX_HEADERS] = [[0u8; 80]; MAX_HEADERS];
 
 // ── WASM entry point ──────────────────────────────────────────────────────────
 
@@ -220,9 +228,21 @@ pub extern "C" fn call(method_id: i32, args_ptr: *const u8, args_len: usize) -> 
     match method_id {
         0 => do_submit_btc_header(args),
         1 => do_verify_btc_transfer(args),
-        2 => {
-            let count = HEADER_COUNT.load(Ordering::SeqCst);
-            count as i32
+        2 => HEADER_COUNT.load(Ordering::SeqCst) as i32,
+        3 => {
+            // get_header_hash(height: u32) → writes [u8;32] to host output, returns 1 ok / -1 not found
+            if args.len() < 4 { return -10; }
+            let target_height = u32::from_le_bytes([args[0], args[1], args[2], args[3]]);
+            let count = HEADER_COUNT.load(Ordering::SeqCst) as usize;
+            for i in 0..count.min(MAX_HEADERS) {
+                let h = unsafe { HEADER_HEIGHTS[i] };
+                if h == target_height {
+                    let hash = unsafe { &HEADER_HASHES[i] };
+                    unsafe { host_return(hash.as_ptr(), 32) };
+                    return 1;
+                }
+            }
+            -1 // not found
         }
         _ => -100, // unknown method
     }
@@ -235,6 +255,16 @@ pub fn call(method_id: i32, args: &[u8]) -> i32 {
         0 => do_submit_btc_header(args),
         1 => do_verify_btc_transfer(args),
         2 => HEADER_COUNT.load(Ordering::SeqCst) as i32,
+        3 => {
+            // get_header_hash: returns 1 if found (hash accessible via HEADER_HASHES), -1 if not.
+            if args.len() < 4 { return -10; }
+            let target_height = u32::from_le_bytes([args[0], args[1], args[2], args[3]]);
+            let count = HEADER_COUNT.load(Ordering::SeqCst) as usize;
+            for i in 0..count.min(MAX_HEADERS) {
+                if unsafe { HEADER_HEIGHTS[i] } == target_height { return 1; }
+            }
+            -1
+        }
         _ => -100,
     }
 }
@@ -269,14 +299,13 @@ fn do_submit_btc_header(args: &[u8]) -> i32 {
         }
     }
 
-    // 3. Store the header
-    if count >= MAX_HEADERS {
-        // Sliding window: overwrite oldest
-    }
+    // 3. Store the full header (hash + height + raw 80 bytes for Merkle root retrieval)
+    // Sliding window: oldest entry is overwritten when MAX_HEADERS is reached.
     let slot = count % MAX_HEADERS;
     unsafe {
-        HEADER_HASHES[slot] = block_hash(&header);
+        HEADER_HASHES[slot]  = block_hash(&header);
         HEADER_HEIGHTS[slot] = height;
+        HEADER_DATA[slot]    = *raw;
     }
     HEADER_COUNT.fetch_add(1, Ordering::SeqCst);
 
@@ -314,12 +343,12 @@ fn do_verify_btc_transfer(args: &[u8]) -> i32 {
 
     for i in 0..count.min(MAX_HEADERS) {
         let h = unsafe { HEADER_HEIGHTS[i] };
+        // Extract the Merkle root from bytes [36..68] of the stored 80-byte header.
         if h == block_height {
-            // We stored the hash, not the full header — in a full impl we'd
-            // store the full header. For now we skip the Merkle root check
-            // (it would require storing 80 bytes × 2016 = 161 KB).
-            // Mark as found with a sentinel root for test purposes.
-            found_merkle_root = Some(unsafe { HEADER_HASHES[i] });
+            let raw = unsafe { &HEADER_DATA[i] };
+            let mut mr = [0u8; 32];
+            mr.copy_from_slice(&raw[36..68]);
+            found_merkle_root = Some(mr);
         }
         if h > tip_height { tip_height = h; }
     }
@@ -333,17 +362,11 @@ fn do_verify_btc_transfer(args: &[u8]) -> i32 {
         return -3; // insufficient confirmations
     }
 
-    // 3. Verify Merkle proof
-    // Note: in the full implementation the stored merkle_root comes from the
-    // header, not the hash — we'd need to store the full header to do this.
-    // The Merkle root is embedded in the 80-byte header at bytes [36..68].
-    // For now: proof verification logic is wired; Merkle root from storage
-    // will be wired when full header storage is added (TODO: store 80B headers).
-    //
-    // Placeholder: accept if proof is non-empty (test harness) or empty (unit test).
-    // Production: replace with `verify_merkle_proof(&tx_hash, &proof, &merkle_root)`.
-    let _ = tx_hash;
-    let _ = proof;
+    // 3. Verify Merkle proof against the stored header's Merkle root.
+    let merkle_root = found_merkle_root.unwrap();
+    if !verify_merkle_proof(&tx_hash, &proof, &merkle_root) {
+        return -2; // bad Merkle proof
+    }
 
     1 // ok — transfer verified
 }

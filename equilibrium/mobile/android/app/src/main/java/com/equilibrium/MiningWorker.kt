@@ -51,6 +51,9 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         private const val RESIDUAL_SCALE = 1_000_000_000_000_000_000.0
         private val JSON_MEDIA_TYPE           = "application/json; charset=utf-8".toMediaType()
 
+        private const val VALIDATION_POLL_MS    = 50L
+        private const val VALIDATION_TIMEOUT_MS = 8_000L
+
         init {
             System.loadLibrary("equilibrium_core")
         }
@@ -105,6 +108,12 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             )
         }
 
+        // ── 0. Ensure background validator is running ─────────────────────────
+        ensureValidator()
+
+        // ── 0b. Adopt a peer block (with validation) if one arrived ───────────
+        if (tryAdoptPeerBlock()) return Result.success()
+
         // ── 1. Fetch current chain tip ─────────────────────────────────────────
         // Priority: (1) local P2P cache, (2) P2P lightnode RR from a peer,
         // (3) HTTP /api/chain/status.  Only tier 3 requires the cloud node.
@@ -154,12 +163,10 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         }
 
         // ── 1b. Abort early if a peer already won this height ─────────────────
-        if (P2PNode.isRunning()) {
-            val competing = P2PNode.pollGossip()
-            if (competing.isNotEmpty()) {
-                Log.i(TAG, "Peer already gossiped block at this height ($competing) — skip cycle")
-                return Result.success()
-            }
+        // (validated before tip advance — tryAdoptPeerBlock handles this)
+        if (tryAdoptPeerBlock()) {
+            Log.i(TAG, "Peer block adopted mid-tip-fetch — skip solve this cycle")
+            return Result.success()
         }
 
         // ── 2. Run the Rust stationarity solver ───────────────────────────────
@@ -190,17 +197,14 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         Log.i(TAG, "Solution found: nonce=$nonce residual=$residual (fixed-point=$residualFp)")
 
         // ── 2b. Re-check race after a long solve ──────────────────────────────
-        if (P2PNode.isRunning()) {
-            val competing = P2PNode.pollGossip()
-            if (competing.isNotEmpty()) {
-                Log.i(TAG, "Peer won while we solved ($competing) — discarding stale solution")
-                return Result.success()
-            }
+        if (tryAdoptPeerBlock()) {
+            Log.i(TAG, "Peer won while we solved — discarding stale solution")
+            return Result.success()
         }
 
         // ── 3. P2P-first block propagation ───────────────────────────────────
-        // If we have peers, try to propagate the block body directly.
-        // Peers that receive it will validate and add it to their chain.
+        // If we have peers, gossip the block then validate before advancing tip.
+        // Tip advance ONLY on Accept — never on Reject or Deferred.
         val blockHash = computeBlockHash(latestHash, nonce, timestamp, difficulty)
         val blockBodyJson = buildBlockBodyJson(
             hash       = blockHash,
@@ -217,10 +221,14 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             val bodySent = P2PNode.gossipBlockBody(blockBodyJson)
             val hashSent = P2PNode.gossipBlock(blockHash)
             if (bodySent && hashSent) {
-                Log.i(TAG, "Block propagated via P2P mesh — skipping HTTP submit")
-                P2PNode.setLocalTip((height + 1).toLong(), blockHash, difficulty)
-                P2PNode.pushBlockBody(blockBodyJson)
-                return Result.success()
+                Log.i(TAG, "Block gossiped — validating before tip advance")
+                if (validateAndAwaitAccept(blockBodyJson, fromPeer = false)) {
+                    P2PNode.setLocalTip((height + 1).toLong(), blockHash, difficulty)
+                    P2PNode.pushBlockBody(blockBodyJson)
+                    Log.i(TAG, "Local tip advanced after Accept")
+                    return Result.success()
+                }
+                Log.w(TAG, "Self-mined body failed local validation — no tip advance, falling back to HTTP")
             }
             Log.w(TAG, "P2P gossip failed — falling back to HTTP submit")
         }
@@ -236,6 +244,95 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             difficulty   = difficulty,
             blockBodyJson = blockBodyJson,
         )
+    }
+
+    // ── Validation helpers ────────────────────────────────────────────────────
+
+    /** Start the Rust background validator if P2P is running (idempotent). */
+    private fun ensureValidator() {
+        if (P2PNode.isRunning()) {
+            P2PNode.startValidator()
+        }
+    }
+
+    /**
+     * Submit [blockBodyJson] to the background Rust validator and poll until it
+     * returns Accept, Reject, or Deferred.
+     *
+     * @param fromPeer true for blocks received from peers (triggers peer-ban on reject).
+     * @return true ONLY on "status":"accept"; false on reject, deferred, or timeout.
+     */
+    private fun validateAndAwaitAccept(blockBodyJson: String, fromPeer: Boolean): Boolean {
+        ensureValidator()
+        if (!P2PNode.shouldValidateNow()) {
+            Log.i(TAG, "Validation deferred (battery/thermal)")
+            return false
+        }
+        if (!P2PNode.submitBlockForValidation(blockBodyJson, fromPeer)) {
+            Log.w(TAG, "submitBlockForValidation failed (validator not started?)")
+            return false
+        }
+        val deadline = System.currentTimeMillis() + VALIDATION_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            val raw = P2PNode.getValidationResult()
+            if (raw.isNotEmpty()) {
+                val json = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return false
+                return when (json.optString("status")) {
+                    "accept" -> {
+                        Log.i(TAG, "Block validated: ${json.optString("hash").take(16)}…")
+                        true
+                    }
+                    "reject" -> {
+                        Log.w(TAG, "Block rejected: ${json.optString("reason")}")
+                        false
+                    }
+                    "deferred" -> {
+                        Log.i(TAG, "Validation deferred: ${json.optString("reason")}")
+                        false
+                    }
+                    else -> false
+                }
+            }
+            try { Thread.sleep(VALIDATION_POLL_MS) } catch (_: InterruptedException) { return false }
+        }
+        Log.w(TAG, "Validation timed out after ${VALIDATION_TIMEOUT_MS}ms")
+        return false
+    }
+
+    /**
+     * Check for a gossiped peer block, fetch its body, validate it, and adopt it
+     * (advance tip + ring) ONLY on Accept.
+     *
+     * @return true if we handled a peer block this cycle (mining should be skipped),
+     *         false if no peer block was available.
+     */
+    private fun tryAdoptPeerBlock(): Boolean {
+        if (!P2PNode.isRunning()) return false
+        val competingHash = P2PNode.pollGossip()
+        if (competingHash.isEmpty()) return false
+
+        Log.i(TAG, "Peer gossip hash=${competingHash.take(16)}… — fetching body")
+        val body = P2PNode.querySyncBlock(competingHash)
+        if (body.isEmpty()) {
+            Log.w(TAG, "No body for peer hash — cannot validate; skipping mine cycle")
+            return true // skip mine; don't tip without validation
+        }
+
+        if (!validateAndAwaitAccept(body, fromPeer = true)) {
+            Log.w(TAG, "Peer block failed validation — tip unchanged")
+            return true // still skip mine for this cycle
+        }
+
+        val obj = runCatching { org.json.JSONObject(body) }.getOrNull()
+        val h    = obj?.optLong("height", -1L) ?: -1L
+        val hash = obj?.optString("hash")?.ifEmpty { competingHash } ?: competingHash
+        val diff = obj?.optLong("difficulty", 0L) ?: 0L
+        if (h >= 0 && hash.isNotEmpty()) {
+            P2PNode.setLocalTip(h, hash, diff)
+            P2PNode.pushBlockBody(body)
+            Log.i(TAG, "Tip advanced after peer Accept: height=$h")
+        }
+        return true
     }
 
     /**
