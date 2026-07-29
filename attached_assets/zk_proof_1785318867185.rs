@@ -1,14 +1,18 @@
 //! Zero-knowledge proof system for Proof-of-Stationarity.
 //!
-//! Dual-mode proving:
+//! Supports two proof backends:
 //!   1. Groth16 on BN254 (fast, small proofs, requires MPC ceremony for mainnet)
 //!   2. RISC Zero ZKVM (transparent, no trusted setup, larger proofs)
 //!
-//! RISC Zero proving is dual:
-//!   - Bonsai (GPU-accelerated, managed, requires BONSAI_API_KEY)
-//!   - Self-hosted (CPU or local CUDA, no external dependency)
+//! The `Groth16Verifier` and `ZkvmVerifier` structs implement the verifier
+//! interface expected by `consensus.rs`. Both operate on `UnifiedProof` from
+//! `proof/mod.rs`.
 //!
-//! Runtime selection via env vars — no recompilation needed.
+//! Circuit (minimal, ark-0.4-safe):
+//!   Public:  residual_fp, threshold_fp, block_hash_lo, block_hash_hi
+//!   Witness: difference = threshold_fp - residual_fp (must be non-negative)
+//!
+//! Enforces: residual_fp + difference = threshold_fp
 
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
@@ -27,9 +31,9 @@ use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use ark_snark::SNARK;
 use std::sync::OnceLock;
 
-// ── RISC Zero (optional compile-time feature) ────────────────────────────────
+// ── RISC Zero (optional) ─────────────────────────────────────────────────────
 #[cfg(feature = "risc0")]
-use risc0_zkvm::{default_prover, ExecutorEnv, Receipt, Prover};
+use risc0_zkvm::{default_prover, ExecutorEnv, Receipt};
 #[cfg(feature = "risc0")]
 use methods::{STATIONARITY_GUEST_ELF, STATIONARITY_GUEST_ID};
 
@@ -338,70 +342,6 @@ pub struct ZkvmOutput {
     pub block_hash_hi: u64,
 }
 
-/// Dual-mode RISC Zero prover: Bonsai (GPU) → fallback to self-hosted (CPU/local CUDA).
-#[derive(Clone, Debug)]
-pub struct DualZkvmProver;
-
-impl DualZkvmProver {
-    /// Prove with Bonsai if BONSAI_API_KEY is set, else self-hosted.
-    #[cfg(feature = "risc0")]
-    pub fn prove(
-        residual_fp: u64,
-        threshold_fp: u64,
-        block_hash: &[u8; 32],
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        assert!(residual_fp < threshold_fp, "residual must be below threshold");
-        let difference = threshold_fp - residual_fp;
-        let (hash_lo, hash_hi) = block_hash_to_u64_pair(block_hash);
-
-        let input = ZkvmInput {
-            residual_fp,
-            threshold_fp,
-            block_hash_lo: hash_lo,
-            block_hash_hi: hash_hi,
-            difference,
-        };
-
-        let env = ExecutorEnv::builder()
-            .write(&input)?
-            .build()?;
-
-        // Try Bonsai first if API key is present
-        let bonsai_key = std::env::var("BONSAI_API_KEY").ok();
-        let receipt = if let Some(_key) = bonsai_key {
-            log::info!("[zk_proof] Using Bonsai GPU prover");
-            let opts = risc0_zkvm::ProverOpts::default()
-                .with_bonsai(true);
-            let prover = Prover::new_with_opts(opts);
-            match prover.prove(env.clone(), STATIONARITY_GUEST_ELF) {
-                Ok(r) => r,
-                Err(e) => {
-                    log::warn!("[zk_proof] Bonsai failed ({}), falling back to self-hosted", e);
-                    let prover = default_prover();
-                    prover.prove(env, STATIONARITY_GUEST_ELF)?
-                }
-            }
-        } else {
-            log::info!("[zk_proof] Using self-hosted prover (BONSAI_API_KEY not set)");
-            let prover = default_prover();
-            prover.prove(env, STATIONARITY_GUEST_ELF)?
-        };
-
-        receipt.verify(STATIONARITY_GUEST_ID)?;
-        let bytes = bincode::serialize(&receipt)?;
-        Ok(bytes)
-    }
-
-    #[cfg(not(feature = "risc0"))]
-    pub fn prove(
-        _residual_fp: u64,
-        _threshold_fp: u64,
-        _block_hash: &[u8; 32],
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        Err("RISC Zero feature not enabled".into())
-    }
-}
-
 // ── ZkvmVerifier ─────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
@@ -471,6 +411,38 @@ impl ZkvmVerifier {
     }
 }
 
+// ── RISC Zero prover (host-side) ─────────────────────────────────────────────
+
+#[cfg(feature = "risc0")]
+pub fn prove_stationarity_zkvm(
+    residual_fp: u64,
+    threshold_fp: u64,
+    block_hash: &[u8; 32],
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    assert!(residual_fp < threshold_fp, "residual must be below threshold");
+    let difference = threshold_fp - residual_fp;
+    let (hash_lo, hash_hi) = block_hash_to_u64_pair(block_hash);
+
+    let input = ZkvmInput {
+        residual_fp,
+        threshold_fp,
+        block_hash_lo: hash_lo,
+        block_hash_hi: hash_hi,
+        difference,
+    };
+
+    let env = ExecutorEnv::builder()
+        .write(&input)?
+        .build()?;
+
+    let prover = default_prover();
+    let receipt = prover.prove(env, STATIONARITY_GUEST_ELF)?;
+    receipt.verify(STATIONARITY_GUEST_ID)?;
+
+    let bytes = bincode::serialize(&receipt)?;
+    Ok(bytes)
+}
+
 // ── Convenience API ───────────────────────────────────────────────────────────
 
 pub fn prove_stationarity(
@@ -482,15 +454,6 @@ pub fn prove_stationarity(
     let difference = threshold_fp - residual_fp;
     let (hash_lo, hash_hi) = block_hash_to_u64_pair(block_hash);
     do_prove(residual_fp, threshold_fp, hash_lo, hash_hi, difference)
-}
-
-#[cfg(feature = "risc0")]
-pub fn prove_stationarity_zkvm(
-    residual_fp: u64,
-    threshold_fp: u64,
-    block_hash: &[u8; 32],
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    DualZkvmProver::prove(residual_fp, threshold_fp, block_hash)
 }
 
 pub fn unified_from_groth16(proof: &Groth16ProofBytes) -> Option<UnifiedProof> {
@@ -543,12 +506,12 @@ mod tests {
 
     #[test]
     #[cfg(feature = "risc0")]
-    fn zkvm_dual_prove_and_verify_roundtrip() {
+    fn zkvm_prove_and_verify_roundtrip() {
         let residual = 3_000_000_000_000_000u64;
         let threshold = 7_000_000_000_000_000u64;
         let block_hash = [0xabu8; 32];
 
-        let receipt_bytes = DualZkvmProver::prove(residual, threshold, &block_hash)
+        let receipt_bytes = prove_stationarity_zkvm(residual, threshold, &block_hash)
             .expect("zkvm proving failed");
 
         let verifier = ZkvmVerifier::new();

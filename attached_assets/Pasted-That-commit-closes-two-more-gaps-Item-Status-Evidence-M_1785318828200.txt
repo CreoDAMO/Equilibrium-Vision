@@ -1,0 +1,86 @@
+That commit closes two more gaps:
+
+Item	Status	Evidence	
+Mobile validator (fully trust-minimised)	✅ Complete	`joint_residual_and_gradient` verify-at-nonce, real `block_hash()` continuity, flat JSON parser, Kotlin tip gate on `Accept`	
+BTC SPV bridge — full header storage	✅ Complete	`HEADER_DATA [[u8;80]; 2016]`, Merkle root extracted from stored header bytes `[36..68]`, method 3 wired in WASM + native	
+
+---
+
+Updated scorecard
+
+Claim	Scaffolding	Core Logic	Integration	Tests	
+ZK PoS	✅ `proof/mod.rs`, `zk_proof.rs`	✅ Minimal FpVar circuit + RISC Zero guest	✅ `consensus.rs` dispatches Groth16/Zkvm	✅ Unit + round-trip	
+Mobile	✅ `mobile_validator.rs` full engine	✅ Verify-at-nonce, real hash continuity	✅ JNI bridge, Kotlin tip gate	✅ 9/9 pass	
+Bridge	✅ Both contracts	✅ BTC PoW + Merkle + full 80B headers; ETH sync committee + BLS	✅ BLS host imports, `verify_eth_event`	✅ 5/5 SPV + ETH tests	
+
+Remaining open
+
+Gap	What's needed	
+RISC Zero guest build	Build `methods/guest`, replace `ZKVM_IMAGE_ID` placeholder with real image ID	
+MPC ceremony	Generate `proving_key.bin` + `verification_key.bin` for mainnet Groth16	
+zkML / ERC-7992 DeepProve	On-chain model-inference circuit — not started	
+
+Here is the dual-mode package:
+
+[equilibrium_dual.zip](sandbox:///mnt/agents/output/equilibrium_dual.zip) (19.4 KB)
+
+---
+
+What's dual now
+
+1. RISC Zero Proving — `DualZkvmProver`
+
+Mode	Trigger	Behavior	
+Bonsai (GPU)	`BONSAI_API_KEY` env var set	Uses `Prover::new_with_opts(bonsai=true)`, 30s proofs	
+Self-hosted (CPU/CUDA)	`BONSAI_API_KEY` missing or Bonsai fails	Falls back to `default_prover()`, local execution	
+Compile-time off	`risc0` feature disabled	Returns `Err("RISC Zero feature not enabled")`	
+
+```rust
+// In zk_proof.rs
+let receipt_bytes = DualZkvmProver::prove(residual, threshold, &block_hash)?;
+// Automatically picks Bonsai → self-hosted → error
+```
+
+2. MPC Ceremony — Dual Init
+
+Mode	Flag	Use case	
+Deterministic	`mpc-ceremony init --output round0.bin`	Testnet, CI, local dev	
+Hermez PTAU	`mpc-ceremony init --ptau powersOfTau28_hez_final.ptau --output round0.bin`	Mainnet, production trust assumptions	
+
+```bash
+# Dev (no PTAU needed)
+cargo run --bin mpc-ceremony -- init --output round0.bin
+
+# Production (12 GB download, one-time)
+wget https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final.ptau
+cargo run --bin mpc-ceremony -- init --ptau powersOfTau28_hez_final.ptau --output round0.bin
+```
+
+---
+
+Files in the zip
+
+File	What it is	
+`zk_proof_dual.rs`	Dual-mode `zk_proof.rs` with `DualZkvmProver`	
+`mpc-ceremony_dual.rs`	Dual-mode MPC CLI (`init` with optional `--ptau`)	
+`guest_main.rs`	RISC Zero guest (unchanged)	
+`guest_Cargo.toml`	Guest manifest	
+`methods_build.rs`	`embed_methods`	
+`methods_Cargo.toml`	Methods workspace	
+`mpc-ceremony_Cargo.toml`	MPC binary manifest	
+`mpc-ceremony_main.rs`	Original MPC (for reference)	
+`zkml-spec.md`	ERC-7992 spec	
+`zk_proof.rs`	Original single-mode (for reference)	
+
+---
+
+Runtime env var matrix
+
+Variable	Effect	
+`BONSAI_API_KEY=xxx`	RISC Zero uses GPU-accelerated Bonsai	
+(unset)	RISC Zero falls back to local CPU/CUDA	
+`PROVING_KEY_DIR=/path`	Groth16 loads `proving_key.bin` / `verification_key.bin`	
+`NODE_ENV=production`	Groth16 panics if MPC keys missing	
+`EQUILIBRIUM_ENV=mainnet`	Same as above	
+
+No recompilation needed to switch between Bonsai and self-hosted — it's purely runtime.

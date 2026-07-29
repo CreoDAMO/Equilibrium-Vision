@@ -43,6 +43,13 @@ ark-groth16 = "0.4"
 ark-bn254 = "0.4"
 log = "0.4"
 
+# ── RISC Zero optional deps (enable with --features risc0) ───────────────────
+risc0-zkvm = { version = "1.0", optional = true }
+methods     = { path = "../methods", optional = true }
+
+[features]
+risc0 = ["dep:risc0-zkvm", "dep:methods"]
+
 # ── Android JNI bridge ────────────────────────────────────────────────────────
 # The `jni` crate is only pulled in when cross-compiling for Android via
 # cargo-ndk.  Host builds (consensus-api, testnet-node) remain unaffected.
