@@ -667,7 +667,7 @@ export class WasmVM {
             // longSignatures mode: G1 pubkeys (48 bytes) + G2 sigs (96 bytes)
             const sigs = bls12_381.longSignatures;
             const aggPoint = sigs.aggregatePublicKeys(pubkeys);
-            const aggBytes = aggPoint.toRawBytes(true); // compressed
+            const aggBytes = aggPoint.toBytes(true); // compressed
             const outView = new Uint8Array(memory.buffer, outPtr, 48);
             outView.set(aggBytes);
             return 1;

@@ -221,8 +221,8 @@ impl ValidationEngine {
             return ValidationDecision::Reject {
                 reason: format!(
                     "merkle root mismatch: expected {}, got {}",
-                    hex::encode(&computed_root),
-                    hex::encode(&block.header.merkle_root),
+                    hex::encode(computed_root),
+                    hex::encode(block.header.merkle_root),
                 ),
             };
         }
@@ -300,14 +300,14 @@ pub fn merkle_root_from_hashes(hashes: &[[u8; 32]]) -> [u8; 32] {
     }
     let mut level: Vec<[u8; 32]> = hashes.to_vec();
     while level.len() > 1 {
-        let mut next = Vec::with_capacity((level.len() + 1) / 2);
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
         let mut i = 0;
         while i < level.len() {
             let left = level[i];
             let right = if i + 1 < level.len() { level[i + 1] } else { left };
             let mut hasher = Sha256::new();
-            hasher.update(&left);
-            hasher.update(&right);
+            hasher.update(left);
+            hasher.update(right);
             next.push(hasher.finalize().into());
             i += 2;
         }

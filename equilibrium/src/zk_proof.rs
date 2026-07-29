@@ -470,6 +470,12 @@ pub struct ZkvmVerifier {
     image_id: [u32; 8],
 }
 
+impl Default for ZkvmVerifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ZkvmVerifier {
     pub fn new() -> Self {
         #[cfg(feature = "risc0")] {
@@ -490,7 +496,7 @@ impl ZkvmVerifier {
         #[cfg(not(feature = "risc0"))] {
             let _ = (proof_bytes, residual_fp, threshold_fp, block_hash);
             log::warn!("[zk_proof] RISC Zero feature not enabled; rejecting Zkvm proof.");
-            return Ok(VerificationResult::Invalid);
+            Ok(VerificationResult::Invalid)
         }
 
         #[cfg(feature = "risc0")] {
