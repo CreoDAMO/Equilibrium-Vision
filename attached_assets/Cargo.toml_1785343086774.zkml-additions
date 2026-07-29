@@ -1,0 +1,17 @@
+# Add to [dependencies] in equilibrium/Cargo.toml:
+
+# zkML proving (optional, requires RISC Zero)
+[dependencies]
+# ... existing deps ...
+
+# Optional: enable with --features risc0
+risc0-zkvm = { version = "2.3", default-features = false, optional = true }
+bincode = { version = "1.3", optional = true }
+sha2 = "0.10"
+
+[features]
+default = []
+risc0 = ["dep:risc0-zkvm", "dep:bincode"]
+
+# Add zkml_prover.rs to lib.rs:
+// pub mod zkml_prover;

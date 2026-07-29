@@ -1,0 +1,91 @@
+Skip to content
+CreoDAMO
+Equilibrium-Vision
+Repository navigation
+Code
+Issues
+Pull requests
+Agents
+Actions
+Projects
+Wiki
+Security and quality
+23
+ (23)
+Insights
+Settings
+CI
+fix: drop compiled target/ dirs from git; upgrade Groth16 verifier to… #157
+All jobs
+Run details
+Annotations
+10 errors and 1 warning
+TypeScript tests (Vitest)
+failed 2 hours ago in 3m 17s
+Search logs
+2s
+22s
+10s
+1s
+4s
+1s
+9s
+2s
+26s
+0s
+5s
+1m 24s
+1s
+1s
+3s
+4s
+2s
+18s
+Run pnpm --filter @workspace/api-server run test
+
+> @workspace/api-server@0.0.0 test /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server
+> vitest run
+
+
+ RUN  v4.1.9 /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server
+
+stderr | src/__tests__/contracts.integration.test.ts > WasmVM — persist callback > does not throw if the persist callback rejects
+[WasmVM] contract persist failed: Error: DB down
+    at WasmVM.persistFn (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/__tests__/contracts.integration.test.ts:424:48)
+    at WasmVM.firePersist (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/chain/wasm.ts:143:12)
+    at WasmVM.deploy (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/chain/wasm.ts:187:10)
+    at /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/__tests__/contracts.integration.test.ts:427:5
+ ❯ src/__tests__/arbitrage.stress.test.ts (14 tests | 13 failed) 326ms
+     × sets up verified model and executions 1–5 are NOT rejected with the circuit-breaker error 23ms
+     × the 6th call is rejected with 'Paused or circuit breaker tripped' 17ms
+    at file:///home/runner/work/Equilibrium-Vision/Equilibrium-Vision/node_modules/.pnpm/@vitest+runner@4.1.9/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+     × after unpause, the next call is no longer blocked by the circuit breaker 7ms
+     × rejects amountIn exceeding the governance cap with 'Amount exceeds the max trade amount' 8ms
+     × pool reserves are unchanged after a cap-rejected call 8ms
+     × execute succeeds and pool reserves change even when profit < minProfit 8ms
+     × no more than 5 non-circuit-breaker results from 10 concurrent calls 8ms
+     × advancing past the window does NOT clear a tripped breaker; unpause() does 10ms
+     × 3 execs in window N, advance past it, 3 execs in window N+1 — never trips breaker 16ms
+     × lowering arbitrageMaxTradeAmount rejects a previously-passing amountIn 8ms
+     × changing arbitrageWindowBlocks live affects subsequent window checks 2ms
+     × rollbackToHeight keeps chainState.height correct and the VM stays coherent 2ms
+     × pool reserves change after a swap even if ArbitrageUnderTarget is logged 12ms
+     ✓ 20 randomised pool sets: detector does not crash, returns well-formed data 90ms
+ ✓ src/__tests__/contracts.integration.test.ts (58 tests) 497ms
+ ❯ src/__tests__/crosschain.integration.test.ts (34 tests | 4 failed) 665ms
+     ✓ GET /api/relay/info returns contract address once deployed 42ms
+     ✓ rejects registration below min bond 16ms
+     ✓ registers a relayer with sufficient bond 9ms
+     ✓ rejects duplicate registration 8ms
+     ✓ GET /api/relay/info shows 1 relayer after registration 18ms
+     ✓ rejects threshold update without admin key 13ms
+     ✓ admin can set threshold to 1 for single-relayer tests 23ms
+0s
+0s
+0s
+0s
+0s
+0s
+0s
+0s

@@ -22,3 +22,14 @@ pub mod mobile_validator;
 // Host builds (consensus-api, testnet-node, wallet) are unaffected.
 #[cfg(target_os = "android")]
 pub mod jni_bridge;
+
+// ── zkML / ERC-7992 DeepProve ─────────────────────────────────────────────────
+// Host prover for quantized MLP inference via RISC Zero.
+// Quantization utilities (quantize_weights, quantize_features, dequantize_output)
+// are available unconditionally; prove_inference / verify_receipt are no-ops
+// unless the `risc0` feature is enabled.
+pub mod zkml_prover;
+
+// Bridge between the on-chain model_registry contract and the off-chain prover.
+// submit_model_inference is a no-op stub unless the `risc0` feature is enabled.
+pub mod model_registry_integration;

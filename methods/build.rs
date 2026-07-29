@@ -12,6 +12,11 @@ fn main() {
 pub const STATIONARITY_GUEST_ELF: &[u8] = &[];
 /// Placeholder image ID — build with the risc0 toolchain to produce a real value.
 pub const STATIONARITY_GUEST_ID: [u32; 8] = [0u32; 8];
+
+/// Placeholder ELF for the zkML (quantized MLP) guest.
+pub const ZKML_GUEST_ELF: &[u8] = &[];
+/// Placeholder image ID for the zkML guest.
+pub const ZKML_GUEST_ID: [u32; 8] = [0u32; 8];
 "#,
         )
         .expect("failed to write stub methods.rs");

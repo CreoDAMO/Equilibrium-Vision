@@ -3,5 +3,10 @@ name = "methods"
 version = "0.1.0"
 edition = "2021"
 
+# Tell risc0-build which guest crates to compile when the full toolchain is
+# present (i.e. RISC0_BUILD_SKIP_BUILD is NOT set).
+[package.metadata.risc0]
+methods = ["guest", "zkml-guest"]
+
 [build-dependencies]
 risc0-build = { version = "1.0" }
