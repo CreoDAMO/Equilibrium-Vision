@@ -1,0 +1,68 @@
+// ── WASM CONTRACT BRIDGE INTEGRATION ─────────────────────────────────────────
+//
+// Add these imports at the top of artifacts/api-server/src/chain/state.ts:
+//
+// import {
+//   deployGovernanceContractIfNeeded,
+//   getGovernanceContractAddress,
+//   scanPendingGovParams,
+//   clearPendingGovParams,
+// } from "./governanceContract.js";
+// import {
+//   deployStakingContractIfNeeded,
+//   getStakingContractAddress,
+// } from "./stakingContract.js";
+//
+// ── In ChainState constructor (after genesis block creation) ─────────────────
+//
+//   // Deploy WASM governance contract if bytecode exists
+//   deployGovernanceContractIfNeeded(this.wasmVM, this.deployer).then((addr) => {
+//     if (addr) logger.info({ addr }, "Governance WASM contract ready");
+//   });
+//
+//   // Deploy WASM staking contract if bytecode exists
+//   deployStakingContractIfNeeded(this.wasmVM, this.deployer).then((addr) => {
+//     if (addr) logger.info({ addr }, "Staking WASM contract ready");
+//   });
+//
+// ── In ChainState.addBlock() or processBlock() ───────────────────────────────
+//
+//   // After: this.governance.processBlock(block.timestamp, this.totalBondedStake);
+//   // Add:
+//
+//   // Bridge: apply pending parameter changes from WASM governance contract
+//   const govContractAddr = getGovernanceContractAddress();
+//   if (govContractAddr) {
+//     const pending = scanPendingGovParams(this.wasmVM);
+//     if (Object.keys(pending).length > 0) {
+//       for (const [name, value] of Object.entries(pending)) {
+//         if (name in this.governance.params) {
+//           const key = name as keyof ChainParameters;
+//           const bounds = PARAM_BOUNDS[key];
+//           if (bounds && value >= bounds.min && value <= bounds.max) {
+//             this.governance.params[key] = value;
+//             logger.info({ param: name, value, block: this.height }, "GovParamAppliedFromContract");
+//           } else {
+//             logger.warn({ param: name, value, bounds }, "GovParamOutOfBoundsRejected");
+//           }
+//         } else {
+//           logger.warn({ param: name, value }, "UnknownGovParamRejected");
+//         }
+//       }
+//       clearPendingGovParams(this.wasmVM);
+//       this.governance.onParamChange(this.governance.params);
+//     }
+//   }
+//
+//   // Bridge: sync TS validator state to WASM staking contract (optional)
+//   // This keeps the WASM contract's active set in sync with the TS layer.
+//   const stakingContractAddr = getStakingContractAddress();
+//   if (stakingContractAddr && this.height % this.governance.params.stakingEpochBlocks === 0) {
+//     // Trigger epoch distribution in WASM contract (permissionless)
+//     // This can be done via a background job or the next block proposer
+//   }
+//
+// ── ENV VARS ─────────────────────────────────────────────────────────────────
+//
+// GOVERNANCE_CONTRACT_ADDRESS=...   // Skip auto-deploy, use existing address
+// STAKING_CONTRACT_ADDRESS=...      // Skip auto-deploy, use existing address

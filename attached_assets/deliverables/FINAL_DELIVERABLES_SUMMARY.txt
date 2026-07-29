@@ -1,0 +1,152 @@
+
+================================================================================
+COMPLETE DELIVERABLES — WASM Contract Bridges + REST Routes + State Integration
+================================================================================
+
+FILES WRITTEN
+-------------
+
+1. GOVERNANCE CONTRACT BRIDGE
+   /mnt/agents/output/governanceContract.ts
+   → artifacts/api-server/src/chain/governanceContract.ts
+
+   Exports:
+   - deployGovernanceContractIfNeeded(wasmVM, deployer) → address
+   - getGovernanceContractAddress() → address | undefined
+   - submitProposalToContract(wasmVM, caller, params) → { proposalId }
+   - voteOnContract(wasmVM, caller, proposalId, option) → { success }
+   - endVotingOnContract(wasmVM, caller, proposalId) → { outcome }
+   - executeProposalOnContract(wasmVM, caller, proposalId) → { success }
+   - cancelProposalOnContract(wasmVM, caller, proposalId) → { success }
+   - getProposalFromContract(wasmVM, proposalId) → ProposalInfo
+   - getVoteFromContract(wasmVM, proposalId, voter) → { option, power }
+   - scanPendingGovParams(wasmVM) → Record<string, number>
+   - clearPendingGovParams(wasmVM) → void
+
+2. STAKING CONTRACT BRIDGE
+   /mnt/agents/output/stakingContract.ts
+   → artifacts/api-server/src/chain/stakingContract.ts
+
+   Exports:
+   - deployStakingContractIfNeeded(wasmVM, deployer) → address
+   - getStakingContractAddress() → address | undefined
+   - registerValidatorOnContract(wasmVM, caller, params) → { validatorId }
+   - delegateOnContract(wasmVM, caller, validatorId, amount) → { success }
+   - undelegateOnContract(wasmVM, caller, validatorId, amount) → { unbondingId }
+   - completeUndelegateOnContract(wasmVM, caller, unbondingId) → { success }
+   - claimRewardsOnContract(wasmVM, caller, validatorId) → { success }
+   - distributeEpochOnContract(wasmVM, caller) → { distributedAmount }
+   - slashValidatorOnContract(wasmVM, caller, validatorId, type, evidence) → { slashedAmount }
+   - unjailValidatorOnContract(wasmVM, caller) → { success }
+   - updateCommissionOnContract(wasmVM, caller, newCommissionBp) → { success }
+   - getValidatorInfoFromContract(wasmVM, validatorId) → ValidatorInfo
+   - getDelegationInfoFromContract(wasmVM, delegator, validatorId) → DelegationInfo
+   - getActiveSetSnapshot(wasmVM) → ActiveValidator[]
+
+3. GOVERNANCE CONTRACT REST ROUTES
+   /mnt/agents/output/governanceContract_routes.ts
+   → artifacts/api-server/src/routes/governanceContract.ts
+
+   Endpoints (all under /api/governance/contract):
+   GET  /proposals
+   GET  /proposals/:id
+   POST /proposals
+   POST /proposals/:id/vote
+   POST /proposals/:id/end-voting
+   POST /proposals/:id/execute
+   POST /proposals/:id/cancel
+   GET  /proposals/:id/vote/:voter
+
+4. STAKING CONTRACT REST ROUTES
+   /mnt/agents/output/stakingContract_routes.ts
+   → artifacts/api-server/src/routes/stakingContract.ts
+
+   Endpoints (all under /api/staking/contract):
+   GET  /validators
+   GET  /validators/:id
+   GET  /delegation/:delegator/:validatorId
+   POST /register
+   POST /delegate
+   POST /undelegate
+   POST /complete-undelegate
+   POST /claim-rewards
+   POST /distribute-epoch
+   POST /slash
+   POST /unjail
+   POST /update-commission
+
+5. STATE.TS INTEGRATION PATCH
+   /mnt/agents/output/state_ts_contract_bridge_patch.txt
+
+   Shows exact imports and code to add to ChainState for:
+   - Auto-deploying both contracts at genesis
+   - Polling gov_pending_param:* keys each block
+   - Applying pending params through PARAM_BOUNDS validation
+   - Clearing applied params from contract storage
+
+6. PREVIOUS ZKML FIXES (still needed)
+   /mnt/agents/output/equilibrium_Cargo.toml
+   /mnt/agents/output/modelRegistry_zkml_patch.ts
+   /mnt/agents/output/routes_models_zkml_patch.ts
+
+================================================================================
+APPLY INSTRUCTIONS
+================================================================================
+
+# 1. Copy bridge files
+cp /mnt/agents/output/governanceContract.ts artifacts/api-server/src/chain/governanceContract.ts
+cp /mnt/agents/output/stakingContract.ts artifacts/api-server/src/chain/stakingContract.ts
+
+# 2. Copy route files
+cp /mnt/agents/output/governanceContract_routes.ts artifacts/api-server/src/routes/governanceContract.ts
+cp /mnt/agents/output/stakingContract_routes.ts artifacts/api-server/src/routes/stakingContract.ts
+
+# 3. Wire routes in server main file (e.g., artifacts/api-server/src/index.ts)
+# Add:
+#   import governanceContractRouter from "./routes/governanceContract.js";
+#   import stakingContractRouter from "./routes/stakingContract.js";
+#   app.use(governanceContractRouter);
+#   app.use(stakingContractRouter);
+
+# 4. Apply state.ts bridge (see patch file for exact code)
+#    - Add imports at top
+#    - Add deploy calls in constructor
+#    - Add param bridge after governance.processBlock()
+
+# 5. Compile WASM contracts (run from repo root)
+cd contracts/governance && cargo build --target wasm32-unknown-unknown --release
+xxd -p target/wasm32-unknown-unknown/release/governance.wasm | tr -d '\n' > governance.hex
+
+cd contracts/staking && cargo build --target wasm32-unknown-unknown --release
+xxd -p target/wasm32-unknown-unknown/release/staking.wasm | tr -d '\n' > staking.hex
+
+# 6. Verify TypeScript compiles
+cd artifacts/api-server && npx tsc --noEmit
+
+# 7. Verify Rust compiles (with risc0 feature for zkML)
+cd equilibrium && cargo check --features risc0
+
+================================================================================
+DESIGN DECISIONS
+================================================================================
+
+1. PARALLEL SYSTEMS: The existing TS governance/staking and the new WASM
+   contracts operate in parallel. The TS layer is the "source of truth" for
+   consensus; the WASM contracts are "extensions" that add on-chain
+   capabilities (treasury spend, cross-contract calls, economic slashing).
+
+2. PARAM BRIDGE: WASM governance writes to gov_pending_param:* keys.
+   The TS layer polls these each block, validates against PARAM_BOUNDS,
+   applies them to the live ChainParameters, then clears the keys.
+   This gives WASM proposals real effect without replacing the TS system.
+
+3. AUTO-DEPLOY: Both contracts auto-deploy at genesis if bytecode .hex
+   files exist. Use env vars to skip deploy and use existing addresses.
+
+4. SIGNATURE VERIFICATION: REST routes require caller in body (same pattern
+   as existing routes). The contract itself trusts the caller (set by WasmVM
+   host import), so the API layer is the security boundary.
+
+5. NO CONFLICTS: All new endpoints are under /governance/contract/* and
+   /staking/contract/*, leaving existing /governance/* and /staking/*
+   endpoints untouched.
