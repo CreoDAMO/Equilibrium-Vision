@@ -337,3 +337,38 @@ export function getModelDetails(wasmVM: WasmVM, modelId: number): Record<string,
   }
   return details;
 }
+
+// ── zkML proof store ──────────────────────────────────────────────────────────
+// Off-chain receipt store for RISC Zero zkML proofs. The on-chain model_registry
+// contract only records Ed25519 inference attestations (method 5). zkML proofs
+// are larger artifacts kept here until a future on-chain verification method is
+// added (e.g. method 8 SUBMIT_ZKML_PROOF that stores a journal hash on-chain).
+
+export interface ZkmlProofRecord {
+  modelId: number;
+  sealHex: string;      // RISC Zero receipt/seal bytes (hex) — field name matches Rust bridge POST body
+  journalHex: string;   // decoded journal bytes (hex) — LE layout matching EquilibriumZkmlVerifier.sol
+  submittedAt: number;  // Unix timestamp (ms)
+}
+
+const zkmlProofStore = new Map<number, ZkmlProofRecord>();
+
+/**
+ * Store a RISC Zero zkML proof receipt for a model. Called by the Rust
+ * model_registry_integration bridge (POST /api/models/:id/zkml-proof).
+ */
+export function submitZkmlReceipt(modelId: number, sealHex: string, journalHex: string): { success: boolean; error?: string } {
+  if (!/^[0-9a-fA-F]+$/.test(sealHex)) return { success: false, error: "sealHex must be a hex string" };
+  if (!/^[0-9a-fA-F]+$/.test(journalHex)) return { success: false, error: "journalHex must be a hex string" };
+  // Minimum sanity: journal must be at least 4 words (128 bits) to hold the LE fields
+  if (journalHex.length < 32) return { success: false, error: "journalHex too short" };
+  zkmlProofStore.set(modelId, { modelId, sealHex, journalHex, submittedAt: Date.now() });
+  return { success: true };
+}
+
+/**
+ * Retrieve a stored zkML proof record for a model, or undefined if none exists.
+ */
+export function getZkmlProof(modelId: number): ZkmlProofRecord | undefined {
+  return zkmlProofStore.get(modelId);
+}

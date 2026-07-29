@@ -47,6 +47,7 @@ log = "0.4"
 # ── RISC Zero optional deps (enable with --features risc0) ───────────────────
 risc0-zkvm = { version = "2.3", optional = true }
 methods     = { path = "../methods", optional = true }
+reqwest     = { version = "0.12", features = ["blocking", "json"], optional = true }
 
 # ── Security: minimum version pins for transitive deps (Dependabot) ──────────
 # yamux: remote panic via malformed Data frame (GHSA-2qph-qpvm-2qf7, High)
@@ -57,7 +58,7 @@ hickory-proto = { version = ">=0.24.2", optional = true }
 tracing-subscriber = { version = ">=0.3.19", optional = true }
 
 [features]
-risc0 = ["dep:risc0-zkvm", "dep:methods"]
+risc0 = ["dep:risc0-zkvm", "dep:methods", "dep:reqwest"]
 
 # ── Android JNI bridge ────────────────────────────────────────────────────────
 # The `jni` crate is only pulled in when cross-compiling for Android via

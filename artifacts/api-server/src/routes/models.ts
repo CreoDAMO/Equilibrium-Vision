@@ -29,6 +29,8 @@ import {
   encodeSupportCommitment,
   submitInferenceAttestation,
   getInferenceStatus,
+  submitZkmlReceipt,
+  getZkmlProof,
 } from "../chain/modelRegistry.js";
 import { logger } from "../lib/logger.js";
 
@@ -366,6 +368,38 @@ router.get("/models/:id/inference-status", async (req, res) => {
   const status = await getInferenceStatus(chainState.wasmVM, id);
   if (status === "unknown") return res.status(404).json({ error: "Model not found" });
   return res.json({ id, inferenceStatus: status });
+});
+
+// POST /api/models/:id/zkml-proof
+// Called by the Rust model_registry_integration bridge after a successful
+// RISC Zero proof run. Stores the receipt off-chain for later retrieval.
+router.post("/models/:id/zkml-proof", (req, res) => {
+  const id = Number(req.params["id"]);
+  if (!Number.isInteger(id) || id < 0) return res.status(400).json({ error: "Invalid model id" });
+
+  const { sealHex, journalHex } = req.body ?? {};
+  if (typeof sealHex !== "string" || typeof journalHex !== "string") {
+    return res.status(400).json({ error: "sealHex and journalHex (hex strings) are required" });
+  }
+  if (sealHex.length % 2 !== 0 || journalHex.length % 2 !== 0) {
+    return res.status(400).json({ error: "sealHex and journalHex must have even length" });
+  }
+
+  const result = submitZkmlReceipt(id, sealHex, journalHex);
+  if (!result.success) return res.status(400).json(result);
+  logger.info({ modelId: id }, "zkml-proof stored");
+  return res.json({ success: true, modelId: id });
+});
+
+// GET /api/models/:id/zkml-proof
+// Returns the stored zkML proof record for a model, if any.
+router.get("/models/:id/zkml-proof", (req, res) => {
+  const id = Number(req.params["id"]);
+  if (!Number.isInteger(id) || id < 0) return res.status(400).json({ error: "Invalid model id" });
+
+  const record = getZkmlProof(id);
+  if (!record) return res.status(404).json({ error: "No zkml proof found for this model" });
+  return res.json(record);
 });
 
 export default router;
