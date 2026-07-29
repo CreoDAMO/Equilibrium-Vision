@@ -86,6 +86,33 @@ export interface ChainParameters {
   arbitrageModelUpdateDelay: number;   // blocks a newly-verified model must wait before arbitrage may use it
   arbitrageMaxTradeAmount: number;     // base units — cap on value moved per atomic arbitrage execution
   arbitrageWindowBlocks: number;       // rolling window (blocks) used by the circuit breaker's profit check
+
+  // ── Governance WASM contract parameters ─────────────────────────────────────
+  // Param names must match the gov_param() calls in contracts/governance/src/lib.rs.
+  govMinDeposit: number;        // base units — minimum deposit to submit a proposal
+  govVotingPeriod: number;      // blocks — length of the voting window
+  govQuorumThreshold: number;   // base units — absolute minimum total vote weight required
+  govPassThreshold: number;     // FP × 10^18 — yes must exceed this fraction of total votes (0.5 × 10^18 = 50%)
+
+  // ── Staking WASM contract parameters ────────────────────────────────────────
+  // Param names must match the gov_param() calls in contracts/staking/src/lib.rs.
+  stakingActiveSetSize: number;       // maximum number of active validators
+  stakingMinValidatorStake: number;   // base units — minimum self-bond to join active set
+  stakingTargetRatio: number;         // FP × 10^18 — target staked/total-supply ratio (0.67 × 10^18)
+  stakingBaseInflationRate: number;   // FP × 10^18 — base annual inflation rate (0.07 × 10^18)
+  stakingAdjustmentSpeed: number;     // FP × 10^18 — how fast inflation responds to ratio delta (0.5 × 10^18)
+  stakingMinInflationRate: number;    // FP × 10^18 — floor on annual inflation (0.01 × 10^18)
+  stakingMaxInflationRate: number;    // FP × 10^18 — ceiling on annual inflation (0.20 × 10^18)
+  stakingBlocksPerYear: number;       // e.g. 2_628_000 at ~12 s/block
+  stakingEpochBlocks: number;         // blocks per reward epoch
+  stakingUnbondPeriod: number;        // blocks — should match TS unbondingPeriod
+  stakingMinDelegation: number;       // base units — minimum delegation amount
+  stakingSlashDoubleSign: number;     // FP × 10^18 — slash fraction for double-sign (0.05 × 10^18)
+  stakingSlashDowntime: number;       // FP × 10^18 — slash fraction for downtime (0.01 × 10^18)
+  stakingJailPeriod: number;          // blocks — mandatory jail duration after downtime slash
+  stakingSlashReporterReward: number; // FP × 10^18 — fraction of slash paid to reporter (0.01 × 10^18)
+  stakingDowntimeThreshold: number;   // missed blocks before automatic downtime slash
+  stakingUnjailFee: number;           // base units — fee to unjail a validator
 }
 
 export const DEFAULT_PARAMS: ChainParameters = {
@@ -107,6 +134,31 @@ export const DEFAULT_PARAMS: ChainParameters = {
   arbitrageModelUpdateDelay: 50,
   arbitrageMaxTradeAmount: 100_000_000_000,
   arbitrageWindowBlocks: 100,
+
+  // Governance WASM contract — testnet defaults (short periods for iteration speed)
+  govMinDeposit:      500_000,
+  govVotingPeriod:    100,                        // blocks
+  govQuorumThreshold: 1_000_000,                  // 1 EQU minimum total votes
+  govPassThreshold:   500_000_000_000_000_000,    // 0.50 × 10^18
+
+  // Staking WASM contract — economic defaults
+  stakingActiveSetSize:       21,
+  stakingMinValidatorStake:   1_000_000,           // 1 EQU (matches TS minValidatorStake)
+  stakingTargetRatio:         670_000_000_000_000_000, // 0.67 × 10^18
+  stakingBaseInflationRate:    70_000_000_000_000_000, // 0.07 × 10^18
+  stakingAdjustmentSpeed:     500_000_000_000_000_000, // 0.50 × 10^18
+  stakingMinInflationRate:     10_000_000_000_000_000, // 0.01 × 10^18
+  stakingMaxInflationRate:    200_000_000_000_000_000, // 0.20 × 10^18
+  stakingBlocksPerYear:       2_628_000,           // ~365.25 days @ 12 s/block
+  stakingEpochBlocks:         100,
+  stakingUnbondPeriod:        10,                  // matches TS unbondingPeriod
+  stakingMinDelegation:       100_000,
+  stakingSlashDoubleSign:      50_000_000_000_000_000, // 0.05 × 10^18
+  stakingSlashDowntime:        10_000_000_000_000_000, // 0.01 × 10^18
+  stakingJailPeriod:          1_000,               // blocks
+  stakingSlashReporterReward:  10_000_000_000_000_000, // 0.01 × 10^18
+  stakingDowntimeThreshold:   10,                  // missed blocks
+  stakingUnjailFee:           10_000,
 };
 
 /**
@@ -134,6 +186,31 @@ const PARAM_BOUNDS: Record<keyof ChainParameters, { min: number; max: number }> 
   arbitrageModelUpdateDelay: { min: 1,         max: 1_000 },
   arbitrageMaxTradeAmount:   { min: 1_000_000, max: 1_000_000_000_000 },
   arbitrageWindowBlocks:     { min: 10,        max: 1_000 },
+
+  // Governance WASM contract
+  govMinDeposit:      { min: 1_000,         max: 100_000_000_000 },
+  govVotingPeriod:    { min: 1,             max: 500_000 },      // 1 block – ~70 days
+  govQuorumThreshold: { min: 1,             max: 1_000_000_000_000_000 },
+  govPassThreshold:   { min: 1,             max: 1_000_000_000_000_000_000 }, // 0–100% × SCALE
+
+  // Staking WASM contract
+  stakingActiveSetSize:       { min: 1,   max: 300 },
+  stakingMinValidatorStake:   { min: 1,   max: 1_000_000_000_000 },
+  stakingTargetRatio:         { min: 1,   max: 1_000_000_000_000_000_000 },
+  stakingBaseInflationRate:   { min: 1,   max: 1_000_000_000_000_000_000 },
+  stakingAdjustmentSpeed:     { min: 1,   max: 1_000_000_000_000_000_000 },
+  stakingMinInflationRate:    { min: 1,   max: 1_000_000_000_000_000_000 },
+  stakingMaxInflationRate:    { min: 1,   max: 1_000_000_000_000_000_000 },
+  stakingBlocksPerYear:       { min: 1,   max: 100_000_000 },
+  stakingEpochBlocks:         { min: 1,   max: 1_000_000 },
+  stakingUnbondPeriod:        { min: 1,   max: 50_400 },
+  stakingMinDelegation:       { min: 1,   max: 1_000_000_000_000 },
+  stakingSlashDoubleSign:     { min: 1,   max: 1_000_000_000_000_000_000 },
+  stakingSlashDowntime:       { min: 1,   max: 1_000_000_000_000_000_000 },
+  stakingJailPeriod:          { min: 1,   max: 10_000_000 },
+  stakingSlashReporterReward: { min: 1,   max: 1_000_000_000_000_000_000 },
+  stakingDowntimeThreshold:   { min: 1,   max: 10_000 },
+  stakingUnjailFee:           { min: 0,   max: 1_000_000_000_000 },
 };
 
 /** Quorum: at least 33.4 % of total bonded stake must have voted. */

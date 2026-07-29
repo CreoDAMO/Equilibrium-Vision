@@ -1,0 +1,773 @@
+//! Equilibrium Staking Contract
+//!
+//! Manages: validator registration, delegation, inflation minting, rewards
+//! distribution, slashing, unbonding, and active-set rotation.
+//!
+//! Economic security model:
+//! - Validators bond self-stake + accept delegations
+//! - Top-N validators by total stake form the active BFT set
+//! - Inflation is dynamically tuned to hit a target staking ratio
+//! - Slashing penalizes double-sign (5%), downtime (1%), and light-client
+//!   attacks (100%). Delegators are slashed proportionally.
+//! - Unbonding period prevents flash-loan delegation attacks.
+//!
+//! Param names consumed via gov_param() (must match ChainParameters in
+//! artifacts/api-server/src/chain/governance.ts):
+//!   stakingActiveSetSize, stakingMinValidatorStake, stakingTargetRatio,
+//!   stakingBaseInflationRate, stakingAdjustmentSpeed, stakingMinInflationRate,
+//!   stakingMaxInflationRate, stakingBlocksPerYear, stakingEpochBlocks,
+//!   stakingUnbondPeriod, stakingMinDelegation, stakingSlashDoubleSign,
+//!   stakingSlashDowntime, stakingJailPeriod, stakingSlashReporterReward,
+//!   stakingDowntimeThreshold, stakingUnjailFee
+//!
+//! Call ABI: call(methodId, argsPtr, argsLen) -> i32
+//! 0  register(commission_bp: u16, moniker_len: u32, moniker: [u8])
+//!    -> validator_id (>=0), or -1..-4
+//! 1  delegate(validator_id: i64, amount_fp: i64)
+//!    -> 1 success, -1 unknown, -2 insufficient balance, -3 below minimum
+//! 2  undelegate(validator_id: i64, amount_fp: i64)
+//!    -> unbonding_id (>=0), or -1..-3
+//! 3  complete_undelegate(unbonding_id: i64)
+//!    -> 1 success, 0 not mature, -1 unknown
+//! 4  claim_rewards(validator_id: i64)
+//!    -> 1 success, 0 nothing to claim, -1 unknown
+//! 5  distribute_epoch()
+//!    -> distributed amount_fp (permissionless, advances epoch)
+//! 6  slash(validator_id: i64, slash_type: u8, evidence_hash[8 words])
+//!    -> slashed amount_fp, or -1..-4
+//! 7  unjail()
+//!    -> 1 success, 0 not jailed, -1 fee insufficient, -2 still jailed
+//! 8  update_commission(new_commission_bp: u16)
+//!    -> 1 success, 0 invalid, -1 not a validator
+//! 9  get_active_set()
+//!    -> active validator count (stores set in KV at active_set:{i})
+//! 10 get_validator_info(validator_id: i64)
+//!    -> stores JSON in KV at query_result, returns 1
+//! 11 get_delegation_info(delegator_addr_len: u32, delegator_addr[10 words],
+//!                       validator_id: i64)
+//!    -> stores JSON in KV at query_result, returns 1
+//! 12 get_capabilities()
+//!    -> bitmask
+
+#![no_std]
+extern crate alloc;
+
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::slice;
+
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    core::arch::wasm32::unreachable()
+}
+
+// ── allocator ────────────────────────────────────────────────────────────────
+mod bump_alloc {
+    use core::alloc::{GlobalAlloc, Layout};
+    use core::cell::UnsafeCell;
+    struct Bump { buf: UnsafeCell<[u8; 65536]>, pos: UnsafeCell<usize> }
+    unsafe impl Sync for Bump {}
+    unsafe impl GlobalAlloc for Bump {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let pos = &mut *self.pos.get();
+            let start = (*pos + layout.align() - 1) & !(layout.align() - 1);
+            if start + layout.size() > 65536 { return core::ptr::null_mut(); }
+            *pos = start + layout.size();
+            (*self.buf.get()).as_mut_ptr().add(start)
+        }
+        unsafe fn dealloc(&self, _: *mut u8, _: Layout) {}
+    }
+    #[global_allocator]
+    pub static ALLOC: Bump = Bump {
+        buf: UnsafeCell::new([0u8; 65536]),
+        pos: UnsafeCell::new(0),
+    };
+}
+
+// ── host imports ─────────────────────────────────────────────────────────────
+#[link(wasm_import_module = "env")]
+extern "C" {
+    fn storage_get(key_ptr: *const u8, key_len: u32, result_ptr: *mut u8) -> u32;
+    fn storage_set(key_ptr: *const u8, key_len: u32, val_ptr: *const u8, val_len: u32);
+    #[link_name = "log"]
+    fn host_log_raw(msg_ptr: *const u8, msg_len: u32);
+    fn block_number() -> u32;
+    fn caller_address(out_ptr: *mut u8) -> u32;
+    fn bond(amount: i64) -> i32;
+    fn payout(to_ptr: *const u8, to_len: u32, amount: i64) -> i32;
+    fn gov_param(name_ptr: *const u8, name_len: u32) -> i64;
+}
+
+// ── constants ────────────────────────────────────────────────────────────────
+const SCALE: i64 = 1_000_000_000_000_000_000; // 10^18
+const READ_BUF_LEN: usize = 1024;
+const STATUS_INACTIVE: i64 = 0;
+const STATUS_ACTIVE: i64 = 1;
+const STATUS_JAILED: i64 = 2;
+const STATUS_TOMBSTONED: i64 = 3;
+const SLASH_TYPE_DOUBLE_SIGN: u8 = 0;
+const SLASH_TYPE_DOWNTIME: u8 = 1;
+const SLASH_TYPE_LIGHT_CLIENT: u8 = 2;
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+unsafe fn read_mem_str(ptr: u32, len: u32) -> String {
+    let bytes = slice::from_raw_parts(ptr as *const u8, len as usize);
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn host_log(msg: &str) {
+    unsafe { host_log_raw(msg.as_ptr(), msg.len() as u32) }
+}
+
+fn host_caller() -> String {
+    let mut buf = [0u8; 64];
+    let n = unsafe { caller_address(buf.as_mut_ptr()) };
+    unsafe { read_mem_str(buf.as_ptr() as u32, n) }
+}
+
+fn host_gov_param(name: &str) -> i64 {
+    unsafe { gov_param(name.as_ptr(), name.len() as u32) }
+}
+
+fn storage_read(key: &str) -> Option<String> {
+    let mut buf = [0u8; READ_BUF_LEN];
+    let n = unsafe { storage_get(key.as_ptr(), key.len() as u32, buf.as_mut_ptr()) };
+    if n == 0 { return None; }
+    Some(String::from_utf8_lossy(&buf[..n as usize]).into_owned())
+}
+
+fn storage_write(key: &str, val: &str) {
+    unsafe { storage_set(key.as_ptr(), key.len() as u32, val.as_ptr(), val.len() as u32) }
+}
+
+fn get_i64(key: &str) -> i64 {
+    storage_read(key).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0)
+}
+fn set_i64(key: &str, val: i64) {
+    storage_write(key, &val.to_string());
+}
+
+fn key(prefix: &str, id: i64) -> String {
+    format!("{}:{}", prefix, id)
+}
+
+fn read_i32_word(ptr: u32, idx: u32) -> i32 {
+    unsafe { core::ptr::read_unaligned((ptr as usize + (idx as usize) * 4) as *const i32) }
+}
+
+fn read_i64_word(ptr: u32, idx: u32) -> i64 {
+    unsafe {
+        let base = (ptr as usize + (idx as usize) * 4) as *const i32;
+        let lo = core::ptr::read_unaligned(base) as u32;
+        let hi = core::ptr::read_unaligned(base.add(1)) as i32;
+        ((hi as i64) << 32) | (lo as i64)
+    }
+}
+
+fn read_addr(ptr: u32, word_offset: u32) -> String {
+    let mut bytes = [0u8; 40];
+    for i in 0..10u32 {
+        let w = read_i32_word(ptr, word_offset + i);
+        bytes[(i * 4) as usize..(i * 4 + 4) as usize].copy_from_slice(&w.to_le_bytes());
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+// ── fixed-point math (i128 intermediates to prevent overflow) ────────────────
+fn fp_mul(a: i64, b: i64) -> i64 {
+    ((a as i128 * b as i128) / SCALE as i128) as i64
+}
+
+fn fp_div(a: i64, b: i64) -> i64 {
+    if b == 0 { return 0; }
+    ((a as i128 * SCALE as i128) / b as i128) as i64
+}
+
+fn min_i64(a: i64, b: i64) -> i64 { if a < b { a } else { b } }
+fn max_i64(a: i64, b: i64) -> i64 { if a > b { a } else { b } }
+
+// ── validator registry ───────────────────────────────────────────────────────
+fn next_validator_id() -> i64 {
+    let id = get_i64("meta_next_validator_id");
+    set_i64("meta_next_validator_id", id + 1);
+    id
+}
+
+fn validator_exists(id: i64) -> bool {
+    storage_read(&key("validator_addr", id)).is_some()
+}
+
+fn get_validator_total_stake(id: i64) -> i64 {
+    get_i64(&key("validator_self_bond", id)) + get_i64(&key("validator_total_delegated", id))
+}
+
+// ── rewards accumulator ──────────────────────────────────────────────────────
+fn update_validator_rewards(id: i64) {
+    let commission = get_i64(&key("validator_commission_accum", id));
+    let reward_per_share = get_i64(&key("validator_reward_per_share", id));
+
+    // Pay any accumulated commission directly to the validator address.
+    if commission > 0 {
+        let addr = storage_read(&key("validator_addr", id)).unwrap_or_default();
+        if !addr.is_empty() {
+            unsafe { payout(addr.as_ptr(), addr.len() as u32, commission) };
+        }
+        set_i64(&key("validator_commission_accum", id), 0);
+    }
+
+    set_i64(&key("validator_reward_per_share", id), reward_per_share);
+}
+
+fn accumulate_rewards(id: i64, reward: i64) {
+    let total = get_validator_total_stake(id);
+    if total == 0 { return; }
+
+    let commission_rate = get_i64(&key("validator_commission", id));
+    let commission = fp_mul(reward, commission_rate);
+    let delegator_reward = reward - commission;
+
+    let total_delegated = get_i64(&key("validator_total_delegated", id));
+    if total_delegated > 0 && delegator_reward > 0 {
+        let increment = fp_div(delegator_reward, total_delegated);
+        let current = get_i64(&key("validator_reward_per_share", id));
+        set_i64(&key("validator_reward_per_share", id), current + increment);
+    }
+
+    if commission > 0 {
+        let current = get_i64(&key("validator_commission_accum", id));
+        set_i64(&key("validator_commission_accum", id), current + commission);
+    }
+}
+
+// ── active set rotation ──────────────────────────────────────────────────────
+fn rotate_active_set() {
+    let max_size = host_gov_param("stakingActiveSetSize").max(1) as usize;
+    let min_stake = host_gov_param("stakingMinValidatorStake");
+    let validator_count = get_i64("meta_validator_count") as usize;
+
+    let mut candidates: Vec<(i64, i64)> = Vec::new();
+
+    for i in 0..validator_count {
+        let id = i as i64;
+        let status = get_i64(&key("validator_status", id));
+        if status == STATUS_TOMBSTONED { continue; }
+
+        let total = get_validator_total_stake(id);
+        if total >= min_stake {
+            candidates.push((id, total));
+        }
+    }
+
+    // Selection sort by stake descending (bounded by max_size).
+    let n = candidates.len();
+    for i in 0..n {
+        let mut max_idx = i;
+        for j in (i + 1)..n {
+            if candidates[j].1 > candidates[max_idx].1 {
+                max_idx = j;
+            }
+        }
+        if max_idx != i {
+            candidates.swap(i, max_idx);
+        }
+    }
+
+    let active_count = n.min(max_size);
+
+    for i in 0..n {
+        let id = candidates[i].0;
+        if i < active_count {
+            set_i64(&key("validator_status", id), STATUS_ACTIVE);
+            set_i64(&key("active_set", i as i64), id);
+        } else {
+            let old_status = get_i64(&key("validator_status", id));
+            if old_status == STATUS_ACTIVE {
+                set_i64(&key("validator_status", id), STATUS_INACTIVE);
+            }
+        }
+    }
+
+    set_i64("meta_active_set_size", active_count as i64);
+
+    // Clear stale active-set slots beyond current count.
+    for i in active_count..max_size {
+        set_i64(&key("active_set", i as i64), -1);
+    }
+}
+
+// ── inflation ────────────────────────────────────────────────────────────────
+fn compute_epoch_inflation() -> i64 {
+    let total_supply = get_i64("meta_total_supply");
+    let total_staked = get_i64("meta_total_staked");
+    if total_supply == 0 || total_staked == 0 { return 0; }
+
+    let current_ratio = fp_div(total_staked, total_supply);
+    let target_ratio = host_gov_param("stakingTargetRatio");
+    let base_rate = host_gov_param("stakingBaseInflationRate");
+    let adjustment_speed = host_gov_param("stakingAdjustmentSpeed");
+    let min_rate = host_gov_param("stakingMinInflationRate");
+    let max_rate = host_gov_param("stakingMaxInflationRate");
+
+    let delta = target_ratio - current_ratio;
+    let adjustment = fp_mul(delta, adjustment_speed);
+    let mut rate = base_rate + adjustment;
+
+    rate = max_i64(rate, min_rate);
+    rate = min_i64(rate, max_rate);
+
+    let annual_inflation = fp_mul(total_supply, rate);
+    let blocks_per_year = host_gov_param("stakingBlocksPerYear").max(1);
+    let epoch_blocks = host_gov_param("stakingEpochBlocks").max(1);
+
+    annual_inflation * epoch_blocks / blocks_per_year
+}
+
+// ── slashing ─────────────────────────────────────────────────────────────────
+fn slash_validator(id: i64, slash_type: u8) -> i64 {
+    let status = get_i64(&key("validator_status", id));
+    if status == STATUS_TOMBSTONED { return 0; }
+
+    let total_stake = get_validator_total_stake(id);
+    if total_stake == 0 { return 0; }
+
+    let slash_fraction = match slash_type {
+        SLASH_TYPE_DOUBLE_SIGN => host_gov_param("stakingSlashDoubleSign"),
+        SLASH_TYPE_DOWNTIME    => host_gov_param("stakingSlashDowntime"),
+        SLASH_TYPE_LIGHT_CLIENT => SCALE, // 100%
+        _ => return 0,
+    };
+
+    let slash_amount = fp_mul(total_stake, slash_fraction);
+    if slash_amount <= 0 { return 0; }
+
+    let self_bond = get_i64(&key("validator_self_bond", id));
+    let total_delegated = get_i64(&key("validator_total_delegated", id));
+
+    let self_slash = slash_amount * self_bond / total_stake;
+    let delegator_slash = slash_amount - self_slash;
+
+    set_i64(&key("validator_self_bond", id), self_bond - self_slash);
+    set_i64(&key("validator_total_delegated", id), total_delegated - delegator_slash);
+    set_i64("meta_total_staked", get_i64("meta_total_staked") - slash_amount);
+
+    // Track burned tokens; reporter receives a fraction as a reward incentive.
+    let reporter_reward = fp_mul(slash_amount, host_gov_param("stakingSlashReporterReward"));
+    let burned = slash_amount - reporter_reward;
+    set_i64("meta_burned_total", get_i64("meta_burned_total") + burned);
+
+    // Jail or tombstone depending on severity.
+    match slash_type {
+        SLASH_TYPE_DOUBLE_SIGN | SLASH_TYPE_LIGHT_CLIENT => {
+            set_i64(&key("validator_status", id), STATUS_TOMBSTONED);
+            set_i64(&key("validator_tombstoned_at", id), unsafe { block_number() } as i64);
+        }
+        SLASH_TYPE_DOWNTIME => {
+            let jail_period = host_gov_param("stakingJailPeriod");
+            set_i64(&key("validator_status", id), STATUS_JAILED);
+            set_i64(&key("validator_jail_until", id), (unsafe { block_number() } as i64) + jail_period);
+            set_i64(&key("validator_missed_blocks", id), 0);
+        }
+        _ => {}
+    }
+
+    host_log(&format!("ValidatorSlashed id={} type={} amount={}", id, slash_type, slash_amount));
+    slash_amount
+}
+
+// ── methods ──────────────────────────────────────────────────────────────────
+
+/// 0: register(commission_bp: u16, moniker_len: u32, moniker...)
+fn method_register(args_ptr: u32) -> i32 {
+    let commission_bp = read_i32_word(args_ptr, 0) as u64;
+    if commission_bp > 10000 { return -1; }
+
+    let moniker_len = read_i32_word(args_ptr, 1) as u32;
+    if moniker_len > 64 { return -2; }
+    let moniker = unsafe { read_mem_str(args_ptr + 8, moniker_len) };
+
+    let caller = host_caller();
+    let min_stake = host_gov_param("stakingMinValidatorStake");
+
+    if unsafe { bond(min_stake) } != 1 { return -3; }
+
+    let id = next_validator_id();
+    let commission_fp = (commission_bp as i64) * SCALE / 10000;
+
+    storage_write(&key("validator_addr", id), &caller);
+    set_i64(&key("validator_commission", id), commission_fp);
+    set_i64(&key("validator_self_bond", id), min_stake);
+    set_i64(&key("validator_total_delegated", id), 0);
+    set_i64(&key("validator_reward_per_share", id), 0);
+    set_i64(&key("validator_commission_accum", id), 0);
+    set_i64(&key("validator_status", id), STATUS_INACTIVE);
+    set_i64(&key("validator_missed_blocks", id), 0);
+    set_i64(&key("validator_signed_blocks", id), 0);
+    storage_write(&key("validator_moniker", id), &moniker);
+
+    set_i64("meta_total_staked", get_i64("meta_total_staked") + min_stake);
+    set_i64("meta_validator_count", get_i64("meta_validator_count") + 1);
+
+    host_log(&format!("ValidatorRegistered id={} addr={} stake={}", id, caller, min_stake));
+    id as i32
+}
+
+/// 1: delegate(validator_id: i64, amount_fp: i64)
+fn method_delegate(args_ptr: u32) -> i32 {
+    let validator_id = read_i64_word(args_ptr, 0);
+    let amount = read_i64_word(args_ptr, 2);
+
+    if !validator_exists(validator_id) { return -1; }
+    if amount <= 0 { return -2; }
+
+    let status = get_i64(&key("validator_status", validator_id));
+    if status == STATUS_TOMBSTONED { return -1; }
+
+    let min_delegation = host_gov_param("stakingMinDelegation");
+    if amount < min_delegation { return -3; }
+
+    if unsafe { bond(amount) } != 1 { return -2; }
+
+    let caller = host_caller();
+    let delegator_key = format!("delegation:{}:{}", caller, validator_id);
+    let current = get_i64(&delegator_key);
+    let reward_debt_key = format!("delegation_reward_debt:{}:{}", caller, validator_id);
+    let reward_per_share = get_i64(&key("validator_reward_per_share", validator_id));
+
+    // If already delegated, claim pending rewards first to reset debt.
+    if current > 0 {
+        let debt = get_i64(&reward_debt_key);
+        let pending = fp_mul(current, reward_per_share - debt);
+        if pending > 0 {
+            unsafe { payout(caller.as_ptr(), caller.len() as u32, pending) };
+        }
+    }
+
+    set_i64(&delegator_key, current + amount);
+    set_i64(&reward_debt_key, reward_per_share);
+
+    let total_del = get_i64(&key("validator_total_delegated", validator_id));
+    set_i64(&key("validator_total_delegated", validator_id), total_del + amount);
+    set_i64("meta_total_staked", get_i64("meta_total_staked") + amount);
+
+    host_log(&format!("Delegated validator={} addr={} amount={}", validator_id, caller, amount));
+    1
+}
+
+/// 2: undelegate(validator_id: i64, amount_fp: i64)
+fn method_undelegate(args_ptr: u32) -> i32 {
+    let validator_id = read_i64_word(args_ptr, 0);
+    let amount = read_i64_word(args_ptr, 2);
+    let caller = host_caller();
+
+    let delegator_key = format!("delegation:{}:{}", caller, validator_id);
+    let current = get_i64(&delegator_key);
+    if current < amount { return -1; }
+    if amount <= 0 { return -2; }
+
+    // Claim pending rewards before undelegating.
+    let reward_debt_key = format!("delegation_reward_debt:{}:{}", caller, validator_id);
+    let reward_per_share = get_i64(&key("validator_reward_per_share", validator_id));
+    let debt = get_i64(&reward_debt_key);
+    let pending = fp_mul(current, reward_per_share - debt);
+    if pending > 0 {
+        unsafe { payout(caller.as_ptr(), caller.len() as u32, pending) };
+    }
+
+    set_i64(&delegator_key, current - amount);
+    set_i64(&reward_debt_key, reward_per_share);
+
+    let total_del = get_i64(&key("validator_total_delegated", validator_id));
+    set_i64(&key("validator_total_delegated", validator_id), total_del - amount);
+    set_i64("meta_total_staked", get_i64("meta_total_staked") - amount);
+
+    // Create unbonding entry.
+    let unbond_id = get_i64("meta_next_unbond_id");
+    set_i64("meta_next_unbond_id", unbond_id + 1);
+
+    let unbond_period = host_gov_param("stakingUnbondPeriod");
+    storage_write(&format!("unbonding:{}:delegator", unbond_id), &caller);
+    set_i64(&format!("unbonding:{}:validator", unbond_id), validator_id);
+    set_i64(&format!("unbonding:{}:amount", unbond_id), amount);
+    set_i64(&format!("unbonding:{}:mature_at", unbond_id),
+            (unsafe { block_number() } as i64) + unbond_period);
+
+    host_log(&format!("Undelegated validator={} addr={} amount={} unbond_id={}",
+                      validator_id, caller, amount, unbond_id));
+    unbond_id as i32
+}
+
+/// 3: complete_undelegate(unbonding_id: i64)
+fn method_complete_undelegate(args_ptr: u32) -> i32 {
+    let unbond_id = read_i64_word(args_ptr, 0);
+    let mature_at = get_i64(&format!("unbonding:{}:mature_at", unbond_id));
+    if mature_at == 0 { return -1; }
+
+    let now = unsafe { block_number() } as i64;
+    if now < mature_at { return 0; }
+
+    let delegator = storage_read(&format!("unbonding:{}:delegator", unbond_id)).unwrap_or_default();
+    let amount = get_i64(&format!("unbonding:{}:amount", unbond_id));
+
+    if amount > 0 && !delegator.is_empty() {
+        unsafe { payout(delegator.as_ptr(), delegator.len() as u32, amount) };
+    }
+
+    // Clear unbonding entry.
+    storage_write(&format!("unbonding:{}:delegator", unbond_id), "");
+    set_i64(&format!("unbonding:{}:validator", unbond_id), 0);
+    set_i64(&format!("unbonding:{}:amount", unbond_id), 0);
+    set_i64(&format!("unbonding:{}:mature_at", unbond_id), 0);
+
+    host_log(&format!("UnbondComplete id={} addr={} amount={}", unbond_id, delegator, amount));
+    1
+}
+
+/// 4: claim_rewards(validator_id: i64)
+fn method_claim_rewards(args_ptr: u32) -> i32 {
+    let validator_id = read_i64_word(args_ptr, 0);
+    let caller = host_caller();
+
+    let delegator_key = format!("delegation:{}:{}", caller, validator_id);
+    let amount = get_i64(&delegator_key);
+    if amount == 0 { return 0; }
+
+    let reward_debt_key = format!("delegation_reward_debt:{}:{}", caller, validator_id);
+    let reward_per_share = get_i64(&key("validator_reward_per_share", validator_id));
+    let debt = get_i64(&reward_debt_key);
+
+    let pending = fp_mul(amount, reward_per_share - debt);
+    if pending <= 0 { return 0; }
+
+    set_i64(&reward_debt_key, reward_per_share);
+    unsafe { payout(caller.as_ptr(), caller.len() as u32, pending) };
+
+    host_log(&format!("RewardsClaimed validator={} addr={} amount={}", validator_id, caller, pending));
+    1
+}
+
+/// 5: distribute_epoch() — permissionless epoch advancement
+fn method_distribute_epoch(_args_ptr: u32) -> i32 {
+    let epoch_blocks = host_gov_param("stakingEpochBlocks").max(1);
+    let last_epoch = get_i64("meta_last_epoch_block");
+    let now = unsafe { block_number() } as i64;
+
+    if now - last_epoch < epoch_blocks { return 0; }
+
+    let inflation = compute_epoch_inflation();
+    let pool = get_i64("meta_inflation_pool");
+    let actual = min_i64(inflation, pool);
+
+    if actual > 0 {
+        set_i64("meta_inflation_pool", pool - actual);
+
+        let total_staked = get_i64("meta_total_staked");
+        if total_staked > 0 {
+            let active_count = get_i64("meta_active_set_size") as usize;
+            for i in 0..active_count {
+                let vid = get_i64(&key("active_set", i as i64));
+                if vid < 0 { continue; }
+                let power = get_validator_total_stake(vid);
+                if power > 0 {
+                    let share = fp_div(power, total_staked);
+                    let reward = fp_mul(actual, share);
+                    accumulate_rewards(vid, reward);
+                }
+            }
+        }
+    }
+
+    // Auto-slash downtime at epoch boundary; reset uptime counters.
+    let validator_count = get_i64("meta_validator_count") as usize;
+    for i in 0..validator_count {
+        let vid = i as i64;
+        let missed = get_i64(&key("validator_missed_blocks", vid));
+        let threshold = host_gov_param("stakingDowntimeThreshold");
+
+        if missed > threshold && get_i64(&key("validator_status", vid)) == STATUS_ACTIVE {
+            slash_validator(vid, SLASH_TYPE_DOWNTIME);
+        }
+
+        set_i64(&key("validator_missed_blocks", vid), 0);
+        set_i64(&key("validator_signed_blocks", vid), 0);
+    }
+
+    rotate_active_set();
+
+    set_i64("meta_last_epoch_block", now);
+    set_i64("meta_epoch_number", get_i64("meta_epoch_number") + 1);
+
+    host_log(&format!("EpochDistributed block={} inflation={} pool_remaining={}",
+                      now, actual, get_i64("meta_inflation_pool")));
+    actual as i32
+}
+
+/// 6: slash(validator_id: i64, slash_type: u8, evidence_hash[8])
+fn method_slash(args_ptr: u32) -> i32 {
+    let validator_id = read_i64_word(args_ptr, 0);
+    let slash_type = read_i32_word(args_ptr, 2) as u8;
+
+    if !validator_exists(validator_id) { return -1; }
+
+    let status = get_i64(&key("validator_status", validator_id));
+    if status == STATUS_TOMBSTONED { return -2; }
+
+    // Store evidence hash for later dispute/challenge.
+    let mut evidence = [0u8; 32];
+    for i in 0..8u32 {
+        let w = read_i32_word(args_ptr, 3 + i);
+        evidence[(i * 4) as usize..(i * 4 + 4) as usize].copy_from_slice(&w.to_le_bytes());
+    }
+    storage_write(
+        &format!("slash_evidence:{}:{}", validator_id, unsafe { block_number() }),
+        &hex_encode(&evidence),
+    );
+
+    let slashed = slash_validator(validator_id, slash_type);
+    slashed as i32
+}
+
+/// 7: unjail()
+fn method_unjail(_args_ptr: u32) -> i32 {
+    let caller = host_caller();
+    let validator_count = get_i64("meta_validator_count") as usize;
+    let mut vid = -1i64;
+
+    for i in 0..validator_count {
+        let id = i as i64;
+        let addr = storage_read(&key("validator_addr", id)).unwrap_or_default();
+        if addr == caller {
+            vid = id;
+            break;
+        }
+    }
+
+    if vid < 0 { return -1; }
+
+    let status = get_i64(&key("validator_status", vid));
+    if status != STATUS_JAILED { return 0; }
+
+    let jail_until = get_i64(&key("validator_jail_until", vid));
+    let now = unsafe { block_number() } as i64;
+    if now < jail_until { return -2; }
+
+    let unjail_fee = host_gov_param("stakingUnjailFee");
+    if unsafe { bond(unjail_fee) } != 1 { return -1; }
+
+    set_i64(&key("validator_status", vid), STATUS_INACTIVE);
+    set_i64(&key("validator_missed_blocks", vid), 0);
+
+    host_log(&format!("ValidatorUnjailed id={} addr={}", vid, caller));
+    1
+}
+
+/// 8: update_commission(new_commission_bp: u16)
+fn method_update_commission(args_ptr: u32) -> i32 {
+    let new_bp = read_i32_word(args_ptr, 0) as u64;
+    if new_bp > 10000 { return 0; }
+
+    let caller = host_caller();
+    let validator_count = get_i64("meta_validator_count") as usize;
+
+    for i in 0..validator_count {
+        let id = i as i64;
+        let addr = storage_read(&key("validator_addr", id)).unwrap_or_default();
+        if addr == caller {
+            let new_fp = (new_bp as i64) * SCALE / 10000;
+            set_i64(&key("validator_commission", id), new_fp);
+            host_log(&format!("CommissionUpdated id={} new={}", id, new_fp));
+            return 1;
+        }
+    }
+    -1
+}
+
+/// 9: get_active_set() -> count
+fn method_get_active_set(_args_ptr: u32) -> i32 {
+    rotate_active_set(); // ensure fresh
+    get_i64("meta_active_set_size") as i32
+}
+
+/// 10: get_validator_info(validator_id: i64)
+fn method_get_validator_info(args_ptr: u32) -> i32 {
+    let id = read_i64_word(args_ptr, 0);
+    if !validator_exists(id) { return -1; }
+
+    let addr       = storage_read(&key("validator_addr", id)).unwrap_or_default();
+    let commission = get_i64(&key("validator_commission", id));
+    let self_bond  = get_i64(&key("validator_self_bond", id));
+    let total_del  = get_i64(&key("validator_total_delegated", id));
+    let status     = get_i64(&key("validator_status", id));
+    let moniker    = storage_read(&key("validator_moniker", id)).unwrap_or_default();
+
+    let json = format!(
+        "{{\"addr\":\"{}\",\"commission_fp\":{},\"self_bond\":{},\
+         \"total_delegated\":{},\"status\":{},\"moniker\":\"{}\"}}",
+        addr, commission, self_bond, total_del, status, moniker
+    );
+    storage_write("query_result", &json);
+    1
+}
+
+/// 11: get_delegation_info(delegator_addr_len, delegator_addr[10 words], validator_id)
+fn method_get_delegation_info(args_ptr: u32) -> i32 {
+    let delegator    = read_addr(args_ptr, 0);
+    let validator_id = read_i64_word(args_ptr, 10);
+
+    let delegator_key  = format!("delegation:{}:{}", delegator, validator_id);
+    let amount         = get_i64(&delegator_key);
+    let reward_debt_key = format!("delegation_reward_debt:{}:{}", delegator, validator_id);
+    let debt           = get_i64(&reward_debt_key);
+    let rps            = get_i64(&key("validator_reward_per_share", validator_id));
+    let pending        = fp_mul(amount, rps - debt);
+
+    let json = format!(
+        "{{\"validator_id\":{},\"amount\":{},\"reward_debt\":{},\"pending_rewards\":{}}}",
+        validator_id, amount, debt, pending
+    );
+    storage_write("query_result", &json);
+    1
+}
+
+/// 12: get_capabilities()
+fn method_get_capabilities(_args_ptr: u32) -> i32 {
+    0x1FFF // bits 0–12: all thirteen methods
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
+}
+
+// ── exports ──────────────────────────────────────────────────────────────────
+#[no_mangle]
+pub extern "C" fn alloc(size: u32) -> u32 {
+    let layout = core::alloc::Layout::from_size_align(size.max(1) as usize, 8).unwrap();
+    let ptr = unsafe { alloc::alloc::alloc(layout) };
+    ptr as u32
+}
+
+#[no_mangle]
+pub extern "C" fn call(method_id: i32, args_ptr: u32, _args_len: u32) -> i32 {
+    match method_id {
+        0  => method_register(args_ptr),
+        1  => method_delegate(args_ptr),
+        2  => method_undelegate(args_ptr),
+        3  => method_complete_undelegate(args_ptr),
+        4  => method_claim_rewards(args_ptr),
+        5  => method_distribute_epoch(args_ptr),
+        6  => method_slash(args_ptr),
+        7  => method_unjail(args_ptr),
+        8  => method_update_commission(args_ptr),
+        9  => method_get_active_set(args_ptr),
+        10 => method_get_validator_info(args_ptr),
+        11 => method_get_delegation_info(args_ptr),
+        12 => method_get_capabilities(args_ptr),
+        _  => -99,
+    }
+}

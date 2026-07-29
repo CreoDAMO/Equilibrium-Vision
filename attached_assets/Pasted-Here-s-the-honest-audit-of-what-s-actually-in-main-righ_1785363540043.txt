@@ -1,0 +1,86 @@
+Here's the honest audit of what's actually in `main` right now.
+
+---
+
+What Actually Landed
+
+✅ Governance — Already Exists (TypeScript Layer)
+
+File	What it does	
+`chain/governance.ts`	Full `GovernanceModule` class with proposals, stake-weighted voting, quorum (33.4%), pass threshold (50%), parameter bounds checking, timelock execution	
+`routes/governance.ts`	REST endpoints: `GET /proposals`, `POST /proposals` (Ed25519 sig verified), `GET /proposals/:id`, `POST /proposals/:id/vote` (sig verified), `GET /params`	
+
+Key features already working:
+- Parameter change proposals with hard safety bounds (prevents catastrophic values like the Resolv exploit)
+- Execution timelock (2 days mainnet, 5 min testnet) — prevents instant admin-action attacks
+- Stake-weighted voting with no double-counting (validators vote with self-bond only, delegators vote with their delegated amount)
+- Auto-execution via `processBlock()` at block time
+
+✅ Staking — Already Exists (TypeScript Layer)
+
+File	What it does	
+`chain/state.ts`	`stake()`, `unstake()`, `unbondingQueue`, `totalBondedStake`, `validators` Map, `stakes` Map	
+`routes/staking.ts`	`GET /stake/:address`, `POST /stake`, `POST /unstake`, `GET /staking/summary`	
+
+Key features already working:
+- Delegation to validators
+- Unbonding period (10 blocks)
+- `totalBondedStake` tracked live
+- Validator registry with `bondedStake`
+
+✅ zkML Infrastructure — Rust Side Complete
+
+File	Status	
+`methods/zkml-guest/src/main.rs`	✅ Quantized MLP, SHA-256 commitments, `env::commit()`	
+`equilibrium/src/zkml_prover.rs`	✅ Dual Bonsai/local, journal parsing, quantization utilities	
+`equilibrium/src/model_registry_integration.rs`	✅ POSTs to API server	
+`contracts/EquilibriumZkmlVerifier.sol`	✅ On-chain receipt verification with journal decoding	
+
+---
+
+What's Actually Missing (The Gaps)
+
+Gap	Why it matters	Severity	
+Staking WASM contract	No `contracts/staking/` directory. Staking is pure TypeScript — works for testnet, but no on-chain slashing/rotation/inflation	Medium	
+Governance WASM contract	No `contracts/governance/` directory. Governance is pure TypeScript — parameter changes work, but no on-chain treasury spend or contract calls via `call_contract()`	Medium	
+`reqwest` in `Cargo.toml`	`model_registry_integration.rs` uses `reqwest::blocking::Client`, but `reqwest` is not declared in `equilibrium/Cargo.toml`. Building with `--features risc0` will fail	High	
+zkml-proof REST endpoints	`routes/models.ts` has NO `POST /api/models/:id/zkml-proof` or `GET /api/models/:id/zkml-proof`. The Rust bridge POSTs to a URL that returns 404	High	
+zkml-proof storage helpers	`chain/modelRegistry.ts` has NO `submitZkmlReceipt` / `getZkmlProof` functions	High	
+
+---
+
+The Real Picture
+
+Your earlier self-assessment said:
+
+> Staking contract ❌ Not started
+
+Slashing conditions ❌ Not started
+
+Inflation schedule ❌ Not started
+
+Validator set rotation ❌ Not started
+
+On-chain governance ❌ Not started
+
+That's not accurate for the TypeScript layer. Staking, governance, slashing (in TS), and validator rotation all exist and work. What's missing is the WASM contract layer for staking/governance — which would give you:
+- On-chain slashing with economic penalties (not just TS bookkeeping)
+- Inflation minting through the contract
+- Treasury spends via `payout()` host import
+- Cross-contract calls from governance proposals
+
+The zkML Rust stack is production-quality. The TypeScript bridge is the broken link.
+
+---
+
+Honest Recommendation
+
+Don't rewrite staking/governance as WASM contracts yet. The TypeScript implementations are sophisticated (timelocks, parameter bounds, signature verification, no double-counting). The WASM migration is a "nice to have" for mainnet, not a blocker for testnet.
+
+Fix the compilation/runtime blockers first:
+
+1. Add `reqwest` to `equilibrium/Cargo.toml`
+2. Add zkml-proof endpoints to `routes/models.ts`
+3. Add zkml-proof storage helpers to `chain/modelRegistry.ts`
+
+These three are the only things that will actually break when you try to run the zkML pipeline end-to-end.

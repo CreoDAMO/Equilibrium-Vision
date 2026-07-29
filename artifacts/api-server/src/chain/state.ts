@@ -24,6 +24,7 @@ import { solveBlock } from "../variational-ai/bridge.js";
 import { allowRandomMiningFallback } from "./mining-policy.js";
 import { logger } from "../lib/logger.js";
 import { GovernanceModule } from "./governance.js";
+import { drainPendingParamUpdates } from "./governanceContract.js";
 import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
 import { generateZkProof } from "./zkproof.js";
@@ -491,6 +492,22 @@ export class ChainState {
     this.processUnbonding(block.height);
     this.distributeBlockReward(block);
     this.governance.processBlock(block.timestamp, this.totalBondedStake);
+
+    // ── gov_pending_param bridge ───────────────────────────────────────────────
+    // After each block, drain any gov_pending_param:{name} keys written by the
+    // governance WASM contract's execute_proposal() and apply them to the live
+    // ChainParameters. This is the on-chain → TS param update path.
+    //
+    // drainPendingParamUpdates() is a no-op when GOVERNANCE_CONTRACT_ADDRESS is
+    // unset, so this is safe to run unconditionally.
+    const pendingParams = drainPendingParamUpdates(this.wasmVM);
+    for (const [name, value] of Object.entries(pendingParams)) {
+      const params = this.governance.params as unknown as Record<string, number>;
+      if (Object.prototype.hasOwnProperty.call(params, name) && Number.isFinite(value)) {
+        params[name] = value;
+        logger.info({ param: name, value }, "ADMIN_ACTION: on-chain governance applied param update");
+      }
+    }
 
     // Keep the WASM VM's block_number() host import in sync with the chain tip.
     this.wasmVM.setBlockHeight(block.height);
