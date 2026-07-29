@@ -152,7 +152,9 @@ fn cmd_verify(tx_path: &str) {
 }
 
 fn load_wallet(path: &str) -> Wallet {
-    Wallet::load(Path::new(path)).unwrap_or_else(|e| {
+    // Pass empty password — the CLI wallet uses plaintext (v1) keystores.
+    // For encrypted keystores, use `wallet load-encrypted <keystore> <password>`.
+    Wallet::load(Path::new(path), "").unwrap_or_else(|e| {
         eprintln!("Failed to load keystore '{path}': {e}");
         process::exit(1);
     })

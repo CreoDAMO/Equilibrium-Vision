@@ -47,6 +47,14 @@ log = "0.4"
 risc0-zkvm = { version = "2.3", optional = true }
 methods     = { path = "../methods", optional = true }
 
+# ── Security: minimum version pins for transitive deps (Dependabot) ──────────
+# yamux: remote panic via malformed Data frame (GHSA-2qph-qpvm-2qf7, High)
+yamux = { version = ">=0.12.1", optional = true }
+# hickory-proto: NSEC3 unbounded loop + O(n²) compression (High + Moderate)
+hickory-proto = { version = ">=0.24.2", optional = true }
+# tracing-subscriber: ANSI escape sequence poisoning (Low)
+tracing-subscriber = { version = ">=0.3.19", optional = true }
+
 [features]
 risc0 = ["dep:risc0-zkvm", "dep:methods"]
 

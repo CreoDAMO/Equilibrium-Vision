@@ -1,0 +1,24 @@
+// Add to root package.json (or pnpm-workspace.yaml for monorepo-wide)
+
+{
+  "pnpm": {
+    "overrides": {
+      "brace-expansion": ">=2.0.2",
+      "js-yaml": ">=4.1.2",
+      "fast-uri": ">=3.0.2",
+      "linkify-it": ">=5.0.1",
+      "postcss": ">=8.4.41",
+      "esbuild": ">=0.23.1"
+    }
+  }
+}
+
+// Alternative: pnpm-workspace.yaml
+// pnpm:
+//   overrides:
+//     brace-expansion: '>=2.0.2'
+//     js-yaml: '>=4.1.2'
+//     fast-uri: '>=3.0.2'
+//     linkify-it: '>=5.0.1'
+//     postcss: '>=8.4.41'
+//     esbuild: '>=0.23.1'

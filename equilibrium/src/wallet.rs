@@ -436,12 +436,14 @@ mod tests {
     }
 
     // Transaction sequence numbers used in tests.  These are ledger counters,
-    // not cryptographic secrets (keys / IVs / salts).  The lgtm suppression
-    // below is intentional: CodeQL's rust/hard-coded-cryptographic-value rule
-    // fires on any integer literal flowing into a signing call site, including
-    // deterministic test sequences where a fixed value is required by design.
-    const NONCE_FIRST: u64 = 0; // lgtm[rust/hard-coded-cryptographic-value]
-    const NONCE_SKIP: u64  = 1; // lgtm[rust/hard-coded-cryptographic-value]
+    // not cryptographic secrets (keys / IVs / salts).  CodeQL's
+    // rust/hard-coded-cryptographic-value rule fires on any integer literal
+    // flowing into a signing call site, including deterministic test sequences
+    // where a fixed value is required by design.
+    // codeql[rust/hard-coded-cryptographic-value] Fixed nonces for deterministic test vectors — not used in production code paths
+    const NONCE_FIRST: u64 = 0;
+    // codeql[rust/hard-coded-cryptographic-value] Fixed nonces for deterministic test vectors — not used in production code paths
+    const NONCE_SKIP: u64 = 1;
 
     #[test]
     fn sign_and_verify_roundtrip() {

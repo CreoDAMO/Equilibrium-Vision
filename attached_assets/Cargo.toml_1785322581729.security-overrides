@@ -1,0 +1,35 @@
+# Add these minimum version constraints to your Cargo.toml files
+# to prevent future downgrades.
+
+# ── equilibrium/Cargo.toml ─────────────────────────────────────────────────────
+[dependencies]
+# ... existing deps ...
+
+# Security: risc0-zkvm-platform arbitrary code execution (CVE-2024-XXXX)
+# Critical severity. sys_read memory safety failure allows guest ACI.
+risc0-zkvm = { version = "1.1", default-features = false, optional = true }
+
+# Security: hickory-proto NSEC3 infinite loop + O(n²) compression (CVE-2024-XXXX)
+# High + Moderate severity. DNS response parsing DoS.
+hickory-proto = ">=0.24.2"
+
+# Security: yamux remote panic via malformed Data frame
+# High severity. P2P connection DoS.
+yamux = ">=0.12.1"
+
+# Security: tracing-subscriber ANSI escape sequence poisoning
+# Low severity. Log injection via user-controlled input.
+tracing-subscriber = ">=0.3.19"
+
+# Security: rand unsound with custom logger
+# Low severity. Thread-local RNG state corruption.
+rand = ">=0.8.5"
+
+# ── mpc-ceremony/Cargo.toml ───────────────────────────────────────────────────
+[dependencies]
+# ... existing deps ...
+
+yamux = ">=0.12.1"
+hickory-proto = ">=0.24.2"
+tracing-subscriber = ">=0.3.19"
+rand = ">=0.8.5"

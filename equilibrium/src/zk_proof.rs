@@ -170,10 +170,11 @@ pub struct Groth16ProofBytes {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StationarityPublicInputs {
-    pub residual_fp: [u8; 32],
-    pub threshold_fp: [u8; 32],
-    pub block_hash_lo: [u8; 32],
-    pub block_hash_hi: [u8; 32],
+    pub prev_hash:           [u8; 32],
+    pub difficulty:          u64,
+    pub threshold_fp:        [u8; 32],
+    pub timestamp:           u64,
+    pub mempool_pressure_fp: [u8; 32],
 }
 
 pub struct StationarityProof {
@@ -184,6 +185,69 @@ pub struct StationarityProof {
     pub challenge: [u8; 32],
     pub response: u64,
     pub revealed_txs: Vec<TxCandidate>,
+}
+
+impl StationarityProof {
+    /// Prove stationarity for a block. Generates a Groth16 proof that the
+    /// block's residual is below the given threshold.
+    pub fn prove(
+        header: &BlockHeader,
+        _txs: &[TxCandidate],
+        _state: &ChainState,
+        threshold: f64,
+    ) -> StationarityProof {
+        let residual_fp = header.residual.unsigned_abs();
+        let threshold_fp = residual_to_fixed(threshold).unsigned_abs();
+        let groth16_proof = prove_stationarity(residual_fp, threshold_fp, &header.prev_hash);
+
+        let mut threshold_bytes = [0u8; 32];
+        threshold_bytes[..8].copy_from_slice(&threshold_fp.to_le_bytes());
+
+        StationarityProof {
+            proof: groth16_proof,
+            public_inputs: StationarityPublicInputs {
+                prev_hash:           header.prev_hash,
+                difficulty:          header.difficulty,
+                threshold_fp:        threshold_bytes,
+                timestamp:           header.timestamp,
+                mempool_pressure_fp: [0u8; 32],
+            },
+            vk_hash:      expected_vk_hash(),
+            valid:        true,
+            challenge:    [0u8; 32],
+            response:     0,
+            revealed_txs: vec![],
+        }
+    }
+
+    /// Verify a stationarity proof against a block header.
+    ///
+    /// Returns `false` immediately on vk_hash mismatch (cheap) or empty proof
+    /// bytes, before attempting the full Groth16 deserialization and pairing
+    /// check.
+    pub fn verify(
+        proof: &StationarityProof,
+        header: &BlockHeader,
+        _state: &ChainState,
+        threshold: f64,
+    ) -> bool {
+        // Fast rejection: vk_hash mismatch means wrong circuit / CRS
+        if proof.vk_hash != expected_vk_hash() {
+            return false;
+        }
+        if proof.proof.raw.is_empty() {
+            return false;
+        }
+
+        let residual_fp = header.residual.unsigned_abs();
+        let threshold_fp = residual_to_fixed(threshold).unsigned_abs();
+
+        let verifier = Groth16Verifier::dummy();
+        matches!(
+            verifier.verify(&proof.proof.raw, residual_fp, threshold_fp, &header.prev_hash),
+            Ok(VerificationResult::Valid)
+        )
+    }
 }
 
 // ── Encoding helpers ──────────────────────────────────────────────────────────
@@ -495,6 +559,18 @@ pub fn prove_stationarity_zkvm(
 
 pub fn unified_from_groth16(proof: &Groth16ProofBytes) -> Option<UnifiedProof> {
     UnifiedProof::from_wire_groth16(&proof.raw)
+}
+
+/// Verify a raw `Groth16ProofBytes` against a block header and threshold.
+/// Convenience wrapper used by the consensus-api binary.
+pub fn verify_raw_proof(proof: &Groth16ProofBytes, header: &BlockHeader, threshold: f64) -> bool {
+    let residual_fp  = header.residual.unsigned_abs();
+    let threshold_fp = residual_to_fixed(threshold).unsigned_abs();
+    let verifier = Groth16Verifier::dummy();
+    matches!(
+        verifier.verify(&proof.raw, residual_fp, threshold_fp, &header.prev_hash),
+        Ok(VerificationResult::Valid)
+    )
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

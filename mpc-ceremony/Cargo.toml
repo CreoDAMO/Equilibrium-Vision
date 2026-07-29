@@ -18,3 +18,8 @@ clap = { version = "4", features = ["derive"] }
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.10"
+
+# ── Security: minimum version pins for transitive deps (Dependabot) ──────────
+yamux = { version = ">=0.12.1", optional = true }
+hickory-proto = { version = ">=0.24.2", optional = true }
+tracing-subscriber = { version = ">=0.3.19", optional = true }
