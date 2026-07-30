@@ -177,6 +177,19 @@ jobs:
         working-directory: equilibrium
         run: cargo build --release --bin p2p-sidecar
 
+      - name: Build consensus-api binary
+        # Option B: builds the real Rust ZK proof backend so Vitest tests can
+        # exercise the production proof path (rust-sidecar) in addition to the
+        # TS trapdoor fallback. The binary is added to PATH below so that any
+        # test that shells out to `consensus-api` finds it automatically.
+        working-directory: equilibrium
+        run: cargo build --release --bin consensus-api
+
+      - name: Add equilibrium release binaries to PATH
+        # Exposes consensus-api (and p2p-sidecar) to every subsequent step,
+        # including the Vitest run, without hardcoding an absolute path.
+        run: echo "${{ github.workspace }}/equilibrium/target/release" >> $GITHUB_PATH
+
       - name: Cache Rust build artifacts (WASM contracts)
         uses: Swatinem/rust-cache@v2
         with:
@@ -213,6 +226,12 @@ jobs:
         run: pnpm --filter @workspace/api-server run test
         env:
           DATABASE_URL: postgresql://runner@localhost:5432/equilibrium
+          # Option A: allow the TS trapdoor prover in CI so every test that
+          # mines a block (generateZkProof / mineNextBlock / advanceBlocks)
+          # can run without a live Rust consensus-api process.  The trapdoor
+          # prover is deterministic and exercised extensively by the test suite;
+          # it is intentionally disabled only in NODE_ENV=production deployments.
+          ALLOW_TS_TRAPDOOR_PROVER: "true"
 
   # ── Rust unit tests (equilibrium) ───────────────────────────────────────────
   rust-test:
