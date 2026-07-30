@@ -1,0 +1,1812 @@
+❯ src/__tests__/arbitrage.stress.test.ts (14 tests | 13 failed) 354ms
+
+
+    × sets up verified model and executions 1–5 are NOT rejected with the circuit-breaker error 15ms
+
+
+    × the 6th call is rejected with 'Paused or circuit breaker tripped' 9ms
+
+
+    × after unpause, the next call is no longer blocked by the circuit breaker 8ms
+
+
+    × rejects amountIn exceeding the governance cap with 'Amount exceeds the max trade amount' 9ms
+
+
+    × pool reserves are unchanged after a cap-rejected call 8ms
+
+
+    × execute succeeds and pool reserves change even when profit < minProfit 8ms
+
+
+    × no more than 5 non-circuit-breaker results from 10 concurrent calls 10ms
+
+
+    × advancing past the window does NOT clear a tripped breaker; unpause() does 8ms
+
+
+    × 3 execs in window N, advance past it, 3 execs in window N+1 — never trips breaker 6ms
+
+
+    × lowering arbitrageMaxTradeAmount rejects a previously-passing amountIn 8ms
+
+
+    × changing arbitrageWindowBlocks live affects subsequent window checks 4ms
+
+
+    × rollbackToHeight keeps chainState.height correct and the VM stays coherent 6ms
+
+
+    × pool reserves change after a swap even if ArbitrageUnderTarget is logged
+
+❯ src/__tests__/crosschain.integration.test.ts (34 tests | 4 failed) 691ms
+
+
+    ✓ GET /api/relay/info returns contract address once deployed 40ms
+
+
+    ✓ rejects registration below min bond 37ms
+
+
+    ✓ registers a relayer with sufficient bond 11ms
+
+
+    ✓ rejects duplicate registration 9ms
+
+
+    ✓ GET /api/relay/info shows 1 relayer after registration 15ms
+
+
+    ✓ rejects threshold update without admin key 6ms
+
+
+    ✓ admin can set threshold to 1 for single-relayer tests 10ms
+
+
+    ✓ rejects attestation with missing chainId 13ms
+
+
+    ✓ rejects attestation with wrong seq (skipping seq 1) 20ms
+
+
+    ✓ rejects attestation with bad signature 16ms
+
+
+    ✓ accepts a valid single-relayer attestation 41ms
+
+
+    ✓ rejects duplicate attestation for same chain+seq 11ms
+
+
+    ✓ GET status shows attestation as pending 10ms
+
+
+    ✓ 404 for non-existent attestation 8ms
+
+
+    ✓ rejects finalization before challenge window expires 14ms
+
+
+    × accepts finalization after advancing past challenge window (100 blocks) 27ms
+
+
+    × GET status shows attestation as finalized 18ms
+
+
+    × rejects double-finalization 10ms
+
+
+    ✓ rejects challenge without admin key 4ms
+
+
+    ✓ admin can challenge a fraudulent attestation 8ms
+
+
+    ✓ GET status shows attestation as challenged 10ms
+
+
+    ✓ rejects double-challenge 16ms
+
+
+    × rejects finalization of a challenged attestation 1ms
+
+
+    ✓ rejects malformed commitmentHex 5ms
+
+
+    ✓ publishes first outbound commitment with seq=1 7ms
+
+
+    ✓ publishes second outbound commitment with seq=2 7ms
+
+
+    ✓ GET outbound seq returns 2 7ms
+
+
+    ✓ rejects attestation with only 1 signature when threshold is 2 13ms
+
+
+    ✓ rejects attestation with duplicate signer 12ms
+
+
+    ✓ accepts 2-of-2 attestation with distinct valid signatures 21ms
+
+
+    ✓ GET status for 2-of-2 attestation shows both signers 7ms
+
+
+    ✓ rejects revocation without admin key 4ms
+
+
+    ✓ admin can revoke a relayer 6ms
+
+
+    ✓ revoked relayer no longer in relayer set 13ms
+
+
+❯ src/__tests__/chain.unit.test.ts (41 tests | 10 failed) 64ms
+
+
+    ✓ returns a 64-char lowercase hex string 4ms
+
+
+    ✓ is deterministic 0ms
+
+
+    ✓ is a double-SHA256 — differs from a single SHA256 1ms
+
+
+    ✓ avalanches — different inputs produce different outputs 0ms
+
+
+    ✓ returns 64 zeros for an empty list 0ms
+
+
+    ✓ returns the single hash unchanged 0ms
+
+
+    ✓ hashes a two-element list as hash256(a + b) 0ms
+
+
+    ✓ duplicates the last element for an odd-length list 0ms
+
+
+    ✓ produces consistent results for a four-element list 1ms
+
+
+    ✓ returns a 40-char lowercase hex string 1ms
+
+
+    ✓ is deterministic 0ms
+
+
+    ✓ different seeds produce different addresses 0ms
+
+
+    ✓ is the first 40 chars of sha256(seed) 0ms
+
+
+    ✓ encodes zero as '0' 0ms
+
+
+    ✓ uses Math.floor — not Math.round 1ms
+
+
+    ✓ encodes the default threshold 1e-7 as 100000000000 1ms
+
+
+    ✓ returns a decimal string consistent with BigInt conversion 0ms
+
+
+    ✓ result is within the BN254 scalar field 0ms
+
+
+    ✓ returns two decimal strings parseable as BigInt 1ms
+
+
+    ✓ blockHashHigh is '0' — the input fits in 128 bits 0ms
+
+
+    ✓ blockHashLow matches the expected BigInt value 0ms
+
+
+    ✓ strips a leading 0x prefix correctly 0ms
+
+
+    ✓ different hashes produce different low fields 0ms
+
+
+    × marks proof valid when residual < threshold (1e-7) 6ms
+
+
+    × marks proof invalid when residual >= threshold 1ms
+
+
+    × carries the correct circuitId 1ms
+
+
+    × vkHash is a 64-char hex string 2ms
+
+
+    × proof contains non-zero G1 point coordinates 1ms
+
+
+    × verifyZkProof accepts a freshly generated valid proof 0ms
+
+
+    × verifyZkProof rejects proof with tampered residual (above threshold) 0ms
+
+
+    × verifyZkProof rejects proof with wrong vkHash 0ms
+
+
+    × verifyZkProof rejects proof with wrong circuitId 0ms
+
+
+    × different blocks produce different proof point coordinates 1ms
+
+
+    ✓ clamps up to +20% when block time is much faster than target 1ms
+
+
+    ✓ clamps down to -20% when block time is much slower than target 0ms
+
+
+    ✓ makes no change when avg block time exactly equals target 0ms
+
+
+    ✓ never drops below minimum difficulty (100 000) 0ms
+
+
+    ✓ keeps difficulty unchanged when there are no blocks (returns target avg) 0ms
+
+    ✓ credits accrued UTXO fees to the next block's miner as a UTXO output 16ms
+
+
+    ✓ does not create a fee UTXO when no fees have accrued (only the coinbase reward is paid) 9ms
+
+
+    ✓ restores the fee pool on rollback so it can be re-swept on the winning fork 6ms
+
+
+❯ src/__tests__/api.integration.test.ts (32 tests | 2 failed) 339ms
+
+
+    ✓ returns 200 with status ok 32ms
+
+
+    ✓ returns 200 with the expected shape 8ms
+
+
+    ✓ latestHash is a 64-char hex string 8ms
+
+
+    ✓ height is a non-negative integer 5ms
+
+
+    ✓ difficulty is a positive integer 4ms
+
+
+    ✓ returns 200 with a paginated response shape 4ms
+
+
+    ✓ respects the limit query param 3ms
+
+
+    ✓ each block in the list has the required fields 3ms
+
+
+    ✓ page 2 is different from page 1 (when enough blocks exist) 10ms
+
+
+    ✓ returns block 0 (genesis) by height 3ms
+
+
+    ✓ returns the same block when fetched by its hash 4ms
+
+
+    ✓ returns 404 for a non-existent block 5ms
+
+
+    ✓ returns 404 for a height beyond the chain tip 7ms
+
+
+    ✓ returns 200 with a transactions array and pressure field 3ms
+
+
+    ✓ returns 400 when miner is missing 19ms
+
+
+    ✓ returns 400 when nonce is missing 3ms
+
+
+    ✓ returns 400 when residual is missing 3ms
+
+
+    ✓ returns 422 when residual is above the threshold (1e-7) 3ms
+
+
+    ✓ returns 409 when prevHash does not match the current chain tip 3ms
+
+
+    × returns 201 and a valid block record for a good submission 13ms
+
+
+    × block submitted above reflects in chain status height 3ms
+
+
+    ✓ returns 200 with utxo shape for any address 3ms
+
+
+    ✓ returns 200 with an array of peers 2ms
+
+
+    ✓ returns 200 with at least one genesis validator 2ms
+
+
+    ✓ accepts a valid Ed25519 signature and returns 200 4ms
+
+
+    ✓ returns 401 when the signature is from a different key 5ms
+
+
+    ✓ returns 400 when publicKey does not correspond to voter address 3ms
+
+
+    ✓ GET returns 400 without a platform query parameter 2ms
+
+
+    ✓ GET returns 404 for a platform with no published release 12ms
+
+
+    ✓ POST rejects a request missing required fields 6ms
+
+
+    ✓ POST publishes a release and GET returns it back 16ms
+
+
+    ✓ POST enforces X-Admin-Key when ADMIN_KEY/ADMIN_API_KEY is configured 12ms
+
+
+❯ src/__tests__/models.integration.test.ts (23 tests | 3 failed) 598ms
+
+
+    ✓ returns a numeric modelId on propose 2ms
+
+
+    ✓ GET /api/models/:id reports status 'proposed' with the proposer recorded 15ms
+
+
+    ✓ appears in GET /api/models 7ms
+
+
+    ✓ verify fails while the challenge window is still open 14ms
+
+
+    × verify succeeds once the challenge window has elapsed, flipping status to verified 11ms
+
+
+    × re-verifying an already-verified model is a no-op success 72ms
+
+
+    ✓ returns an error when the posted support set doesn't hash to the committed value 12ms
+
+
+    ✓ model remains in 'proposed' status after a rejected challenge 10ms
+
+
+    ✓ a matching challenge disproves the claim and slashes the model 13ms
+
+
+    ✓ model status flips to 'slashed' 11ms
+
+
+    ✓ shows as slashed in the model list too 3ms
+
+
+    ✓ the challenger is paid a reward and refunded their bond 0ms
+
+
+    × a slashed model can no longer be verified 1ms
+
+
+    ✓ rejects propose with a missing caller 3ms
+
+
+    ✓ rejects propose with missing numeric fields 3ms
+
+
+    ✓ GET /api/models/:id returns 404 for an unknown id 11ms
+
+
+    ✓ GET /api/models/:id returns 400 for a non-numeric id 2ms
+
+
+    ✓ rejects challenge with non-array supportData/supportLabels 13ms
+
+
+    ✓ rejects propose when the caller has insufficient balance for the bond 11ms
+
+
+    ✓ GET inference-status is 'none' before any attestation 10ms
+
+
+    ✓ accepts a validly-signed inference attestation and reflects it in status 153ms
+
+
+    ✓ rejects an attestation whose signature does not match the claimed attestor 15ms
+
+
+    ✓ returns 404 for inference-status on an unknown model id 8ms
+
+
+✓ src/__tests__/multisig.integration.test.ts (19 tests) 464ms
+
+
+✓ src/__tests__/p2p-sync.integration.test.ts (12 tests) 86ms
+
+
+❯ src/__tests__/arbitrage.integration.test.ts (24 tests | 8 failed) 208ms
+src/__tests__/arbitrage.integration.test.ts (24 tests | 8 failed) 208ms
+
+
+    ✓ returns 200 with the expected shape 16ms
+
+
+    ✓ honours the ?limit query param (capped at 20) 5ms
+
+
+    ✓ clamps an oversized limit to 20 4ms
+
+
+    ✓ each opportunity has the required fields when present 3ms
+
+
+    ✓ returns 200 with a valid contract address once initChain has deployed it 3ms
+
+
+    ✓ reports circuitTripped=false on a fresh deployment 2ms
+
+
+    ✓ reports an owner address (40 hex chars) 3ms
+
+
+    ✓ reports a numeric execCount 4ms
+
+
+    × pause returns success when called by the contract owner 19ms
+
+
+    × GET /api/arbitrage/status reflects paused=true 3ms
+
+
+    × unpause restores paused=false 3ms
+
+
+    × a non-owner cannot pause the contract 4ms
+
+
+    × pause requires a caller field 7ms
+
+
+    × unpause requires a caller field 3ms
+
+
+    × rejects a request missing caller / registryAddress / modelId 2ms
+
+
+    × rejects a non-owner caller 4ms
+
+
+    ✓ rejects a request missing required fields 2ms
+
+
+    ✓ rejects poolIds that is not an array 2ms
+
+
+    ✓ returns a well-formed error or success response shape 4ms
+
+
+    ✓ pause returns 403 when X-Admin-Key header is absent 2ms
+
+
+    ✓ pause returns 403 when X-Admin-Key header has the wrong value 2ms
+
+
+    ✓ pause succeeds when the correct X-Admin-Key header is sent 3ms
+
+
+    ✓ unpause succeeds with the correct key 3ms
+
+
+    ✓ set-model returns 403 without the header 4ms
+
+
+✓ src/__tests__/p2p-mesh.integration.test.ts (4 tests) 10253ms
+
+
+    ✓ node2 receives a gossiped block hash from node1 10020ms
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+
+
+❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:154:5
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/40]⎯
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.1 Rapid-fire execution — circuit breaker trips after 5 calls > the 6th call is rejected with 'Paused or circuit breaker tripped'
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+
+
+❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:178:5
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/40]⎯
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.1 Rapid-fire execution — circuit breaker trips after 5 calls > after unpause, the next call is no longer blocked by the circuit breaker
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+
+
+❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:203:5
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/40]⎯
+
+
+FAIL src/__tests__/arbitrage.stress.test.ts > 2.2 Max-trade-amount cap > rejects amountIn exceeding the governance cap with 'Amount exceeds the max trade amount'
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+
+
+❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:607:5
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/40]⎯
+
+
+FAIL src/__tests__/chain.unit.test.ts > generateZkProof / verifyZkProof > marks proof valid when residual < threshold (1e-7)
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ src/__tests__/chain.unit.test.ts:185:19
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/40]⎯
+
+
+FAIL src/__tests__/chain.unit.test.ts > generateZkProof / verifyZkProof > marks proof invalid when residual >= threshold
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ src/__tests__/chain.unit.test.ts:190:19
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/40]⎯
+
+
+FAIL src/__tests__/chain.unit.test.ts > generateZkProof / verifyZkProof > carries the correct circuitId
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ src/__tests__/chain.unit.test.ts:195:19
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/40]⎯
+
+
+FAIL src/__tests__/chain.unit.test.ts > generateZkProof / verifyZkProof > vkHash is a 64-char hex string
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ src/__tests__/chain.unit.test.ts:200:19
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/40]⎯
+
+
+FAIL src/__tests__/chain.unit.test.ts > generateZkProof / verifyZkProof > proof contains non-zero G1 point coordinates
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ src/__tests__/chain.unit.test.ts:206:19
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/40]⎯
+
+
+FAIL src/__tests__/chain.unit.test.ts > generateZkProof / verifyZkProof > verifyZkProof accepts a freshly generated valid proof
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ src/__tests__/chain.unit.test.ts:214:19
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[29/40]⎯
+
+
+FAIL src/__tests__/chain.unit.test.ts > generateZkProof / verifyZkProof > verifyZkProof rejects proof with tampered residual (above threshold)
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ src/__tests__/chain.unit.test.ts:219:19
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[30/40]⎯
+
+
+FAIL src/__tests__/chain.unit.test.ts > generateZkProof / verifyZkProof > verifyZkProof rejects proof with wrong vkHash
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ src/__tests__/chain.unit.test.ts:231:19
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[31/40]⎯
+
+
+FAIL src/__tests__/chain.unit.test.ts > generateZkProof / verifyZkProof > verifyZkProof rejects proof with wrong circuitId
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ src/__tests__/chain.unit.test.ts:236:19
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[32/40]⎯
+
+
+FAIL src/__tests__/chain.unit.test.ts > generateZkProof / verifyZkProof > different blocks produce different proof point coordinates
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ src/__tests__/chain.unit.test.ts:241:16
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[33/40]⎯
+
+
+FAIL src/__tests__/crosschain.integration.test.ts > CrossChainRelay — inbound finalization after challenge window > accepts finalization after advancing past challenge window (100 blocks)
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/crosschain.integration.test.ts:48:25
+
+
+❯ src/__tests__/crosschain.integration.test.ts:346:5
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[34/40]⎯
+
+
+FAIL src/__tests__/crosschain.integration.test.ts > CrossChainRelay — inbound finalization after challenge window > GET status shows attestation as finalized
+
+
+AssertionError: expected 'pending' to be 'finalized' // Object.is equality
+
+
+Expected: "finalized"
+
+
+Received: "pending"
+
+
+❯ src/__tests__/crosschain.integration.test.ts:359:29
+
+
+   357|     const res = await api.get(`/api/relay/attest/inbound/${chainId}/1`…
+
+
+   358|     expect(res.status).toBe(200);
+
+
+   359|     expect(res.body.status).toBe("finalized");
+
+
+     |                             ^
+
+
+   360|   });
+
+
+   361|
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[35/40]⎯
+
+
+FAIL src/__tests__/crosschain.integration.test.ts > CrossChainRelay — inbound finalization after challenge window > rejects double-finalization
+
+
+AssertionError: expected 'Challenge window still open' to match /already finalized/i
+
+
+- Expected:
+
+
+/already finalized/i
+
+
++ Received:
+
+
+"Challenge window still open"
+
+
+❯ src/__tests__/crosschain.integration.test.ts:369:28
+
+
+   367|       .send({ caller: randomAddress() });
+
+
+   368|     expect(res.status).toBe(400);
+
+
+   369|     expect(res.body.error).toMatch(/already finalized/i);
+
+
+     |                            ^
+
+
+   370|   });
+
+
+   371| });
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[36/40]⎯
+FAIL src/__tests__/crosschain.integration.test.ts > CrossChainRelay — admin challenge + slashing > rejects finalization of a challenged attestation
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/crosschain.integration.test.ts:48:25
+
+
+❯ src/__tests__/crosschain.integration.test.ts:445:5
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[37/40]⎯
+
+
+FAIL src/__tests__/models.integration.test.ts > Models API — propose -> verify (undisputed) > verify succeeds once the challenge window has elapsed, flipping status to verified
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/models.integration.test.ts:30:25
+
+
+❯ src/__tests__/models.integration.test.ts:91:5
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[38/40]⎯
+
+
+FAIL src/__tests__/models.integration.test.ts > Models API — propose -> verify (undisputed) > re-verifying an already-verified model is a no-op success
+
+
+AssertionError: expected 400 to be 200 // Object.is equality
+
+
+- Expected
+
+
++ Received
+
+
+- 200
+
+
++ 400
+
+
+❯ src/__tests__/models.integration.test.ts:103:24
+
+
+   101|   it("re-verifying an already-verified model is a no-op success", asyn…
+
+
+   102|     const res = await api.post(`/api/models/${modelId}/verify`).send({…
+
+
+   103|     expect(res.status).toBe(200);
+
+
+     |                        ^
+
+
+   104|     expect(res.body.success).toBe(true);
+
+
+   105|     expect(res.body.status).toBe("verified");
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[39/40]⎯
+
+
+FAIL src/__tests__/models.integration.test.ts > Models API — challenge slashes a model whose claimed residual is provably wrong > a slashed model can no longer be verified
+
+
+Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+   219|   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
+
+
+   220|   if (!ALLOW_TS_PROVER) {
+
+
+   221|     throw new Error("TS trapdoor prover is disabled in production. Use…
+
+
+     |           ^
+
+
+   222|   }
+
+
+   223|
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/models.integration.test.ts:30:25
+
+
+❯ src/__tests__/models.integration.test.ts:217:5
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[40/40]⎯
+
+
+Test Files 6 failed | 4 passed (10)
+
+
+     Tests 40 failed | 221 passed (261)
+
+
+  Start at 01:16:02
+
+
+  Duration 17.07s (transform 2.28s, setup 0ms, import 15.67s, tests 13.45s, environment 2ms)
+
+
+Error: AssertionError: expected 500 to be 201 // Object.is equality
+
+
+
+
+
+- Expected
+
+
++ Received
+
+
+
+
+
+- 201
+
+
++ 500
+
+
+
+
+
+❯ src/__tests__/api.integration.test.ts:233:24
+
+
+
+
+
+
+
+
+Error: AssertionError: expected 0 to be greater than 0
+
+
+❯ src/__tests__/api.integration.test.ts:250:29
+
+
+
+
+
+
+
+
+Error: AssertionError: expected 503 to be 200 // Object.is equality
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+
+
+❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:389:5
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+
+
+❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:438:5
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+
+
+❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:483:5
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:512:5
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:564:25
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+
+
+❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+
+
+❯ src/__tests__/arbitrage.stress.test.ts:607:5
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ src/__tests__/chain.unit.test.ts:185:19
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ src/__tests__/chain.unit.test.ts:190:19
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ src/__tests__/chain.unit.test.ts:195:19
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ src/__tests__/chain.unit.test.ts:200:19
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ src/__tests__/chain.unit.test.ts:206:19
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ src/__tests__/chain.unit.test.ts:214:19
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ src/__tests__/chain.unit.test.ts:219:19
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ src/__tests__/chain.unit.test.ts:231:19
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ src/__tests__/chain.unit.test.ts:236:19
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ src/__tests__/chain.unit.test.ts:241:16
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/crosschain.integration.test.ts:48:25
+
+
+❯ src/__tests__/crosschain.integration.test.ts:346:5
+
+
+
+
+
+
+
+
+Error: AssertionError: expected 'pending' to be 'finalized' // Object.is equality
+
+
+
+
+
+Expected: "finalized"
+
+
+Received: "pending"
+
+
+
+
+
+❯ src/__tests__/crosschain.integration.test.ts:359:29
+
+
+
+
+
+
+
+
+Error: AssertionError: expected 'Challenge window still open' to match /already finalized/i
+
+
+
+
+
+- Expected:
+
+
+/already finalized/i
+
+
+
+
+
++ Received:
+
+
+"Challenge window still open"
+
+
+
+
+
+❯ src/__tests__/crosschain.integration.test.ts:369:28
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/crosschain.integration.test.ts:48:25
+
+
+❯ src/__tests__/crosschain.integration.test.ts:445:5
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/models.integration.test.ts:30:25
+
+
+❯ src/__tests__/models.integration.test.ts:91:5
+
+
+
+
+
+
+
+
+Error: AssertionError: expected 400 to be 200 // Object.is equality
+
+
+
+
+
+- Expected
+
+
++ Received
+
+
+
+
+
+- 200
+
+
++ 400
+
+
+
+
+
+❯ src/__tests__/models.integration.test.ts:103:24
+
+
+
+
+
+
+
+
+Error: Error: TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.
+
+
+❯ generateZkProof src/chain/zkproof.ts:221:11
+
+
+❯ mineNextBlock src/chain/state.ts:1789:19
+
+
+❯ advanceBlocks src/__tests__/models.integration.test.ts:30:25
+
+
+❯ src/__tests__/models.integration.test.ts:217:5
+
+
+
+
+
+
+
+
+/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server:
+
+
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 test: `vitest run`
+
+
+Exit status 1
+
+
+Error: Process completed with exit code 1.
+
