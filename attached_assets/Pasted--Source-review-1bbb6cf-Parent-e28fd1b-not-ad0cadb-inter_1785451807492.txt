@@ -1,0 +1,72 @@
+## Source review: `1bbb6cf`
+
+Parent: `e28fd1b` (not `ad0cadb` — intermediate commits in between). Message: `git update`. ~1k lines.
+
+---
+
+### What landed (Gap 5 — PTAU)
+
+| Piece | Status |
+|-------|--------|
+| `mpc-ceremony/src/ptau.rs` | **Yes** — streaming snarkjs/Hermez reader |
+| Magic `ptau`, sections 1–7 | **Yes** |
+| `MIN_PTAU_POWER = 20` | **Yes** |
+| Fingerprint + τG1/τG2 samples | **Yes** |
+| Reject zero τ samples | **Yes** |
+| Mainnet init without `--ptau` → exit 4 | **Yes** |
+| Bad/missing PTAU → exit 2; power too small → exit 5 | **Yes** |
+| `init --ptau` → setup from fingerprint (not fixed seed) | **Yes** |
+| `.ptau.json` metadata sidecar | **Yes** |
+| `MPC_ALLOW_PTAU_PLACEHOLDER` fallback | **Removed** — no silent deterministic under `--ptau` |
+
+Streaming is a real upgrade: large Hermez files are not fully loaded into RAM.
+
+---
+
+### What did **not** land
+
+| Piece | Status |
+|-------|--------|
+| `snarkjs_import.rs` | **Absent** |
+| `import-vk` / `import-zkey` CLI | **Absent** |
+| zkey → ark compressed PK | **Absent** |
+| Raw τ-power QAP specialization | **No** — still `circuit_specific_setup` with PTAU-derived RNG |
+
+Comments in `init_from_ptau` state that honestly: ark-groth16 0.4 has no τ-power specialize API; keys are **bound to the PTAU transcript**, not a pure multi-party phase-2 over R1CS matrices.
+
+---
+
+### Crypto honesty
+
+```text
+valid community .ptau
+  → fingerprint(header + τ prefixes)
+  → StdRng::from_seed(SHA256("equilibrium-phase2-setup-v1" || …))
+  → Groth16::circuit_specific_setup(StationarityCircuit)
+  → PK/VK + .ptau.json
+```
+
+So:
+
+- **Not** fixed-seed `0xCAFE_BABE_DEAD_BEEF` under `--ptau`
+- **Not** “import τ powers and evaluate the QAP” (snarkjs `zkey new` style)
+- **Is** fail-closed + PTAU-bound CRS for the ark prove path
+
+---
+
+### Gap 5 scorecard after this commit
+
+| Layer | Status |
+|-------|--------|
+| Policy (mainnet / missing file / undersized) | **Closed** |
+| Real `.ptau` parse + fingerprint setup | **Closed** (as designed above) |
+| External snarkjs zkey → ark VK/PK import | **Still open** |
+| Full phase-2 MPC contribution protocol | **Still open** (`contribute` still re-setups) |
+
+---
+
+### Bottom line
+
+`1bbb6cf` implements the **PTAU import path we drafted** (streaming parser + fingerprint-bound setup + hard fails). It does **not** implement the follow-on **snarkjs zkey → ark converter**.
+
+Next concrete step if you want that path: add `snarkjs_import.rs` + `import-vk` / `import-zkey` as in the previous message.

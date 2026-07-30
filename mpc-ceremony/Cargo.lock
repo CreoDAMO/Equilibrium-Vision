@@ -2822,6 +2822,8 @@ name = "mpc-ceremony"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
+ "ark-ec",
+ "ark-ff",
  "ark-groth16",
  "ark-relations",
  "ark-serialize",
@@ -2831,7 +2833,11 @@ dependencies = [
  "equilibrium-core",
  "hex",
  "hickory-proto 0.26.1",
+ "num-bigint",
+ "num-traits",
  "rand 0.10.2",
+ "serde",
+ "serde_json",
  "sha2",
  "tracing-subscriber 0.3.23",
  "yamux 0.14.0",

@@ -18,6 +18,8 @@
 //!   cargo run --bin mpc-ceremony -- finalize --contributions-dir ./contributions --pk-out proving_key.bin --vk-out verification_key.bin
 
 mod ptau;
+mod snarkjs_import;
+mod zkey_pk;
 
 use ark_bn254::Bn254;
 use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
@@ -27,6 +29,8 @@ use ark_std::rand::SeedableRng;
 use ark_std::rand::rngs::StdRng;
 use clap::{Parser, Subcommand};
 use ptau::{load_ptau, PtauError};
+use snarkjs_import::{vk_from_snarkjs_json, write_pk_bin, write_vk_bin};
+use zkey_pk::pk_from_zkey;
 use sha2::{Sha256, Digest};
 use std::fs;
 use std::path::Path;
@@ -90,6 +94,30 @@ enum Commands {
         #[arg(short, long)]
         current: String,
     },
+    /// Import snarkjs verification_key.json → ark compressed verification_key.bin
+    ImportVk {
+        /// Path to snarkjs-exported verification_key.json
+        #[arg(long)]
+        json: String,
+        /// Output path for ark-compressed .bin
+        #[arg(long)]
+        vk_out: String,
+    },
+    /// Import snarkjs zkey → ark VK + full ProvingKey
+    ///
+    /// VK is always written. PK requires --pk-out and reads all query sections
+    /// (A / B_G1 / B_G2 / L / H).
+    ImportZkey {
+        /// Path to circuit_final.zkey produced by snarkjs
+        #[arg(long)]
+        zkey: String,
+        /// Output path for ark-compressed verification_key.bin
+        #[arg(long)]
+        vk_out: String,
+        /// Output path for ark-compressed proving_key.bin (optional)
+        #[arg(long)]
+        pk_out: Option<String>,
+    },
 }
 
 fn main() {
@@ -124,6 +152,46 @@ fn main() {
         Commands::Verify { prev, current } => {
             println!("[mpc] Verifying: {} -> {}", prev, current);
             verify_contribution(&prev, &current);
+        }
+        Commands::ImportVk { json, vk_out } => {
+            let raw = fs::read_to_string(&json).unwrap_or_else(|e| {
+                eprintln!("[mpc] FATAL: cannot read {json}: {e}");
+                std::process::exit(6);
+            });
+            let vk = vk_from_snarkjs_json(&raw).unwrap_or_else(|e| {
+                eprintln!("[mpc] FATAL: {e}");
+                std::process::exit(6);
+            });
+            write_vk_bin(&vk, Path::new(&vk_out)).unwrap_or_else(|e| {
+                eprintln!("[mpc] FATAL: {e}");
+                std::process::exit(6);
+            });
+        }
+        Commands::ImportZkey { zkey, vk_out, pk_out } => {
+            let path = Path::new(&zkey);
+            // Parse full PK (includes VK); consistent key pair.
+            let pk = pk_from_zkey(path).unwrap_or_else(|e| {
+                eprintln!("[mpc] FATAL: {e}");
+                std::process::exit(7);
+            });
+            write_vk_bin(&pk.vk, Path::new(&vk_out)).unwrap_or_else(|e| {
+                eprintln!("[mpc] FATAL: {e}");
+                std::process::exit(7);
+            });
+            if let Some(pk_path) = pk_out {
+                write_pk_bin(&pk, Path::new(&pk_path)).unwrap_or_else(|e| {
+                    eprintln!("[mpc] FATAL: {e}");
+                    std::process::exit(7);
+                });
+                println!(
+                    "[mpc] PK queries: a={} b_g1={} b_g2={} h={} l={}",
+                    pk.a_query.len(),
+                    pk.b_g1_query.len(),
+                    pk.b_g2_query.len(),
+                    pk.h_query.len(),
+                    pk.l_query.len()
+                );
+            }
         }
     }
 }

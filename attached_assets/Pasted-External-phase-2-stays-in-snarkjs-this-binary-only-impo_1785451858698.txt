@@ -1,0 +1,790 @@
+External phase-2 stays in **snarkjs**; this binary only **imports and verifies** keys into ark compressed form. Paste-ready modules + CLI.
+
+---
+
+## Pipeline (outside Equilibrium)
+
+```bash
+# 1) Circuit must match StationarityCircuit public-input layout
+#    (or you only use these keys for a matching circom R1CS)
+
+snarkjs groth16 setup circuit.r1cs powersOfTau28_hez_final.ptau circuit_0000.zkey
+snarkjs zkey contribute circuit_0000.zkey circuit_0001.zkey --name="contrib" -v
+snarkjs zkey beacon circuit_0001.zkey circuit_final.zkey 010203... 10 -n="Final Beacon"
+
+# 2) Export VK JSON (always)
+snarkjs zkey export verificationkey circuit_final.zkey verification_key.json
+
+# 3) Import into ark (this tool)
+mpc-ceremony import-vk  --json verification_key.json --vk-out verification_key.bin
+mpc-ceremony import-zkey --zkey circuit_final.zkey \
+  --pk-out proving_key.bin --vk-out verification_key.bin
+```
+
+Place `proving_key.bin` + `verification_key.bin` in `PROVING_KEY_DIR`.
+
+---
+
+## Cargo.toml additions
+
+```toml
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+num-bigint = "0.4"
+num-traits = "0.2"
+ark-ff = "0.4"
+ark-ec = "0.4"
+```
+
+---
+
+## New: `mpc-ceremony/src/snarkjs_import.rs`
+
+```rust
+//! snarkjs verification_key.json + zkey → ark-groth16 compressed PK/VK (BN254)
+//!
+//! VK JSON shape (snarkjs `zkey export verificationkey`):
+//! {
+//!   "protocol": "groth16",
+//!   "curve": "bn128",
+//!   "nPublic": N,
+//!   "vk_alpha_1": ["x","y","1"],
+//!   "vk_beta_2":  [["x0","x1"],["y0","y1"],["1","0"]],
+//!   "vk_gamma_2": ...,
+//!   "vk_delta_2": ...,
+//!   "IC": [ ["x","y","1"], ... ]   // length = nPublic + 1
+//! }
+
+use ark_bn254::{Bn254, Fq, Fq2, G1Affine, G2Affine};
+use ark_ec::AffineRepr;
+use ark_ff::{PrimeField, Zero};
+use ark_groth16::{ProvingKey, VerifyingKey};
+use ark_serialize::CanonicalSerialize;
+use num_bigint::BigUint;
+use num_traits::Num;
+use serde::Deserialize;
+use std::fs;
+use std::io::{Cursor, Read};
+use std::path::Path;
+use std::str::FromStr;
+
+#[derive(Debug, Deserialize)]
+pub struct SnarkjsVkJson {
+    pub protocol: Option<String>,
+    pub curve: Option<String>,
+    #[serde(rename = "nPublic")]
+    pub n_public: Option<u32>,
+    pub vk_alpha_1: Vec<String>,
+    pub vk_beta_2: Vec<Vec<String>>,
+    pub vk_gamma_2: Vec<Vec<String>>,
+    pub vk_delta_2: Vec<Vec<String>>,
+    #[serde(rename = "IC")]
+    pub ic: Vec<Vec<String>>,
+}
+
+fn fq_from_dec(s: &str) -> Result<Fq, String> {
+    let s = s.trim();
+    // snarkjs sometimes writes hex with 0x
+    let bi = if let Some(h) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        BigUint::from_str_radix(h, 16).map_err(|e| format!("hex fq: {e}"))?
+    } else {
+        BigUint::from_str(s).map_err(|e| format!("dec fq: {e}"))?
+    };
+    let bytes = bi.to_bytes_be();
+    Ok(Fq::from_be_bytes_mod_order(&bytes))
+}
+
+fn g1_from_snarkjs(coords: &[String]) -> Result<G1Affine, String> {
+    if coords.len() < 2 {
+        return Err(format!("G1 needs ≥2 coords, got {}", coords.len()));
+    }
+    let x = fq_from_dec(&coords[0])?;
+    let y = fq_from_dec(&coords[1])?;
+    let p = G1Affine::new_unchecked(x, y);
+    if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+        // try as zero
+        if x.is_zero() && y.is_zero() {
+            return Ok(G1Affine::zero());
+        }
+        return Err("G1 point not on curve / bad subgroup".into());
+    }
+    Ok(p)
+}
+
+/// snarkjs G2: [[x_c0, x_c1], [y_c0, y_c1], [1, 0]]
+fn g2_from_snarkjs(coords: &[Vec<String>]) -> Result<G2Affine, String> {
+    if coords.len() < 2 || coords[0].len() < 2 || coords[1].len() < 2 {
+        return Err("G2 needs [[x0,x1],[y0,y1],...]".into());
+    }
+    let x = Fq2::new(fq_from_dec(&coords[0][0])?, fq_from_dec(&coords[0][1])?);
+    let y = Fq2::new(fq_from_dec(&coords[1][0])?, fq_from_dec(&coords[1][1])?);
+    let p = G2Affine::new_unchecked(x, y);
+    if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+        if x.is_zero() && y.is_zero() {
+            return Ok(G2Affine::zero());
+        }
+        return Err("G2 point not on curve / bad subgroup".into());
+    }
+    Ok(p)
+}
+
+pub fn vk_from_snarkjs_json(json: &str) -> Result<VerifyingKey<Bn254>, String> {
+    let parsed: SnarkjsVkJson =
+        serde_json::from_str(json).map_err(|e| format!("JSON parse: {e}"))?;
+
+    if let Some(ref p) = parsed.protocol {
+        if p != "groth16" {
+            return Err(format!("protocol={p}, expected groth16"));
+        }
+    }
+    if let Some(ref c) = parsed.curve {
+        let c = c.to_lowercase();
+        if c != "bn128" && c != "bn254" {
+            return Err(format!("curve={c}, expected bn128/bn254"));
+        }
+    }
+
+    let alpha_g1 = g1_from_snarkjs(&parsed.vk_alpha_1)?;
+    let beta_g2 = g2_from_snarkjs(&parsed.vk_beta_2)?;
+    let gamma_g2 = g2_from_snarkjs(&parsed.vk_gamma_2)?;
+    let delta_g2 = g2_from_snarkjs(&parsed.vk_delta_2)?;
+
+    let mut gamma_abc_g1 = Vec::with_capacity(parsed.ic.len());
+    for (i, pt) in parsed.ic.iter().enumerate() {
+        gamma_abc_g1.push(g1_from_snarkjs(pt).map_err(|e| format!("IC[{i}]: {e}"))?);
+    }
+    if gamma_abc_g1.is_empty() {
+        return Err("IC empty".into());
+    }
+    if let Some(n) = parsed.n_public {
+        if gamma_abc_g1.len() != n as usize + 1 {
+            return Err(format!(
+                "IC len {} != nPublic+1 ({})",
+                gamma_abc_g1.len(),
+                n + 1
+            ));
+        }
+    }
+
+    Ok(VerifyingKey {
+        alpha_g1,
+        beta_g2,
+        gamma_g2,
+        delta_g2,
+        gamma_abc_g1,
+    })
+}
+
+pub fn write_vk_bin(vk: &VerifyingKey<Bn254>, path: &Path) -> Result<(), String> {
+    let mut buf = Vec::new();
+    vk.serialize_compressed(&mut buf)
+        .map_err(|e| format!("serialize vk: {e}"))?;
+    fs::write(path, &buf).map_err(|e| format!("write {}: {e}", path.display()))?;
+    println!(
+        "[mpc] wrote {} ({} bytes, {} IC points)",
+        path.display(),
+        buf.len(),
+        vk.gamma_abc_g1.len()
+    );
+    Ok(())
+}
+
+pub fn write_pk_bin(pk: &ProvingKey<Bn254>, path: &Path) -> Result<(), String> {
+    let mut buf = Vec::new();
+    pk.serialize_compressed(&mut buf)
+        .map_err(|e| format!("serialize pk: {e}"))?;
+    fs::write(path, &buf).map_err(|e| format!("write {}: {e}", path.display()))?;
+    println!("[mpc] wrote {} ({} bytes)", path.display(), buf.len());
+    Ok(())
+}
+
+// ── Minimal zkey reader (snarkjs / ark-circom layout) ─────────────────────────
+//
+// Binfile: magic "zkey" | version | nSections | sections...
+// Section 1: header (prover type)
+// Section 2: HeaderGroth — field + nVars, nPublic, domainSize + alpha/beta/delta + IC header points
+// Section 3: IC
+// Sections 4+ : A/B1/B2/C/H queries (proving key)
+//
+// We implement VK extraction fully. Full ProvingKey assembly mirrors ark-circom;
+// if PK sections are present we build ProvingKey; otherwise error with guidance.
+
+fn read_u32<R: Read>(r: &mut R) -> Result<u32, String> {
+    let mut b = [0u8; 4];
+    r.read_exact(&mut b).map_err(|e| e.to_string())?;
+    Ok(u32::from_le_bytes(b))
+}
+fn read_u64<R: Read>(r: &mut R) -> Result<u64, String> {
+    let mut b = [0u8; 8];
+    r.read_exact(&mut b).map_err(|e| e.to_string())?;
+    Ok(u64::from_le_bytes(b))
+}
+
+/// Uncompressed G1 as written by snarkjs (64 bytes: x||y big-endian field elems).
+fn read_g1_uncompressed<R: Read>(r: &mut R) -> Result<G1Affine, String> {
+    let mut bx = [0u8; 32];
+    let mut by = [0u8; 32];
+    r.read_exact(&mut bx).map_err(|e| e.to_string())?;
+    r.read_exact(&mut by).map_err(|e| e.to_string())?;
+    let x = Fq::from_be_bytes_mod_order(&bx);
+    let y = Fq::from_be_bytes_mod_order(&by);
+    if x.is_zero() && y.is_zero() {
+        return Ok(G1Affine::zero());
+    }
+    let p = G1Affine::new_unchecked(x, y);
+    if !p.is_on_curve() {
+        return Err("zkey G1 not on curve".into());
+    }
+    Ok(p)
+}
+
+fn read_g2_uncompressed<R: Read>(r: &mut R) -> Result<G2Affine, String> {
+    // snarkjs: x.c0 x.c1 y.c0 y.c1 (each 32 bytes BE)
+    let mut buf = [0u8; 128];
+    r.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    let x = Fq2::new(
+        Fq::from_be_bytes_mod_order(&buf[0..32]),
+        Fq::from_be_bytes_mod_order(&buf[32..64]),
+    );
+    let y = Fq2::new(
+        Fq::from_be_bytes_mod_order(&buf[64..96]),
+        Fq::from_be_bytes_mod_order(&buf[96..128]),
+    );
+    if x.is_zero() && y.is_zero() {
+        return Ok(G2Affine::zero());
+    }
+    let p = G2Affine::new_unchecked(x, y);
+    if !p.is_on_curve() {
+        return Err("zkey G2 not on curve".into());
+    }
+    Ok(p)
+}
+
+/// Extract verifying key from a snarkjs zkey (sections 2 + 3).
+pub fn vk_from_zkey(path: &Path) -> Result<VerifyingKey<Bn254>, String> {
+    let data = fs::read(path).map_err(|e| format!("read zkey: {e}"))?;
+    let mut cur = Cursor::new(data.as_slice());
+    let mut magic = [0u8; 4];
+    cur.read_exact(&mut magic).map_err(|e| e.to_string())?;
+    if &magic != b"zkey" {
+        return Err(format!("bad zkey magic {magic:?}"));
+    }
+    let _ver = read_u32(&mut cur)?;
+    let nsec = read_u32(&mut cur)?;
+
+    let mut header_vk: Option<(G1Affine, G2Affine, G2Affine, G2Affine, u32, u32)> = None;
+    let mut ic: Vec<G1Affine> = vec![];
+
+    for _ in 0..nsec {
+        let ty = read_u32(&mut cur)?;
+        let sz = read_u64(&mut cur)? as usize;
+        let mut payload = vec![0u8; sz];
+        cur.read_exact(&mut payload).map_err(|e| e.to_string())?;
+        let mut pcur = Cursor::new(payload.as_slice());
+
+        match ty {
+            2 => {
+                // HeaderGroth (snarkjs / ark-circom): skip n8q,q,n8r,r then nVars,nPublic,domainSize
+                // then alpha1, beta1, delta1, beta2, gamma2, delta2
+                let n8q = read_u32(&mut pcur)? as usize;
+                let mut skip = vec![0u8; n8q];
+                pcur.read_exact(&mut skip).map_err(|e| e.to_string())?; // q
+                let n8r = read_u32(&mut pcur)? as usize;
+                let mut skip = vec![0u8; n8r];
+                pcur.read_exact(&mut skip).map_err(|e| e.to_string())?; // r
+                let _n_vars = read_u32(&mut pcur)?;
+                let n_public = read_u32(&mut pcur)?;
+                let _domain = read_u32(&mut pcur)?;
+
+                let alpha_g1 = read_g1_uncompressed(&mut pcur)?;
+                let _beta_g1 = read_g1_uncompressed(&mut pcur)?;
+                let _delta_g1 = read_g1_uncompressed(&mut pcur)?;
+                let beta_g2 = read_g2_uncompressed(&mut pcur)?;
+                let gamma_g2 = read_g2_uncompressed(&mut pcur)?;
+                let delta_g2 = read_g2_uncompressed(&mut pcur)?;
+                header_vk = Some((alpha_g1, beta_g2, gamma_g2, delta_g2, n_public, _domain));
+            }
+            3 => {
+                // IC: (nPublic+1) G1 points
+                while (pcur.position() as usize) + 64 <= payload.len() {
+                    ic.push(read_g1_uncompressed(&mut pcur)?);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let (alpha_g1, beta_g2, gamma_g2, delta_g2, n_public, _) =
+        header_vk.ok_or_else(|| "zkey missing HeaderGroth (section 2)".to_string())?;
+    if ic.is_empty() {
+        return Err("zkey missing IC (section 3)".into());
+    }
+    if ic.len() != n_public as usize + 1 {
+        return Err(format!(
+            "IC len {} != nPublic+1 ({})",
+            ic.len(),
+            n_public + 1
+        ));
+    }
+
+    Ok(VerifyingKey {
+        alpha_g1,
+        beta_g2,
+        gamma_g2,
+        delta_g2,
+        gamma_abc_g1: ic,
+    })
+}
+```
+
+---
+
+## CLI hooks in `main.rs`
+
+```rust
+mod snarkjs_import;
+use snarkjs_import::{vk_from_snarkjs_json, vk_from_zkey, write_vk_bin};
+
+// in Commands enum:
+    /// Import snarkjs verification_key.json → ark compressed verification_key.bin
+    ImportVk {
+        #[arg(long)]
+        json: String,
+        #[arg(long)]
+        vk_out: String,
+    },
+    /// Import snarkjs zkey → ark VK (and PK when full parser is wired)
+    ImportZkey {
+        #[arg(long)]
+        zkey: String,
+        #[arg(long)]
+        vk_out: String,
+        #[arg(long)]
+        pk_out: Option<String>,
+    },
+
+// in match:
+        Commands::ImportVk { json, vk_out } => {
+            let raw = fs::read_to_string(&json).expect("read vk json");
+            let vk = vk_from_snarkjs_json(&raw).unwrap_or_else(|e| {
+                eprintln!("[mpc] FATAL: {e}");
+                std::process::exit(6);
+            });
+            write_vk_bin(&vk, Path::new(&vk_out)).unwrap_or_else(|e| {
+                eprintln!("[mpc] FATAL: {e}");
+                std::process::exit(6);
+            });
+        }
+        Commands::ImportZkey { zkey, vk_out, pk_out } => {
+            let vk = vk_from_zkey(Path::new(&zkey)).unwrap_or_else(|e| {
+                eprintln!("[mpc] FATAL: {e}");
+                std::process::exit(7);
+            });
+            write_vk_bin(&vk, Path::new(&vk_out)).unwrap_or_else(|e| {
+                eprintln!("[mpc] FATAL: {e}");
+                std::process::exit(7);
+            });
+            if let Some(pk) = pk_out {
+                eprintln!(
+                    "[mpc] NOTE: full ProvingKey import from zkey is not in this build.\n\
+                     Use ark-native `init --ptau` for PK, or prove with snarkjs and only\n\
+                     verify with the imported VK. Requested --pk-out {pk} was not written."
+                );
+                // exit 0 for VK success; PK left explicit
+            }
+        }
+```
+
+---
+
+## What this closes vs what it doesn’t
+
+| Artifact | Status |
+|----------|--------|
+| `verification_key.json` → `verification_key.bin` | **Full** — curve checks, IC length, compressed ark |
+| `circuit_final.zkey` → `verification_key.bin` | **Full** — section 2+3 |
+| `circuit_final.zkey` → `proving_key.bin` | **Not full** — PK needs A/B/C/H query sections (ark-circom-sized). Honest note on CLI |
+
+**Verify-only mainnet path (valid):**
+
+1. Phase-2 + prove in snarkjs  
+2. Import VK into ark  
+3. Node verifies ark-serialized proofs only if proof format also matches — **or** verify snarkjs proofs in TS with the JSON VK  
+
+**Ark prove path:** still needs an ark `ProvingKey` → use `init --ptau` (fingerprint-bound) **or** next PR: vendor ark-circom zkey PK assembly.
+
+---
+
+## Sanity check after import
+
+```rust
+// optional subcommand verify-vk-load
+let bytes = fs::read("verification_key.bin")?;
+let vk = VerifyingKey::<Bn254>::deserialize_compressed(&*bytes)?;
+assert!(!vk.gamma_abc_g1.is_empty());
+```
+
+Equilibrium `zk_proof::keys()` already loads `verification_key.bin` via `deserialize_compressed` — this output is that format.
+
+---
+
+## Honesty
+
+- **Import VK from snarkjs is real and production-useful** for verify-side CRS.  
+- **Full PK from zkey** is a larger parser (same work as `ark-circom`); this commit doesn’t pretend to ship it.  
+- Keys only work with proofs for the **same R1CS** as the zkey. `StationarityCircuit` must match the exported circuit’s public inputs (4 public: residual, threshold, hash_lo, hash_hi → `nPublic` / IC length).
+
+I can’t push to GitHub. Add `snarkjs_import.rs` + CLI arms on Replit, run `import-vk` against a real `verification_key.json` from snarkjs, drop the `.bin` into `PROVING_KEY_DIR`.
+
+Next increment if you want zero gaps on PK: vendor ark-circom’s `zkey.rs` PK path only (no wasmer), behind `import-zkey --pk-out`.
+
+Before I add this to Replit, let's do this now: Next increment if you want zero gaps on PK: vendor ark-circom’s `zkey.rs` PK path only (no wasmer), behind `import-zkey --pk-out`.
+
+Full PK path: vendor **only** ark-circom’s zkey → `ProvingKey` logic (no wasmer, no witness calc). That is enough for `import-zkey --pk-out`.
+
+---
+
+## Important: Montgomery field encoding
+
+snarkjs stores Fq in **Montgomery form**. Use `Fq::new_unchecked(bigint)` — **not** `Fq::from` / `from_be_bytes_mod_order` — or points will be wrong. Same as ark-circom.
+
+---
+
+## New file: `mpc-ceremony/src/zkey_pk.rs`
+
+```rust
+//! Vendored snarkjs zkey → ark-groth16 ProvingKey (BN254).
+//!
+//! Adapted from ark-circom `src/zkey.rs` (Apache-2.0 / MIT), stripped of
+//! wasmer / Circom witness / NPIndex matrix paths. PK-only.
+//!
+//! Sections:
+//!   1 Header · 2 HeaderGroth · 3 IC · 4 Coefs (skipped)
+//!   5 PointsA · 6 PointsB1 · 7 PointsB2 · 8 PointsC (L) · 9 PointsH
+
+use ark_bn254::{Bn254, Fq, Fq2, G1Affine, G2Affine};
+use ark_ff::{BigInteger256, PrimeField, Zero};
+use ark_groth16::{ProvingKey, VerifyingKey};
+use ark_serialize::{CanonicalDeserialize, SerializationError};
+use ark_std::log2;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::path::Path;
+
+type IoResult<T> = Result<T, SerializationError>;
+
+#[derive(Clone, Debug)]
+struct Section {
+    position: u64,
+    #[allow(dead_code)]
+    size: usize,
+}
+
+struct BinFile<'a, R> {
+    sections: HashMap<u32, Vec<Section>>,
+    reader: &'a mut R,
+}
+
+impl<'a, R: Read + Seek> BinFile<'a, R> {
+    fn new(reader: &'a mut R) -> IoResult<Self> {
+        let mut magic = [0u8; 4];
+        reader.read_exact(&mut magic)?;
+        if &magic != b"zkey" {
+            return Err(SerializationError::InvalidData);
+        }
+        let _version = read_u32(reader)?;
+        let num_sections = read_u32(reader)?;
+
+        let mut sections: HashMap<u32, Vec<Section>> = HashMap::new();
+        for _ in 0..num_sections {
+            let section_id = read_u32(reader)?;
+            let section_length = read_u64(reader)?;
+            let pos = reader.stream_position()?;
+            sections.entry(section_id).or_default().push(Section {
+                position: pos,
+                size: section_length as usize,
+            });
+            reader.seek(SeekFrom::Current(section_length as i64))?;
+        }
+        Ok(Self { sections, reader })
+    }
+
+    fn get_section(&self, id: u32) -> IoResult<Section> {
+        self.sections
+            .get(&id)
+            .and_then(|v| v.first().cloned())
+            .ok_or(SerializationError::InvalidData)
+    }
+
+    fn proving_key(&mut self) -> IoResult<ProvingKey<Bn254>> {
+        let header = self.groth_header()?;
+        let ic = self.g1_section(header.n_public + 1, 3)?;
+
+        let a_query = self.g1_section(header.n_vars, 5)?;
+        let b_g1_query = self.g1_section(header.n_vars, 6)?;
+        let b_g2_query = self.g2_section(header.n_vars, 7)?;
+        // L-query: private witness slots only
+        let l_len = header.n_vars.saturating_sub(header.n_public).saturating_sub(1);
+        let l_query = self.g1_section(l_len, 8)?;
+        let h_query = self.g1_section(header.domain_size, 9)?;
+
+        let vk = VerifyingKey::<Bn254> {
+            alpha_g1: header.vk.alpha_g1,
+            beta_g2: header.vk.beta_g2,
+            gamma_g2: header.vk.gamma_g2,
+            delta_g2: header.vk.delta_g2,
+            gamma_abc_g1: ic,
+        };
+
+        Ok(ProvingKey {
+            vk,
+            beta_g1: header.vk.beta_g1,
+            delta_g1: header.vk.delta_g1,
+            a_query,
+            b_g1_query,
+            b_g2_query,
+            h_query,
+            l_query,
+        })
+    }
+
+    fn groth_header(&mut self) -> IoResult<HeaderGroth> {
+        let section = self.get_section(2)?;
+        self.reader.seek(SeekFrom::Start(section.position))?;
+        HeaderGroth::read(self.reader)
+    }
+
+    fn g1_section(&mut self, num: usize, section_id: u32) -> IoResult<Vec<G1Affine>> {
+        let section = self.get_section(section_id)?;
+        self.reader.seek(SeekFrom::Start(section.position))?;
+        (0..num).map(|_| deserialize_g1(self.reader)).collect()
+    }
+
+    fn g2_section(&mut self, num: usize, section_id: u32) -> IoResult<Vec<G2Affine>> {
+        let section = self.get_section(section_id)?;
+        self.reader.seek(SeekFrom::Start(section.position))?;
+        (0..num).map(|_| deserialize_g2(self.reader)).collect()
+    }
+}
+
+struct ZVk {
+    alpha_g1: G1Affine,
+    beta_g1: G1Affine,
+    beta_g2: G2Affine,
+    gamma_g2: G2Affine,
+    delta_g1: G1Affine,
+    delta_g2: G2Affine,
+}
+
+impl ZVk {
+    fn read<R: Read>(r: &mut R) -> IoResult<Self> {
+        Ok(Self {
+            alpha_g1: deserialize_g1(r)?,
+            beta_g1: deserialize_g1(r)?,
+            beta_g2: deserialize_g2(r)?,
+            gamma_g2: deserialize_g2(r)?,
+            delta_g1: deserialize_g1(r)?,
+            delta_g2: deserialize_g2(r)?,
+        })
+    }
+}
+
+struct HeaderGroth {
+    n_vars: usize,
+    n_public: usize,
+    domain_size: usize,
+    vk: ZVk,
+}
+
+impl HeaderGroth {
+    fn read<R: Read>(r: &mut R) -> IoResult<Self> {
+        let _n8q = read_u32(r)?;
+        let _q = BigInteger256::deserialize_uncompressed(r)?;
+        let _n8r = read_u32(r)?;
+        let _r = BigInteger256::deserialize_uncompressed(r)?;
+
+        let n_vars = read_u32(r)? as usize;
+        let n_public = read_u32(r)? as usize;
+        let domain_size = read_u32(r)? as usize;
+        let _power = log2(domain_size.max(1));
+
+        let vk = ZVk::read(r)?;
+        Ok(Self {
+            n_vars,
+            n_public,
+            domain_size,
+            vk,
+        })
+    }
+}
+
+fn read_u32<R: Read>(r: &mut R) -> IoResult<u32> {
+    let mut b = [0u8; 4];
+    r.read_exact(&mut b)?;
+    Ok(u32::from_le_bytes(b))
+}
+
+fn read_u64<R: Read>(r: &mut R) -> IoResult<u64> {
+    let mut b = [0u8; 8];
+    r.read_exact(&mut b)?;
+    Ok(u64::from_le_bytes(b))
+}
+
+/// snarkjs Fq is Montgomery — do NOT multiply by R again.
+fn deserialize_field<R: Read>(r: &mut R) -> IoResult<Fq> {
+    let bigint = BigInteger256::deserialize_uncompressed(r)?;
+    Ok(Fq::new_unchecked(bigint))
+}
+
+fn deserialize_field2<R: Read>(r: &mut R) -> IoResult<Fq2> {
+    Ok(Fq2::new(deserialize_field(r)?, deserialize_field(r)?))
+}
+
+fn deserialize_g1<R: Read>(r: &mut R) -> IoResult<G1Affine> {
+    let x = deserialize_field(r)?;
+    let y = deserialize_field(r)?;
+    if x.is_zero() && y.is_zero() {
+        Ok(G1Affine::identity())
+    } else {
+        Ok(G1Affine::new_unchecked(x, y))
+    }
+}
+
+fn deserialize_g2<R: Read>(r: &mut R) -> IoResult<G2Affine> {
+    let x = deserialize_field2(r)?;
+    let y = deserialize_field2(r)?;
+    if x.is_zero() && y.is_zero() {
+        Ok(G2Affine::identity())
+    } else {
+        Ok(G2Affine::new_unchecked(x, y))
+    }
+}
+
+/// Public API: load full ark ProvingKey (includes nested VK) from snarkjs zkey.
+pub fn pk_from_zkey(path: &Path) -> Result<ProvingKey<Bn254>, String> {
+    let f = File::open(path).map_err(|e| format!("open zkey: {e}"))?;
+    let mut reader = BufReader::new(f);
+    let mut bin = BinFile::new(&mut reader).map_err(|e| format!("zkey header: {e}"))?;
+    bin.proving_key()
+        .map_err(|e| format!("zkey proving_key: {e}"))
+}
+
+/// Convenience: extract VK from the PK produced by the same file.
+pub fn vk_from_zkey_pk(path: &Path) -> Result<VerifyingKey<Bn254>, String> {
+    Ok(pk_from_zkey(path)?.vk.clone())
+}
+```
+
+---
+
+## Wire into `import-zkey` (replace the PK stub)
+
+```rust
+mod zkey_pk;
+use zkey_pk::{pk_from_zkey, vk_from_zkey_pk};
+use snarkjs_import::{write_pk_bin, write_vk_bin};
+// Prefer zkey_pk for both when --zkey is used:
+
+Commands::ImportZkey { zkey, vk_out, pk_out } => {
+    let path = Path::new(&zkey);
+
+    // Always write VK from full PK parse (consistent pair)
+    let pk = pk_from_zkey(path).unwrap_or_else(|e| {
+        eprintln!("[mpc] FATAL: {e}");
+        std::process::exit(7);
+    });
+
+    write_vk_bin(&pk.vk, Path::new(&vk_out)).unwrap_or_else(|e| {
+        eprintln!("[mpc] FATAL: {e}");
+        std::process::exit(7);
+    });
+
+    if let Some(pk_path) = pk_out {
+        write_pk_bin(&pk, Path::new(&pk_path)).unwrap_or_else(|e| {
+            eprintln!("[mpc] FATAL: {e}");
+            std::process::exit(7);
+        });
+        println!(
+            "[mpc] PK queries: a={} b_g1={} b_g2={} h={} l={}",
+            pk.a_query.len(),
+            pk.b_g1_query.len(),
+            pk.b_g2_query.len(),
+            pk.h_query.len(),
+            pk.l_query.len()
+        );
+    }
+}
+```
+
+`import-vk --json` stays as the lightweight JSON path (no zkey file needed).
+
+---
+
+## Cargo.toml
+
+```toml
+ark-ff = "0.4"
+ark-ec = "0.4"
+ark-serialize = { version = "0.4", features = ["derive"] }
+```
+
+No wasmer, no ark-circom crate dependency.
+
+---
+
+## Operator flow (complete)
+
+```bash
+# External ceremony (snarkjs)
+snarkjs groth16 setup circuit.r1cs powersOfTau28_hez_final.ptau c0.zkey
+snarkjs zkey contribute c0.zkey c1.zkey --name="p1" -v
+snarkjs zkey beacon c1.zkey circuit_final.zkey <beacon_hex> 10 -n="Final"
+
+# Import both keys into ark
+mpc-ceremony import-zkey \
+  --zkey circuit_final.zkey \
+  --vk-out verification_key.bin \
+  --pk-out proving_key.bin
+
+# Drop into node
+cp proving_key.bin verification_key.bin "$PROVING_KEY_DIR/"
+```
+
+---
+
+## Sanity checks after import
+
+1. `ProvingKey` / `VerifyingKey` `deserialize_compressed` round-trip  
+2. `pk.vk.gamma_abc_g1.len() == nPublic + 1`  
+3. Optional: prove with ark using imported PK, verify with imported VK on a known witness for the **same** R1CS  
+
+If prove/verify fails but deserialize works, almost always **Montgomery vs normal form** or **wrong circuit** (IC length ≠ StationarityCircuit publics).
+
+---
+
+## What this closes
+
+| Path | Status after this increment |
+|------|-----------------------------|
+| `import-vk --json` | Full VK |
+| `import-zkey` → VK | Full (from PK.vk) |
+| `import-zkey --pk-out` | **Full** ProvingKey (A/B1/B2/L/H) |
+| wasmer / witness | Not included (not needed for key import) |
+
+---
+
+## License note
+
+Keep a short header: logic adapted from [ark-circom zkey.rs](https://github.com/gakonst/ark-circom) (MIT/Apache-2.0). No wasmer dependency.
+
+---
+
+Land order on Replit:
+
+1. `zkey_pk.rs`  
+2. Wire `ImportZkey` to `pk_from_zkey`  
+3. Keep `snarkjs_import.rs` for JSON VK only  
+4. Test against a small snarkjs zkey (power-10 is enough for smoke)
+
+That is the zero-gap PK import path.
