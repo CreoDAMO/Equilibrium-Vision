@@ -221,6 +221,118 @@ fn read_g2_uncompressed_be<R: Read>(r: &mut R) -> Result<G2Affine, String> {
     Ok(p)
 }
 
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
+    // ── BN254 known-good point fixtures ──────────────────────────────────────
+    // G1 generator satisfies y² = x³ + 3  →  4 = 1+3 ✓  (standard BN254)
+    // G2 generator taken from ark-bn254 0.4 source constants.
+
+    fn g2_block() -> &'static str {
+        r#"[
+            ["10857046999023057135944570762232829481370756359578518086990519993285655852781",
+             "11559732032986387107991004021392285783925812861821192530917403151452391805634"],
+            ["8495653923123431417604973247489272438418190587263600148770280649306958101930",
+             "4082367875863433681332203403145435568316851327593401208105741076214120093531"],
+            ["1","0"]
+        ]"#
+    }
+
+    /// Build a syntactically-valid VK JSON using the BN254 generator for every point.
+    fn make_vk_json(n_public: u32) -> String {
+        let ic: Vec<String> = (0..=n_public)
+            .map(|_| r#"["1","2","1"]"#.to_string())
+            .collect();
+        let ic_str = ic.join(",");
+        let g2 = g2_block();
+        format!(
+            r#"{{
+                "protocol": "groth16",
+                "curve": "bn128",
+                "nPublic": {n_public},
+                "vk_alpha_1": ["1","2","1"],
+                "vk_beta_2":  {g2},
+                "vk_gamma_2": {g2},
+                "vk_delta_2": {g2},
+                "IC": [{ic_str}]
+            }}"#
+        )
+    }
+
+    #[test]
+    fn vk_json_parses_n_public_1() {
+        let vk = vk_from_snarkjs_json(&make_vk_json(1)).expect("parse n_public=1");
+        assert_eq!(vk.gamma_abc_g1.len(), 2, "IC must be nPublic+1 = 2");
+    }
+
+    #[test]
+    fn vk_json_parses_n_public_4() {
+        // StationarityCircuit has 4 public inputs → IC length = 5
+        let vk = vk_from_snarkjs_json(&make_vk_json(4)).expect("parse n_public=4");
+        assert_eq!(vk.gamma_abc_g1.len(), 5, "IC must be nPublic+1 = 5");
+    }
+
+    #[test]
+    fn vk_json_rejects_wrong_protocol() {
+        let json = make_vk_json(1).replace("\"groth16\"", "\"plonk\"");
+        assert!(vk_from_snarkjs_json(&json).is_err(), "plonk must be rejected");
+    }
+
+    #[test]
+    fn vk_json_rejects_bad_curve() {
+        let json = make_vk_json(1).replace("\"bn128\"", "\"bls12-381\"");
+        assert!(vk_from_snarkjs_json(&json).is_err(), "bls12-381 must be rejected");
+    }
+
+    #[test]
+    fn vk_json_rejects_ic_length_mismatch() {
+        // nPublic claims 3 but JSON only contains 2 IC entries (nPublic=1 template)
+        let json = make_vk_json(1).replace("\"nPublic\": 1", "\"nPublic\": 3");
+        assert!(
+            vk_from_snarkjs_json(&json).is_err(),
+            "IC len mismatch must be rejected"
+        );
+    }
+
+    #[test]
+    fn vk_json_compressed_round_trip() {
+        // parse JSON → serialize compressed → deserialize → IC length preserved
+        let vk = vk_from_snarkjs_json(&make_vk_json(4)).expect("parse");
+        assert_eq!(vk.gamma_abc_g1.len(), 5);
+
+        let mut buf = Vec::new();
+        vk.serialize_compressed(&mut buf).expect("serialize");
+        let vk2 =
+            VerifyingKey::<Bn254>::deserialize_compressed(&*buf).expect("deserialize");
+        assert_eq!(vk2.gamma_abc_g1.len(), 5, "IC count must survive round-trip");
+    }
+
+    #[test]
+    fn vk_json_write_bin_round_trips() {
+        // write_vk_bin → fs read → deserialize_compressed → IC length preserved
+        let vk = vk_from_snarkjs_json(&make_vk_json(4)).expect("parse");
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "mpc_test_vk_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        write_vk_bin(&vk, &path).expect("write_vk_bin");
+
+        let bytes = std::fs::read(&path).expect("read bin");
+        let vk2 =
+            VerifyingKey::<Bn254>::deserialize_compressed(&*bytes).expect("deserialize");
+        assert_eq!(vk2.gamma_abc_g1.len(), 5, "IC count must survive file round-trip");
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 /// Extract verifying key from a snarkjs zkey (sections 2 + 3 only).
 /// For full ProvingKey import use `zkey_pk::pk_from_zkey`.
 pub fn vk_from_zkey(path: &Path) -> Result<VerifyingKey<Bn254>, String> {

@@ -376,3 +376,108 @@ fn read_keys(path: &str) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), Box
     let vk = VerifyingKey::<Bn254>::deserialize_compressed(&vk_bytes[..])?;
     Ok((pk, vk))
 }
+
+// ── Round-trip tests using ark-native key generation ─────────────────────────
+//
+// These tests exercise the write_vk_bin / write_pk_bin → deserialize_compressed
+// pipeline end-to-end using keys produced by Groth16::circuit_specific_setup,
+// which is the same path used by `mpc-ceremony init` and `finalize`.
+//
+// StationarityCircuit has 4 public inputs (residual_fp, threshold_fp,
+// block_hash_lo, block_hash_hi), so gamma_abc_g1.len() must equal 5.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_groth16::Groth16;
+    use ark_snark::SNARK;
+    use ark_std::rand::SeedableRng;
+    use ark_std::rand::rngs::StdRng;
+    use crate::snarkjs_import::{write_vk_bin, write_pk_bin};
+
+    const EXPECTED_IC_LEN: usize = 5; // 4 public inputs + 1
+
+    fn test_circuit() -> StationarityCircuit {
+        StationarityCircuit {
+            residual_fp:   Some(0),
+            threshold_fp:  Some(1_000_000_000),
+            block_hash_lo: Some(0xDEAD_BEEF),
+            block_hash_hi: Some(0xCAFE_BABE),
+            difference:    Some(0),
+        }
+    }
+
+    fn setup_keys() -> (ProvingKey<Bn254>, VerifyingKey<Bn254>) {
+        let mut rng = StdRng::seed_from_u64(0x1234_5678_9ABC_DEF0);
+        Groth16::<Bn254>::circuit_specific_setup(test_circuit(), &mut rng)
+            .expect("circuit_specific_setup must not fail")
+    }
+
+    #[test]
+    fn vk_ic_length_matches_stationarity_circuit() {
+        let (_, vk) = setup_keys();
+        assert_eq!(
+            vk.gamma_abc_g1.len(),
+            EXPECTED_IC_LEN,
+            "StationarityCircuit must produce IC length {EXPECTED_IC_LEN}"
+        );
+    }
+
+    #[test]
+    fn write_vk_bin_round_trips() {
+        let (_, vk) = setup_keys();
+        let dir = std::env::temp_dir();
+        let path = dir.join("mpc_test_write_vk.bin");
+
+        write_vk_bin(&vk, &path).expect("write_vk_bin must succeed");
+
+        let bytes = fs::read(&path).expect("read back bin");
+        let vk2 = VerifyingKey::<Bn254>::deserialize_compressed(&*bytes)
+            .expect("deserialize_compressed must succeed");
+
+        assert_eq!(
+            vk2.gamma_abc_g1.len(),
+            EXPECTED_IC_LEN,
+            "IC length must survive write_vk_bin → deserialize_compressed"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn write_pk_bin_round_trips() {
+        let (pk, _) = setup_keys();
+        let dir = std::env::temp_dir();
+        let path = dir.join("mpc_test_write_pk.bin");
+
+        write_pk_bin(&pk, &path).expect("write_pk_bin must succeed");
+
+        let bytes = fs::read(&path).expect("read back bin");
+        let pk2 = ProvingKey::<Bn254>::deserialize_compressed(&*bytes)
+            .expect("deserialize_compressed must succeed");
+
+        assert_eq!(
+            pk2.vk.gamma_abc_g1.len(),
+            EXPECTED_IC_LEN,
+            "IC length inside PK must survive write_pk_bin → deserialize_compressed"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn init_deterministic_writes_readable_keys() {
+        // Mirror what `mpc-ceremony init` does and verify the output files
+        // can be loaded back without error.
+        let dir = std::env::temp_dir();
+        let pk_path = dir.join("mpc_test_init_det.bin");
+        let pk_str = pk_path.to_str().unwrap();
+
+        init_deterministic(pk_str);
+
+        let (pk, vk) = read_keys(pk_str).expect("read_keys must succeed after init_deterministic");
+        assert_eq!(pk.vk.gamma_abc_g1.len(), EXPECTED_IC_LEN);
+        assert_eq!(vk.gamma_abc_g1.len(), EXPECTED_IC_LEN);
+
+        let _ = fs::remove_file(pk_str);
+        let _ = fs::remove_file(pk_str.to_string() + ".vk");
+    }
+}

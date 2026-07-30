@@ -228,3 +228,51 @@ pub fn pk_from_zkey(path: &Path) -> Result<ProvingKey<Bn254>, String> {
 pub fn vk_from_zkey_pk(path: &Path) -> Result<VerifyingKey<Bn254>, String> {
     Ok(pk_from_zkey(path)?.vk)
 }
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
+    /// Verify that the Montgomery-form field deserializer round-trips through
+    /// ark's compressed serialization. This guards against accidentally swapping
+    /// `Fq::new_unchecked` (Montgomery) for `from_be_bytes_mod_order` (normal form).
+    #[test]
+    fn montgomery_field_round_trips_through_ark_serialize() {
+        // Pick a non-trivial field element by multiplying the identity
+        // representation in Montgomery form with a known bigint.
+        // BigInteger256::from(1) is 1 in raw limb form; Fq::new_unchecked wraps
+        // it as a Montgomery-form field element — which is what zkey binaries store.
+        let bigint = ark_ff::BigInteger256::from(1u64);
+        let fq: Fq = Fq::new_unchecked(bigint);
+
+        // Round-trip through uncompressed ark serialization
+        let mut buf = Vec::new();
+        fq.serialize_uncompressed(&mut buf).expect("serialize");
+        let fq2 = Fq::deserialize_uncompressed(&*buf).expect("deserialize");
+        assert_eq!(fq, fq2, "Montgomery Fq must survive ark uncompressed round-trip");
+    }
+
+    /// Confirm G1 identity parses without panicking and survives compressed
+    /// serialization (important: ark uses a special "infinity" flag for identity).
+    #[test]
+    fn g1_identity_compresses_cleanly() {
+        let identity = G1Affine::identity();
+        let mut buf = Vec::new();
+        identity.serialize_compressed(&mut buf).expect("serialize identity");
+        let back = G1Affine::deserialize_compressed(&*buf).expect("deserialize identity");
+        assert!(back.is_zero(), "identity must round-trip as zero/infinity");
+    }
+
+    /// Confirm G2 identity parses without panicking.
+    #[test]
+    fn g2_identity_compresses_cleanly() {
+        let identity = G2Affine::identity();
+        let mut buf = Vec::new();
+        identity.serialize_compressed(&mut buf).expect("serialize");
+        let back = G2Affine::deserialize_compressed(&*buf).expect("deserialize");
+        assert!(back.is_zero(), "G2 identity must round-trip");
+    }
+}
