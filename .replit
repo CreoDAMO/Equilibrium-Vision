@@ -82,3 +82,7 @@ channel = "stable-25_05"
 [userenv.shared]
 REQUIRE_TX_SIGNATURES = "true"
 ALLOW_TS_TRAPDOOR_PROVER = "true"
+
+[[ports]]
+localPort = 5432
+externalPort = 80
