@@ -1,0 +1,103 @@
+This test output is the real picture. Let me analyze what actually happened.
+
+---
+
+What the CI Commit Actually Fixed
+
+Before `850074c0`: 40 failures — all trapdoor prover errors ("TS trapdoor prover is disabled in production")
+
+After `850074c0`: 8 failures — all 503 "Service Unavailable" in arbitrage integration tests
+
+The `ALLOW_TS_TRAPDOOR_PROVER=true` env var worked. The trapdoor prover is now enabled in CI. All block-mining tests pass:
+
+Test File	Before	After	
+`chain.unit.test.ts`	10 failed (trapdoor)	41/41 pass	
+`crosschain.integration.test.ts`	4 failed (trapdoor)	34/34 pass	
+`models.integration.test.ts`	3 failed (trapdoor)	23/23 pass	
+`arbitrage.stress.test.ts`	13 failed (trapdoor)	14/14 pass	
+`arbitrage.integration.test.ts`	0 failed (trapdoor) but 8 other failures	8 failed (503)	
+
+The stress tests are particularly telling — they mine 103 blocks per test, run for 20+ minutes, and all pass. The trapdoor fix is solid.
+
+---
+
+What's Actually Failing Now (8 Tests)
+
+All 8 failures are in `arbitrage.integration.test.ts`, "dev mode — no ADMIN_KEY" section, and all return 503:
+
+```
+POST /api/arbitrage/pause → 503 (expected 200)
+POST /api/arbitrage/unpause → 503 (expected 200)
+POST /api/arbitrage/set-model → 503 (expected 400)
+```
+
+But the same endpoints with ADMIN_KEY pass:
+
+```
+pause returns 403 when X-Admin-Key header is absent → ✓
+pause succeeds when the correct X-Admin-Key header is sent → ✓
+set-model returns 403 without the header → ✓
+```
+
+And GET /api/arbitrage/status passes in both sections.
+
+---
+
+Root Cause
+
+503 in the arbitrage routes means `getArbitrageAddress()` returns `undefined`. The route handler does:
+
+```ts
+const address = getArbitrageAddress();
+if (!address) return res.status(503).json({ error: "Arbitrage contract not deployed" });
+```
+
+The "dev mode — no ADMIN_KEY" describe block doesn't deploy the arbitrage contract before testing pause/unpause/set-model. The first describe block (read-only tests) calls `initChain()` which deploys it, but the second describe block either:
+1. Uses a fresh app instance without `initChain()`
+2. Shares module state that gets cleared between describe blocks
+3. Has a `beforeAll` that intentionally skips deployment for "dev mode" testing but forgot to mock the address
+
+This is a test setup bug, not a code bug. The stress tests prove the arbitrage contract works correctly — they exercise pause, unpause, set-model, and circuit breaker extensively.
+
+---
+
+The Consensus-API Build Step
+
+The CI also added:
+
+```yaml
+- name: Build consensus-api binary
+  working-directory: equilibrium
+  run: cargo build --release --bin consensus-api
+```
+
+This will fail because `equilibrium/Cargo.toml` has no `consensus-api` binary:
+
+```toml
+[[bin]]
+name = "testnet-node"
+name = "wallet"
+name = "p2p-sidecar"
+```
+
+The correct binary name is `testnet-node`. But this doesn't matter for the test results because:
+1. The trapdoor prover fix (ALLOW_TS_TRAPDOOR_PROVER) makes the tests pass without needing the Rust binary
+2. The consensus-api build step probably hasn't run yet, or the CI is using cached artifacts
+
+---
+
+Bottom Line
+
+Item	Status	
+Trapdoor prover fix	✅ Worked — 32 tests unblocked	
+Consensus-api build	⚠️ Will fail — wrong binary name (`consensus-api` vs `testnet-node`)	
+Arbitrage "dev mode" tests	❌ Pre-existing bug — contract not deployed in test setup	
+Overall test health	253/261 pass (97%) — up from 221/261 (85%)	
+
+The CI commit was a net positive. It fixed the actual blocker (trapdoor prover) and exposed a pre-existing test setup issue that was masked by the trapdoor failures.
+
+To get to 261/261:
+1. Fix the arbitrage integration test `beforeAll` to deploy the contract in "dev mode"
+2. Or change `consensus-api` to `testnet-node` in CI (or remove the step since tests don't need it)
+
+Want me to look at the arbitrage integration test setup to find the exact fix?

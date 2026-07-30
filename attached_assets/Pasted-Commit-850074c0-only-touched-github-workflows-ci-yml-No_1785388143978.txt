@@ -1,0 +1,128 @@
+Commit `850074c0` only touched `.github/workflows/ci.yml`. **No source code was modified.** Here's what actually landed and what it means.
+
+---
+
+What Changed
+
+Change	Before	After	
+CI env var	None	`ALLOW_TS_TRAPDOOR_PROVER: "true"` added to Vitest step	
+Rust binary build	Only `p2p-sidecar`	Also builds `consensus-api` + adds to `PATH`	
+Permissions block	`permissions: contents: read`	Removed	
+
+---
+
+The Problem
+
+The CI now sets `ALLOW_TS_TRAPDOOR_PROVER=true`, but nothing in the source code reads this env var.
+
+From `zkproof.ts` (the file I just read):
+
+```ts
+// No env var checks. generateZkProof() is always available.
+export function generateZkProof(residual: number, blockHash: string, height: number, threshold = DEFAULT_THRESHOLD): ZkProof {
+  // ... trapdoor prover logic ...
+}
+```
+
+There's no `ALLOW_TS_PROVER`, `ALLOW_TS_TRAPDOOR_PROVER`, `REQUIRE_REAL_SOLVER`, or `NODE_ENV` check in `zkproof.ts`. The error message `"TS trapdoor prover is disabled in production"` doesn't exist in the current source code.
+
+This means one of two things:
+
+1. The env var check was removed in a previous commit — the error message and guard existed earlier but were deleted, making the CI fix a no-op.
+
+2. The env var check lives in a different file — possibly `miner.ts` or `state.ts` where `mineNextBlock` is called.
+
+Let me check if the guard exists elsewhere:
+
+The search confirms it — those strings don't exist in the public repo. The CI fix is setting an env var that nothing reads.
+
+Let me check what binaries actually exist in the equilibrium crate:
+
+Now I have the full picture. Here's the honest assessment of commit `850074c0`.
+
+---
+
+What Actually Landed
+
+Only `.github/workflows/ci.yml` was modified. No source code changes.
+
+The Two "Fixes"
+
+Fix	What CI Does	Reality	
+Option A	Sets `ALLOW_TS_TRAPDOOR_PROVER=true`	No-op — this env var is never read anywhere in the codebase	
+Option B	Builds `consensus-api` binary	Will fail — no `consensus-api` binary exists in `equilibrium/Cargo.toml`	
+
+---
+
+The Actual Binaries in `equilibrium/Cargo.toml`
+
+```toml
+[[bin]]
+name = "testnet-node"
+path = "testnet/node/main.rs"
+
+[[bin]]
+name = "wallet"
+path = "src/bin/wallet.rs"
+
+[[bin]]
+name = "p2p-sidecar"
+path = "src/bin/p2p-sidecar.rs"
+```
+
+There is no `consensus-api` binary. The CI step `cargo build --release --bin consensus-api` will error with:
+
+```
+error: no bin target named `consensus-api`
+```
+
+---
+
+What the CI Fix Should Actually Be
+
+The `testnet-node` binary is the Rust ZK proof backend. From `testnet/node/main.rs`, it:
+1. Spawns a libp2p sidecar
+2. Runs the consensus engine with real Groth16 proving
+3. Listens on a socket for TS bridge connections
+
+If you want CI to build the real Rust solver, the step should be:
+
+```yaml
+- name: Build testnet-node binary
+  working-directory: equilibrium
+  run: cargo build --release --bin testnet-node
+```
+
+But this won't help the test suite directly — `testnet-node` is a full node, not a sidecar the TS tests shell out to.
+
+---
+
+The Real Fix
+
+The test failures were never about a missing binary or env var. Looking at the actual `zkproof.ts`, `generateZkProof()` has no guard at all. The function is always available. The error message `"TS trapdoor prover is disabled in production"` doesn't exist in the current codebase.
+
+This means the 40 test failures from earlier were from a different version of the code — possibly local changes that were never pushed, or the test output was from a different branch.
+
+The current code on `main` should pass all tests as-is, because:
+- `zkproof.ts` has no env var guards
+- `generateZkProof()` is always callable
+- The trapdoor prover is always available
+
+---
+
+Bottom Line
+
+Commit `850074c0` is well-intentioned but broken:
+
+Issue	Severity	
+`ALLOW_TS_TRAPDOOR_PROVER` env var is never read	Harmless no-op	
+`consensus-api` binary doesn't exist	CI will fail at build step	
+`permissions: contents: read` removed	Slightly less secure (GitHub defaults may vary)	
+
+What needs to happen:
+
+1. Remove the `consensus-api` build step or rename it to `testnet-node`
+2. Remove the `ALLOW_TS_TRAPDOOR_PROVER` env var — it's dead code
+3. Verify tests actually pass with the current `main` code (no env var guards in zkproof.ts)
+
+Or, if the env var guard was intentionally removed from `zkproof.ts` in a previous commit, then no CI fix is needed at all — the tests should already pass.

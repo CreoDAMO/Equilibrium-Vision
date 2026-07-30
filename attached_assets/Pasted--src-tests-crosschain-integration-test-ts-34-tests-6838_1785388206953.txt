@@ -1,0 +1,466 @@
+✓ src/__tests__/crosschain.integration.test.ts (34 tests) 68388ms 
+
+✓ accepts finalization after advancing past challenge window (100 blocks) 18936ms 
+
+✓ rejects finalization of a challenged attestation 48739ms 
+
+✓ src/__tests__/chain.unit.test.ts (41 tests) 364ms 
+
+✓ src/__tests__/multisig.integration.test.ts (19 tests) 489ms 
+
+✓ src/__tests__/models.integration.test.ts (23 tests) 68389ms 
+
+✓ verify succeeds once the challenge window has elapsed, flipping status to verified 19973ms 
+
+✓ a slashed model can no longer be verified 47890ms 
+
+✓ src/__tests__/p2p-sync.integration.test.ts (12 tests) 127ms 
+
+❯ src/__tests__/arbitrage.integration.test.ts (24 tests | 8 failed) 334ms 
+
+✓ returns 200 with the expected shape 19ms 
+
+✓ honours the ?limit query param (capped at 20) 4ms 
+
+✓ clamps an oversized limit to 20 4ms 
+
+✓ each opportunity has the required fields when present 38ms 
+
+✓ returns 200 with a valid contract address once initChain has deployed it 5ms 
+
+✓ reports circuitTripped=false on a fresh deployment 3ms 
+
+✓ reports an owner address (40 hex chars) 3ms 
+
+✓ reports a numeric execCount 4ms 
+
+× pause returns success when called by the contract owner 23ms 
+
+× GET /api/arbitrage/status reflects paused=true 4ms 
+
+× unpause restores paused=false 4ms 
+
+× a non-owner cannot pause the contract 4ms 
+
+× pause requires a caller field 4ms 
+
+× unpause requires a caller field 4ms 
+
+× rejects a request missing caller / registryAddress / modelId 6ms 
+
+× rejects a non-owner caller 5ms 
+
+✓ rejects a request missing required fields 2ms 
+
+✓ rejects poolIds that is not an array 3ms 
+
+✓ returns a well-formed error or success response shape 14ms 
+
+✓ pause returns 403 when X-Admin-Key header is absent 4ms 
+
+✓ pause returns 403 when X-Admin-Key header has the wrong value 3ms 
+
+✓ pause succeeds when the correct X-Admin-Key header is sent 6ms 
+
+✓ unpause succeeds with the correct key 5ms 
+
+✓ set-model returns 403 without the header 6ms 
+
+✓ src/__tests__/p2p-mesh.integration.test.ts (4 tests) 10246ms 
+
+✓ node2 receives a gossiped block hash from node1 10020ms 
+
+[04:47:09.039] INFO (5910): request completed 
+
+req: { 
+
+"id": 2, 
+
+"method": "GET", 
+
+"url": "/api/arbitrage/status" 
+
+} 
+
+res: { 
+
+"statusCode": 200 
+
+} 
+
+responseTime: 5 
+
+✓ src/__tests__/arbitrage.stress.test.ts (14 tests) 1253321ms 
+
+✓ sets up verified model and executions 1–5 are NOT rejected with the circuit-breaker error 18730ms 
+
+✓ the 6th call is rejected with 'Paused or circuit breaker tripped' 42629ms 
+
+✓ after unpause, the next call is no longer blocked by the circuit breaker 53399ms 
+
+✓ rejects amountIn exceeding the governance cap with 'Amount exceeds the max trade amount' 67788ms 
+
+✓ pool reserves are unchanged after a cap-rejected call 86565ms 
+
+✓ execute succeeds and pool reserves change even when profit < minProfit 105822ms 
+
+✓ no more than 5 non-circuit-breaker results from 10 concurrent calls 122084ms 
+
+✓ advancing past the window does NOT clear a tripped breaker; unpause() does 155542ms 
+
+✓ 3 execs in window N, advance past it, 3 execs in window N+1 — never trips breaker 173507ms 
+
+✓ lowering arbitrageMaxTradeAmount rejects a previously-passing amountIn 186632ms 
+
+✓ changing arbitrageWindowBlocks live affects subsequent window checks 222653ms 
+
+✓ rollbackToHeight keeps chainState.height correct and the VM stays coherent 4328ms 
+
+✓ pool reserves change after a swap even if ArbitrageUnderTarget is logged 13361ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯ 
+
+FAIL src/__tests__/arbitrage.integration.test.ts > POST /api/arbitrage/pause + unpause (dev mode — no ADMIN_KEY) > pause returns success when called by the contract owner 
+
+AssertionError: expected 503 to be 200 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 200 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:124:24 
+
+122| it("pause returns success when called by the contract owner", async … 
+
+123| const res = await api.post("/api/arbitrage/pause").send({ caller: … 
+
+124| expect(res.status).toBe(200); 
+
+| ^ 
+
+125| expect(res.body.success).toBe(true); 
+
+126| }); 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯ 
+
+FAIL src/__tests__/arbitrage.integration.test.ts > POST /api/arbitrage/pause + unpause (dev mode — no ADMIN_KEY) > GET /api/arbitrage/status reflects paused=true 
+
+AssertionError: expected false to be true // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- true 
+
++ false 
+
+❯ src/__tests__/arbitrage.integration.test.ts:130:29 
+
+128| it("GET /api/arbitrage/status reflects paused=true", async () => { 
+
+129| const res = await api.get("/api/arbitrage/status"); 
+
+130| expect(res.body.paused).toBe(true); 
+
+| ^ 
+
+131| }); 
+
+132| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯ 
+
+FAIL src/__tests__/arbitrage.integration.test.ts > POST /api/arbitrage/pause + unpause (dev mode — no ADMIN_KEY) > unpause restores paused=false 
+
+AssertionError: expected 503 to be 200 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 200 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:135:31 
+
+133| it("unpause restores paused=false", async () => { 
+
+134| const unpauseRes = await api.post("/api/arbitrage/unpause").send({… 
+
+135| expect(unpauseRes.status).toBe(200); 
+
+| ^ 
+
+136| expect(unpauseRes.body.success).toBe(true); 
+
+137| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯ 
+
+FAIL src/__tests__/arbitrage.integration.test.ts > POST /api/arbitrage/pause + unpause (dev mode — no ADMIN_KEY) > a non-owner cannot pause the contract 
+
+AssertionError: expected 503 to be 400 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 400 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:145:24 
+
+143| const stranger = randomAddress(); 
+
+144| const res = await api.post("/api/arbitrage/pause").send({ caller: … 
+
+145| expect(res.status).toBe(400); 
+
+| ^ 
+
+146| expect(res.body.success).toBe(false); 
+
+147| }); 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯ 
+
+unpause (dev mode — no ADMIN_KEY) > pause requires a caller field 
+
+AssertionError: expected 503 to be 400 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 400 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:151:24 
+
+149| it("pause requires a caller field", async () => { 
+
+150| const res = await api.post("/api/arbitrage/pause").send({}); 
+
+151| expect(res.status).toBe(400); 
+
+| ^ 
+
+152| }); 
+
+153| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯ 
+
+FAIL src/__tests__/arbitrage.integration.test.ts > POST /api/arbitrage/pause + unpause (dev mode — no ADMIN_KEY) > unpause requires a caller field 
+
+AssertionError: expected 503 to be 400 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 400 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:156:24 
+
+154| it("unpause requires a caller field", async () => { 
+
+155| const res = await api.post("/api/arbitrage/unpause").send({}); 
+
+156| expect(res.status).toBe(400); 
+
+| ^ 
+
+157| }); 
+
+158| }); 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯ 
+
+FAIL src/__tests__/arbitrage.integration.test.ts > POST /api/arbitrage/set-model (dev mode — no ADMIN_KEY) > rejects a request missing caller / registryAddress / modelId 
+
+AssertionError: expected 503 to be 400 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 400 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:177:24 
+
+175| it("rejects a request missing caller / registryAddress / modelId", a… 
+
+176| const res = await api.post("/api/arbitrage/set-model").send({ call… 
+
+177| expect(res.status).toBe(400); 
+
+| ^ 
+
+178| }); 
+
+179| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/8]⎯ 
+
+FAIL src/__tests__/arbitrage.integration.test.ts > POST /api/arbitrage/set-model (dev mode — no ADMIN_KEY) > rejects a non-owner caller 
+
+AssertionError: expected 503 to be 400 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 400 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:188:24 
+
+186| modelId: 0, 
+
+187| }); 
+
+188| expect(res.status).toBe(400); 
+
+| ^ 
+
+189| expect(res.body.success).toBe(false); 
+
+190| }); 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/8]⎯
+
+Test Files 1 failed | 9 passed (10) 
+
+Tests 8 failed | 253 passed (261) 
+
+Start at 04:26:26 
+
+Duration 1255.91s (transform 2.39s, setup 0ms, import 14.59s, tests 1402.38s, environment 2ms) 
+
+Error: AssertionError: expected 503 to be 200 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 200 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:124:24 
+
+Error: AssertionError: expected false to be true // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- true 
+
++ false 
+
+❯ src/__tests__/arbitrage.integration.test.ts:130:29 
+
+Error: AssertionError: expected 503 to be 200 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 200 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:135:31 
+
+Error: AssertionError: expected 503 to be 400 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 400 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:145:24 
+
+Error: AssertionError: expected 503 to be 400 // Object.is equality 
+
+- Expected 
+
++ Received 
+
+- 400 
+
++ 503 
+
+❯ src/__tests__/arbitrage.integration.test.ts:151:24 
+
+
+Error: AssertionError: expected 503 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 503
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:151:24
+
+
+
+Error: AssertionError: expected 503 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 503
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:156:24
+
+
+
+Error: AssertionError: expected 503 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 503
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:177:24
+
+
+
+Error: AssertionError: expected 503 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 503
+
+ ❯ src/__tests__/arbitrage.integration.test.ts:188:24
+
+
+/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 test: `vitest run`
+Exit status 1
+Error: Process completed with exit code 1.
