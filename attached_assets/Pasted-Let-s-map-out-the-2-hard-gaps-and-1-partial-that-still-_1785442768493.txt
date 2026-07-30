@@ -1,0 +1,435 @@
+Let's map out the 2 hard gaps and 1 partial that still remains and provide the closing for each one.
+
+## Remaining: 2 hard + 1 partial
+
+| # | Gap | Type | Why it still matters |
+|---|-----|------|----------------------|
+| **3** | Closed-mesh proof | **Partial** | Engine test exists; claim needs **real P2P** tip advance with HTTP off |
+| **4** | Stronger ZK stationarity | **Hard** | Circuit proves residual ≤ threshold via difference, not full Lagrangian / recompute |
+| **5** | Real MPC / PTAU phase-2 | **Hard** | Production CRS honesty; `init --ptau` still can fall back to deterministic setup |
+
+---
+
+### 3 — Closed-mesh proof (partial → closed)
+
+**Today:** `p2p_gossip_advances_tip_without_http` runs two `ValidationEngine`s in one process. No Gossipsub, no RR, no phone.
+
+**Close path (pick one ladder):**
+
+| Step | Artifact | Done when |
+|------|----------|-----------|
+| **A** | Env `HTTP_SUBMIT=0` in `MiningWorker` — skip POST submit; only gossip + validate | Phone never calls `/api/blocks/submit` when flag set |
+| **B** | Integration: two `p2p-sidecar` processes (or phone + sidecar) — A gossips body, B validates, tip advances | Test log: height↑, zero HTTP submit |
+| **C** (optional) | JNI: load validator set into `set_validators` from tip/sync payload | Soft BFT path can become hard under `REQUIRE_BFT_VOTES` |
+
+**Minimum to mark closed:** **B** (two processes, HTTP off, tip moves). **A** is the product switch; **C** hardens BFT on phone.
+
+**Not required for this gap:** full Altair LC or zkML.
+
+---
+
+### 4 — Stronger ZK stationarity (hard)
+
+**Today:** R1CS binds residual, threshold, hash limbs; witness is difference so residual + difference = threshold. Proves “numbers fit the relation,” **not** “this residual came from the Lagrangian at this nonce.”
+
+**Close path — two tracks (choose by claim strength):**
+
+| Track | Work | Done when |
+|-------|------|-----------|
+| **4a Honesty** | LIMITATIONS + claim text: “Groth16 proves residual ≤ threshold under public inputs; residual itself is checked outside ZK by validators / mobile re-eval” | Marketing cannot say “full stationarity in-circuit” |
+| **4b Strength (preferred for claim)** | ZkVM guest: call same fixed-point residual eval used by `joint_residual_and_gradient` (or a pure-integer subset), commit residual + prev_hash limbs in journal; host proves; `validate_unified` accepts type `0x02` | Real receipt verifies; journal matches header residual |
+
+**Practical order:** keep Groth16 for cheap verify; use **4b** as the strong path governance can prefer (`accepted_proof_types` already masks this).
+
+**Out of scope for “close the gap”:** full DEQ/NTK network inside R1CS in one shot.
+
+---
+
+### 5 — Real MPC / PTAU phase-2 (hard)
+
+**Today:** Keys load from disk; production panics if missing. Ceremony CLI exists; **PTAU path can still degrade to deterministic setup** with a warning.
+
+**Close path:**
+
+| Step | Work | Done when |
+|------|------|-----------|
+| **1** | `init --ptau <file>` **fails** if phase-2 cannot import — no silent `init_deterministic` in mainnet mode | Exit non-zero / panic when `EQUILIBRIUM_ENV=mainnet` |
+| **2** | Documented pipeline: Powers of Tau → phase-2 contribute → `finalize` → `proving_key.bin` + `verification_key.bin` | One operator run produces keys that pass verify |
+| **3** | CI: testnet uses fixed-seed or checked-in **test** keys only; mainnet artifact is ceremony output (or hash-pinned) | No production binary ships with known trapdoor seed |
+
+**Done when:** production boot **only** accepts non-test CRS; ceremony path never falls back under mainnet flags.
+
+---
+
+## Sequencing (smallest real closes first)
+
+```text
+3B  two-sidecar (or phone+sidecar) mesh test, HTTP off     ← finishes partial
+4a  honesty text when README unfreezes  OR  4b ZkVM residual guest
+5.1 fail-closed PTAU under mainnet
+5.2–5.3 ceremony pipeline + pin
+```
+
+| If you care most about… | Do next |
+|-------------------------|---------|
+| “Fully mobile” slogan | **3B** |
+| “ZK PoS” slogan | **4b** (or **4a** for honesty-only) |
+| Mainnet CRS trust | **5** |
+
+---
+
+## One-line “closed” definitions
+
+- **3 closed:** automated test or runbook: peer B’s tip height increases after A’s gossip, with submit HTTP disabled.  
+- **4 closed (strong):** `validate_unified` accepts a ZkVM receipt whose journal residual equals the header’s fixed-point residual.  
+- **5 closed:** mainnet/prod cannot start on deterministic/test CRS; keys come from a completed phase-2 finalize.
+
+Say which to draft first — **3B mesh harness**, **4b guest residual**, or **5.1 fail-closed PTAU** — and we write the concrete patch against current files.
+
+Lol I care about all 3 without acceptions so let's draft the fix for them.
+
+Three closings, no soft options. Apply on top of `44a89d0`.
+
+---
+
+## Gap 3 — Closed mesh (partial → closed)
+
+**Goal:** two real `p2p-sidecar` processes advance tip with **no HTTP**.
+
+### 3.1 Sidecar RPC (if missing)
+
+In `p2p-sidecar.rs` ensure these methods exist (names match mesh test style):
+
+| method | behavior |
+|--------|----------|
+| `set_local_tip` | `{ height, hash, difficulty }` → in-process tip |
+| `get_local_tip` | → current tip |
+| `gossip_block_body` | publish full block JSON on body topic |
+| `poll_block_body` | dequeue received body |
+| `validate_and_adopt` | run same path as mobile: parse → residual/merkle → on Accept `set_local_tip` + ring |
+
+Minimal `validate_and_adopt` can call into `mobile_validator::ValidationEngine` (or shared `validate_gossiped_block`).
+
+### 3.2 Integration test — extend `p2p-mesh.integration.test.ts`
+
+```ts
+it("node2 advances tip from node1 body with no HTTP", async () => {
+  // proc1, proc2 already dialed (reuse two-node setup from existing test)
+  const genesis = {
+    height: 0,
+    hash: "0".repeat(64),
+    prevHash: "0".repeat(64),
+    // ... minimal fields your parse_block_json accepts
+    residual: 0,
+    residualFp: 0,
+    nonce: 0,
+    timestamp: Math.floor(Date.now() / 1000),
+    difficulty: 1,
+    merkleRoot: "0".repeat(64),
+    txs: [],
+  };
+
+  await rpcCall(proc1, { id: "t0", method: "set_local_tip", height: 0, hash: genesis.hash, difficulty: 1 });
+  await rpcCall(proc2, { id: "t1", method: "set_local_tip", height: 0, hash: genesis.hash, difficulty: 1 });
+
+  // Block 1 body — use a body your residual verifier accepts (fixture from Rust test)
+  const body = { /* flat mining body height 1, prevHash = genesis.hash, ... */ };
+
+  const g = await rpcCall(proc1, {
+    id: "g1",
+    method: "gossip_block_body",
+    body: JSON.stringify(body),
+  });
+  expect(g).toMatchObject({ ok: true });
+
+  let adopted = false;
+  for (let i = 0; i < 30; i++) {
+    const poll = await rpcCall(proc2, { id: `p${i}`, method: "poll_block_body" });
+    if ((poll as any).body) {
+      const v = await rpcCall(proc2, {
+        id: `v${i}`,
+        method: "validate_and_adopt",
+        body: (poll as any).body,
+        from_peer: true,
+      });
+      if ((v as any).ok && (v as any).accepted) {
+        adopted = true;
+        break;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  expect(adopted).toBe(true);
+
+  const tip = await rpcCall(proc2, { id: "tip", method: "get_local_tip" });
+  expect((tip as any).height).toBeGreaterThanOrEqual(1);
+  // No process may have called HTTP — this test never imports fetch/axios to submit.
+}, 60_000);
+```
+
+### 3.3 Phone product switch
+
+`MiningWorker.kt`:
+
+```kotlin
+val httpSubmit = System.getenv("HTTP_SUBMIT")?.lowercase() !in setOf("0", "false", "off")
+// ...
+if (httpSubmit) {
+  // existing POST /api/blocks/submit
+} else {
+  P2PNode.gossipBlockBody(bodyJson)
+  // tip only via validateAndAwaitAccept / setLocalTip
+}
+```
+
+**Closed when:** CI (with `cargo build --release --bin p2p-sidecar`) runs the new test green.
+
+---
+
+## Gap 4 — Stronger ZK stationarity (hard)
+
+**Goal:** ZkVM guest **recomputes** residual from header fields (same identity as consensus), not only `residual + difference == threshold`.
+
+### 4.1 Guest `methods/guest/src/main.rs`
+
+Replace difference-only check with fixed-point residual evaluation that mirrors the **consensus-critical** parts of `joint_residual_and_gradient` (hash constraint + scalar terms you can do in pure integer).
+
+Pragmatic **strong** first cut (still stronger than today):
+
+```rust
+#![no_main]
+use risc0_zkvm::guest::env;
+use serde::{Deserialize, Serialize};
+
+/// Header fields needed to re-evaluate residual at fixed nonce (no search).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StationarityInput {
+    pub prev_hash: [u8; 32],
+    pub merkle_root: [u8; 32],
+    pub timestamp: u64,
+    pub nonce: u64,
+    pub difficulty: u64,
+    pub recursion_depth: u32,
+    /// Claimed residual (fixed-point, same scale as chain).
+    pub residual_fp: u64,
+    pub threshold_fp: u64,
+    /// Optional: pack more ChainState fields as you tighten parity.
+    pub cumulative_work: u64,
+    pub height: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StationarityOutput {
+    pub residual_fp: u64,
+    pub threshold_fp: u64,
+    pub block_hash_lo: u64,
+    pub block_hash_hi: u64,
+}
+
+/// Must match mobile_validator::block_hash / MiningWorker.computeBlockHash
+fn block_hash(prev: &[u8; 32], nonce: u64, timestamp: u64, difficulty: u64) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(prev);
+    h.update(nonce.to_le_bytes());
+    h.update(timestamp.to_le_bytes());
+    h.update(difficulty.to_le_bytes());
+    h.finalize().into()
+}
+
+/// Integer-only residual proxy aligned with fixed-point consensus.
+/// Expand until it matches StationarySolver::joint_residual_and_gradient
+/// for the fields you put in the journal (document any remaining f64-only terms).
+fn residual_at_nonce(inp: &StationarityInput) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(inp.prev_hash);
+    h.update(inp.merkle_root);
+    h.update(inp.timestamp.to_le_bytes());
+    h.update(inp.nonce.to_le_bytes());
+    h.update(inp.difficulty.to_le_bytes());
+    h.update(inp.recursion_depth.to_le_bytes());
+    let digest = h.finalize();
+    // Fold into u64 residual units (deterministic; replace with full FP formula)
+    let mut acc = 0u64;
+    for chunk in digest.chunks(8) {
+        let mut buf = [0u8; 8];
+        buf[..chunk.len()].copy_from_slice(chunk);
+        acc ^= u64::from_le_bytes(buf);
+    }
+    acc
+}
+
+risc0_zkvm::guest::entry!(main);
+
+fn main() {
+    let input: StationarityInput = env::read();
+
+    let recomputed = residual_at_nonce(&input);
+    assert_eq!(
+        recomputed, input.residual_fp,
+        "claimed residual != recomputed residual"
+    );
+    assert!(
+        input.residual_fp < input.threshold_fp,
+        "residual not below threshold"
+    );
+
+    let bh = block_hash(
+        &input.prev_hash,
+        input.nonce,
+        input.timestamp,
+        input.difficulty,
+    );
+    let lo = u64::from_le_bytes(bh[0..8].try_into().unwrap());
+    let hi = u64::from_le_bytes(bh[8..16].try_into().unwrap());
+
+    env::commit(&StationarityOutput {
+        residual_fp: input.residual_fp,
+        threshold_fp: input.threshold_fp,
+        block_hash_lo: lo,
+        block_hash_hi: hi,
+    });
+}
+```
+
+**Critical follow-through:** replace `residual_at_nonce` with the **same pure-integer path** extracted from `StationarySolver` (shared crate module `residual_fp.rs` used by solver, mobile_validator, and guest). Until that extract is done, document that guest uses hash-folded residual **v1** and bump image ID when you switch to full joint residual.
+
+### 4.2 Host `DualZkvmProver::prove`
+
+Pass full header fields into guest; stop sending only difference.
+
+### 4.3 `ZkvmVerifier::verify`
+
+Decode journal → `StationarityOutput`; require `residual_fp == header.residual.unsigned_abs()` and threshold/hash limbs match.
+
+**Closed when:** `validate_unified(..., ProofType::Zkvm, ...)` accepts a real receipt whose journal residual equals header residual after guest recompute.
+
+---
+
+## Gap 5 — Real MPC / PTAU (hard)
+
+**Goal:** `--ptau` never silently equals deterministic; mainnet cannot use test CRS.
+
+### 5.1 Fail-closed in `mpc-ceremony/src/main.rs`
+
+```rust
+fn is_mainnet_ceremony() -> bool {
+    std::env::var("EQUILIBRIUM_ENV").as_deref() == Ok("mainnet")
+        || std::env::var("MPC_REQUIRE_PTAU").as_deref() == Ok("1")
+}
+
+fn init_from_ptau(ptau_path: &str, output: &str) {
+    if !Path::new(ptau_path).exists() {
+        eprintln!("[mpc] FATAL: PTAU file not found: {ptau_path}");
+        std::process::exit(2);
+    }
+
+    // Real import path — implement with arkworks phase2 / snarkjs export bridge.
+    // Until binary import lands, REFUSE fallback under mainnet:
+    if is_mainnet_ceremony() || std::env::var("MPC_ALLOW_PTAU_PLACEHOLDER").as_deref() != Ok("1") {
+        eprintln!(
+            "[mpc] FATAL: PTAU specialization not implemented. \
+             Refusing deterministic fallback. Set MPC_ALLOW_PTAU_PLACEHOLDER=1 \
+             only for explicit dev experiments."
+        );
+        std::process::exit(3);
+    }
+
+    eprintln!("[mpc] WARNING: placeholder PTAU path (dev only)");
+    init_deterministic(output);
+}
+
+// Init without --ptau:
+Commands::Init { ptau, output } => {
+    if let Some(ptau_path) = ptau {
+        init_from_ptau(&ptau_path, &output);
+    } else {
+        if is_mainnet_ceremony() {
+            eprintln!("[mpc] FATAL: mainnet requires --ptau");
+            std::process::exit(4);
+        }
+        init_deterministic(&output);
+    }
+}
+```
+
+### 5.2 Real phase-2 (implementation target)
+
+Ship one of these pipelines (pick and lock in `docs/mpc-ceremony.md` when README unfreezes):
+
+1. **snarkjs** R1CS export of `StationarityCircuit` → `snarkjs powersoftau` / phase2 → convert PK/VK to ark compressed bytes, **or**
+2. **ark-std + circuit-specific setup from imported toxic-waste-free phase1** via a maintained crate (e.g. phase2 tooling you vendor).
+
+Minimum honest bar before calling CRS “ceremony-grade”:
+
+- `init --ptau` produces params whose **transcript hash ≠** `0xCAFE_BABE_DEAD_BEEF` test setup  
+- `contribute` applies entropy to **existing** params (not full re-setup)  
+- `finalize` writes `proving_key.bin` / `verification_key.bin` that `zk_proof::keys()` loads  
+- `verify` checks contribution linkage (not only deserialize)
+
+### 5.3 Runtime (already mostly done)
+
+Keep production panic if keys missing. Add:
+
+```rust
+// After loading keys from disk in zk_proof::keys():
+if is_production {
+    // Optional: reject known testnet vk hash
+    const FORBIDDEN_TESTNET_VK_PREFIX: [u8; 8] = /* hash of fixed-seed vk */;
+    // if vk fingerprint matches testnet → panic
+}
+```
+
+**Closed when:**  
+`EQUILIBRIUM_ENV=mainnet mpc-ceremony init` without real PTAU **exits non-zero**;  
+`init --ptau <real>` either produces non-test keys or exits;  
+node with `NODE_ENV=production` only runs on ceremony PK/VK.
+
+---
+
+## Apply order (all three, no exceptions)
+
+```text
+1. Gap 5.1 fail-closed PTAU / mainnet init     ← hours, pure policy
+2. Gap 3.1–3.2 sidecar RPCs + mesh tip test    ← proves mobile mesh
+3. Gap 4 shared residual_fp + guest recompute  ← proves stronger ZK
+4. Gap 5.2 real phase-2 import                 ← ceremony integrity
+5. Gap 3.3 HTTP_SUBMIT=0 on phone              ← product default offline
+```
+
+| Gap | First PR | Definition of done |
+|-----|----------|--------------------|
+| **3** | Sidecar body + `validate_and_adopt` + mesh test | Two sidecars, height↑, no HTTP |
+| **4** | Guest recompute + host journal check | ZkVM receipt residual == header |
+| **5** | Exit codes + no mainnet fallback | Then real PTAU import |
+
+I can’t push to your repo from here. Paste these into Replit on `44a89d0`, land **5.1 + 3 mesh test** first (fastest verifiable wins), then guest residual, then full PTAU import.
+
+Want the next message to be **only** the full `p2p-sidecar` RPC handlers for 3.1, or **only** the shared `residual_fp` module extract for 4?
+
+Screenshot Provided
+
+CI on **`44a89d0` / `main`** is green.
+
+| Job | Result |
+|-----|--------|
+| TypeScript typecheck | Pass |
+| Rust check & clippy (`equilibrium`) | Pass |
+| Rust check & clippy (`variational-ai`) | Pass |
+| TypeScript tests (Vitest) | **10/10 files · 261/261** |
+| Rust unit tests (`equilibrium`) | Pass |
+| Rust unit tests (`variational-ai`) | Pass |
+| Workflow | **Success** (~22m 43s) |
+
+So the BFT / UnifiedProof / ETH / method 8 / in-process mesh work on that commit is not just in the tree — it **builds and tests clean** on Actions.
+
+Still outside what this run proves (same as before):
+
+- **3** two-process/device mesh with HTTP off (sidecar body + tip adopt)
+- **4** ZkVM residual recompute in guest
+- **5** fail-closed real PTAU (no deterministic fallback under mainnet)
+
+Warnings are only Node 20 deprecation noise — not test failures.
+
+Solid checkpoint. Next land is still those three closings when you’re ready.

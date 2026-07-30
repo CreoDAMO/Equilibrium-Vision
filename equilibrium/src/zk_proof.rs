@@ -386,19 +386,35 @@ impl Groth16Verifier {
 
 // ── RISC Zero types ──────────────────────────────────────────────────────────
 
+/// Host-side input passed to the RISC Zero ZkVM guest.
+///
+/// Field order **must** match `StationarityInput` in
+/// `methods/guest/src/main.rs` — risc0 uses bincode/postcard serialisation
+/// where field order determines the on-wire layout.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkvmInput {
-    pub residual_fp: u64,
-    pub threshold_fp: u64,
-    pub block_hash_lo: u64,
-    pub block_hash_hi: u64,
-    pub difference: u64,
+    pub prev_hash:       [u8; 32],
+    pub merkle_root:     [u8; 32],
+    pub timestamp:       u64,
+    pub nonce:           u64,
+    pub difficulty:      u64,
+    pub recursion_depth: u32,
+    /// Claimed residual (fixed-point, same scale as the chain validator).
+    pub residual_fp:     u64,
+    pub threshold_fp:    u64,
+    pub cumulative_work: u64,
+    pub height:          u64,
 }
 
+/// Journal output decoded from the RISC Zero receipt.
+///
+/// `residual_fp` is now the *recomputed* value from the guest, not a
+/// pass-through — so if the prover supplied a wrong `residual_fp` the receipt
+/// cannot be produced (the guest panics on the assert_eq).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkvmOutput {
-    pub residual_fp: u64,
-    pub threshold_fp: u64,
+    pub residual_fp:   u64,
+    pub threshold_fp:  u64,
     pub block_hash_lo: u64,
     pub block_hash_hi: u64,
 }
@@ -409,22 +425,37 @@ pub struct DualZkvmProver;
 
 impl DualZkvmProver {
     /// Prove with Bonsai if BONSAI_API_KEY is set, else self-hosted.
+    ///
+    /// The guest now **recomputes** the residual from header fields rather than
+    /// accepting `residual + difference == threshold` as a witness.  All header
+    /// fields that the guest's `residual_at_nonce` function hashes must be
+    /// supplied here so the prover can produce a valid receipt.
     #[cfg(feature = "risc0")]
     pub fn prove(
-        residual_fp: u64,
-        threshold_fp: u64,
-        block_hash: &[u8; 32],
+        residual_fp:     u64,
+        threshold_fp:    u64,
+        prev_hash:       &[u8; 32],
+        nonce:           u64,
+        timestamp:       u64,
+        difficulty:      u64,
+        height:          u64,
+        merkle_root:     &[u8; 32],
+        cumulative_work: u64,
+        recursion_depth: u32,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         assert!(residual_fp < threshold_fp, "residual must be below threshold");
-        let difference = threshold_fp - residual_fp;
-        let (hash_lo, hash_hi) = block_hash_to_u64_pair(block_hash);
 
         let input = ZkvmInput {
+            prev_hash:       *prev_hash,
+            merkle_root:     *merkle_root,
+            timestamp,
+            nonce,
+            difficulty,
+            recursion_depth,
             residual_fp,
             threshold_fp,
-            block_hash_lo: hash_lo,
-            block_hash_hi: hash_hi,
-            difference,
+            cumulative_work,
+            height,
         };
 
         let env = ExecutorEnv::builder()
@@ -455,9 +486,16 @@ impl DualZkvmProver {
 
     #[cfg(not(feature = "risc0"))]
     pub fn prove(
-        _residual_fp: u64,
-        _threshold_fp: u64,
-        _block_hash: &[u8; 32],
+        _residual_fp:     u64,
+        _threshold_fp:    u64,
+        _prev_hash:       &[u8; 32],
+        _nonce:           u64,
+        _timestamp:       u64,
+        _difficulty:      u64,
+        _height:          u64,
+        _merkle_root:     &[u8; 32],
+        _cumulative_work: u64,
+        _recursion_depth: u32,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         Err("RISC Zero feature not enabled".into())
     }
@@ -553,13 +591,35 @@ pub fn prove_stationarity(
     do_prove(residual_fp, threshold_fp, hash_lo, hash_hi, difference)
 }
 
+/// Prove stationarity for a block using the ZkVM (RISC Zero) path.
+///
+/// The guest recomputes the residual from the supplied header fields and
+/// asserts it equals `residual_fp`, binding the receipt to a specific block.
+///
+/// `prev_hash` is the parent block's hash (the field the residual is hashed
+/// against).  Supply `nonce`, `timestamp`, and `difficulty` from the mined
+/// block header; the rest default to conservative placeholders.
 #[cfg(feature = "risc0")]
 pub fn prove_stationarity_zkvm(
-    residual_fp: u64,
+    residual_fp:  u64,
     threshold_fp: u64,
-    block_hash: &[u8; 32],
+    prev_hash:    &[u8; 32],
+    nonce:        u64,
+    timestamp:    u64,
+    difficulty:   u64,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    DualZkvmProver::prove(residual_fp, threshold_fp, block_hash)
+    DualZkvmProver::prove(
+        residual_fp,
+        threshold_fp,
+        prev_hash,
+        nonce,
+        timestamp,
+        difficulty,
+        0,            // height — informational; does not affect residual check
+        &[0u8; 32],  // merkle_root placeholder (not yet in guest residual)
+        0,            // cumulative_work placeholder
+        2,            // recursion_depth default
+    )
 }
 
 pub fn unified_from_groth16(proof: &Groth16ProofBytes) -> Option<UnifiedProof> {

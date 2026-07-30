@@ -154,6 +154,16 @@ struct Command {
     ok:         Option<bool>,
     data:       Option<Value>,
     error:      Option<String>,
+    /// Full block body — JSON object or JSON-encoded string.
+    /// Used by gossip_block_body and validate_and_adopt (Gap 3).
+    body:       Option<Value>,
+    /// Block height for set_local_tip.
+    height:     Option<u64>,
+    /// Chain difficulty for set_local_tip / validate_and_adopt.
+    difficulty: Option<u64>,
+    /// True when the body came from a remote peer (validate_and_adopt).
+    #[serde(rename = "fromPeer")]
+    from_peer:  Option<bool>,
 }
 
 // ── Pending response maps ──────────────────────────────────────────────────────
@@ -163,6 +173,17 @@ type OutboundLN   = HashMap<request_response::OutboundRequestId, String>;
 type InboundLN    = HashMap<String, request_response::ResponseChannel<LightnodeResp>>;
 type OutboundSync = HashMap<request_response::OutboundRequestId, String>;
 type InboundSync  = HashMap<String, request_response::ResponseChannel<SyncResp>>;
+
+// ── Local tip cache (Gap 3 — no-HTTP mesh proof) ──────────────────────────────
+
+/// Lightweight chain-tip state kept by the sidecar.
+/// Populated via `set_local_tip`; checked in `validate_and_adopt`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LocalTip {
+    height:     u64,
+    hash:       String,
+    difficulty: u64,
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -326,6 +347,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Buffer for gossip block hashes received from peers.  Drained by the
     // `poll_gossip` RPC so the test suite can pull-check received messages.
     let mut gossip_queue: VecDeque<String>   = VecDeque::new();
+    // Buffer for full block bodies received via Gossipsub body topic.  Drained
+    // by `poll_block_body` — lets two-sidecar mesh tests advance tip without HTTP.
+    let mut body_queue:   VecDeque<Value>    = VecDeque::new();
+    // Local chain tip (height / hash / difficulty) for lightweight chain-continuity
+    // validation in `validate_and_adopt`.
+    let mut local_tip:    Option<LocalTip>   = None;
 
     // ── Event loop ─────────────────────────────────────────────────────────────
     loop {
@@ -339,6 +366,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut ln_out, &mut ln_in,
                     &mut sync_out, &mut sync_in,
                     &mut gossip_queue,
+                    &mut body_queue,
+                    &mut local_tip,
                 );
                 emit(&stdout, &resp);
             }
@@ -366,6 +395,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // structured object rather than a raw string.
                             let body = serde_json::from_str::<serde_json::Value>(&payload)
                                 .unwrap_or(serde_json::Value::Null);
+                            // Buffer so poll_block_body can dequeue without HTTP.
+                            if !body.is_null() {
+                                body_queue.push_back(body.clone());
+                            }
                             serde_json::json!({ "event": "block_body", "body": body, "peerId": peer_id })
                         } else {
                             serde_json::json!({ "event": "tx", "txHash": payload, "peerId": peer_id })
@@ -613,6 +646,8 @@ fn handle_command(
     sync_out:      &mut OutboundSync,
     sync_in:       &mut InboundSync,
     gossip_queue:  &mut VecDeque<String>,
+    body_queue:    &mut VecDeque<Value>,
+    local_tip:     &mut Option<LocalTip>,
 ) -> Value {
     let cmd: Command = match serde_json::from_str(line) {
         Ok(c)  => c,
@@ -656,14 +691,116 @@ fn handle_command(
         }
 
         // Publish a full block body JSON so mobile peers can store and serve it
-        // without needing an HTTP node.  `data` carries the block body object.
+        // without needing an HTTP node.
+        // Accepts body as:
+        //   - `body` field: JSON-encoded string (JSON.stringify'd in TypeScript)
+        //   - `body` field: JSON object value
+        //   - `data` field: JSON object value (legacy)
         "gossip_block_body" => {
-            let body = cmd.data.unwrap_or(serde_json::Value::Null);
+            let body = match cmd.body {
+                Some(Value::String(s)) => {
+                    serde_json::from_str::<Value>(&s).unwrap_or(Value::Null)
+                }
+                Some(v) => v,
+                None    => cmd.data.unwrap_or(Value::Null),
+            };
             let json = serde_json::to_string(&body).unwrap_or_default();
             match swarm.behaviour_mut().gossipsub.publish(topic_bodies.clone(), json.into_bytes()) {
                 Ok(_)  => ok_resp(id),
                 Err(e) => err_resp(id, e),
             }
+        }
+
+        // ── Local tip management (Gap 3 — no-HTTP mesh proof) ─────────────────
+
+        // Store a chain tip locally so validate_and_adopt can check continuity.
+        "set_local_tip" => {
+            let height     = cmd.height.unwrap_or(0);
+            let hash       = cmd.hash.or(cmd.block_hash).unwrap_or_default();
+            let difficulty = cmd.difficulty.unwrap_or(1);
+            *local_tip = Some(LocalTip { height, hash, difficulty });
+            ok_resp(id)
+        }
+
+        // Return the current local tip (height / hash / difficulty).
+        "get_local_tip" => {
+            match local_tip.as_ref() {
+                Some(tip) => serde_json::json!({
+                    "id":         id,
+                    "ok":         true,
+                    "height":     tip.height,
+                    "hash":       tip.hash,
+                    "difficulty": tip.difficulty,
+                }),
+                None => serde_json::json!({
+                    "id":     id,
+                    "ok":     true,
+                    "height": Value::Null,
+                }),
+            }
+        }
+
+        // Dequeue one block body received via Gossipsub body topic.
+        // Returns `{"ok":true,"body":{…}}` or `{"body":null}` when empty.
+        "poll_block_body" => {
+            match body_queue.pop_front() {
+                Some(body) => serde_json::json!({ "id": id, "ok": true, "body": body }),
+                None       => serde_json::json!({ "id": id, "ok": true, "body": Value::Null }),
+            }
+        }
+
+        // Parse a block body, validate chain-continuity (height == tip+1,
+        // prevHash matches), and on success advance local tip — no HTTP required.
+        // Returns: `{"ok":true,"accepted":true|false}`.
+        "validate_and_adopt" => {
+            // Accept body as JSON object or as a JSON-encoded string.
+            let body_val = match cmd.body {
+                Some(Value::String(s)) => {
+                    serde_json::from_str::<Value>(&s).unwrap_or(Value::Null)
+                }
+                Some(v) => v,
+                None    => Value::Null,
+            };
+
+            let height     = body_val.get("height")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let prev_hash  = body_val.get("prevHash")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let block_hash = body_val.get("hash")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let difficulty = body_val.get("difficulty")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1);
+
+            // Chain-continuity check: height must be tip+1 and prevHash must match.
+            // Full residual / ZK validation lives in mobile_validator.rs.
+            let accepted = if block_hash.is_empty() {
+                false
+            } else {
+                match local_tip.as_ref() {
+                    Some(tip) => height == tip.height + 1 && prev_hash == tip.hash,
+                    // No local tip yet — accept block at height 1 unconditionally
+                    // (the first block after genesis; real residual check is elsewhere).
+                    None      => height == 1,
+                }
+            };
+
+            if accepted {
+                *local_tip = Some(LocalTip {
+                    height,
+                    hash: block_hash,
+                    difficulty,
+                });
+                // Also buffer so subsequent poll_block_body calls can serve it.
+                body_queue.push_back(body_val);
+            }
+
+            serde_json::json!({ "id": id, "ok": true, "accepted": accepted })
         }
 
         "peers" => {

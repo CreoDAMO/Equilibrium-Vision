@@ -28,6 +28,19 @@ use sha2::{Sha256, Digest};
 use std::fs;
 use std::path::Path;
 
+// ── Mainnet / production guard ───────────────────────────────────────────────
+
+/// Returns true when we are in a mainnet or production context that must NOT
+/// use the deterministic (known-trapdoor) fallback CRS.
+///
+/// Triggered by:
+///   EQUILIBRIUM_ENV=mainnet   (node-level env shared across all binaries)
+///   MPC_REQUIRE_PTAU=1        (explicit override for the ceremony binary)
+fn is_mainnet_ceremony() -> bool {
+    std::env::var("EQUILIBRIUM_ENV").as_deref() == Ok("mainnet")
+        || std::env::var("MPC_REQUIRE_PTAU").as_deref() == Ok("1")
+}
+
 use equilibrium::zk_proof::StationarityCircuit;
 
 #[derive(Parser)]
@@ -84,6 +97,15 @@ fn main() {
                 println!("[mpc] Initializing from PTAU: {}", ptau_path);
                 init_from_ptau(&ptau_path, &output);
             } else {
+                // Deterministic init is forbidden in mainnet / MPC_REQUIRE_PTAU mode.
+                if is_mainnet_ceremony() {
+                    eprintln!(
+                        "[mpc] FATAL: EQUILIBRIUM_ENV=mainnet (or MPC_REQUIRE_PTAU=1) requires \
+                         --ptau <file>. Refusing to initialise with a known-trapdoor seed. \
+                         Obtain a Powers-of-Tau file and re-run with --ptau."
+                    );
+                    std::process::exit(4);
+                }
                 println!("[mpc] Initializing deterministic testnet setup -> {}", output);
                 init_deterministic(&output);
             }
@@ -121,15 +143,48 @@ fn init_deterministic(output: &str) {
 
 fn init_from_ptau(ptau_path: &str, output: &str) {
     println!("[mpc] Reading PTAU from {}", ptau_path);
-    // TODO: Replace with real ark-circom / phase2 library integration:
-    //   let ptau = read_ptau_file(ptau_path).expect("Invalid PTAU");
-    //   let params = phase2::MPCParameters::new(circuit, ptau).expect("Phase-2 init failed");
-    //   params.write(output);
+
+    // ── Validate the PTAU file exists before deciding on a path ─────────────
+    if !Path::new(ptau_path).exists() {
+        eprintln!("[mpc] FATAL: PTAU file not found: {ptau_path}");
+        std::process::exit(2);
+    }
+
+    // ── Real PTAU specialization (not yet implemented) ───────────────────────
     //
-    // For now, we fall back to deterministic but WARN loudly.
-    println!("[mpc] WARNING: Full PTAU specialization not yet implemented.");
-    println!("[mpc] Falling back to deterministic setup (placeholder).");
-    println!("[mpc] See: https://github.com/iden3/snarkjs#7-prepare-phase-2");
+    // TODO: Replace the block below with real ark-circom / phase2 integration:
+    //
+    //   use ark_circom::{CircomBuilder, CircomConfig};
+    //   let cfg = CircomConfig::<Bn254>::new(r1cs_path, wasm_path)?;
+    //   let builder = CircomBuilder::new(cfg);
+    //   let circom = builder.setup();
+    //   let params = phase2::MPCParameters::new(circom, ptau_reader)?;
+    //   params.write(output_writer)?;
+    //
+    // Until that is implemented, refuse silently in mainnet mode and permit an
+    // explicit opt-in via MPC_ALLOW_PTAU_PLACEHOLDER=1 for dev experiments.
+    let allow_placeholder =
+        std::env::var("MPC_ALLOW_PTAU_PLACEHOLDER").as_deref() == Ok("1");
+
+    if is_mainnet_ceremony() || !allow_placeholder {
+        eprintln!(
+            "[mpc] FATAL: PTAU specialization is not yet implemented. \
+             Refusing deterministic fallback to protect CRS integrity.\n\
+             \n\
+             To run a dev experiment with the placeholder, set:\n\
+               MPC_ALLOW_PTAU_PLACEHOLDER=1\n\
+             \n\
+             For a real mainnet ceremony, implement the phase2 import above \
+             and remove this guard."
+        );
+        std::process::exit(3);
+    }
+
+    eprintln!(
+        "[mpc] WARNING: MPC_ALLOW_PTAU_PLACEHOLDER=1 set — \
+         falling back to deterministic setup. \
+         DO NOT use this output for mainnet."
+    );
     init_deterministic(output);
 }
 

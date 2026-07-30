@@ -108,6 +108,12 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             )
         }
 
+        // ── HTTP_SUBMIT flag — set HTTP_SUBMIT=0 (or "false"/"off") to disable
+        //    cloud HTTP submit and rely purely on P2P gossip + local validation.
+        //    Useful for fully-offline mesh operation and CI mesh tests.
+        val httpSubmitEnabled = System.getenv("HTTP_SUBMIT")
+            ?.lowercase() !in setOf("0", "false", "off")
+
         // ── 0. Ensure background validator is running ─────────────────────────
         ensureValidator()
 
@@ -234,6 +240,12 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         }
 
         // ── 4. HTTP fallback: submit solved block to the node ─────────────────
+        // Skipped when HTTP_SUBMIT=0 — body was already gossiped in step 3 and
+        // tip advance happens only on Accept (P2P-first, fully offline path).
+        if (!httpSubmitEnabled) {
+            Log.i(TAG, "HTTP_SUBMIT=0 — skipping cloud submit; block propagated via P2P only")
+            return Result.success()
+        }
         return submitBlock(
             nodeUrl      = nodeUrl,
             miner        = minerAddress,

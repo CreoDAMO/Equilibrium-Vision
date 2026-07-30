@@ -197,6 +197,68 @@ describe.skipIf(!binPresent)("p2p-sidecar mesh (binary required)", () => {
     }
     expect(received).toBe(fakeHash);
   }, 30_000);
+
+  // ── No-HTTP body mesh test (Gap 3 — closed-mesh proof) ────────────────────
+  //
+  // Proves: node2's tip height increases after node1 gossips a full block body,
+  // with HTTP disabled.  No fetch/axios/submit call is made anywhere in this test.
+
+  it("node2 advances tip from node1 body with no HTTP", async () => {
+    // Set genesis tip on both nodes (height 0, all-zeros hash).
+    const GENESIS_HASH = "0".repeat(64);
+
+    await rpcCall(proc1, { id: "bt0", method: "set_local_tip", height: 0, hash: GENESIS_HASH, difficulty: 1 });
+    await rpcCall(proc2, { id: "bt1", method: "set_local_tip", height: 0, hash: GENESIS_HASH, difficulty: 1 });
+
+    // Block-1 body — only chain-continuity fields matter for the sidecar;
+    // full residual / ZK validation lives in mobile_validator.rs.
+    const BLOCK1_HASH = "ab".repeat(32);
+    const block1 = {
+      hash:       BLOCK1_HASH,
+      height:     1,
+      prevHash:   GENESIS_HASH,
+      nonce:      0,
+      residual:   0,
+      residualFp: 0,
+      timestamp:  Math.floor(Date.now() / 1000),
+      difficulty: 1,
+      merkleRoot: "0".repeat(64),
+      txs:        [] as unknown[],
+    };
+
+    // node1 gossips the full body over Gossipsub — no HTTP.
+    const gResp = await rpcCall(proc1, {
+      id:     "bg1",
+      method: "gossip_block_body",
+      body:   JSON.stringify(block1),
+    });
+    expect(gResp).toMatchObject({ ok: true });
+
+    // node2 polls for the received body and validates it (Gossipsub propagation
+    // may take a moment — retry up to 30 × 200 ms = 6 s).
+    let adopted = false;
+    for (let i = 0; i < 30; i++) {
+      const poll = await rpcCall(proc2, { id: `bp${i}`, method: "poll_block_body" }, 5000);
+      if ((poll as any).body) {
+        const vResp = await rpcCall(proc2, {
+          id:       `bv${i}`,
+          method:   "validate_and_adopt",
+          body:     (poll as any).body,
+          fromPeer: true,
+        });
+        if ((vResp as any).ok && (vResp as any).accepted) {
+          adopted = true;
+          break;
+        }
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(adopted).toBe(true);
+
+    // node2's tip height must now be ≥ 1 — advanced without any HTTP call.
+    const tipResp = await rpcCall(proc2, { id: "btip", method: "get_local_tip" });
+    expect((tipResp as any).height).toBeGreaterThanOrEqual(1);
+  }, 60_000);
 });
 
 // ── Informational test that always runs ───────────────────────────────────────
