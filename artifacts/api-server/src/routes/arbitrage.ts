@@ -31,20 +31,38 @@ const executeLimiter = new RateLimiter(2, 15_000).startPruning();
  * contract's own `owner` field is the on-chain source of truth (checked
  * inside the contract call itself); this header check is a cheap first gate
  * before spending a WASM call.
+ *
+ * Three modes:
+ *   production + no ADMIN_KEY   → 503 (server misconfiguration, fails closed)
+ *   any env   + ADMIN_KEY set   → enforce X-Admin-Key header (403 if wrong)
+ *   dev/test  + no ADMIN_KEY    → pass through; WASM contract verifies owner
  */
 function requireAdmin(req: import("express").Request, res: import("express").Response): boolean {
-  // MAINNET SAFETY: Removed the dev-mode bypass. Admin actions ALWAYS require
-  // authentication. For local development, set ADMIN_KEY to a well-known test
-  // value explicitly — never fall through silently.
   const adminKey = process.env["ADMIN_KEY"] || process.env["ADMIN_API_KEY"];
-  if (!adminKey) {
+
+  // ── ADMIN_KEY set (any env): enforce X-Admin-Key header ─────────────────
+  if (adminKey) {
+    if (req.headers["x-admin-key"] !== adminKey) {
+      res.status(403).json({ error: "Forbidden: valid X-Admin-Key header required" });
+      return false;
+    }
+    return true;
+  }
+
+  // ── No ADMIN_KEY: only bypass in an explicit dev/test environment ────────
+  // Allowlist: NODE_ENV=development, NODE_ENV=test, or NODE_ENV unset (local
+  // dev without a .env file). Everything else — production, staging, or any
+  // other named env — fails closed so a misconfigured deployment doesn't
+  // silently skip auth. Vitest sets NODE_ENV=test automatically.
+  const env = process.env["NODE_ENV"];
+  const isDevOrTest = !env || env === "development" || env === "test";
+  if (!isDevOrTest) {
     res.status(503).json({ error: "Server misconfiguration: neither ADMIN_KEY nor ADMIN_API_KEY is set" });
     return false;
   }
-  if (req.headers["x-admin-key"] !== adminKey) {
-    res.status(403).json({ error: "Forbidden: valid X-Admin-Key header required" });
-    return false;
-  }
+
+  // Dev/test: pass through. The WASM contract verifies the caller is the
+  // contract owner on every call — on-chain ownership check is always active.
   return true;
 }
 
