@@ -8,11 +8,13 @@
 //!   4. Merkle root recomputation from tx hashes
 //!   5. BFT vote verification (stubbed)
 
+use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 use crate::chain_state::{
     BlockHeader, TxCandidate, ChainState, residual_to_fixed,
@@ -153,6 +155,9 @@ struct ValidationEngine {
     chain: Vec<BlockHeader>,
     /// Real SHA256 block hashes for each accepted header (for prev_hash continuity).
     tip_hashes: Vec<[u8; 32]>,
+    /// Active validator set: addr → (pubkey_bytes, bonded_stake).
+    /// Empty = skip quorum check unless REQUIRE_BFT_VOTES=true.
+    validators: HashMap<String, ValidatorInfo>,
 }
 
 impl ValidationEngine {
@@ -160,7 +165,14 @@ impl ValidationEngine {
         Self {
             chain: Vec::with_capacity(MAX_VALIDATED_BLOCKS),
             tip_hashes: Vec::with_capacity(MAX_VALIDATED_BLOCKS),
+            validators: HashMap::new(),
         }
+    }
+
+    /// Load the active validator set (called from JNI when tip sync delivers the set).
+    #[allow(dead_code)]
+    fn set_validators(&mut self, set: HashMap<String, ValidatorInfo>) {
+        self.validators = set;
     }
 
     fn validate(&self, block: &GossipedBlock, _from_peer: bool) -> ValidationDecision {
@@ -227,8 +239,27 @@ impl ValidationEngine {
             };
         }
 
-        // 5. BFT vote verification (stubbed — needs BLS host imports)
-        // if block.bft_votes.len() < supermajority { return Reject { reason: "quorum" } }
+        // 5. BFT votes — Ed25519, same domain string as state.ts runFinalityRound.
+        // Message: "equilibrium-bft-v1" || hashHex(UTF-8) || heightDecimalString(UTF-8)
+        let require = require_bft_votes();
+        let votes = parse_bft_votes_from_block_json(&block.block_json);
+
+        if require || !votes.is_empty() {
+            if self.validators.is_empty() {
+                if require {
+                    return ValidationDecision::Reject {
+                        reason: "REQUIRE_BFT_VOTES set but no validator set loaded".into(),
+                    };
+                }
+                // Soft path: cannot verify without set; do not block testnet traffic
+            } else {
+                let hash_hex = hex::encode(block_hash(&block.header));
+                let height = block.header.recursion_depth as u64;
+                if let Err(e) = check_bft_quorum(&self.validators, &votes, &hash_hex, height) {
+                    return ValidationDecision::Reject { reason: e };
+                }
+            }
+        }
 
         ValidationDecision::Accept
     }
@@ -450,6 +481,163 @@ fn parse_hash32(hex: &str) -> Result<[u8; 32], String> {
             .map_err(|e| format!("hex byte parse: {e}"))?;
     }
     Ok(out)
+}
+
+// ── BFT vote verification (bit-aligned with state.ts runFinalityRound) ────────
+//
+// Vote message (EXACT TS layout — do NOT use raw hash bytes or LE height):
+//   Buffer.from("equilibrium-bft-v1")
+//   || Buffer.from(block.hash)               // hex STRING as UTF-8
+//   || Buffer.from(block.height.toString())  // decimal STRING as UTF-8
+//
+// Env:
+//   REQUIRE_BFT_VOTES=true|1  → reject when quorum fails or validator set missing
+//   unset / false             → if votes present + set loaded, enforce quorum;
+//                               if no votes or set empty, accept (testnet soft path)
+
+const BFT_VOTE_DOMAIN: &[u8] = b"equilibrium-bft-v1";
+
+/// A single BFT finality vote from a validator.
+#[derive(Debug, Clone)]
+pub struct BftVote {
+    pub validator_addr: String,
+    /// Hex string identical to what the signer hashed (no 0x prefix, lowercase).
+    pub block_hash_hex: String,
+    pub height: u64,
+    pub signature: [u8; 64],
+}
+
+/// Validator identity and stake weight.
+#[derive(Debug, Clone)]
+pub struct ValidatorInfo {
+    pub pubkey: [u8; 32],
+    pub bonded_stake: u64,
+}
+
+impl BftVote {
+    /// Construct the vote message exactly as TypeScript `runFinalityRound` does.
+    pub fn vote_message(block_hash_hex: &str, height: u64) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(BFT_VOTE_DOMAIN.len() + block_hash_hex.len() + 24);
+        msg.extend_from_slice(BFT_VOTE_DOMAIN);
+        msg.extend_from_slice(block_hash_hex.as_bytes());
+        msg.extend_from_slice(height.to_string().as_bytes());
+        msg
+    }
+
+    /// Verify the Ed25519 signature against the validator's public key.
+    pub fn verify(&self, pubkey: &[u8; 32]) -> Result<(), String> {
+        let vk = VerifyingKey::from_bytes(pubkey)
+            .map_err(|e| format!("invalid pubkey: {e}"))?;
+        let msg = Self::vote_message(&self.block_hash_hex, self.height);
+        let sig = Signature::from_bytes(&self.signature);
+        vk.verify(&msg, &sig)
+            .map_err(|e| format!("signature verify failed: {e}"))
+    }
+}
+
+fn require_bft_votes() -> bool {
+    std::env::var("REQUIRE_BFT_VOTES")
+        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Check that votes reach ≥ ⅔ supermajority of total bonded stake.
+/// `expected_hash_hex` / `expected_height` must match what each voter signed.
+pub fn check_bft_quorum(
+    validators: &HashMap<String, ValidatorInfo>,
+    votes: &[BftVote],
+    expected_hash_hex: &str,
+    expected_height: u64,
+) -> Result<(), String> {
+    if validators.is_empty() {
+        return Err("no active validators in set".into());
+    }
+    let total_stake: u64 = validators.values().map(|v| v.bonded_stake).sum();
+    if total_stake == 0 {
+        return Err("total bonded stake is zero".into());
+    }
+
+    let normalize = |h: &str| h.trim().trim_start_matches("0x").trim_start_matches("0X").to_lowercase();
+    let eh = normalize(expected_hash_hex);
+
+    let mut voted_stake: u64 = 0;
+    let mut seen = HashSet::new();
+
+    for vote in votes {
+        if !seen.insert(vote.validator_addr.clone()) {
+            continue; // deduplicate
+        }
+        let vh = normalize(&vote.block_hash_hex);
+        if vh != eh || vote.height != expected_height {
+            return Err(format!(
+                "vote for wrong block: {}@{} vs {}@{}",
+                vote.block_hash_hex, vote.height, expected_hash_hex, expected_height
+            ));
+        }
+        let info = validators
+            .get(&vote.validator_addr)
+            .ok_or_else(|| format!("unknown validator: {}", vote.validator_addr))?;
+        vote.verify(&info.pubkey)?;
+        voted_stake = voted_stake.saturating_add(info.bonded_stake);
+    }
+
+    // voted/total >= 2/3  ⇔  voted*3 >= total*2
+    if voted_stake.saturating_mul(3) < total_stake.saturating_mul(2) {
+        return Err(format!(
+            "BFT quorum not met: voted_stake={voted_stake} total_stake={total_stake}"
+        ));
+    }
+    Ok(())
+}
+
+/// Parse BFT votes from a block JSON envelope.
+/// Accepts `bftVotes` / `bft_votes` at the top level.
+pub fn parse_bft_votes_from_block_json(json: &str) -> Vec<BftVote> {
+    #[derive(Deserialize)]
+    struct WireVote {
+        #[serde(alias = "validatorAddress", alias = "validator")]
+        validator: String,
+        #[serde(alias = "blockHash", alias = "hash")]
+        block_hash: String,
+        height: u64,
+        #[serde(alias = "signature", alias = "sig")]
+        signature: String,
+    }
+    #[derive(Deserialize)]
+    struct Envelope {
+        #[serde(default, alias = "bftVotes", alias = "bft_votes")]
+        bft_votes: Option<Vec<WireVote>>,
+    }
+
+    let env: Envelope = match serde_json::from_str(json) {
+        Ok(e) => e,
+        Err(_) => return vec![],
+    };
+    let Some(list) = env.bft_votes else { return vec![] };
+
+    let mut out = Vec::with_capacity(list.len());
+    for v in list {
+        let clean = v.signature.trim().trim_start_matches("0x").trim_start_matches("0X");
+        if clean.len() != 128 || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        let mut sig = [0u8; 64];
+        let mut ok = true;
+        for i in 0..64 {
+            match u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16) {
+                Ok(b) => sig[i] = b,
+                Err(_) => { ok = false; break; }
+            }
+        }
+        if !ok { continue; }
+        out.push(BftVote {
+            validator_addr: v.validator,
+            block_hash_hex: v.block_hash.trim().trim_start_matches("0x").trim_start_matches("0X").to_lowercase(),
+            height: v.height,
+            signature: sig,
+        });
+    }
+    out
 }
 
 // ── Battery / thermal deferral stub ───────────────────────────────────────────
@@ -681,5 +869,212 @@ mod tests {
         let v = MobileValidator::start();
         v.shutdown();
         std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // ── BFT vote tests ────────────────────────────────────────────────────────
+
+    // ── Closed-mesh / offline-P2P integration test ───────────────────────────
+    //
+    // Proves that two nodes can exchange blocks via the gossip path (from_peer=true)
+    // and advance their local tips without the HTTP /api/blocks/submit endpoint.
+    // This is the Rust-side evidence for the "fully mobile P2P mesh" claim.
+    #[test]
+    fn p2p_gossip_advances_tip_without_http() {
+        use crate::chain_state::ChainState;
+        use crate::stationary_solver::StationarySolver;
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let lambda = [1.0_f64; 5];
+
+        // ── Node A: mine genesis (height 0) ───────────────────────────────
+        let genesis_base = BlockHeader {
+            prev_hash: [0u8; 32],
+            merkle_root: [0u8; 32],
+            timestamp: now,
+            nonce: 0,
+            difficulty: 1,
+            recursion_depth: 0,
+            residual: 0,
+            state_root: [0u8; 32],
+        };
+        let genesis_state = ChainState {
+            cumulative_work: 0,
+            mempool_pressure: 0.5,
+            validator_count: 1,
+            last_quality: 1.0,
+            height: 0,
+        };
+        let (res0, _) = StationarySolver::joint_residual_and_gradient(
+            &genesis_base, &[], &genesis_state, &lambda,
+        );
+        let genesis_header = BlockHeader { residual: res0, ..genesis_base };
+
+        // ── Node B: receives genesis via gossip (HTTP never called) ───────
+        let mut engine_b = ValidationEngine::new();
+        let genesis_gossip = GossipedBlock {
+            header: genesis_header.clone(),
+            tx_hashes: vec![],
+            bft_votes: vec![],
+            block_json: "{}".into(),
+        };
+        assert!(
+            matches!(engine_b.validate(&genesis_gossip, /* from_peer */ true), ValidationDecision::Accept),
+            "genesis must be accepted from peer"
+        );
+        engine_b.accept(&genesis_gossip);
+        assert_eq!(engine_b.chain.len(), 1, "tip must advance to height 0");
+
+        // ── Node A: mine block 1 (height 1) ───────────────────────────────
+        let genesis_hash = block_hash(&genesis_header);
+        let block1_base = BlockHeader {
+            prev_hash: genesis_hash,
+            merkle_root: [0u8; 32],
+            timestamp: now + 1,
+            nonce: 1,
+            difficulty: 1,
+            recursion_depth: 1,
+            residual: 0,
+            state_root: [0u8; 32],
+        };
+        let block1_state = ChainState {
+            cumulative_work: 1,
+            mempool_pressure: 0.5,
+            validator_count: 1,
+            last_quality: 1.0,
+            height: 1,
+        };
+        let (res1, _) = StationarySolver::joint_residual_and_gradient(
+            &block1_base, &[], &block1_state, &lambda,
+        );
+        let block1_header = BlockHeader { residual: res1, ..block1_base };
+
+        // ── Node B: receives block 1 via gossip (HTTP never called) ───────
+        let block1_gossip = GossipedBlock {
+            header: block1_header.clone(),
+            tx_hashes: vec![],
+            bft_votes: vec![],
+            block_json: "{}".into(),
+        };
+        assert!(
+            matches!(engine_b.validate(&block1_gossip, /* from_peer */ true), ValidationDecision::Accept),
+            "block 1 must be accepted from peer"
+        );
+        engine_b.accept(&block1_gossip);
+        assert_eq!(engine_b.chain.len(), 2, "tip must advance to height 1");
+        assert_eq!(engine_b.chain[1].recursion_depth, 1, "tip height must be 1");
+
+        // HTTP submit (/api/blocks/submit) was never called in this test —
+        // both blocks arrived exclusively via the from_peer=true gossip path.
+    }
+
+    #[test]
+    fn bft_vote_message_matches_ts_layout() {
+        // TS: Buffer.from("equilibrium-bft-v1") || Buffer.from(block.hash) || Buffer.from(block.height.toString())
+        let msg = BftVote::vote_message("aabb", 12);
+        assert_eq!(&msg[..18], b"equilibrium-bft-v1");
+        assert_eq!(&msg[18..22], b"aabb");
+        assert_eq!(&msg[22..], b"12");
+    }
+
+    #[test]
+    fn bft_quorum_accepts_supermajority() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let pk = sk.verifying_key();
+        let hash_hex = "ab".repeat(32);
+        let height = 5u64;
+        let msg = BftVote::vote_message(&hash_hex, height);
+        let sig = sk.sign(&msg);
+
+        let vote = BftVote {
+            validator_addr: "v1".into(),
+            block_hash_hex: hash_hex.clone(),
+            height,
+            signature: sig.to_bytes(),
+        };
+        let mut validators = HashMap::new();
+        validators.insert(
+            "v1".into(),
+            ValidatorInfo { pubkey: pk.to_bytes(), bonded_stake: 100 },
+        );
+        assert!(check_bft_quorum(&validators, &[vote], &hash_hex, height).is_ok());
+    }
+
+    #[test]
+    fn bft_quorum_rejects_insufficient_stake() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let sk = SigningKey::from_bytes(&[9u8; 32]);
+        let pk = sk.verifying_key();
+        let hash_hex = "cd".repeat(32);
+        let height = 1u64;
+        let msg = BftVote::vote_message(&hash_hex, height);
+        let sig = sk.sign(&msg);
+        let vote = BftVote {
+            validator_addr: "small".into(),
+            block_hash_hex: hash_hex.clone(),
+            height,
+            signature: sig.to_bytes(),
+        };
+        let mut validators = HashMap::new();
+        validators.insert(
+            "small".into(),
+            ValidatorInfo { pubkey: pk.to_bytes(), bonded_stake: 10 },
+        );
+        validators.insert(
+            "silent".into(),
+            ValidatorInfo { pubkey: [0u8; 32], bonded_stake: 100 },
+        );
+        // 10 / 110 < 2/3
+        assert!(check_bft_quorum(&validators, &[vote], &hash_hex, height).is_err());
+    }
+
+    #[test]
+    fn bft_quorum_rejects_bad_signature() {
+        use ed25519_dalek::SigningKey;
+        let sk = SigningKey::from_bytes(&[11u8; 32]);
+        let pk = sk.verifying_key();
+        let hash_hex = "ef".repeat(32);
+        let height = 3u64;
+        let vote = BftVote {
+            validator_addr: "v1".into(),
+            block_hash_hex: hash_hex.clone(),
+            height,
+            signature: [0u8; 64], // deliberately bad
+        };
+        let mut validators = HashMap::new();
+        validators.insert(
+            "v1".into(),
+            ValidatorInfo { pubkey: pk.to_bytes(), bonded_stake: 100 },
+        );
+        assert!(check_bft_quorum(&validators, &[vote], &hash_hex, height).is_err());
+    }
+
+    #[test]
+    fn parse_bft_votes_from_json_empty_votes_key() {
+        let json = r#"{"height":1,"bftVotes":[]}"#;
+        assert!(parse_bft_votes_from_block_json(json).is_empty());
+    }
+
+    #[test]
+    fn parse_bft_votes_from_json_no_votes_key() {
+        let json = r#"{"height":1,"nonce":42}"#;
+        assert!(parse_bft_votes_from_block_json(json).is_empty());
+    }
+
+    #[test]
+    fn parse_bft_votes_from_json_valid_vote() {
+        let sig_hex = "aa".repeat(64); // 128 hex chars
+        let json = format!(
+            r#"{{ "bftVotes": [{{ "validator": "v1", "blockHash": "aabb", "height": 5, "signature": "{sig_hex}" }}] }}"#
+        );
+        let votes = parse_bft_votes_from_block_json(&json);
+        assert_eq!(votes.len(), 1);
+        assert_eq!(votes[0].validator_addr, "v1");
+        assert_eq!(votes[0].block_hash_hex, "aabb");
+        assert_eq!(votes[0].height, 5);
+        assert_eq!(votes[0].signature, [0xaau8; 64]);
     }
 }

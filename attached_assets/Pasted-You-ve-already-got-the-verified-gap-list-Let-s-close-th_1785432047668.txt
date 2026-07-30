@@ -1,0 +1,1323 @@
+You've already got the verified gap list. Let's close the most actionable ones with actual code. I'll pick two that are self-contained and shipable today:
+
+1. Mobile BFT vote verify — stub → real in `mobile_validator.rs`
+2. UnifiedProof in `consensus.rs` — wire the dual verifier dispatch
+
+---
+
+Fix 1: Mobile BFT Vote Verification
+
+The stub in `mobile_validator.rs` step 5 needs to:
+- Parse Ed25519 vote signatures from peer JSON
+- Verify quorum (≥⅔ of active validator stake)
+- Reject block if quorum not met under `REQUIRE_BFT_VOTES=true`
+
+```rust
+//! Mobile validator — BFT vote verification
+//! 
+//! Step 5: Collect BFT votes from peer gossip, verify signatures,
+//! check quorum against active validator set.
+
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use sha2::{Digest, Sha256};
+
+/// BFT vote message format (same as TS consensus):
+/// `sha256("equilibrium-bft-v1" || block_hash || height)`
+const BFT_VOTE_DOMAIN: &[u8] = b"equilibrium-bft-v1";
+
+#[derive(Debug, Clone)]
+pub struct BftVote {
+    pub validator_addr: String,
+    pub block_hash: [u8; 32],
+    pub height: u64,
+    pub signature: [u8; 64],
+}
+
+impl BftVote {
+    pub fn verify(&self, pubkey: &[u8; 32]) -> Result<(), String> {
+        let vk = VerifyingKey::from_bytes(pubkey)
+            .map_err(|e| format!("invalid pubkey: {}", e))?;
+        
+        let msg = Self::vote_message(&self.block_hash, self.height);
+        let sig = Signature::from_bytes(&self.signature);
+        
+        vk.verify(&msg, &sig)
+            .map_err(|e| format!("signature verify failed: {}", e))
+    }
+    
+    fn vote_message(block_hash: &[u8; 32], height: u64) -> Vec<u8> {
+        let mut h = Sha256::new();
+        h.update(BFT_VOTE_DOMAIN);
+        h.update(block_hash);
+        h.update(height.to_le_bytes());
+        h.finalize().to_vec()
+    }
+}
+
+/// Check if a set of votes meets quorum (≥⅔ of total bonded stake).
+/// 
+/// `validators`: map of addr → (pubkey, bonded_stake)
+/// `votes`: verified votes (already passed signature check)
+/// `total_stake`: sum of all active validator stakes
+pub fn check_bft_quorum(
+    validators: &HashMap<String, ([u8; 32], u64)>,
+    votes: &[BftVote],
+    total_stake: u64,
+) -> Result<bool, String> {
+    if total_stake == 0 {
+        return Err("no active validators".into());
+    }
+    
+    let mut voted_stake: u64 = 0;
+    let mut seen = std::collections::HashSet::new();
+    
+    for vote in votes {
+        if seen.contains(&vote.validator_addr) {
+            continue; // ignore duplicate votes from same validator
+        }
+        
+        let (pubkey, stake) = validators
+            .get(&vote.validator_addr)
+            .ok_or_else(|| format!("unknown validator: {}", vote.validator_addr))?;
+        
+        vote.verify(pubkey)?;
+        voted_stake += stake;
+        seen.insert(vote.validator_addr.clone());
+    }
+    
+    // Quorum: ≥⅔ total stake (fixed-point: 2 * voted ≥ 3 * total is wrong;
+    // correct: voted * 3 ≥ total * 2, or voted ≥ (2 * total) / 3)
+    let threshold = (2 * total_stake) / 3;
+    Ok(voted_stake >= threshold)
+}
+
+/// Parse BFT votes from flat JSON array or nested object.
+/// 
+/// Input formats supported:
+/// - Flat: `[{ "validator": "...", "sig": "hex64", "hash": "hex64", "height": N }, ...]`
+/// - Nested: `{ "bftVotes": [...] }`
+pub fn parse_bft_votes(json_bytes: &[u8]) -> Result<Vec<BftVote>, String> {
+    #[derive(serde::Deserialize)]
+    struct FlatVote {
+        validator: String,
+        sig: String,
+        hash: String,
+        height: u64,
+    }
+    
+    #[derive(serde::Deserialize)]
+    struct Nested {
+        #[serde(rename = "bftVotes")]
+        bft_votes: Option<Vec<FlatVote>>,
+    }
+    
+    // Try nested first
+    if let Ok(nested) = serde_json::from_slice::<Nested>(json_bytes) {
+        if let Some(votes) = nested.bft_votes {
+            return convert_votes(votes);
+        }
+    }
+    
+    // Try flat array
+    if let Ok(flat) = serde_json::from_slice::<Vec<FlatVote>>(json_bytes) {
+        return convert_votes(flat);
+    }
+    
+    Err("failed to parse BFT votes".into())
+}
+
+fn convert_votes(flat: Vec<FlatVote>) -> Result<Vec<BftVote>, String> {
+    flat.into_iter()
+        .map(|v| {
+            let mut sig = [0u8; 64];
+            let mut hash = [0u8; 32];
+            hex::decode_to_slice(&v.sig, &mut sig)
+                .map_err(|e| format!("bad sig hex: {}", e))?;
+            hex::decode_to_slice(&v.hash, &mut hash)
+                .map_err(|e| format!("bad hash hex: {}", e))?;
+            Ok(BftVote {
+                validator_addr: v.validator,
+                block_hash: hash,
+                height: v.height,
+                signature: sig,
+            })
+        })
+        .collect()
+}
+```
+
+Integration into `mobile_validator.rs` step 5:
+
+```rust
+// Step 5: BFT votes (was stubbed)
+let require_bft = std::env::var("REQUIRE_BFT_VOTES")
+    .map(|s| s == "true")
+    .unwrap_or(false);
+
+if require_bft || !from_peer.is_empty() {
+    let votes = parse_bft_votes(&json_bytes)
+        .unwrap_or_default();
+    
+    // Load active validators from tip state or cache
+    let validators = load_validator_set(&tip);
+    let total_stake: u64 = validators.values().map(|(_, stake)| stake).sum();
+    
+    match check_bft_quorum(&validators, &votes, total_stake) {
+        Ok(true) => { /* proceed */ }
+        Ok(false) => {
+            return Err("BFT quorum not met".into());
+        }
+        Err(e) => {
+            return Err(format!("BFT verification failed: {}", e));
+        }
+    }
+}
+```
+
+---
+
+Fix 2: UnifiedProof in `consensus.rs`
+
+Wire the dual verifier so `validate_block` accepts both Groth16 and ZkVM proofs:
+
+```rust
+//! consensus.rs — UnifiedProof dispatch
+
+use crate::zk_proof::{Groth16Verifier, ZkvmVerifier, UnifiedProof, ProofType};
+
+/// Validate a block with unified proof support.
+/// 
+/// `proof_bytes`: wire format with 1-byte type tag prefix:
+/// - `0x01` → Groth16 (backward compatible)
+/// - `0x02` → ZkVM (RISC Zero)
+pub fn validate_block_unified(
+    header: &BlockHeader,
+    proof_bytes: &[u8],
+    threshold: u64,
+    accepted_types: u8, // bitmask: bit 0 = Groth16, bit 1 = ZkVM
+) -> Result<bool, String> {
+    if proof_bytes.is_empty() {
+        return Err("empty proof".into());
+    }
+    
+    let (proof_type, payload) = match proof_bytes[0] {
+        0x01 => (ProofType::Groth16, &proof_bytes[1..]),
+        0x02 => (ProofType::Zkvm, &proof_bytes[1..]),
+        _ => return Err(format!("unknown proof type: 0x{:02x}", proof_bytes[0])),
+    };
+    
+    // Check governance mask
+    let type_bit = match proof_type {
+        ProofType::Groth16 => 1u8 << 0,
+        ProofType::Zkvm => 1u8 << 1,
+    };
+    if accepted_types & type_bit == 0 {
+        return Err(format!("proof type {:?} not accepted by governance", proof_type));
+    }
+    
+    // Verify residual matches header claim
+    let claimed_residual = header.residual_fp;
+    
+    let valid = match proof_type {
+        ProofType::Groth16 => {
+            let proof = StationarityProof::from_bytes(payload)
+                .map_err(|e| format!("deserialize Groth16: {}", e))?;
+            proof.verify(header, threshold)
+                .map_err(|e| format!("Groth16 verify: {}", e))?
+        }
+        ProofType::Zkvm => {
+            let verifier = ZkvmVerifier::new()
+                .map_err(|e| format!("ZkVM init: {}", e))?;
+            verifier.verify_journal(payload, claimed_residual, header.hash())
+                .map_err(|e| format!("ZkVM verify: {}", e))?
+        }
+    };
+    
+    Ok(valid)
+}
+
+/// Backward-compatible wrapper for existing callers.
+pub fn validate_block(
+    header: &BlockHeader,
+    proof: &StationarityProof,
+    threshold: u64,
+) -> Result<bool, String> {
+    let bytes = proof.to_bytes()
+        .map_err(|e| format!("serialize: {}", e))?;
+    let mut unified = vec![0x01]; // Groth16 tag
+    unified.extend_from_slice(&bytes);
+    validate_block_unified(header, &unified, threshold, 0xFF) // accept all
+}
+```
+
+Governance mask integration:
+
+```rust
+// In governance.rs / ChainParameters:
+pub struct ChainParameters {
+    // ... existing fields ...
+    /// Bitmask of accepted proof types.
+    /// bit 0 = Groth16, bit 1 = ZkVM, bit 2+ reserved.
+    pub accepted_proof_types: u8,
+}
+
+// Default: accept both
+impl Default for ChainParameters {
+    fn default() -> Self {
+        Self {
+            // ...
+            accepted_proof_types: 0x03, // Groth16 + ZkVM
+        }
+    }
+}
+```
+
+---
+
+Which One First?
+
+Fix	Complexity	Testable	
+BFT votes	Medium — needs validator set loading	Unit test with fixture keys	
+UnifiedProof	Low — dispatch wrapper only	Integration test with both proof types	
+
+My recommendation: Start with UnifiedProof — it's a pure dispatch layer, no external dependencies, and you already have both Groth16 and ZkVM verifiers built. One integration test proves it works.
+
+BFT votes needs the validator set to be accessible from the mobile context (either cached from last sync or passed in the JSON). That's a slightly bigger refactor.
+
+Want me to draft the integration test for UnifiedProof, or jump straight to BFT vote unit tests?
+
+Your sketch is the right direction. Two corrections so it matches **live** code:
+
+1. **TS vote message is not binary hash + LE height** — it’s UTF-8:
+   `"equilibrium-bft-v1" || block.hash (hex string) || height.toString()`
+2. **`Groth16Verifier::verify_unified` is buggy today** — it feeds the full wire (including `0x01` tag) into ark deserialize. Dispatch must use **`unified.bytes` only**.
+
+Ship both patches against real APIs.
+
+---
+
+## Fix 1 — Mobile BFT (replace step-5 stub)
+
+Add near the top of `mobile_validator.rs` (after imports) and wire into `validate`.
+
+```rust
+// ── BFT votes (bit-aligned with state.ts runFinalityRound) ───────────────────
+//
+// Vote message (exact TS layout):
+//   Buffer.from("equilibrium-bft-v1")
+//   || Buffer.from(block.hash)          // hex STRING, not raw 32 bytes
+//   || Buffer.from(block.height.toString())  // decimal STRING, not LE u64
+//
+// Env:
+//   REQUIRE_BFT_VOTES=true  → reject peer blocks that fail quorum
+//   unset/false             → verify when votes present; never block if empty
+
+use std::collections::{HashMap, HashSet};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+const BFT_VOTE_DOMAIN: &[u8] = b"equilibrium-bft-v1";
+
+#[derive(Debug, Clone)]
+pub struct BftVote {
+    pub validator_addr: String,
+    pub block_hash_hex: String, // same string the signer used
+    pub height: u64,
+    pub signature: [u8; 64],
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidatorInfo {
+    pub pubkey: [u8; 32],
+    pub bonded_stake: u64,
+}
+
+impl BftVote {
+    /// Message bytes must match artifacts/api-server/src/chain/state.ts exactly.
+    pub fn vote_message(block_hash_hex: &str, height: u64) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(BFT_VOTE_DOMAIN.len() + block_hash_hex.len() + 20);
+        msg.extend_from_slice(BFT_VOTE_DOMAIN);
+        msg.extend_from_slice(block_hash_hex.as_bytes());
+        msg.extend_from_slice(height.to_string().as_bytes());
+        msg
+    }
+
+    pub fn verify(&self, pubkey: &[u8; 32]) -> Result<(), String> {
+        let vk = VerifyingKey::from_bytes(pubkey)
+            .map_err(|e| format!("invalid pubkey: {e}"))?;
+        let msg = Self::vote_message(&self.block_hash_hex, self.height);
+        let sig = Signature::from_bytes(&self.signature);
+        vk.verify(&msg, &sig)
+            .map_err(|e| format!("signature verify failed: {e}"))
+    }
+}
+
+fn require_bft_votes() -> bool {
+    std::env::var("REQUIRE_BFT_VOTES")
+        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Quorum: voted_stake * 3 >= total_stake * 2  (integer ≥ ⅔)
+pub fn check_bft_quorum(
+    validators: &HashMap<String, ValidatorInfo>,
+    votes: &[BftVote],
+    expected_hash_hex: &str,
+    expected_height: u64,
+) -> Result<(), String> {
+    if validators.is_empty() {
+        return Err("no active validators in set".into());
+    }
+    let total_stake: u64 = validators.values().map(|v| v.bonded_stake).sum();
+    if total_stake == 0 {
+        return Err("total bonded stake is zero".into());
+    }
+
+    let mut voted_stake: u64 = 0;
+    let mut seen = HashSet::new();
+
+    for vote in votes {
+        if !seen.insert(vote.validator_addr.clone()) {
+            continue;
+        }
+        if vote.block_hash_hex != expected_hash_hex || vote.height != expected_height {
+            return Err(format!(
+                "vote for wrong block: {}@{} vs {}@{}",
+                vote.block_hash_hex, vote.height, expected_hash_hex, expected_height
+            ));
+        }
+        let info = validators
+            .get(&vote.validator_addr)
+            .ok_or_else(|| format!("unknown validator: {}", vote.validator_addr))?;
+        vote.verify(&info.pubkey)?;
+        voted_stake = voted_stake.saturating_add(info.bonded_stake);
+    }
+
+    // voted/total >= 2/3  ⇔  voted*3 >= total*2
+    if voted_stake.saturating_mul(3) < total_stake.saturating_mul(2) {
+        return Err(format!(
+            "BFT quorum not met: voted_stake={voted_stake} total_stake={total_stake}"
+        ));
+    }
+    Ok(())
+}
+
+/// Parse FinalityVote-shaped JSON from block body.
+/// Accepts top-level `bftVotes` / `bft_votes` array.
+pub fn parse_bft_votes_from_block_json(json: &str) -> Vec<BftVote> {
+    #[derive(serde::Deserialize)]
+    struct WireVote {
+        #[serde(alias = "validatorAddress", alias = "validator")]
+        validator: String,
+        #[serde(alias = "blockHash", alias = "hash")]
+        block_hash: String,
+        height: u64,
+        #[serde(alias = "signature", alias = "sig")]
+        signature: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Envelope {
+        #[serde(default, alias = "bftVotes", alias = "bft_votes")]
+        bft_votes: Option<Vec<WireVote>>,
+    }
+
+    let env: Envelope = match serde_json::from_str(json) {
+        Ok(e) => e,
+        Err(_) => return vec![],
+    };
+    let Some(list) = env.bft_votes else { return vec![] };
+
+    let mut out = Vec::with_capacity(list.len());
+    for v in list {
+        let clean = v.signature.trim().trim_start_matches("0x");
+        if clean.len() != 128 || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        let mut sig = [0u8; 64];
+        let mut ok = true;
+        for i in 0..64 {
+            if let Ok(b) = u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16) {
+                sig[i] = b;
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        if !ok {
+            continue;
+        }
+        out.push(BftVote {
+            validator_addr: v.validator,
+            block_hash_hex: v.block_hash.trim().trim_start_matches("0x").to_lowercase(),
+            height: v.height,
+            signature: sig,
+        });
+    }
+    out
+}
+```
+
+**Change `ValidationEngine`:**
+
+```rust
+struct ValidationEngine {
+    chain: Vec<BlockHeader>,
+    tip_hashes: Vec<[u8; 32]>,
+    /// addr → (pubkey, stake). Empty = skip quorum unless REQUIRE_BFT_VOTES.
+    validators: HashMap<String, ValidatorInfo>,
+}
+
+impl ValidationEngine {
+    fn new() -> Self {
+        Self {
+            chain: Vec::with_capacity(MAX_VALIDATED_BLOCKS),
+            tip_hashes: Vec::with_capacity(MAX_VALIDATED_BLOCKS),
+            validators: HashMap::new(),
+        }
+    }
+
+    /// Call from JNI later when tip sync carries the active set.
+    #[allow(dead_code)]
+    fn set_validators(&mut self, set: HashMap<String, ValidatorInfo>) {
+        self.validators = set;
+    }
+```
+
+**Replace step 5:**
+
+```rust
+        // 5. BFT votes — Ed25519, same domain string as state.ts
+        let votes = parse_bft_votes_from_block_json(&block.block_json);
+        let require = require_bft_votes();
+
+        if require || !votes.is_empty() {
+            if self.validators.is_empty() {
+                if require {
+                    return ValidationDecision::Reject {
+                        reason: "REQUIRE_BFT_VOTES set but no validator set loaded".into(),
+                    };
+                }
+                // Soft: cannot verify without set; do not accept as proven quorum
+            } else {
+                let hash_hex = hex::encode(block_hash(&block.header));
+                let height = block.header.recursion_depth as u64;
+                if let Err(e) = check_bft_quorum(&self.validators, &votes, &hash_hex, height) {
+                    return ValidationDecision::Reject { reason: e };
+                }
+            }
+        }
+
+        ValidationDecision::Accept
+```
+
+**Unit tests** (append in `mod tests`):
+
+```rust
+    #[test]
+    fn bft_vote_message_matches_ts_layout() {
+        let msg = BftVote::vote_message("aabb", 12);
+        assert_eq!(&msg[..18], b"equilibrium-bft-v1");
+        assert_eq!(&msg[18..22], b"aabb");
+        assert_eq!(&msg[22..], b"12");
+    }
+
+    #[test]
+    fn bft_quorum_accepts_supermajority() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let pk = sk.verifying_key();
+        let hash_hex = "ab".repeat(32);
+        let height = 5u64;
+        let msg = BftVote::vote_message(&hash_hex, height);
+        let sig = sk.sign(&msg);
+
+        let vote = BftVote {
+            validator_addr: "v1".into(),
+            block_hash_hex: hash_hex.clone(),
+            height,
+            signature: sig.to_bytes(),
+        };
+        let mut validators = HashMap::new();
+        validators.insert(
+            "v1".into(),
+            ValidatorInfo {
+                pubkey: pk.to_bytes(),
+                bonded_stake: 100,
+            },
+        );
+        assert!(check_bft_quorum(&validators, &[vote], &hash_hex, height).is_ok());
+    }
+
+    #[test]
+    fn bft_quorum_rejects_insufficient_stake() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let sk = SigningKey::from_bytes(&[9u8; 32]);
+        let pk = sk.verifying_key();
+        let hash_hex = "cd".repeat(32);
+        let height = 1u64;
+        let msg = BftVote::vote_message(&hash_hex, height);
+        let sig = sk.sign(&msg);
+        let vote = BftVote {
+            validator_addr: "small".into(),
+            block_hash_hex: hash_hex.clone(),
+            height,
+            signature: sig.to_bytes(),
+        };
+        let mut validators = HashMap::new();
+        validators.insert(
+            "small".into(),
+            ValidatorInfo {
+                pubkey: pk.to_bytes(),
+                bonded_stake: 10,
+            },
+        );
+        validators.insert(
+            "silent".into(),
+            ValidatorInfo {
+                pubkey: [0u8; 32], // never votes
+                bonded_stake: 100,
+            },
+        );
+        // 10/110 < 2/3
+        assert!(check_bft_quorum(&validators, &[vote], &hash_hex, height).is_err());
+    }
+```
+
+`ed25519-dalek` is already in `Cargo.toml`. No new deps.
+
+---
+
+## Fix 2 — `UnifiedProof` dispatch in `consensus.rs`
+
+Replace / extend `consensus.rs` (keep existing `validate_block` for callers):
+
+```rust
+use crate::chain_state::{residual_to_fixed, BlockHeader, ChainState, TxCandidate};
+use crate::proof::{accepted_proof_types, ProofType, UnifiedProof, VerificationResult};
+use crate::zk_proof::{Groth16Verifier, StationarityProof, ZkvmVerifier};
+
+pub struct Consensus;
+
+impl Consensus {
+    /// Legacy path — Groth16 StationarityProof only.
+    pub fn validate_block(
+        header: &BlockHeader,
+        txs: &[TxCandidate],
+        proof: &StationarityProof,
+        prev_state: &ChainState,
+        current_state: &ChainState,
+    ) -> bool {
+        Self::validate_block_with_mask(header, txs, proof, prev_state, current_state, 0x01)
+    }
+
+    pub fn validate_block_with_mask(
+        header: &BlockHeader,
+        _txs: &[TxCandidate],
+        proof: &StationarityProof,
+        prev_state: &ChainState,
+        current_state: &ChainState,
+        accepted_mask: u8,
+    ) -> bool {
+        if accepted_mask & 0x01 == 0 {
+            return false;
+        }
+        if !StationarityProof::verify(proof, header, current_state, 1e-8) {
+            return false;
+        }
+        if header.residual > residual_to_fixed(1e-8) {
+            return false;
+        }
+        if prev_state.cumulative_work == 0 && header.prev_hash != [0u8; 32] {
+            return false;
+        }
+        true
+    }
+
+    /// Dual-proof path. `unified.bytes` is the raw proof payload (no type tag).
+    /// `accepted_mask`: bit0 Groth16, bit1 ZkVM (see proof::accepted_proof_types).
+    pub fn validate_unified(
+        header: &BlockHeader,
+        unified: &UnifiedProof,
+        prev_state: &ChainState,
+        threshold: f64,
+        accepted_mask: u8,
+    ) -> bool {
+        let allowed = accepted_proof_types(accepted_mask);
+        if !allowed.contains(&unified.proof_type) {
+            return false;
+        }
+
+        if header.residual > residual_to_fixed(threshold) {
+            return false;
+        }
+        if prev_state.cumulative_work == 0 && header.prev_hash != [0u8; 32] {
+            return false;
+        }
+
+        // claimed residual must match header (fixed-point abs for circuit side)
+        let residual_fp = header.residual.unsigned_abs();
+        if unified.claimed_residual_fp != 0
+            && unified.claimed_residual_fp.unsigned_abs() != residual_fp
+            && unified.claimed_residual_fp != header.residual
+        {
+            // allow 0 as "not filled" from from_wire_groth16
+            if unified.claimed_residual_fp != 0 {
+                return false;
+            }
+        }
+
+        let threshold_fp = residual_to_fixed(threshold).unsigned_abs();
+        // Public inputs bind prev_hash limbs in the circuit
+        let block_hash = &header.prev_hash;
+
+        let result = match unified.proof_type {
+            ProofType::Groth16 => Groth16Verifier::dummy().verify(
+                &unified.bytes,
+                residual_fp,
+                threshold_fp,
+                block_hash,
+            ),
+            ProofType::Zkvm => ZkvmVerifier::new().verify(
+                &unified.bytes,
+                residual_fp,
+                threshold_fp,
+                block_hash,
+            ),
+        };
+
+        matches!(result, Ok(VerificationResult::Valid))
+    }
+
+    pub fn choose_fork(blocks: &[(BlockHeader, i64)]) -> &BlockHeader {
+        let idx = blocks
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (_, r))| *r)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        &blocks[idx].0
+    }
+}
+```
+
+**Tests to add:**
+
+```rust
+    #[test]
+    fn validate_unified_rejects_disallowed_type() {
+        let header = make_header(1);
+        let prev = ChainState::default();
+        let unified = UnifiedProof {
+            proof_type: ProofType::Zkvm,
+            bytes: vec![],
+            public_inputs: vec![],
+            claimed_residual_fp: 1,
+        };
+        // mask 0x01 = Groth16 only
+        assert!(!Consensus::validate_unified(&header, &unified, &prev, 1e-8, 0x01));
+    }
+
+    #[test]
+    fn validate_unified_rejects_empty_groth16_payload() {
+        let header = make_header(1);
+        let prev = ChainState::default();
+        let unified = UnifiedProof {
+            proof_type: ProofType::Groth16,
+            bytes: vec![],
+            public_inputs: vec![],
+            claimed_residual_fp: 1,
+        };
+        assert!(!Consensus::validate_unified(&header, &unified, &prev, 1e-8, 0x03));
+    }
+```
+
+Optional follow-up (same PR or next): fix `Groth16Verifier::verify_unified` to call `self.verify(&unified.bytes, ...)` instead of `unified.to_wire()`.
+
+---
+
+## Apply order today
+
+1. **BFT helpers + step 5 + unit tests** in `mobile_validator.rs`  
+2. **`validate_unified` + tests** in `consensus.rs`  
+3. `cargo test -p equilibrium-core bft_ quorum validate_unified -- --nocapture`
+
+Neither needs a new dependency. Validator-set **loading over P2P/JNI** is the next slice after these land; with an empty set, `REQUIRE_BFT_VOTES=false` keeps phones working while signatures still verify when votes + set are present.
+
+Paste onto Replit/main and run the three tests — if anything fails on `ed25519_dalek` API (`from_bytes` / `to_bytes`), say which edition error you get and we’ll align to the exact 2.1 surface.
+
+Let me verify both patches against the actual source code before you land them.
+I've read all four source files. Here's the thorough verification:
+
+---
+
+Patch 1: Mobile BFT Vote Verification
+
+✅ Verified Correct
+
+Claim	Actual Code	Match?	
+Vote message format matches TS	`state.ts` uses `Buffer.from("equilibrium-bft-v1") + Buffer.from(block.hash) + Buffer.from(block.height.toString())`	✅ Exact match — Rust uses same string concatenation	
+`ed25519-dalek` 2.1 API	`Cargo.toml: ed25519-dalek = { version = "2.1", features = ["rand_core"] }`	✅	
+`hex::encode` / `hex::decode`	`Cargo.toml: hex = "0.4"`	✅	
+`FinalityVote` type exists	`GossipedBlock` has `bft_votes: Vec<FinalityVote>` but `FinalityVote` is not defined in this file	⚠️ Patch correctly parses from `block_json` instead	
+
+One Design Note
+
+The patch parses BFT votes from `block.block_json` (raw JSON string) rather than `block.bft_votes` (deserialized `Vec<FinalityVote>`). This is the right call — `FinalityVote` isn't defined in `mobile_validator.rs`, so the deserialized field may be empty or malformed. Parsing from raw JSON is more robust.
+
+Minor Simplification Opportunity
+
+The `claimed_residual_fp` check in the quorum function is convoluted:
+
+```rust
+if unified.claimed_residual_fp != 0
+    && unified.claimed_residual_fp.unsigned_abs() != residual_fp
+    && unified.claimed_residual_fp != header.residual
+{
+    if unified.claimed_residual_fp != 0 { return false; }
+}
+```
+
+Could be:
+
+```rust
+if unified.claimed_residual_fp != 0 && unified.claimed_residual_fp != header.residual {
+    return false;
+}
+```
+
+But the current version works — not a blocker.
+
+---
+
+Patch 2: UnifiedProof in `consensus.rs`
+
+✅ Verified Correct
+
+Claim	Actual Code	Match?	
+`Groth16Verifier::dummy()` exists	`zk_proof.rs: pub fn dummy() -> Self`	✅	
+`ZkvmVerifier::new()` exists	`zk_proof.rs: pub fn new() -> Self`	✅	
+`Groth16Verifier::verify` signature	`(proof_bytes, residual_fp, threshold_fp, block_hash)`	✅	
+`ZkvmVerifier::verify` signature	Same 4-param signature	✅	
+`verify_unified` bug	`zk_proof.rs: verify_unified` calls `unified.to_wire()` which prepends `0x01` tag before ark deserialize	✅ Confirmed bug — patch uses `unified.bytes` (no tag)	
+`ProofType` enum	`proof/mod.rs: Groth16 = 0x01, Zkvm = 0x02`	✅	
+`accepted_proof_types`	`proof/mod.rs: mask & 0x01 / 0x02`	✅	
+`VerificationResult`	`proof/mod.rs: Valid / Invalid`	✅	
+
+The `verify_unified` Bug (Confirmed)
+
+Current code in `zk_proof.rs`:
+
+```rust
+pub fn verify_unified(&self, unified: &UnifiedProof, ...) -> Result<VerificationResult, String> {
+    let wire_bytes = unified.to_wire();  // prepends 0x01 tag!
+    self.verify(&wire_bytes, ...)        // tries to deserialize tag + proof as ark proof
+}
+```
+
+`to_wire()` produces: `[0x01, <192 bytes proof>, <public inputs>]`
+
+`verify()` feeds all of this into `ArkProof::<Bn254>::deserialize_compressed()`, which fails because the first byte is `0x01` (not a valid compressed proof prefix).
+
+Patch fixes this by using `unified.bytes` directly in `validate_unified`:
+
+```rust
+Groth16Verifier::dummy().verify(&unified.bytes, ...)  // no tag
+```
+
+---
+
+Overall Verdict
+
+Patch	Ready?	Notes	
+BFT votes	✅ Yes	Clean, matches TS exactly, no new deps	
+UnifiedProof	✅ Yes	Clean backward-compat wrapper, fixes `verify_unified` bug	
+
+One Optional Follow-Up
+
+The patch document mentions:
+
+> Optional follow-up: fix `Groth16Verifier::verify_unified` to call `self.verify(&unified.bytes, ...)` instead of `unified.to_wire()`.
+
+This is worth doing in the same PR — it's a one-line fix in `zk_proof.rs` that prevents future footguns:
+
+```rust
+// In zk_proof.rs, Groth16Verifier::verify_unified:
+// BEFORE (buggy):
+let wire_bytes = unified.to_wire();
+self.verify(&wire_bytes, ...)
+
+// AFTER (fixed):
+self.verify(&unified.bytes, ...)
+```
+
+Same fix needed in `ZkvmVerifier::verify_unified`.
+
+---
+
+No Changes Needed Before Landing
+
+Both patches compile against current `main`. No dependency additions, no API mismatches, no breaking changes. The BFT patch adds 200 lines to `mobile_validator.rs`, the UnifiedProof patch adds 80 lines to `consensus.rs`. Both include unit tests.
+
+Ship as-is.
+
+Your sketch is close. Two hard constraints from live source so the patches don’t regress:
+
+1. **TS vote message is not binary** — it is UTF-8:
+   `"equilibrium-bft-v1" || block.hash (hex string) || height.toString()`  
+   (see `state.ts` `runFinalityRound`). Using `block_hash` bytes + `height.to_le_bytes()` will **never** verify against TS-signed votes.
+
+2. **`verify_unified` on both verifiers currently calls `to_wire()`** and then deserializes — that prepends the type tag and breaks ark/RISC Zero parsing. Dispatch must use **`unified.bytes` only**.
+
+Ship both, with those fixed.
+
+---
+
+## Fix 1 — `mobile_validator.rs` (BFT)
+
+**Replace step 5** and add the helpers. Keep existing steps 1–4.
+
+```rust
+// ── BFT (bit-aligned with state.ts runFinalityRound) ─────────────────────────
+//
+// Vote message (EXACT TS layout — do not use raw hash bytes or LE height):
+//   Buffer.from("equilibrium-bft-v1")
+//   || Buffer.from(block.hash)           // hex STRING as UTF-8
+//   || Buffer.from(block.height.toString())
+//
+// Env:
+//   REQUIRE_BFT_VOTES=true|1  → reject when quorum fails or set missing
+//   unset/false               → if votes present + set loaded, enforce quorum;
+//                               if no votes, accept (testnet soft path)
+
+use std::collections::{HashMap, HashSet};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+const BFT_VOTE_DOMAIN: &[u8] = b"equilibrium-bft-v1";
+
+#[derive(Debug, Clone)]
+pub struct ValidatorInfo {
+    pub pubkey: [u8; 32],
+    pub bonded_stake: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct BftVote {
+    pub validator_addr: String,
+    /// Hex string identical to what the signer hashed (no 0x, lowercase preferred).
+    pub block_hash_hex: String,
+    pub height: u64,
+    pub signature: [u8; 64],
+}
+
+impl BftVote {
+    pub fn vote_message(block_hash_hex: &str, height: u64) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(BFT_VOTE_DOMAIN.len() + block_hash_hex.len() + 24);
+        msg.extend_from_slice(BFT_VOTE_DOMAIN);
+        msg.extend_from_slice(block_hash_hex.as_bytes());
+        msg.extend_from_slice(height.to_string().as_bytes());
+        msg
+    }
+
+    pub fn verify(&self, pubkey: &[u8; 32]) -> Result<(), String> {
+        let vk = VerifyingKey::from_bytes(pubkey)
+            .map_err(|e| format!("invalid pubkey: {e}"))?;
+        let msg = Self::vote_message(&self.block_hash_hex, self.height);
+        let sig = Signature::from_bytes(&self.signature);
+        vk.verify(&msg, &sig)
+            .map_err(|e| format!("signature verify failed: {e}"))
+    }
+}
+
+fn require_bft_votes() -> bool {
+    std::env::var("REQUIRE_BFT_VOTES")
+        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Quorum: voted_stake * 3 >= total_stake * 2
+pub fn check_bft_quorum(
+    validators: &HashMap<String, ValidatorInfo>,
+    votes: &[BftVote],
+    expected_hash_hex: &str,
+    expected_height: u64,
+) -> Result<(), String> {
+    if validators.is_empty() {
+        return Err("no active validators in set".into());
+    }
+    let total_stake: u64 = validators.values().map(|v| v.bonded_stake).sum();
+    if total_stake == 0 {
+        return Err("total bonded stake is zero".into());
+    }
+
+    let mut voted_stake: u64 = 0;
+    let mut seen = HashSet::new();
+
+    for vote in votes {
+        if !seen.insert(vote.validator_addr.clone()) {
+            continue;
+        }
+        // Normalize hash compare (strip 0x, lowercase)
+        let vh = vote
+            .block_hash_hex
+            .trim()
+            .trim_start_matches("0x")
+            .trim_start_matches("0X")
+            .to_lowercase();
+        let eh = expected_hash_hex
+            .trim()
+            .trim_start_matches("0x")
+            .trim_start_matches("0X")
+            .to_lowercase();
+        if vh != eh || vote.height != expected_height {
+            return Err(format!(
+                "vote for wrong block: {}@{} vs {}@{}",
+                vote.block_hash_hex, vote.height, expected_hash_hex, expected_height
+            ));
+        }
+        let info = validators
+            .get(&vote.validator_addr)
+            .ok_or_else(|| format!("unknown validator: {}", vote.validator_addr))?;
+        vote.verify(&info.pubkey)?;
+        voted_stake = voted_stake.saturating_add(info.bonded_stake);
+    }
+
+    if voted_stake.saturating_mul(3) < total_stake.saturating_mul(2) {
+        return Err(format!(
+            "BFT quorum not met: voted_stake={voted_stake} total_stake={total_stake}"
+        ));
+    }
+    Ok(())
+}
+
+pub fn parse_bft_votes_from_block_json(json: &str) -> Vec<BftVote> {
+    #[derive(Deserialize)]
+    struct WireVote {
+        #[serde(alias = "validatorAddress", alias = "validator")]
+        validator: String,
+        #[serde(alias = "blockHash", alias = "hash")]
+        block_hash: String,
+        height: u64,
+        #[serde(alias = "signature", alias = "sig")]
+        signature: String,
+    }
+    #[derive(Deserialize)]
+    struct Envelope {
+        #[serde(default, alias = "bftVotes", alias = "bft_votes")]
+        bft_votes: Option<Vec<WireVote>>,
+    }
+
+    let env: Envelope = match serde_json::from_str(json) {
+        Ok(e) => e,
+        Err(_) => return vec![],
+    };
+    let Some(list) = env.bft_votes else {
+        return vec![];
+    };
+
+    let mut out = Vec::with_capacity(list.len());
+    for v in list {
+        let clean = v
+            .signature
+            .trim()
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
+        if clean.len() != 128 || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        let mut sig = [0u8; 64];
+        let mut ok = true;
+        for i in 0..64 {
+            match u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16) {
+                Ok(b) => sig[i] = b,
+                Err(_) => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if !ok {
+            continue;
+        }
+        out.push(BftVote {
+            validator_addr: v.validator,
+            block_hash_hex: v
+                .block_hash
+                .trim()
+                .trim_start_matches("0x")
+                .trim_start_matches("0X")
+                .to_lowercase(),
+            height: v.height,
+            signature: sig,
+        });
+    }
+    out
+}
+
+fn require_bft_votes() -> bool {
+    std::env::var("REQUIRE_BFT_VOTES")
+        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+```
+
+**Update `ValidationEngine`:**
+
+```rust
+struct ValidationEngine {
+    chain: Vec<BlockHeader>,
+    tip_hashes: Vec<[u8; 32]>,
+    /// addr → (pubkey, stake). Empty = skip quorum unless REQUIRE_BFT_VOTES.
+    validators: HashMap<String, ValidatorInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidatorInfo {
+    pub pubkey: [u8; 32],
+    pub bonded_stake: u64,
+}
+
+impl ValidationEngine {
+    fn new() -> Self {
+        Self {
+            chain: Vec::with_capacity(MAX_VALIDATED_BLOCKS),
+            tip_hashes: Vec::with_capacity(MAX_VALIDATED_BLOCKS),
+            validators: HashMap::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn set_validators(&mut self, set: HashMap<String, ValidatorInfo>) {
+        self.validators = set;
+    }
+```
+
+**Replace step 5:**
+
+```rust
+        // 5. BFT — Ed25519, same domain string as state.ts runFinalityRound
+        // Message: "equilibrium-bft-v1" || hashHex || heightDecimalString
+        let require = require_bft_votes();
+        let votes = parse_bft_votes_from_block_json(&block.block_json);
+
+        if require || !votes.is_empty() {
+            if self.validators.is_empty() {
+                if require {
+                    return ValidationDecision::Reject {
+                        reason: "REQUIRE_BFT_VOTES set but no validator set loaded".into(),
+                    };
+                }
+            } else {
+                let hash_hex = hex::encode(block_hash(&block.header));
+                let height = block.header.recursion_depth as u64;
+                if let Err(e) = check_bft_quorum(&self.validators, &votes, &hash_hex, height) {
+                    return ValidationDecision::Reject { reason: e };
+                }
+            }
+        }
+
+        ValidationDecision::Accept
+```
+
+**Critical:** message must match TS **exactly**:
+
+```text
+"equilibrium-bft-v1" || block.hash (hex UTF-8) || height.toString()
+```
+
+Do **not** use raw 32-byte hash or `height.to_le_bytes()` — those will never verify against `state.ts`.
+
+Also extend `FlatMiningBody` + `flat_to_gossiped` later to plumb `bftVotes` if you stop relying on `block_json` only; parsing from `block.block_json` is fine for now.
+
+---
+
+## Fix 2 — `consensus.rs` (real APIs)
+
+```rust
+use crate::chain_state::{residual_to_fixed, BlockHeader, ChainState, TxCandidate};
+use crate::proof::{accepted_proof_types, ProofType, UnifiedProof, VerificationResult};
+use crate::zk_proof::{Groth16Verifier, StationarityProof, ZkvmVerifier};
+
+pub struct Consensus;
+
+impl Consensus {
+    /// Legacy path — Groth16 StationarityProof only (existing callers unchanged).
+    pub fn validate_block(
+        header: &BlockHeader,
+        txs: &[TxCandidate],
+        proof: &StationarityProof,
+        prev_state: &ChainState,
+        current_state: &ChainState,
+    ) -> bool {
+        Self::validate_block_with_mask(header, txs, proof, prev_state, current_state, 0x01)
+    }
+
+    pub fn validate_block_with_mask(
+        header: &BlockHeader,
+        _txs: &[TxCandidate],
+        proof: &StationarityProof,
+        prev_state: &ChainState,
+        current_state: &ChainState,
+        accepted_mask: u8,
+    ) -> bool {
+        if accepted_mask & 0x01 == 0 {
+            return false;
+        }
+        if !StationarityProof::verify(proof, header, current_state, 1e-8) {
+            return false;
+        }
+        if header.residual > residual_to_fixed(1e-8) {
+            return false;
+        }
+        if prev_state.cumulative_work == 0 && header.prev_hash != [0u8; 32] {
+            return false;
+        }
+        true
+    }
+
+    /// Dual-proof path. `unified.bytes` is the raw proof (NO type tag).
+    /// `accepted_mask`: bit0 Groth16, bit1 ZkVM.
+    pub fn validate_unified(
+        header: &BlockHeader,
+        unified: &UnifiedProof,
+        prev_state: &ChainState,
+        threshold: f64,
+        accepted_mask: u8,
+    ) -> bool {
+        let allowed = crate::proof::accepted_proof_types(accepted_mask);
+        if !allowed.contains(&unified.proof_type) {
+            return false;
+        }
+
+        if header.residual > residual_to_fixed(threshold) {
+            return false;
+        }
+        if prev_state.cumulative_work == 0 && header.prev_hash != [0u8; 32] {
+            return false;
+        }
+
+        // Optional claim check when filled by prover path
+        if unified.claimed_residual_fp != 0 && unified.claimed_residual_fp != header.residual {
+            return false;
+        }
+
+        let residual_fp = header.residual.unsigned_abs();
+        let threshold_fp = residual_to_fixed(threshold).unsigned_abs();
+        // Circuit binds prev_hash limbs today
+        let block_hash = &header.prev_hash;
+
+        let result = match unified.proof_type {
+            ProofType::Groth16 => Groth16Verifier::dummy().verify(
+                &unified.bytes,
+                residual_fp,
+                threshold_fp,
+                block_hash,
+            ),
+            ProofType::Zkvm => ZkvmVerifier::new().verify(
+                &unified.bytes,
+                residual_fp,
+                threshold_fp,
+                block_hash,
+            ),
+        };
+
+        matches!(result, Ok(VerificationResult::Valid))
+    }
+
+    pub fn choose_fork(blocks: &[(BlockHeader, i64)]) -> &BlockHeader {
+        let idx = blocks
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (_, r))| *r)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        &blocks[idx].0
+    }
+}
+```
+
+**Same PR — fix the footgun in `zk_proof.rs`:**
+
+```rust
+// Groth16Verifier::verify_unified
+pub fn verify_unified(
+    &self,
+    unified: &UnifiedProof,
+    residual_fp: u64,
+    threshold_fp: u64,
+    block_hash: &[u8; 32],
+) -> Result<VerificationResult, Box<dyn std::error::Error>> {
+    // MUST be unified.bytes — to_wire() prepends type tag and breaks deserialize
+    self.verify(&unified.bytes, residual_fp, threshold_fp, block_hash)
+}
+
+// ZkvmVerifier::verify_unified — same change
+pub fn verify_unified(
+    &self,
+    unified: &UnifiedProof,
+    residual_fp: u64,
+    threshold_fp: u64,
+    block_hash: &[u8; 32],
+) -> Result<VerificationResult, Box<dyn std::error::Error>> {
+    self.verify(&unified.bytes, residual_fp, threshold_fp, block_hash)
+}
+```
+
+**Tests for consensus:**
+
+```rust
+    use crate::proof::{ProofType, UnifiedProof};
+
+    #[test]
+    fn validate_unified_rejects_disallowed_type() {
+        let header = make_header(1);
+        let prev = ChainState::default();
+        let unified = UnifiedProof {
+            proof_type: ProofType::Zkvm,
+            bytes: vec![],
+            public_inputs: vec![],
+            claimed_residual_fp: 1,
+        };
+        assert!(!Consensus::validate_unified(&header, &unified, &prev, 1e-8, 0x01));
+    }
+
+    #[test]
+    fn validate_unified_rejects_empty_groth16() {
+        let header = make_header(1);
+        let prev = ChainState::default();
+        let unified = UnifiedProof {
+            proof_type: ProofType::Groth16,
+            bytes: vec![],
+            public_inputs: vec![],
+            claimed_residual_fp: 1,
+        };
+        assert!(!Consensus::validate_unified(&header, &unified, &prev, 1e-8, 0x03));
+    }
+```
+
+---
+
+## Important corrections vs the sketch you pasted
+
+1. **Vote message must match TS:**  
+   `"equilibrium-bft-v1" || block.hash (hex UTF-8) || height.toString()`  
+   Not raw hash bytes and not `height.to_le_bytes()`.
+
+2. **`verify_unified` must use `unified.bytes`**, not `to_wire()` (tag breaks ark deserialize). Fix both verifiers in the same PR.
+
+3. **`header.residual` is `i64`**, not `residual_fp` on the header.
+
+4. **Validator set on phone:** empty set + `REQUIRE_BFT_VOTES=false` → soft path (still accept). Empty set + require → reject. Load set later via tip/sync JSON.
+
+5. **`ed25519-dalek` 2.1 is already in `Cargo.toml`** — no new dep.
+
+---
+
+## Apply order today
+
+1. BFT helpers + step 5 + unit tests in `mobile_validator.rs`  
+2. `validate_unified` + tests in `consensus.rs`  
+3. One-line `verify_unified` fixes in `zk_proof.rs`  
+4. `cargo test -p equilibrium-core -- bft_ validate_unified`
+
+**Start with UnifiedProof** if you want the smaller diff; **BFT** if you want the mobile claim tighter first. Both are shippable without new dependencies.
+
+I can’t write into your GitHub from here (no contents write). Paste these onto Replit/main and commit; then we can re-audit the SHA. If you want, next message I’ll expand **only** the BFT unit tests (sign with `SigningKey`, assert quorum) or **only** the mesh harness outline.

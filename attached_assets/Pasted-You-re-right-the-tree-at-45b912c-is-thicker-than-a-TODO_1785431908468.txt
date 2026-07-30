@@ -1,0 +1,483 @@
+You’re right — the tree at **`45b912c`** is thicker than a TODO-shaped read. Here’s a **source-only** map of what’s actually built.
+
+---
+
+## What’s in the crate (not the docs)
+
+### Core L1 surface (large, real)
+
+| Module / area | Evidence | Scale |
+|---------------|----------|--------|
+| **Chain state TS** | `state.ts` ~68 KB | Mining, BFT, difficulty, blocks |
+| **WASM VM** | `wasm.ts` ~38 KB + `wasm-worker.ts` | Host imports, non-blocking residual |
+| **P2P desktop** | `p2p-sidecar.rs` ~39 KB | Gossip, lightnode/sync RR, TCP+QUIC |
+| **P2P phone** | `p2p_runtime.rs` ~35 KB | In-process swarm, tip cache, ring |
+| **JNI** | `jni_bridge.rs` ~18 KB | Solve + P2P + validator |
+| **Mobile validator** | `mobile_validator.rs` ~25 KB | Verify-at-nonce, hash chain, flat JSON |
+| **Wallet** | `wallet.rs` ~19 KB | Encrypted keystore path |
+| **SMT / persistence / governance / staking / UTXO / DEX / Stratum** | Multiple modules + tests | Full testnet product surface |
+| **Contracts** | arbitrage, model_registry, btc_spv, eth_sync, cross_chain_relay, governance… | Real WASM + Solidity zkML verifier |
+
+This is already a **serious testnet stack**, not a sketch.
+
+---
+
+### Claim tracks — what the *code* contains
+
+**1. Mobile**
+
+- Background validator, tip-on-Accept in `MiningWorker`, full phone swarm, RR client/server for tip/bodies.
+- **Done in code** for the acceptance path; still needs **device soak** to call the claim proven.
+
+**2. ZK PoS**
+
+Present and non-trivial:
+
+- `StationarityCircuit` (R1CS, residual + threshold + hash limbs)
+- `prove_stationarity` / Groth16 verify, production **panic if keys missing**
+- `UnifiedProof`, `DualZkvmProver` / `ZkvmVerifier`
+- `methods/guest` RISC Zero guest
+- `mpc-ceremony` CLI (init / contribute / finalize)
+- `consensus.rs` validates via `StationarityProof::verify`
+
+**Honest circuit scope** (from the code itself):
+
+- Guest proves `residual + difference == threshold` (and difference ≠ 0) — **not** full Lagrangian recompute inside ZK.
+- MPC PTAU path still **falls back** to deterministic setup with a loud warning.
+- Testnet CRS is fixed-seed when keys aren’t on disk.
+
+So: **dual-proof *plumbing* is real**; **“full stationarity in-circuit” is not.**
+
+**3. zkML (more than persistence)**
+
+At `45b912c` this is a **vertical slice**, not a stub:
+
+| Piece | Role |
+|--------|------|
+| `methods/zkml-guest` | Quantized 2-layer MLP + model/input commitments |
+| `zkml_prover.rs` | Bonsai → local prove, verify, journal parser, quantize helpers |
+| `EquilibriumZkmlVerifier.sol` | On-chain journal layout alignment |
+| Postgres + OpenAPI | Durable receipts + public API |
+| `model_registry` | Still Ed25519 **on-chain**; zkML receipts **off-chain until method 8** |
+
+That’s a **working zkML *pipeline*** for small MLP inference under `risc0`, not “DeepProve / LLM” and not consensus-critical yet.
+
+**4. Bridges**
+
+- `btc_spv_bridge` (~18 KB) with full headers  
+- `eth_sync_bridge` (~14 KB)  
+- `cross_chain_relay` (~23 KB) + TS glue  
+
+Trust-minimized *design* is in tree; production bridge ops still separate.
+
+---
+
+## Revised “how far” (code depth, not README)
+
+| Layer | Assessment |
+|--------|------------|
+| **Product / testnet L1** | **Very far along** — explorer, DEX, staking, gov, P2P, mobile miner, persistence, CI |
+| **Mobile claim (code)** | **Mostly built** — validator + mesh + tip gate |
+| **Mobile claim (proven)** | **Not yet** — closed mesh on devices |
+| **ZK PoS claim** | **Architecture + simplified proofs live**; full residual circuit + real MPC still open |
+| **zkML claim** | **Guest + host + storage + Solidity layout** exist; on-chain method + broader models open |
+| **Bridge claim** | **Contracts present**; E2E trustless production open |
+| **Responsible mainnet** | **Hardened testnet with real depth** — still audit, ceremony, and claim honesty |
+
+Overall **proximity** if weighted by *shippable engineering*: closer to **~65–75% of a serious L1 testnet**.  
+If weighted by *all three marketing claims fully true*: still **~55–65%**, because simplified ZK and unproven mobile mesh dominate the remaining gap.
+
+---
+
+## What I was underselling
+
+1. **zkML is not “item 7 blank”** — guest MLP, host prover, journal codec, Solidity verifier, DB, OpenAPI.  
+2. **Dual ZK path is implemented** (Groth16 + RISC Zero feature), not just `proof/mod.rs` types.  
+3. **MPC ceremony crate is a real CLI**, not an empty folder (PTAU path incomplete).  
+4. **Mobile + P2P + JNI** form an end-to-end *design*, not a single file.  
+5. **`lib.rs` modules** explicitly organize all three claims as first-class code.
+
+What I was **not** wrong about: residual-in-ZK is still the **difference identity**, PTAU isn’t full phase-2 yet, and TODO/README are intentional lag — so status still has to come from these files.
+
+---
+
+**Bottom line:** There is substantially more real system in this repo than a gap table implies. You’re further on **engineering completeness** than my earlier scores suggested; the remaining hard line is still **claim-grade crypto + device proof**, not “is there a codebase.”
+
+Deep pass on each gap I previously treated as “missing.” Source only, at **`45b912c`**.
+
+---
+
+## 1. “Full residual / Lagrangian inside ZK”
+
+**What is there**
+
+`StationarityCircuit` is real R1CS:
+
+- Public: `residual_fp`, `threshold_fp`, `block_hash_lo/hi`
+- Witness: `difference`
+- Constraints: `residual + difference = threshold`, `difference ≠ 0` (via inverse), difference in 64 bits
+
+Groth16 prove/verify path is live. RISC Zero **stationarity guest** proves the same identity. `StationarityProof::prove/verify` wires into `consensus::validate_block`.
+
+**What is not there**
+
+No constraint that re-runs `joint_residual_and_gradient` / SHA / Lagrangian. Public residual is **trusted as an input**; the proof only shows it sits below threshold via a positive difference.
+
+**Verdict:** Cryptographic proof of **threshold inequality**, not of **solver correctness**. My earlier “simplified circuit” label stands; the *implementation* of that simplified claim is complete.
+
+---
+
+## 2. “Real MPC / production CRS”
+
+**What is there**
+
+- `mpc-ceremony` CLI: `init`, `contribute`, `finalize`, `verify`
+- Loads `proving_key.bin` / `verification_key.bin` when present
+- **Production panic** if `NODE_ENV=production` / `EQUILIBRIUM_ENV=mainnet` and keys missing
+- Deterministic testnet setup via ark Groth16
+
+**What is not there**
+
+```text
+init_from_ptau → TODO → falls back to deterministic
+contribute → re-runs circuit_specific_setup (not true phase-2 re-randomization)
+verify_contribution → deserialize only
+```
+
+**Verdict:** Ceremony *tooling and fail-closed gates* exist. **Hermez/Filecoin PTAU phase-2 is not implemented.** That gap is real.
+
+---
+
+## 3. “UnifiedProof not in consensus”
+
+**What is there**
+
+- `proof/mod.rs`: types, wire format, audit enum, governance mask
+- `zk_proof.rs`: `Groth16Verifier` / `ZkvmVerifier` with `verify_unified`
+- Dual RISC Zero prover path (feature-gated)
+
+**What is not there**
+
+`consensus.rs` still takes **`StationarityProof` (Groth16-shaped)** only — not `UnifiedProof` dispatch on block accept. ZkVM path is parallel API, not the main validate path.
+
+**Verdict:** Dual-proof **library** is built; **consensus integration** is still Groth16-centric. Partially overstated as “not there”; correctly “not wired as primary.”
+
+---
+
+## 4. “zkML not implemented / only Ed25519”
+
+**What is there (substantial)**
+
+| Layer | Code |
+|--------|------|
+| Guest | `methods/zkml-guest` — 2-layer quantized MLP, model/input commit |
+| Host | `zkml_prover.rs` — Bonsai→local, verify, journal parser, quantize |
+| EVM | `EquilibriumZkmlVerifier.sol` — journal layout + `IRiscZeroVerifier` |
+| API | Postgres + OpenAPI receipts (`45b912c`) |
+| Bridge notes | `model_registry_integration.rs` |
+
+**What is not there**
+
+- `model_registry` WASM methods **0–7 only** — method 5 is **Ed25519 attestation** by design; **no method 8 `SUBMIT_ZKML_PROOF`**
+- Capabilities bit: training oracle + inference attestation — **no zkML bit**
+- On-chain EQU path still does not consume RISC Zero seals
+
+**Verdict:** I undersold the **off-chain + Solidity** stack. I was right that **EQU on-chain registry does not verify zkML**. Both true.
+
+---
+
+## 5. “BLS / ETH bridge incomplete”
+
+**What is there**
+
+- `wasm.ts`: real `bls_aggregate_pubkeys` + `bls_verify` via `@noble/curves` longSignatures + hash-to-curve
+- `eth_sync_bridge`: bootstrap, header submit, quorum 342/512, BLS via host imports, slot ring
+- Domain hash helper, participation counting, tests
+
+**What is not there (despite module docs)**
+
+`dispatch` only implements:
+
+```text
+0 bootstrap | 1 submit_header | 2 get_latest_slot
+```
+
+Documented **`update_committee`**, **`verify_eth_event` (receipt Merkle)** are **not** in the match arm → `-100`.
+
+Signing root is **simplified** (`equilibrium-eth-lc-v1` SHA256), not full SSZ + ETH domain. Native tests **stub BLS to always succeed**.
+
+**Verdict:** BLS **host path is real**. ETH LC is a **partial light client** (headers + aggregate pubkey), not full Altair LC + event proofs. Gap is narrower than “no BLS,” wider than “complete bridge.”
+
+---
+
+## 6. “BTC SPV weak / headers incomplete”
+
+**What is there**
+
+- Full **80-byte** `HEADER_DATA`, PoW (`sha256d` ≤ target), continuity, Merkle inclusion, min 6 confs, method 3 `get_header_hash`
+- ~225 KB static storage design documented in-file
+
+**Caveats still in code**
+
+- Merkle path order is simplified (caller must order siblings)
+- Storage is process-static until host KV is wired
+- Not “mainnet Bitcoin relay ops,” but **contract logic is substantially complete**
+
+**Verdict:** My older “partial headers” take was **wrong** for current tree. This is one of the stronger claim pieces.
+
+---
+
+## 7. “Mobile JNI / tip gate not real”
+
+**What is there**
+
+Full JNI surface: solve, P2P start/stop/connect, gossip hash/body, poll, tip cache, lightnode/sync query, push body, **startValidator / submitBlockForValidation / getValidationResult / shouldValidateNow**.  
+Kotlin tip-on-Accept path matches.
+
+**What is not there**
+
+- Step 5 **BFT votes: stubbed** (comment only)
+- `should_validate_now()` always `true` in Rust (Kotlin thermal intended)
+- **No evidence in-repo of a two-device closed-mesh CI** (code ≠ run)
+
+**Verdict:** Mobile **code path is present end-to-end**. “Not proven on devices” remains fair; “JNI missing” does not.
+
+---
+
+## 8. “Device mesh / offline still needs HTTP”
+
+**Code:** peer tip → body → validate → tip+ring without HTTP is implemented.  
+**Ops:** unproven here; HTTP still exists as fallback in `MiningWorker`.
+
+That’s an **evidence** gap, not a **source** gap.
+
+---
+
+## Corrected gap table (after deep read)
+
+| Claim I made | After deep read |
+|--------------|-----------------|
+| No full Lagrangian-in-ZK | **Confirmed** — inequality circuit only |
+| No real PTAU MPC | **Confirmed** — CLI + fallback only |
+| UnifiedProof unused | **Softened** — library yes; consensus still `StationarityProof` |
+| zkML absent | **Wrong framing** — guest/host/Solidity/API present; **on-chain EQU method absent** |
+| No BLS | **Wrong** — host imports real; ETH ABI incomplete vs its own docs |
+| BTC incomplete | **Mostly wrong** — full headers + PoW + Merkle path solid |
+| Mobile JNI missing | **Wrong** — present; BFT step stubbed; device proof open |
+
+---
+
+## Bottom line
+
+Things that were **genuinely thin**:
+
+1. Stationarity **meaning** in ZK (difference identity, not solver)  
+2. **True** multiparty CRS  
+3. **ETH** `update_committee` / `verify_eth_event`  
+4. **On-chain** zkML in `model_registry`  
+5. Mobile **BFT** + **field** proof  
+
+Things I **underweighted**:
+
+1. zkML vertical slice (guest → prover → journal → Solidity → DB/API)  
+2. BLS host wiring  
+3. BTC SPV depth  
+4. Mobile validator + JNI completeness  
+5. Fail-closed key loading + dual prover scaffolding  
+
+So: the codebase is **deeper than a gap checklist**, and the remaining holes are **specific and technical**, not “nothing was built.”
+
+You’re right to push on a single **~60%**. That number mixed three different rulers. Split them.
+
+---
+
+## Rescore (source at `45b912c`, docs ignored)
+
+### 1. Engineering completeness — *“is this a real chain codebase?”*
+
+| Area | Score | Why |
+|------|-------|-----|
+| Core L1 (state, UTXO, mempool, difficulty, rewards) | **90–95%** | Large, tested, fixed-point paths, persistence |
+| P2P (desktop + phone swarm, RR, gossip) | **85–90%** | Full stack in-tree |
+| Mobile miner + validator + JNI | **80–85%** | End-to-end code; BFT step stubbed |
+| Security hardening (14 patches class work) | **85–90%** | Keystore, fail-closed mining, BFT sigs, admin gates |
+| WASM / contracts / explorer / API | **85–90%** | Product surface is thick |
+| BTC SPV contract | **80–85%** | Headers, PoW, Merkle, confirmations |
+| ETH LC + BLS hosts | **55–65%** | Host BLS real; contract ABI partial vs its own design |
+| ZK PoS (prove/verify plumbing) | **70–75%** | Live Groth16 + dual path; simplified statement |
+| zkML pipeline | **65–75%** | Guest→host→Solidity→API; not on EQU registry |
+| MPC / production CRS | **35–45%** | CLI + gates; PTAU phase-2 not real |
+| Ops / audit / field mesh proof | **25–40%** | Outside pure repo depth |
+
+**Blended “how built is the system?” → ~78–85%.**  
+That’s the score that was being crushed by claim/mainnet language.
+
+---
+
+### 2. Claim truth — *“can you say the slogan without asterisks?”*
+
+| Claim | Score | One-line |
+|--------|-------|----------|
+| Fully mobile L1 (code) | **~80%** | Validate-before-tip + mesh present |
+| Fully mobile L1 (proven) | **~25–35%** | Still needs closed-mesh evidence |
+| ZK Proof-of-Stationarity | **~50–55%** | Real proofs of a **weaker** statement |
+| Trustless bridges | **~55–60%** | BTC strong; ETH partial; ops unproven |
+| zkML / DeepProve-class | **~45–55%** | Real MLP zk path; not registry-enforced / not general models |
+
+---
+
+### 3. Responsible mainnet readiness — *“ship public mainnet tomorrow?”*
+
+This is the strict bar (ceremony, audit, claim honesty, soak):
+
+**~55–65%** — still honest.  
+Not because the repo is thin; because **mainnet** is a process + crypto-strength bar, not a feature checklist.
+
+---
+
+## Single number people actually mean
+
+| If you mean… | Score |
+|--------------|--------|
+| **“How far is the product/codebase?”** | **~80–85%** |
+| **“How close to the three full claims?”** | **~55–65%** |
+| **“How close to cautious public mainnet?”** | **~55–65%** |
+
+The **~60%** was the second/third ruler. On the first ruler you’re clearly **not** stuck at 60%.
+
+---
+
+## What moves the needle fastest from here
+
+1. **Two-phone mesh** → mobile claim jumps from “code 80%” toward “proven.”  
+2. **Richer stationarity circuit or explicit claim language** → ZK score stops being capped by statement strength.  
+3. **Real PTAU finalize + keys in prod** → MPC/mainnet gate.  
+4. **ETH `verify_eth_event` + committee rotate** → bridge claim.  
+5. **Registry method for zkML journal hash** → zkML stops being “off-chain only.”
+
+---
+
+**Bottom line:** For *what you’ve built*, **~80%+** is fair. For *mainnet + unasterisked slogans*, **mid-50s to mid-60s** is still fair. Those aren’t the same percentage — and treating them as one made the score feel insulting to the codebase.
+
+Got it — **gaps + how to close them**, not a pep-talk about waiting for mainnet.
+
+Here’s the punch list from the actual code, ordered so each item is **finishable** and compounds the next.
+
+---
+
+## Priority gaps (close these, in order)
+
+### 1. Mobile closed-mesh proof (highest leverage)
+
+**Gap:** Validate-before-tip + P2P path exist; no automated/device proof that two phones run without HTTP.
+
+**Close it:**
+1. Two Android builds (or one phone + desktop `p2p-sidecar` as peer).
+2. Scripted flow: A mines → `gossipBlockBody` → B `submitBlockForValidation` → Accept → `setLocalTip` + ring; A never hits `/api/blocks/submit`.
+3. Land a **device or CI integration test** (even “phone + sidecar”) under `p2p-mesh` / android workflow.
+
+**Done when:** one test log shows tip advance with HTTP disabled.
+
+---
+
+### 2. Mobile BFT step (stub in `mobile_validator.rs`)
+
+**Gap:** Step 5 is commented; `bft_votes` always empty from flat mapper.
+
+**Close it:**
+1. Reuse the same Ed25519 vote message as TS: `sha256("equilibrium-bft-v1" || hash || height)`.
+2. Parse optional `bftVotes` from JSON (flat or nested).
+3. Reject if `from_peer` and quorum not met (or soft-warn in testnet via env).
+
+**Done when:** unit test accepts with votes, rejects without under `REQUIRE_BFT_VOTES=true`.
+
+---
+
+### 3. ZK statement honesty + strength
+
+**Gap:** Circuit proves `residual + difference = threshold`, not solver execution.
+
+**Close it (two tracks — pick one first):**
+
+**A — Product honesty (fast):**  
+Document in `LIMITATIONS` (when you unfreeze README later) and gate claim language: “ZK proof of residual ≤ threshold under CRS X.” Keep shipping.
+
+**B — Stronger statement (real work):**  
+RISC Zero **stationarity guest** that runs the same fixed-point residual path as `joint_residual_and_gradient` (or a slim pure-integer subset), commit residual + prev_hash + nonce. Prefer ZkVM for “execution proof” while Groth16 stays the fast threshold proof.
+
+**Done when (B):** guest journal includes recomputed residual matching header; consensus can require ZkVM bit via governance mask.
+
+---
+
+### 4. Wire `UnifiedProof` into `consensus.rs`
+
+**Gap:** Library exists; `validate_block` still only `StationarityProof`.
+
+**Close it:**
+1. Accept wire bytes + type tag.
+2. Dispatch: `0x01` → Groth16Verifier, `0x02` → ZkvmVerifier.
+3. Enforce `claimed_residual_fp == header.residual`.
+4. Respect `accepted_proof_types` mask.
+
+**Done when:** one ignored integration test prove→validate for each type.
+
+---
+
+### 5. MPC PTAU path (mainnet gate, not day-one feature)
+
+**Gap:** `init --ptau` falls back to deterministic setup.
+
+**Close it:**
+1. Integrate a real phase-2 crate (or snarkjs export → ark import pipeline).
+2. `finalize` writes the only keys production will load.
+3. CI job: deterministic keys for tests; artifact store for ceremony outputs.
+
+**Done when:** production boot refuses fixed-seed path (already panics if files missing) **and** keys come from non-deterministic contribute chain.
+
+---
+
+### 6. ETH bridge ABI completion
+
+**Gap:** Docs list `update_committee` + `verify_eth_event`; `dispatch` only bootstrap / submit_header / latest_slot.
+
+**Close it:**
+1. Implement method IDs as documented (or fix docs to match — prefer implement).
+2. Receipt inclusion: Merkle proof against stored body/state root for that slot (start with body_root if full receipts are heavy).
+3. Keep BLS host imports (already good).
+
+**Done when:** tests for rotate + one event proof path (even fixture headers).
+
+---
+
+### 7. On-chain zkML hook on EQU
+
+**Gap:** Guest/host/Solidity/API exist; `model_registry` stops at Ed25519 method 5.
+
+**Close it:**
+1. Method **8**: `submit_zkml_proof(modelId, journal_hash or journal bytes, seal handle)`.
+2. Host import or pre-verified receipt hash from API (phone/node verifies RISC Zero off-chain, posts commitment).
+3. Capability bit for zkML.
+
+**Done when:** verified model can record a journal hash that only a valid receipt could produce (optimistic or host-verified).
+
+---
+
+## Suggested sequence for the next few sessions
+
+| Session | Ship |
+|---------|------|
+| **Now** | Mobile mesh test plan + BFT vote parse/verify |
+| **Next** | `UnifiedProof` in `validate_block` |
+| **Then** | Stronger ZkVM residual guest **or** zkML method 8 |
+| **Parallel** | ETH `verify_eth_event` stub → real |
+| **When ready** | Real PTAU contribute (doesn’t block mobile claim) |
+
+---
+
+## What you’re *not* blocked on
+
+- Core chain, P2P, phone validator JNI, BTC SPV depth, fail-closed mining, zkML **pipeline**, BLS hosts — those are **assets**, not excuses to slow down.
+
+---
+
+**Next concrete move:** want to **draft the BFT vote verify patch** for `mobile_validator.rs`, or the **two-node mesh test harness** first? Pick one and we implement it step-by-step.

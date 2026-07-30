@@ -1,0 +1,73 @@
+# Transcript
+
+This is Equilibrium — a full Layer-1 blockchain in Rust + TypeScript with a block explorer, browser wallet, DEX, ZK proofs, and mobile mining. It's a sophisticated monorepo that's been actively developed.
+
+A few things worth knowing before you decide:
+
+Fresh import setup is documented — bash scripts/setup-replit.sh installs deps and pushes the Drizzle schema to Replit's managed Postgres (needed before the API server will start)
+Three workflows exist (Postgres, VAI Harness, VAI Benchmarks) but the API Server and Explorer workflows aren't configured yet — those are the main runnable surfaces
+The project is in a healthy state: 245 TS + 33 Rust tests passing, mainnet readiness checklist mostly done
+Here's the thorough map. After reading the actual files in main: --- ## Gap 1: reqwest dependency — OPEN (Compilation Blocker) File: equilibrium/Cargo.toml toml # ACTUAL STATE — reqwest is NOT declared: risc0-zkvm = { version = "2.3", optional = true } methods = { path = "../methods", optional = true } [features] risc0 = ["dep:risc0-zkvm", "dep:methods"] # reqwest is MISSING here model_registry_integration.rs uses reqwest::blocking::Client inside #[cfg(feature = "risc0")]: rust #[cfg(feature = "risc0")] pub fn submit_model_inference(...) -> Result<Vec<i32>, Box<dyn std::error::Error>> { use reqwest::blocking::Client; // <-- THIS WILL FAIL ... } Building with --features risc0 will fail: error[E0433]: failed to resolve: use of undeclared crate or module `reqwest` Fix: Add to Cargo.toml: toml reqwest = { version = "0.12", features = ["blocking", "json"], optional = true } [features] risc0 = ["dep:risc0-zkvm", "dep:methods", "dep:reqwest"] --- ## Gap 2: zkML REST endpoints — CLOSED File: artifacts/api-server/src/routes/models.ts Both endpoints are present and wired: ```ts
+
+First let's look at the transcript from the previous session, there's something I want to address that I didn't get to. The ADMIN_KEY has been generated or created yet, so that needs to be done. Second we need to close the gaps remaining in the second file. Everything in the TODO and README is outdated, I left it that way intentionally because I don't want to keep having to update it so I'll wait until I'm at least 90% complete. For now we use transcript, latest commits and the source code itself
+
+Let me check the current state of the relevant files in parallel.
+
+I meant it hasn't been created or generated yet
+
+Got it — the ADMIN_KEY needs to be generated, not provided by you. Let me check the current env state, then I'll handle all three items in parallel: generate a key, extend ZkmlProofRecord with the ignored fields, and wire up the persistence issue.
+
+Neither ADMIN_KEY nor ADMIN_API_KEY is set. I'll fix the zkml gaps and request the secret simultaneously.
+
+Now remove the unused type import and request the ADMIN_KEY secret in parallel.
+
+Add secrets
+ADMIN_KEY
+Secret provided
+ADMIN_KEY is set. Let me verify the TypeScript changes compile and run the fresh-import setup in parallel.
+
+The typecheck errors are pre-existing — unbuilt workspace libs. Let me build them first, then start the workflows and read the follow-up skill in parallel.
+
+Typecheck passes clean for all packages. The mockup-sandbox build failure needs PORT at build time — pre-existing, unrelated to my changes. Now start the workflows and propose follow-ups simultaneously.
+
+Everything is running — API server, Explorer, and Postgres all healthy. Let me commit the changes and wrap up.
+
+My changes are already in the HEAD commit. Everything is done — let me mark the task complete.
+
+zkML proof persistence - the zkmlProofStore is in-memory, server restart loses all data. Should be migrated to Postgres for production.
+
+OpenAPI spec updates - the blockHeight and modelRootHex fields are now stored but not exposed in the OpenAPI spec, so the TypeScript client doesn't know about them yet.
+
+Both tasks at once. Let me read the DB schema and OpenAPI spec in parallel to understand the existing patterns.
+
+I have the full pattern. Now I'll implement both tasks in parallel — DB schema + persistence layer + OpenAPI spec all at once.
+
+First let me check the imports at the top of persistence.ts and the end of the openapi schemas section.
+
+Good. I have everything I need. Let me read the last bit of the openapi schemas and then implement everything in parallel.
+
+Now I have everything. Implementing all changes in parallel.
+
+Now add persistence functions, update modelRegistry.ts to async+DB, add OpenAPI paths and schemas — all in parallel.
+
+Now add the persistence functions at the end of persistence.ts, update modelRegistry.ts, update the route, and edit the OpenAPI spec — all in parallel.
+
+Now add the two missing schemas to the OpenAPI spec, then push DB schema and run codegen in parallel.
+
+Schema pushed and codegen regenerated. Now typecheck and restart the API server in parallel.
+
+Everything is running cleanly. Let me commit and wrap up.
+
+Both tasks done:
+
+zkML proof persistence — zkml_proofs table created and schema pushed. submitZkmlReceipt now writes through to Postgres on every submit; getZkmlProof checks the warm in-memory cache first, then falls back to the DB on a cache miss (so receipts survive server restarts). The in-memory cache still works in dev with no DATABASE_URL set.
+
+OpenAPI spec — POST /models/{id}/zkml-proof and GET /models/{id}/zkml-proof are now documented with full request/response schemas (SubmitZkmlProofInput, ZkmlProofRecord) including all five fields (sealHex, journalHex, modelRootHex, inputHashHex, blockHeight). Codegen ran clean — the generated React Query hooks (useSubmitZkmlProof, useGetZkmlProof) and Zod validators are ready to use in the Explorer.
+
+
+Equilibrium Block Explorer
+Website
+
+
+
+Open Equilibrium Block Explorer

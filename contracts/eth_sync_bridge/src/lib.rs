@@ -45,8 +45,6 @@
 //!   4 = get_latest_slot() -> i32 (slot number of latest verified header)
 
 #![no_std]
-extern crate alloc;
-use alloc::vec::Vec;
 use sha2::{Sha256, Digest};
 use core::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 
@@ -172,6 +170,18 @@ pub fn count_participants(bits: &[u8; PARTICIPATION_BYTES]) -> u32 {
     bits.iter().map(|b| b.count_ones()).sum()
 }
 
+/// Look up the stored body_root for a given slot, or None if not found.
+fn find_body_root_for_slot(slot: u64) -> Option<[u8; 32]> {
+    let limit = unsafe { STORED_COUNT }.min(MAX_HEADERS);
+    for i in 0..limit {
+        if unsafe { STORED_SLOTS[i] } == slot {
+            return Some(unsafe { STORED_BODY_ROOTS[i] });
+        }
+    }
+    None
+}
+
+/// Verify a Merkle inclusion path from `leaf` up to `root`.
 /// Hash a beacon header for BLS signing (domain-separated).
 ///
 /// Ethereum uses SSZ hash_tree_root + signing_root with a domain prefix.
@@ -219,8 +229,10 @@ pub fn call(method_id: i32, args: &[u8]) -> i32 {
 fn dispatch(method_id: i32, args: &[u8]) -> i32 {
     match method_id {
         0 => do_bootstrap(args),
-        1 => do_submit_header(args),
-        2 => LATEST_SLOT.load(Ordering::SeqCst) as i32,
+        1 => do_update_committee(args),
+        2 => do_submit_header(args),
+        3 => do_verify_eth_event(args),
+        4 => LATEST_SLOT.load(Ordering::SeqCst) as i32,
         _ => -100,
     }
 }
@@ -236,6 +248,56 @@ fn do_bootstrap(args: &[u8]) -> i32 {
         AGGREGATE_PUBKEY.copy_from_slice(&args[..BLS_PUBKEY_LEN]);
     }
     BOOTSTRAPPED.store(true, Ordering::SeqCst);
+    1
+}
+
+/// Rotate the sync committee aggregate public key.
+///
+/// Verifies the current committee signed the transition header, then installs
+/// the new aggregate public key. Also stores the header's slot/roots.
+///
+/// Args: [header_bytes: WIRE_LEN | new_aggregate_pubkey: BLS_PUBKEY_LEN]
+fn do_update_committee(args: &[u8]) -> i32 {
+    if !BOOTSTRAPPED.load(Ordering::SeqCst) { return -3; }
+    if args.len() < LightClientHeader::WIRE_LEN + BLS_PUBKEY_LEN { return -10; }
+
+    let header = match LightClientHeader::parse(args) {
+        Some(h) => h,
+        None => return -10,
+    };
+
+    // 1. Quorum from current committee
+    let participants = count_participants(&header.sync_committee_bits);
+    if participants < MIN_PARTICIPANTS { return -2; }
+
+    // 2. BLS verify against current aggregate pubkey
+    let msg = hash_header(&header);
+    let verified = unsafe {
+        bls_verify(
+            AGGREGATE_PUBKEY.as_ptr(),
+            msg.as_ptr(),
+            msg.len() as u32,
+            header.sync_committee_signature.as_ptr(),
+        )
+    };
+    if verified != 1 { return -1; }
+
+    // 3. Install the new aggregate pubkey
+    let new_pk = &args[LightClientHeader::WIRE_LEN..LightClientHeader::WIRE_LEN + BLS_PUBKEY_LEN];
+    unsafe { AGGREGATE_PUBKEY.copy_from_slice(new_pk); }
+
+    // 4. Store this header (same as submit_header)
+    let slot = header.slot;
+    unsafe {
+        let i = STORED_COUNT % MAX_HEADERS;
+        STORED_SLOTS[i]       = slot;
+        STORED_STATE_ROOTS[i] = header.state_root;
+        STORED_BODY_ROOTS[i]  = header.body_root;
+        STORED_COUNT += 1;
+    }
+    let prev = LATEST_SLOT.load(Ordering::SeqCst);
+    if slot > prev { LATEST_SLOT.store(slot, Ordering::SeqCst); }
+
     1
 }
 
@@ -295,6 +357,57 @@ fn do_submit_header(args: &[u8]) -> i32 {
     1 // ok
 }
 
+/// Verify an EVM event/receipt inclusion against the stored body_root for a slot.
+///
+/// Uses a Merkle inclusion path: callers provide leaf + sibling hashes; the
+/// contract recomputes the root and checks it equals the stored body_root.
+///
+/// Args wire layout:
+///   [0..8]   slot:       u64 LE
+///   [8..12]  log_index:  u32 LE  (bit i → 0=leaf-is-left, 1=leaf-is-right at level i)
+///   [12..16] proof_len:  u32 LE  (number of 32-byte sibling hashes; 0 = leaf IS root)
+///   [16 .. 16+32*proof_len] sibling hashes
+///   [16+32*proof_len .. +32] leaf hash
+///
+/// Returns:
+///   1   inclusion verified
+///  -1   no stored header for that slot
+///  -2   Merkle path does not reach stored body_root
+fn do_verify_eth_event(args: &[u8]) -> i32 {
+    if args.len() < 16 { return -10; }
+
+    let slot       = u64::from_le_bytes(args[0..8].try_into().unwrap_or([0u8; 8]));
+    let log_index  = u32::from_le_bytes(args[8..12].try_into().unwrap_or([0u8; 4]));
+    let proof_len  = u32::from_le_bytes(args[12..16].try_into().unwrap_or([0u8; 4])) as usize;
+
+    let nodes_end = 16 + 32 * proof_len;
+    let leaf_end  = nodes_end + 32;
+    if args.len() < leaf_end { return -10; }
+
+    let body_root = match find_body_root_for_slot(slot) {
+        Some(r) => r,
+        None => return -1,
+    };
+
+    // Walk the Merkle path in-place (no heap allocation needed).
+    let mut current: [u8; 32] = args[nodes_end..leaf_end].try_into().unwrap_or([0u8; 32]);
+    for i in 0..proof_len {
+        let off = 16 + i * 32;
+        let sibling: [u8; 32] = args[off..off + 32].try_into().unwrap_or([0u8; 32]);
+        let mut h = Sha256::new();
+        if (log_index >> i) & 1 == 0 {
+            h.update(current);
+            h.update(sibling);
+        } else {
+            h.update(sibling);
+            h.update(current);
+        }
+        current = h.finalize().into();
+    }
+
+    if current == body_root { 1 } else { -2 }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -343,7 +456,7 @@ mod tests {
     fn submit_header_without_bootstrap_returns_minus3() {
         BOOTSTRAPPED.store(false, Ordering::SeqCst);
         let args = [0u8; LightClientHeader::WIRE_LEN];
-        let result = call(1, &args);
+        let result = call(2, &args); // submit_header is now method 2
         assert_eq!(result, -3);
     }
 
@@ -352,8 +465,111 @@ mod tests {
         BOOTSTRAPPED.store(true, Ordering::SeqCst);
         // All participation bits zero → 0 participants < 342
         let args = [0u8; LightClientHeader::WIRE_LEN];
-        let result = call(1, &args);
+        let result = call(2, &args); // submit_header is now method 2
         assert_eq!(result, -2, "zero participants should fail quorum check");
+    }
+
+    // ── update_committee tests ────────────────────────────────────────────────
+
+    // Wire length for update_committee args: header + new aggregate pubkey
+    const UPDATE_ARGS_LEN: usize = LightClientHeader::WIRE_LEN + BLS_PUBKEY_LEN;
+
+    #[test]
+    fn update_committee_requires_bootstrap() {
+        BOOTSTRAPPED.store(false, Ordering::SeqCst);
+        let args = [0u8; UPDATE_ARGS_LEN];
+        assert_eq!(call(1, &args), -3);
+    }
+
+    #[test]
+    fn update_committee_below_quorum_returns_minus2() {
+        BOOTSTRAPPED.store(true, Ordering::SeqCst);
+        // Zero participation bits → no quorum
+        let args = [0u8; UPDATE_ARGS_LEN];
+        assert_eq!(call(1, &args), -2);
+    }
+
+    #[test]
+    fn update_committee_rotates_aggregate_pubkey() {
+        // BLS stub always returns 1, so full-participation header passes immediately.
+        BOOTSTRAPPED.store(true, Ordering::SeqCst);
+        unsafe { STORED_COUNT = 0; }
+        LATEST_SLOT.store(0, Ordering::SeqCst);
+
+        let mut args = [0u8; UPDATE_ARGS_LEN];
+        // Full participation bits (512 set bits = supermajority)
+        // sync_committee_bits starts at offset 8+8+32+32+32 = 112
+        for b in args[112..112 + PARTICIPATION_BYTES].iter_mut() { *b = 0xFF; }
+        // New aggregate pubkey sentinel byte at offset WIRE_LEN
+        args[LightClientHeader::WIRE_LEN] = 0xBE;
+
+        assert_eq!(call(1, &args), 1);
+        // Aggregate pubkey must have been updated
+        unsafe { assert_eq!(AGGREGATE_PUBKEY[0], 0xBE); }
+    }
+
+    // ── get_latest_slot tests (method 4) ──────────────────────────────────────
+
+    #[test]
+    fn get_latest_slot_method_id_is_4() {
+        LATEST_SLOT.store(77, Ordering::SeqCst);
+        assert_eq!(call(4, &[]), 77);
+    }
+
+    // ── verify_eth_event tests (method 3) ─────────────────────────────────────
+
+    // Wire size for an event proof with no sibling nodes: slot(8)+log_idx(4)+proof_len(4)+leaf(32)
+    const EVENT_ARGS_ZERO_DEPTH: usize = 8 + 4 + 4 + 32;
+
+    #[test]
+    fn verify_eth_event_no_header_returns_minus1() {
+        unsafe { STORED_COUNT = 0; }
+        let mut args = [0u8; EVENT_ARGS_ZERO_DEPTH];
+        args[0..8].copy_from_slice(&9999u64.to_le_bytes()); // slot 9999, never stored
+        // proof_len = 0; leaf = [0;32]
+        assert_eq!(call(3, &args), -1);
+    }
+
+    #[test]
+    fn verify_eth_event_zero_depth_matches_body_root() {
+        // Submit a header first so we have a body_root to check against.
+        BOOTSTRAPPED.store(true, Ordering::SeqCst);
+        unsafe { STORED_COUNT = 0; }
+        LATEST_SLOT.store(0, Ordering::SeqCst);
+
+        let target_body_root = [0xCAu8; 32];
+        let mut header_args = [0u8; LightClientHeader::WIRE_LEN];
+        header_args[0..8].copy_from_slice(&42u64.to_le_bytes()); // slot = 42
+        // body_root at offset 8+8+32+32 = 80
+        header_args[80..112].copy_from_slice(&target_body_root);
+        // Full participation bits at offset 112
+        for b in header_args[112..112 + PARTICIPATION_BYTES].iter_mut() { *b = 0xFF; }
+        assert_eq!(call(2, &header_args), 1, "header submit must succeed");
+
+        // Zero-depth proof: proof_len=0, leaf = body_root → computed root == body_root
+        let mut ev_args = [0u8; EVENT_ARGS_ZERO_DEPTH];
+        ev_args[0..8].copy_from_slice(&42u64.to_le_bytes()); // slot = 42
+        // log_index=0, proof_len=0 (both zero at offsets 8,12)
+        ev_args[16..48].copy_from_slice(&target_body_root); // leaf = body_root
+        assert_eq!(call(3, &ev_args), 1, "zero-depth leaf==body_root must verify");
+    }
+
+    #[test]
+    fn verify_eth_event_bad_leaf_returns_minus2() {
+        BOOTSTRAPPED.store(true, Ordering::SeqCst);
+        unsafe { STORED_COUNT = 0; }
+
+        let body_root = [0xABu8; 32];
+        let mut hdr = [0u8; LightClientHeader::WIRE_LEN];
+        hdr[0..8].copy_from_slice(&100u64.to_le_bytes()); // slot 100
+        hdr[80..112].copy_from_slice(&body_root);
+        for b in hdr[112..112 + PARTICIPATION_BYTES].iter_mut() { *b = 0xFF; }
+        call(2, &hdr);
+
+        let mut ev = [0u8; EVENT_ARGS_ZERO_DEPTH];
+        ev[0..8].copy_from_slice(&100u64.to_le_bytes()); // slot 100
+        ev[16..48].copy_from_slice(&[0xFFu8; 32]);       // wrong leaf
+        assert_eq!(call(3, &ev), -2, "wrong leaf must fail");
     }
 
     #[test]

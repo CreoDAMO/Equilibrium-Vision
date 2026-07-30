@@ -1,32 +1,104 @@
-use crate::chain_state::{BlockHeader, ChainState, TxCandidate};
-use crate::zk_proof::StationarityProof;
+use crate::chain_state::{BlockHeader, ChainState, TxCandidate, residual_to_fixed};
+use crate::proof::{accepted_proof_types, ProofType, UnifiedProof, VerificationResult};
+use crate::zk_proof::{Groth16Verifier, StationarityProof, ZkvmVerifier};
 
 pub struct Consensus;
 
 impl Consensus {
+    /// Legacy path — Groth16 `StationarityProof` only. Existing callers unchanged.
     pub fn validate_block(
+        header: &BlockHeader,
+        txs: &[TxCandidate],
+        proof: &StationarityProof,
+        prev_state: &ChainState,
+        current_state: &ChainState,
+    ) -> bool {
+        Self::validate_block_with_mask(header, txs, proof, prev_state, current_state, 0x01)
+    }
+
+    /// Same as `validate_block` but respects a governance proof-type mask.
+    /// `accepted_mask`: bit 0 = Groth16, bit 1 = ZkVM (currently only Groth16 path here).
+    pub fn validate_block_with_mask(
         header: &BlockHeader,
         _txs: &[TxCandidate],
         proof: &StationarityProof,
         prev_state: &ChainState,
         current_state: &ChainState,
+        accepted_mask: u8,
     ) -> bool {
+        // Groth16 is bit 0; if not set, reject immediately
+        if accepted_mask & 0x01 == 0 {
+            return false;
+        }
         // 1. Verify the stationarity proof
         if !StationarityProof::verify(proof, header, current_state, 1e-8) {
             return false;
         }
-        // 2. Check residual is within target (simplified; actual check would recompute residual).
-        //    `residual` is already fixed-point i64 (scaled by RESIDUAL_SCALE) — compared
-        //    directly against a fixed-point threshold, no float involved.
-        if header.residual > crate::chain_state::residual_to_fixed(1e-8) {
+        // 2. Check residual is within target (fixed-point, no float involved)
+        if header.residual > residual_to_fixed(1e-8) {
             return false;
         }
-        // 3. Chain continuity: previous hash must match current tip
-        // (In production, compare with actual chain tip)
+        // 3. Chain continuity: genesis must have zero prev_hash
         if prev_state.cumulative_work == 0 && header.prev_hash != [0u8; 32] {
             return false;
         }
         true
+    }
+
+    /// Dual-proof path: accepts both Groth16 and ZkVM `UnifiedProof`.
+    ///
+    /// `unified.bytes` is the raw proof payload (NO type-tag prefix).
+    /// `accepted_mask`: bit 0 = Groth16 allowed, bit 1 = ZkVM allowed.
+    pub fn validate_unified(
+        header: &BlockHeader,
+        unified: &UnifiedProof,
+        prev_state: &ChainState,
+        threshold: f64,
+        accepted_mask: u8,
+    ) -> bool {
+        // Governance gate: check proof type is allowed
+        let allowed = accepted_proof_types(accepted_mask);
+        if !allowed.contains(&unified.proof_type) {
+            return false;
+        }
+
+        // Residual threshold check
+        if header.residual > residual_to_fixed(threshold) {
+            return false;
+        }
+
+        // Chain continuity: genesis must have zero prev_hash
+        if prev_state.cumulative_work == 0 && header.prev_hash != [0u8; 32] {
+            return false;
+        }
+
+        // Optional claimed-residual binding (0 means "not filled" — e.g. from_wire_groth16)
+        if unified.claimed_residual_fp != 0 && unified.claimed_residual_fp != header.residual {
+            return false;
+        }
+
+        let residual_fp = header.residual.unsigned_abs();
+        let threshold_fp = residual_to_fixed(threshold).unsigned_abs();
+        // Circuit binds prev_hash as public input limbs
+        let block_hash = &header.prev_hash;
+
+        // Dispatch to the appropriate verifier using unified.bytes (no tag prefix)
+        let result = match unified.proof_type {
+            ProofType::Groth16 => Groth16Verifier::dummy().verify(
+                &unified.bytes,
+                residual_fp,
+                threshold_fp,
+                block_hash,
+            ),
+            ProofType::Zkvm => ZkvmVerifier::new().verify(
+                &unified.bytes,
+                residual_fp,
+                threshold_fp,
+                block_hash,
+            ),
+        };
+
+        matches!(result, Ok(VerificationResult::Valid))
     }
 
     /// Select the canonical chain head from a set of competing fork candidates.
@@ -177,6 +249,75 @@ mod tests {
         let cur   = ChainState::default();
         let proof = make_invalid_proof();
         assert!(!Consensus::validate_block(&header, &[], &proof, &prev, &cur));
+    }
+
+    // ── validate_unified tests ────────────────────────────────────────────────
+
+    #[test]
+    fn validate_unified_rejects_disallowed_proof_type() {
+        let header = make_header(1);
+        let prev = ChainState::default();
+        let unified = UnifiedProof {
+            proof_type: ProofType::Zkvm,
+            bytes: vec![],
+            public_inputs: vec![],
+            claimed_residual_fp: 0,
+        };
+        // mask 0x01 = Groth16 only — ZkVM must be rejected
+        assert!(!Consensus::validate_unified(&header, &unified, &prev, 1e-8, 0x01));
+    }
+
+    #[test]
+    fn validate_unified_rejects_all_types_when_mask_zero() {
+        let header = make_header(1);
+        let prev = ChainState::default();
+        for pt in [ProofType::Groth16, ProofType::Zkvm] {
+            let unified = UnifiedProof {
+                proof_type: pt,
+                bytes: vec![],
+                public_inputs: vec![],
+                claimed_residual_fp: 0,
+            };
+            assert!(!Consensus::validate_unified(&header, &unified, &prev, 1e-8, 0x00));
+        }
+    }
+
+    #[test]
+    fn validate_unified_rejects_empty_groth16_payload() {
+        let header = make_header(1);
+        let prev = ChainState::default();
+        let unified = UnifiedProof {
+            proof_type: ProofType::Groth16,
+            bytes: vec![],
+            public_inputs: vec![],
+            claimed_residual_fp: 0,
+        };
+        // Both types allowed — should still fail because proof bytes are empty
+        assert!(!Consensus::validate_unified(&header, &unified, &prev, 1e-8, 0x03));
+    }
+
+    #[test]
+    fn validate_unified_rejects_residual_mismatch() {
+        // claimed_residual_fp != header.residual and != 0 → must reject before verifying
+        let header = make_header(1);
+        let prev = ChainState::default();
+        let unified = UnifiedProof {
+            proof_type: ProofType::Groth16,
+            bytes: vec![0u8; 192],
+            public_inputs: vec![],
+            claimed_residual_fp: 999, // != header.residual (1)
+        };
+        assert!(!Consensus::validate_unified(&header, &unified, &prev, 1e-8, 0x03));
+    }
+
+    #[test]
+    fn validate_block_with_mask_rejects_when_groth16_not_allowed() {
+        let header = make_header(1);
+        let prev = ChainState::default();
+        let cur = ChainState::default();
+        let proof = make_invalid_proof();
+        // mask 0x02 = ZkVM only — Groth16 must be rejected at the mask check
+        assert!(!Consensus::validate_block_with_mask(&header, &[], &proof, &prev, &cur, 0x02));
     }
 
     /// Full prove→verify integration test.  Marked `#[ignore]` because Groth16

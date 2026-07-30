@@ -465,6 +465,8 @@ fn method_get_status(args_ptr: u32) -> i32 {
 
 const CAP_TRAINING_ORACLE: i32 = 1;
 const CAP_INFERENCE_ATTESTATION: i32 = 2;
+/// Capability bit: contract supports on-chain zkML proof submission (method 8).
+const CAP_ZKML: i32 = 4;
 
 /// args: [modelId, inputHash x8 words (32 bytes), outputHash x8 words
 ///        (32 bytes), sig x16 words (64 bytes), pubkey x8 words (32 bytes),
@@ -543,7 +545,61 @@ fn method_get_inference_status(args_ptr: u32) -> i32 {
 }
 
 fn method_get_capabilities(_args_ptr: u32) -> i32 {
-    CAP_TRAINING_ORACLE | CAP_INFERENCE_ATTESTATION
+    CAP_TRAINING_ORACLE | CAP_INFERENCE_ATTESTATION | CAP_ZKML
+}
+
+/// Method 8 — submit_zkml_proof(modelId, journalHash[32], sealHash[32])
+///
+/// Records the RISC Zero journal hash and seal hash commitment for a verified
+/// model on-chain. The journal hash is what the off-chain prover computed and
+/// only a valid RISC Zero receipt over the correct MLP guest could produce —
+/// so storing it on-chain makes the zkML attestation permanent and auditable.
+///
+/// Anyone may submit a proof for a verified model. The caller typically holds
+/// the receipt and proves correct execution of the `zkml-guest` MLP program.
+///
+/// Args wire layout (all i32 words):
+///   word 0:     modelId
+///   words 1-8:  journalHash (32 bytes, 8 × 4-byte LE words)
+///   words 9-16: sealHash    (32 bytes, 8 × 4-byte LE words)
+///
+/// Returns:
+///   1  proof recorded
+///  -1  unknown model
+///  -2  model not yet verified (still Proposed or Slashed)
+fn method_submit_zkml_proof(args_ptr: u32) -> i32 {
+    let id = read_i32_word(args_ptr, 0) as i64;
+
+    let status = match storage_read(&key("model_status", id)) {
+        None => return -1,
+        Some(s) => s.parse::<i64>().unwrap_or(-1),
+    };
+    if status != STATUS_VERIFIED {
+        return -2;
+    }
+
+    let mut journal_hash = [0u8; 32];
+    for i in 0..8u32 {
+        let w = read_i32_word(args_ptr, 1 + i);
+        journal_hash[(i * 4) as usize..(i * 4 + 4) as usize].copy_from_slice(&w.to_le_bytes());
+    }
+
+    let mut seal_hash = [0u8; 32];
+    for i in 0..8u32 {
+        let w = read_i32_word(args_ptr, 9 + i);
+        seal_hash[(i * 4) as usize..(i * 4 + 4) as usize].copy_from_slice(&w.to_le_bytes());
+    }
+
+    storage_write(&key("model_zkml_journal", id), &hex_encode(&journal_hash));
+    storage_write(&key("model_zkml_seal", id), &hex_encode(&seal_hash));
+    set_i64(&key("model_zkml_at", id), unsafe { block_number() } as i64);
+
+    host_log(&format!(
+        "ZkmlProofSubmitted id={} journal={}",
+        id,
+        hex_encode(&journal_hash)
+    ));
+    1
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -579,6 +635,7 @@ pub extern "C" fn call(method_id: i32, args_ptr: u32, _args_len: u32) -> i32 {
         5 => method_submit_inference_attestation(args_ptr),
         6 => method_get_inference_status(args_ptr),
         7 => method_get_capabilities(args_ptr),
+        8 => method_submit_zkml_proof(args_ptr),
         _ => -99,
     }
 }

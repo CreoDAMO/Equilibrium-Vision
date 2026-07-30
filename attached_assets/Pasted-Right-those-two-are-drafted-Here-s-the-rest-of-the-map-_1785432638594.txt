@@ -1,0 +1,116 @@
+Right — those two are drafted. Here’s the **rest of the map** as one coherent backlog (not six separate science projects).
+
+---
+
+## Remaining work (after BFT + UnifiedProof)
+
+| # | Gap | Size | Depends on | Closes which claim |
+|---|-----|------|------------|--------------------|
+| **3** | Phone closed-mesh proof | Small–med | BFT soft-path OK | Fully mobile |
+| **4** | Stronger stationarity statement (ZkVM guest or honest claim text) | Med–large | UnifiedProof dispatch | ZK PoS |
+| **5** | Real MPC / PTAU phase-2 | Med | Keys already load | Mainnet CRS |
+| **6** | ETH LC: `update_committee` + `verify_eth_event` | Med | BLS hosts already live | Bridge |
+| **7** | On-chain zkML method on `model_registry` | Med | Guest/host/Solidity exist | zkML |
+
+(Optional polish, not blocking claims: fix `verify_unified` one-liners if not in the same PR as #2.)
+
+---
+
+### 3 — Closed-mesh proof (highest product leverage)
+
+**Gap:** Code path exists; no automated evidence two nodes advance tip with HTTP off.
+
+**Build:**
+1. Env/flag: `HTTP_SUBMIT=false` / offline mode in `MiningWorker`.
+2. Flow: A solves → `gossipBlockBody` → B `submitBlockForValidation` → Accept → `setLocalTip` + ring.
+3. Harness: phone + `p2p-sidecar`, or two sidecars, under CI when binary present.
+
+**Done when:** one log/test shows height advance with submit HTTP never called.
+
+---
+
+### 4 — ZK statement (pick track)
+
+**Gap:** Circuit proves residual ≤ threshold via difference, not full Lagrangian.
+
+| Track | Work | Outcome |
+|-------|------|---------|
+| **4a Honesty (fast)** | Claim language + LIMITATIONS when README unfreezes | Ship without overclaim |
+| **4b Strength** | ZkVM guest re-evaluates fixed-point residual at nonce; journal = residual + prev_hash limbs; governance prefers `0x02` | Stronger “execution proof” |
+
+**Done when (4b):** `validate_unified` accepts a real ZkVM receipt whose journal matches header residual.
+
+---
+
+### 5 — MPC / production CRS
+
+**Gap:** `init --ptau` falls back to deterministic setup.
+
+**Build:**
+1. Real phase-2 contribute (or snarkjs → ark import pipeline).
+2. `finalize` → only keys production loads.
+3. CI: testnet fixed seed; mainnet artifact from ceremony.
+
+**Done when:** production boot only accepts non-test CRS files (panic-on-missing already there).
+
+---
+
+### 6 — ETH bridge completion
+
+**Gap:** Docs list methods 1/3; `dispatch` only bootstrap / submit_header / latest_slot. BLS hosts are already real.
+
+**Build:**
+1. `update_committee` — rotate aggregate key under current committee sig + quorum.
+2. `verify_eth_event` — receipt/log inclusion against stored root for slot (start with body_root fixture).
+3. Tests with fixture headers (native BLS stubs OK; wasm path uses host).
+
+**Done when:** both method IDs implemented and covered by unit tests.
+
+---
+
+### 7 — On-chain zkML hook
+
+**Gap:** Guest → prover → Solidity → API exist; `model_registry` stops at Ed25519 method 5.
+
+**Build:**
+1. Method **8**: bind modelId + journal hash (and/or seal commitment).
+2. Verification: host-verified receipt hash **or** optimistic bond-and-challenge.
+3. Capability bit for zkML.
+
+**Done when:** verified model stores a journal hash only a valid receipt path can produce.
+
+---
+
+## Suggested sequencing (not six parallel threads)
+
+```text
+Land 1–2 (BFT + UnifiedProof)          ← now
+    → 3 mesh proof                     ← proves mobile
+    → 4b ZkVM residual guest  OR  7 zkML method 8   ← pick by which claim you push next
+    → 6 ETH methods                    ← can parallel with 4/7
+    → 5 MPC                            ← when approaching public mainnet CRS
+```
+
+**Rule of thumb:**  
+- Push **mobile slogan** → **3** next.  
+- Push **ZK slogan** → **4b**.  
+- Push **AI/zkML slogan** → **7**.  
+- **5** is a gate for *trusted setup honesty*, not for testnet feature completeness.
+
+---
+
+## What “mapped” means in practice
+
+| Item | First concrete artifact |
+|------|-------------------------|
+| **3** | Integration test or script: gossip body → validate → tip, HTTP disabled |
+| **4b** | Guest `main.rs` that commits recomputed residual; host prove path |
+| **5** | Working `init --ptau` that does not call `init_deterministic` |
+| **6** | `dispatch` arms for committee update + event verify + tests |
+| **7** | `match 8 => method_submit_zkml_...` in `model_registry` |
+
+---
+
+You already closed the “plumbing” pair (BFT soft/real path + dual-proof dispatch). Everything left is either **proof of the mobile path (#3)** or **deepening one claim surface (#4 / #6 / #7)** plus **CRS hygiene (#5)**.
+
+Which one do you want to attack next: **3 (mesh)**, **4b (ZkVM residual)**, or **7 (registry method 8)**?

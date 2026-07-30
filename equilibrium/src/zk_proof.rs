@@ -378,8 +378,9 @@ impl Groth16Verifier {
         threshold_fp: u64,
         block_hash: &[u8; 32],
     ) -> Result<VerificationResult, Box<dyn std::error::Error>> {
-        let wire_bytes = unified.to_wire();
-        self.verify(&wire_bytes, residual_fp, threshold_fp, block_hash)
+        // Use unified.bytes directly — to_wire() prepends the type tag byte
+        // which causes ark's compressed deserializer to fail on the 0x01 prefix.
+        self.verify(&unified.bytes, residual_fp, threshold_fp, block_hash)
     }
 }
 
@@ -533,8 +534,9 @@ impl ZkvmVerifier {
         threshold_fp: u64,
         block_hash: &[u8; 32],
     ) -> Result<VerificationResult, Box<dyn std::error::Error>> {
-        let wire_bytes = unified.to_wire();
-        self.verify(&wire_bytes, residual_fp, threshold_fp, block_hash)
+        // Use unified.bytes directly — to_wire() prepends the type tag byte
+        // which causes RISC Zero bincode deserializer to fail on the 0x02 prefix.
+        self.verify(&unified.bytes, residual_fp, threshold_fp, block_hash)
     }
 }
 
