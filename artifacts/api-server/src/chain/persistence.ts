@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { and, asc, desc, eq, gte, lt } from "drizzle-orm";
-import { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable } from "@workspace/db/schema";
+import { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zkmlProofsTable } from "@workspace/db/schema";
 import type { BlockRecord, TxRecord } from "./types.js";
 import type { ContractRecord } from "./wasm.js";
 import { logger } from "../lib/logger.js";
@@ -22,6 +22,7 @@ type Db = ReturnType<typeof drizzle<{
   transactionsTable: typeof transactionsTable;
   contractsTable: typeof contractsTable;
   stateSnapshotsTable: typeof stateSnapshotsTable;
+  zkmlProofsTable: typeof zkmlProofsTable;
 }>>;
 
 let _db: Db | null = null;
@@ -43,7 +44,7 @@ function getDb(): Db | null {
 
   try {
     const pool = new Pool({ connectionString: url });
-    _db = drizzle(pool, { schema: { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable } }) as unknown as Db;
+    _db = drizzle(pool, { schema: { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zkmlProofsTable } }) as unknown as Db;
     // Only mark done once we have a real db handle.
     _initDone = true;
     logger.info({ url: url.replace(/:[^@]*@/, ":***@") }, "Postgres persistence enabled");
@@ -581,5 +582,82 @@ export async function loadContractsByDeployer(deployer: string): Promise<Contrac
   } catch (err) {
     logger.warn({ err, deployer }, "Failed to load contracts by deployer");
     return [];
+  }
+}
+
+// ── zkML proof persistence ────────────────────────────────────────────────────
+
+export interface ZkmlProofData {
+  modelId:      number;
+  sealHex:      string;
+  journalHex:   string;
+  submittedAt:  number;
+  modelRootHex?: string;
+  inputHashHex?: string;
+  blockHeight?:  number;
+}
+
+/**
+ * Upsert a zkML proof receipt. Uses ON CONFLICT DO UPDATE so re-submitting
+ * a proof for the same model overwrites the old record. Fire-and-forget safe.
+ */
+export async function persistZkmlProof(data: ZkmlProofData): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+  try {
+    await db
+      .insert(zkmlProofsTable)
+      .values({
+        modelId:      data.modelId,
+        sealHex:      data.sealHex,
+        journalHex:   data.journalHex,
+        submittedAt:  data.submittedAt,
+        modelRootHex: data.modelRootHex ?? null,
+        inputHashHex: data.inputHashHex ?? null,
+        blockHeight:  data.blockHeight ?? null,
+      })
+      .onConflictDoUpdate({
+        target: zkmlProofsTable.modelId,
+        set: {
+          sealHex:      data.sealHex,
+          journalHex:   data.journalHex,
+          submittedAt:  data.submittedAt,
+          modelRootHex: data.modelRootHex ?? null,
+          inputHashHex: data.inputHashHex ?? null,
+          blockHeight:  data.blockHeight ?? null,
+        },
+      });
+  } catch (err) {
+    logger.warn({ err, modelId: data.modelId }, "Failed to persist zkML proof — in-memory record still held");
+  }
+}
+
+/**
+ * Load a stored zkML proof receipt for a model from Postgres.
+ * Returns null when unavailable (no DB, or no row for this modelId).
+ */
+export async function loadZkmlProof(modelId: number): Promise<ZkmlProofData | null> {
+  const db = getDb();
+  if (!db) return null;
+  try {
+    const rows = await db
+      .select()
+      .from(zkmlProofsTable)
+      .where(eq(zkmlProofsTable.modelId, modelId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      modelId:      row.modelId,
+      sealHex:      row.sealHex,
+      journalHex:   row.journalHex,
+      submittedAt:  row.submittedAt,
+      modelRootHex: row.modelRootHex ?? undefined,
+      inputHashHex: row.inputHashHex ?? undefined,
+      blockHeight:  row.blockHeight ?? undefined,
+    };
+  } catch (err) {
+    logger.warn({ err, modelId }, "Failed to load zkML proof from DB — falling back to in-memory");
+    return null;
   }
 }

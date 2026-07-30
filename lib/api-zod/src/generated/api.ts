@@ -1025,6 +1025,45 @@ export const ChallengeModelResponse = zod.object({
 
 
 /**
+ * @summary Submit a RISC Zero zkML proof receipt for a model (called by the Rust bridge after a successful proof run)
+ */
+export const SubmitZkmlProofParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const SubmitZkmlProofBody = zod.object({
+  "sealHex": zod.string().describe('RISC Zero receipt\/seal bytes as a hex string (even length, hex chars only)'),
+  "journalHex": zod.string().describe('Decoded journal bytes as a hex string (min 32 chars \/ 16 bytes)'),
+  "modelRootHex": zod.string().optional().describe('SHA-256 hex commitment of the model weights (optional)'),
+  "inputHashHex": zod.string().optional().describe('SHA-256 hex of the model input (optional)'),
+  "blockHeight": zod.number().optional().describe('Chain block height at proof generation time (optional)')
+})
+
+export const SubmitZkmlProofResponse = zod.object({
+  "success": zod.boolean(),
+  "modelId": zod.number()
+})
+
+
+/**
+ * @summary Retrieve the stored RISC Zero zkML proof receipt for a model
+ */
+export const GetZkmlProofParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetZkmlProofResponse = zod.object({
+  "modelId": zod.number().describe('Model ID this proof belongs to'),
+  "sealHex": zod.string().describe('RISC Zero receipt\/seal bytes encoded as a hex string'),
+  "journalHex": zod.string().describe('Decoded journal bytes in little-endian layout (matches EquilibriumZkmlVerifier.sol)'),
+  "submittedAt": zod.number().describe('Unix timestamp in milliseconds when the receipt was stored'),
+  "modelRootHex": zod.string().optional().describe('SHA-256 hex commitment of the canonical model weights (optional, supplied by Rust bridge)'),
+  "inputHashHex": zod.string().optional().describe('SHA-256 hex of the model input used for this proof (optional, supplied by Rust bridge)'),
+  "blockHeight": zod.number().optional().describe('Chain block height at proof generation time (optional, supplied by Rust bridge)')
+})
+
+
+/**
  * @summary Get a swap quote without executing the trade
  */
 export const GetDexQuoteQueryParams = zod.object({
@@ -1042,6 +1081,183 @@ export const GetDexQuoteResponse = zod.object({
   "fee": zod.number(),
   "priceImpact": zod.string(),
   "rate": zod.number()
+})
+
+
+/**
+ * @summary Current chain tip with state root — the entry point for any mobile light node
+ */
+export const GetLightnodeTipResponse = zod.object({
+  "height": zod.number().optional(),
+  "hash": zod.string().optional(),
+  "prevHash": zod.string().optional(),
+  "stateRoot": zod.string().optional(),
+  "merkleRoot": zod.string().optional(),
+  "timestamp": zod.number().optional(),
+  "difficulty": zod.number().optional(),
+  "residual": zod.number().optional(),
+  "residualFp": zod.number().optional(),
+  "finalized": zod.boolean().optional(),
+  "finalizedHeight": zod.number().optional(),
+  "peers": zod.number().optional(),
+  "smtDepth": zod.number().optional().describe('Always 256 — number of siblings in any SMT proof')
+})
+
+
+/**
+ * @summary Block headers only (no transaction data) — for initial sync and chain verification
+ */
+export const getLightnodeHeadersQueryFromDefault = 0;
+
+export const GetLightnodeHeadersQueryParams = zod.object({
+  "from": zod.coerce.number().default(getLightnodeHeadersQueryFromDefault),
+  "to": zod.coerce.number().optional()
+})
+
+export const GetLightnodeHeadersResponse = zod.object({
+  "from": zod.number().optional(),
+  "to": zod.number().optional(),
+  "count": zod.number().optional(),
+  "tip": zod.number().optional(),
+  "headers": zod.array(zod.object({
+  "hash": zod.string(),
+  "height": zod.number(),
+  "prevHash": zod.string(),
+  "merkleRoot": zod.string(),
+  "stateRoot": zod.string().describe('256-bit SMT root committing to accounts + UTXOs + contracts'),
+  "timestamp": zod.number(),
+  "nonce": zod.number(),
+  "difficulty": zod.number(),
+  "residual": zod.number(),
+  "residualFp": zod.number(),
+  "recursionDepth": zod.number(),
+  "coinbaseReward": zod.number(),
+  "miner": zod.string(),
+  "txCount": zod.number(),
+  "finalized": zod.boolean()
+})).optional()
+})
+
+
+/**
+ * @summary Incremental sync — returns headers added after a given height (poll this repeatedly)
+ */
+export const getLightnodeSyncQueryLimitDefault = 100;
+export const getLightnodeSyncQueryLimitMax = 200;
+
+
+
+export const GetLightnodeSyncQueryParams = zod.object({
+  "after": zod.coerce.number().describe('Last height the client already has. Returns headers with height > after.'),
+  "limit": zod.coerce.number().max(getLightnodeSyncQueryLimitMax).default(getLightnodeSyncQueryLimitDefault)
+})
+
+export const GetLightnodeSyncResponse = zod.object({
+  "syncedTo": zod.number().optional(),
+  "tip": zod.number().optional(),
+  "count": zod.number().optional(),
+  "more": zod.boolean().optional().describe('true if there are more headers beyond this page'),
+  "headers": zod.array(zod.object({
+  "hash": zod.string(),
+  "height": zod.number(),
+  "prevHash": zod.string(),
+  "merkleRoot": zod.string(),
+  "stateRoot": zod.string().describe('256-bit SMT root committing to accounts + UTXOs + contracts'),
+  "timestamp": zod.number(),
+  "nonce": zod.number(),
+  "difficulty": zod.number(),
+  "residual": zod.number(),
+  "residualFp": zod.number(),
+  "recursionDepth": zod.number(),
+  "coinbaseReward": zod.number(),
+  "miner": zod.string(),
+  "txCount": zod.number(),
+  "finalized": zod.boolean()
+})).optional()
+})
+
+
+/**
+ * @summary Account balance + 256-sibling SMT proof against the current state root
+ */
+export const GetLightnodeAccountProofParams = zod.object({
+  "address": zod.coerce.string()
+})
+
+export const GetLightnodeAccountProofResponse = zod.object({
+  "address": zod.string().optional(),
+  "balance": zod.number().optional(),
+  "nonce": zod.number().optional(),
+  "stateRoot": zod.string().optional(),
+  "height": zod.number().optional(),
+  "proof": zod.object({
+  "key": zod.string().optional().describe('64-char hex SMT key'),
+  "value": zod.string().nullish().describe('64-char hex value (null = non-membership proof)'),
+  "siblings": zod.array(zod.string()).optional().describe('256 sibling hashes from root to leaf'),
+  "root": zod.string().optional().describe('State root at proof generation time')
+}).optional(),
+  "valueEncoding": zod.string().optional()
+})
+
+
+/**
+ * @summary UTXO state + 256-sibling SMT proof against the current state root
+ */
+export const GetLightnodeUtxoProofParams = zod.object({
+  "txHash": zod.coerce.string(),
+  "index": zod.coerce.number()
+})
+
+export const GetLightnodeUtxoProofResponse = zod.object({
+  "txHash": zod.string().optional(),
+  "outputIndex": zod.number().optional(),
+  "utxo": zod.object({
+
+}).passthrough().nullish(),
+  "stateRoot": zod.string().optional(),
+  "height": zod.number().optional(),
+  "proof": zod.object({
+  "key": zod.string().optional().describe('64-char hex SMT key'),
+  "value": zod.string().nullish().describe('64-char hex value (null = non-membership proof)'),
+  "siblings": zod.array(zod.string()).optional().describe('256 sibling hashes from root to leaf'),
+  "root": zod.string().optional().describe('State root at proof generation time')
+}).optional(),
+  "valueEncoding": zod.string().optional()
+})
+
+
+/**
+ * @summary Network parameters and current chain info — used by mobile nodes on first connect
+ */
+export const GetLightnodeChainParamsResponse = zod.object({
+  "chainId": zod.string().optional(),
+  "height": zod.number().optional(),
+  "stateRoot": zod.string().optional(),
+  "difficulty": zod.number().optional(),
+  "finalizedHeight": zod.number().optional(),
+  "validatorCount": zod.number().optional(),
+  "mempoolSize": zod.number().optional(),
+  "dexPoolCount": zod.number().optional(),
+  "contractCount": zod.number().optional(),
+  "smtDepth": zod.number().optional(),
+  "residualScale": zod.number().optional(),
+  "pruneBelow": zod.number().optional()
+})
+
+
+/**
+ * @summary Peer list for mobile P2P bootstrap
+ */
+export const GetLightnodePeersResponse = zod.object({
+  "peers": zod.array(zod.object({
+  "peerId": zod.string().optional(),
+  "address": zod.string().optional(),
+  "height": zod.number().optional(),
+  "connected": zod.boolean().optional(),
+  "syncState": zod.string().optional(),
+  "latencyMs": zod.number().optional()
+})).optional(),
+  "count": zod.number().optional()
 })
 
 

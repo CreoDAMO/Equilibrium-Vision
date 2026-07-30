@@ -1170,6 +1170,70 @@ paths:
               schema:
                 $ref: "#/components/schemas/ChallengeModelResult"
 
+  /models/{id}/zkml-proof:
+    post:
+      operationId: submitZkmlProof
+      tags: [models]
+      summary: Submit a RISC Zero zkML proof receipt for a model (called by the Rust bridge after a successful proof run)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitZkmlProofInput"
+      responses:
+        "200":
+          description: Receipt stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, modelId]
+                properties:
+                  success: { type: boolean }
+                  modelId: { type: integer }
+        "400":
+          description: Invalid request or hex validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    get:
+      operationId: getZkmlProof
+      tags: [models]
+      summary: Retrieve the stored RISC Zero zkML proof receipt for a model
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Proof record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZkmlProofRecord"
+        "400":
+          description: Invalid model id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: No proof found for this model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
   /dex/quote:
     get:
       operationId: getDexQuote
@@ -2662,6 +2726,52 @@ components:
           enum: [slashed, failed]
         error:
           type: string
+
+    ZkmlProofRecord:
+      type: object
+      required: [modelId, sealHex, journalHex, submittedAt]
+      properties:
+        modelId:
+          type: integer
+          description: Model ID this proof belongs to
+        sealHex:
+          type: string
+          description: RISC Zero receipt/seal bytes encoded as a hex string
+        journalHex:
+          type: string
+          description: Decoded journal bytes in little-endian layout (matches EquilibriumZkmlVerifier.sol)
+        submittedAt:
+          type: integer
+          description: Unix timestamp in milliseconds when the receipt was stored
+        modelRootHex:
+          type: string
+          description: SHA-256 hex commitment of the canonical model weights (optional, supplied by Rust bridge)
+        inputHashHex:
+          type: string
+          description: SHA-256 hex of the model input used for this proof (optional, supplied by Rust bridge)
+        blockHeight:
+          type: integer
+          description: Chain block height at proof generation time (optional, supplied by Rust bridge)
+
+    SubmitZkmlProofInput:
+      type: object
+      required: [sealHex, journalHex]
+      properties:
+        sealHex:
+          type: string
+          description: RISC Zero receipt/seal bytes as a hex string (even length, hex chars only)
+        journalHex:
+          type: string
+          description: Decoded journal bytes as a hex string (min 32 chars / 16 bytes)
+        modelRootHex:
+          type: string
+          description: SHA-256 hex commitment of the model weights (optional)
+        inputHashHex:
+          type: string
+          description: SHA-256 hex of the model input (optional)
+        blockHeight:
+          type: integer
+          description: Chain block height at proof generation time (optional)
 
     # ── Light node schemas ──────────────────────────────────────────────────────
 

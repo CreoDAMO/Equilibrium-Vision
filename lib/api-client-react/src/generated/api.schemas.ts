@@ -705,6 +705,151 @@ export interface ChallengeModelResult {
   error?: string;
 }
 
+export interface ZkmlProofRecord {
+  /** Model ID this proof belongs to */
+  modelId: number;
+  /** RISC Zero receipt/seal bytes encoded as a hex string */
+  sealHex: string;
+  /** Decoded journal bytes in little-endian layout (matches EquilibriumZkmlVerifier.sol) */
+  journalHex: string;
+  /** Unix timestamp in milliseconds when the receipt was stored */
+  submittedAt: number;
+  /** SHA-256 hex commitment of the canonical model weights (optional, supplied by Rust bridge) */
+  modelRootHex?: string;
+  /** SHA-256 hex of the model input used for this proof (optional, supplied by Rust bridge) */
+  inputHashHex?: string;
+  /** Chain block height at proof generation time (optional, supplied by Rust bridge) */
+  blockHeight?: number;
+}
+
+export interface SubmitZkmlProofInput {
+  /** RISC Zero receipt/seal bytes as a hex string (even length, hex chars only) */
+  sealHex: string;
+  /** Decoded journal bytes as a hex string (min 32 chars / 16 bytes) */
+  journalHex: string;
+  /** SHA-256 hex commitment of the model weights (optional) */
+  modelRootHex?: string;
+  /** SHA-256 hex of the model input (optional) */
+  inputHashHex?: string;
+  /** Chain block height at proof generation time (optional) */
+  blockHeight?: number;
+}
+
+export interface LightBlockHeader {
+  hash: string;
+  height: number;
+  prevHash: string;
+  merkleRoot: string;
+  /** 256-bit SMT root committing to accounts + UTXOs + contracts */
+  stateRoot: string;
+  timestamp: number;
+  nonce: number;
+  difficulty: number;
+  residual: number;
+  residualFp: number;
+  recursionDepth: number;
+  coinbaseReward: number;
+  miner: string;
+  txCount: number;
+  finalized: boolean;
+}
+
+export interface LightnodeTip {
+  height?: number;
+  hash?: string;
+  prevHash?: string;
+  stateRoot?: string;
+  merkleRoot?: string;
+  timestamp?: number;
+  difficulty?: number;
+  residual?: number;
+  residualFp?: number;
+  finalized?: boolean;
+  finalizedHeight?: number;
+  peers?: number;
+  /** Always 256 — number of siblings in any SMT proof */
+  smtDepth?: number;
+}
+
+export interface LightnodeHeadersPage {
+  from?: number;
+  to?: number;
+  count?: number;
+  tip?: number;
+  headers?: LightBlockHeader[];
+}
+
+export interface LightnodeSyncPage {
+  syncedTo?: number;
+  tip?: number;
+  count?: number;
+  /** true if there are more headers beyond this page */
+  more?: boolean;
+  headers?: LightBlockHeader[];
+}
+
+export interface SMTProof {
+  /** 64-char hex SMT key */
+  key?: string;
+  /** 64-char hex value (null = non-membership proof) */
+  value?: string | null;
+  /** 256 sibling hashes from root to leaf */
+  siblings?: string[];
+  /** State root at proof generation time */
+  root?: string;
+}
+
+export interface LightnodeAccountProof {
+  address?: string;
+  balance?: number;
+  nonce?: number;
+  stateRoot?: string;
+  height?: number;
+  proof?: SMTProof;
+  valueEncoding?: string;
+}
+
+export type LightnodeUtxoProofUtxo = { [key: string]: unknown } | null;
+
+export interface LightnodeUtxoProof {
+  txHash?: string;
+  outputIndex?: number;
+  utxo?: LightnodeUtxoProofUtxo;
+  stateRoot?: string;
+  height?: number;
+  proof?: SMTProof;
+  valueEncoding?: string;
+}
+
+export interface LightnodeChainParams {
+  chainId?: string;
+  height?: number;
+  stateRoot?: string;
+  difficulty?: number;
+  finalizedHeight?: number;
+  validatorCount?: number;
+  mempoolSize?: number;
+  dexPoolCount?: number;
+  contractCount?: number;
+  smtDepth?: number;
+  residualScale?: number;
+  pruneBelow?: number;
+}
+
+export type LightnodePeersPeersItem = {
+  peerId?: string;
+  address?: string;
+  height?: number;
+  connected?: boolean;
+  syncState?: string;
+  latencyMs?: number;
+};
+
+export interface LightnodePeers {
+  peers?: LightnodePeersPeersItem[];
+  count?: number;
+}
+
 export interface AppRelease {
   platform: string;
   versionCode: number;
@@ -739,10 +884,31 @@ export type GetArbitrageOpportunitiesParams = {
 limit?: number;
 };
 
+export type SubmitZkmlProof200 = {
+  success: boolean;
+  modelId: number;
+};
+
 export type GetDexQuoteParams = {
 poolId: string;
 tokenIn: string;
 amountIn: string;
+};
+
+export type GetLightnodeHeadersParams = {
+from?: number;
+to?: number;
+};
+
+export type GetLightnodeSyncParams = {
+/**
+ * Last height the client already has. Returns headers with height > after.
+ */
+after: number;
+/**
+ * @maximum 200
+ */
+limit?: number;
 };
 
 export type GetMobileVersionParams = {

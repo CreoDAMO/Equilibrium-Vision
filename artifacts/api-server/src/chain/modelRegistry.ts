@@ -343,6 +343,13 @@ export function getModelDetails(wasmVM: WasmVM, modelId: number): Record<string,
 // contract only records Ed25519 inference attestations (method 5). zkML proofs
 // are larger artifacts kept here until a future on-chain verification method is
 // added (e.g. method 8 SUBMIT_ZKML_PROOF that stores a journal hash on-chain).
+//
+// Persistence strategy: write-through to Postgres (via persistence.ts) with an
+// in-memory Map as a warm read cache. On read, the Map is checked first; if
+// missing (e.g. after a server restart) the DB is queried and the result is
+// cached. This keeps reads fast and ensures receipts survive restarts.
+
+import { persistZkmlProof, loadZkmlProof } from "./persistence.js";
 
 export interface ZkmlProofRecord {
   modelId: number;
@@ -354,7 +361,8 @@ export interface ZkmlProofRecord {
   blockHeight?: number;    // Chain block height at proof generation time (optional, sent by Rust bridge)
 }
 
-const zkmlProofStore = new Map<number, ZkmlProofRecord>();
+// Warm read cache — populated on submit and on first DB read-back after restart.
+const zkmlProofCache = new Map<number, ZkmlProofRecord>();
 
 export interface SubmitZkmlReceiptParams {
   sealHex: string;
@@ -367,11 +375,9 @@ export interface SubmitZkmlReceiptParams {
 /**
  * Store a RISC Zero zkML proof receipt for a model. Called by the Rust
  * model_registry_integration bridge (POST /api/models/:id/zkml-proof).
- * Accepts optional modelRootHex, inputHashHex, and blockHeight fields that
- * the Rust bridge sends alongside the core proof bytes — storing them makes
- * the receipt self-describing without requiring journal parsing in TypeScript.
+ * Writes through to Postgres (if available) and updates the in-memory cache.
  */
-export function submitZkmlReceipt(modelId: number, p: SubmitZkmlReceiptParams): { success: boolean; error?: string } {
+export async function submitZkmlReceipt(modelId: number, p: SubmitZkmlReceiptParams): Promise<{ success: boolean; error?: string }> {
   const { sealHex, journalHex, modelRootHex, inputHashHex, blockHeight } = p;
   if (!/^[0-9a-fA-F]+$/.test(sealHex)) return { success: false, error: "sealHex must be a hex string" };
   if (!/^[0-9a-fA-F]+$/.test(journalHex)) return { success: false, error: "journalHex must be a hex string" };
@@ -386,17 +392,38 @@ export function submitZkmlReceipt(modelId: number, p: SubmitZkmlReceiptParams): 
   if (blockHeight !== undefined && (!Number.isInteger(blockHeight) || blockHeight < 0)) {
     return { success: false, error: "blockHeight must be a non-negative integer" };
   }
-  const record: ZkmlProofRecord = { modelId, sealHex, journalHex, submittedAt: Date.now() };
+  const submittedAt = Date.now();
+  const record: ZkmlProofRecord = { modelId, sealHex, journalHex, submittedAt };
   if (modelRootHex !== undefined) record.modelRootHex = modelRootHex;
   if (inputHashHex !== undefined) record.inputHashHex = inputHashHex;
   if (blockHeight !== undefined) record.blockHeight = blockHeight;
-  zkmlProofStore.set(modelId, record);
+  // Update warm cache first so subsequent reads are instant.
+  zkmlProofCache.set(modelId, record);
+  // Write-through to Postgres — best-effort, never throws (errors are logged in persistZkmlProof).
+  await persistZkmlProof({ modelId, sealHex, journalHex, submittedAt, modelRootHex, inputHashHex, blockHeight });
   return { success: true };
 }
 
 /**
- * Retrieve a stored zkML proof record for a model, or undefined if none exists.
+ * Retrieve a stored zkML proof record for a model.
+ * Checks the warm in-memory cache first; falls back to Postgres on a cache
+ * miss (e.g. after a server restart), then re-populates the cache.
+ * Returns undefined if no record exists in either location.
  */
-export function getZkmlProof(modelId: number): ZkmlProofRecord | undefined {
-  return zkmlProofStore.get(modelId);
+export async function getZkmlProof(modelId: number): Promise<ZkmlProofRecord | undefined> {
+  const cached = zkmlProofCache.get(modelId);
+  if (cached) return cached;
+  const row = await loadZkmlProof(modelId);
+  if (!row) return undefined;
+  const record: ZkmlProofRecord = {
+    modelId:  row.modelId,
+    sealHex:  row.sealHex,
+    journalHex: row.journalHex,
+    submittedAt: row.submittedAt,
+  };
+  if (row.modelRootHex) record.modelRootHex = row.modelRootHex;
+  if (row.inputHashHex) record.inputHashHex = row.inputHashHex;
+  if (row.blockHeight !== undefined) record.blockHeight = row.blockHeight;
+  zkmlProofCache.set(modelId, record);
+  return record;
 }

@@ -7,3 +7,4 @@ export * from "./app-releases";
 export * from "./state-snapshots";
 export * from "./dex-pools";
 export * from "./smt-roots";
+export * from "./zkml-proofs";

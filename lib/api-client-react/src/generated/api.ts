@@ -49,8 +49,17 @@ import type {
   FaucetStatus,
   GetArbitrageOpportunitiesParams,
   GetDexQuoteParams,
+  GetLightnodeHeadersParams,
+  GetLightnodeSyncParams,
   GetMobileVersionParams,
   HealthStatus,
+  LightnodeAccountProof,
+  LightnodeChainParams,
+  LightnodeHeadersPage,
+  LightnodePeers,
+  LightnodeSyncPage,
+  LightnodeTip,
+  LightnodeUtxoProof,
   ListBlocksParams,
   ListDexSwapsParams,
   Mempool,
@@ -76,6 +85,8 @@ import type {
   StakePositions,
   StakeResult,
   StakingSummary,
+  SubmitZkmlProof200,
+  SubmitZkmlProofInput,
   SwapHistory,
   SwapInput,
   SwapQuote,
@@ -89,7 +100,8 @@ import type {
   ValidatorList,
   VerifyModelResult,
   VoteInput,
-  VoteResult
+  VoteResult,
+  ZkmlProofRecord
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -3793,6 +3805,154 @@ export const useChallengeModel = <TError = ErrorType<ChallengeModelResult>,
       return useMutation(getChallengeModelMutationOptions(options));
     }
 
+export const getSubmitZkmlProofUrl = (id: number,) => {
+
+
+
+
+  return `/api/models/${id}/zkml-proof`
+}
+
+/**
+ * @summary Submit a RISC Zero zkML proof receipt for a model (called by the Rust bridge after a successful proof run)
+ */
+export const submitZkmlProof = async (id: number,
+    submitZkmlProofInput: SubmitZkmlProofInput, options?: RequestInit): Promise<SubmitZkmlProof200> => {
+
+  return customFetch<SubmitZkmlProof200>(getSubmitZkmlProofUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(submitZkmlProofInput)
+  }
+);}
+
+
+
+
+export const getSubmitZkmlProofMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitZkmlProof>>, TError,{id: number;data: BodyType<SubmitZkmlProofInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof submitZkmlProof>>, TError,{id: number;data: BodyType<SubmitZkmlProofInput>}, TContext> => {
+
+const mutationKey = ['submitZkmlProof'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitZkmlProof>>, {id: number;data: BodyType<SubmitZkmlProofInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  submitZkmlProof(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SubmitZkmlProofMutationResult = NonNullable<Awaited<ReturnType<typeof submitZkmlProof>>>
+    export type SubmitZkmlProofMutationBody = BodyType<SubmitZkmlProofInput>
+    export type SubmitZkmlProofMutationError = ErrorType<ApiError>
+
+    /**
+ * @summary Submit a RISC Zero zkML proof receipt for a model (called by the Rust bridge after a successful proof run)
+ */
+export const useSubmitZkmlProof = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitZkmlProof>>, TError,{id: number;data: BodyType<SubmitZkmlProofInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof submitZkmlProof>>,
+        TError,
+        {id: number;data: BodyType<SubmitZkmlProofInput>},
+        TContext
+      > => {
+      return useMutation(getSubmitZkmlProofMutationOptions(options));
+    }
+
+export const getGetZkmlProofUrl = (id: number,) => {
+
+
+
+
+  return `/api/models/${id}/zkml-proof`
+}
+
+/**
+ * @summary Retrieve the stored RISC Zero zkML proof receipt for a model
+ */
+export const getZkmlProof = async (id: number, options?: RequestInit): Promise<ZkmlProofRecord> => {
+
+  return customFetch<ZkmlProofRecord>(getGetZkmlProofUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetZkmlProofQueryKey = (id: number,) => {
+    return [
+    `/api/models/${id}/zkml-proof`
+    ] as const;
+    }
+
+
+export const getGetZkmlProofQueryOptions = <TData = Awaited<ReturnType<typeof getZkmlProof>>, TError = ErrorType<ApiError>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getZkmlProof>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetZkmlProofQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getZkmlProof>>> = ({ signal }) => getZkmlProof(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getZkmlProof>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetZkmlProofQueryResult = NonNullable<Awaited<ReturnType<typeof getZkmlProof>>>
+export type GetZkmlProofQueryError = ErrorType<ApiError>
+
+
+/**
+ * @summary Retrieve the stored RISC Zero zkML proof receipt for a model
+ */
+
+export function useGetZkmlProof<TData = Awaited<ReturnType<typeof getZkmlProof>>, TError = ErrorType<ApiError>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getZkmlProof>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetZkmlProofQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getGetDexQuoteUrl = (params: GetDexQuoteParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -3865,6 +4025,564 @@ export function useGetDexQuote<TData = Awaited<ReturnType<typeof getDexQuote>>, 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetDexQuoteQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetLightnodeTipUrl = () => {
+
+
+
+
+  return `/api/lightnode/tip`
+}
+
+/**
+ * @summary Current chain tip with state root — the entry point for any mobile light node
+ */
+export const getLightnodeTip = async ( options?: RequestInit): Promise<LightnodeTip> => {
+
+  return customFetch<LightnodeTip>(getGetLightnodeTipUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLightnodeTipQueryKey = () => {
+    return [
+    `/api/lightnode/tip`
+    ] as const;
+    }
+
+
+export const getGetLightnodeTipQueryOptions = <TData = Awaited<ReturnType<typeof getLightnodeTip>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeTip>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLightnodeTipQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLightnodeTip>>> = ({ signal }) => getLightnodeTip({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLightnodeTip>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLightnodeTipQueryResult = NonNullable<Awaited<ReturnType<typeof getLightnodeTip>>>
+export type GetLightnodeTipQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Current chain tip with state root — the entry point for any mobile light node
+ */
+
+export function useGetLightnodeTip<TData = Awaited<ReturnType<typeof getLightnodeTip>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeTip>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLightnodeTipQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetLightnodeHeadersUrl = (params?: GetLightnodeHeadersParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/lightnode/headers?${stringifiedParams}` : `/api/lightnode/headers`
+}
+
+/**
+ * @summary Block headers only (no transaction data) — for initial sync and chain verification
+ */
+export const getLightnodeHeaders = async (params?: GetLightnodeHeadersParams, options?: RequestInit): Promise<LightnodeHeadersPage> => {
+
+  return customFetch<LightnodeHeadersPage>(getGetLightnodeHeadersUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLightnodeHeadersQueryKey = (params?: GetLightnodeHeadersParams,) => {
+    return [
+    `/api/lightnode/headers`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetLightnodeHeadersQueryOptions = <TData = Awaited<ReturnType<typeof getLightnodeHeaders>>, TError = ErrorType<unknown>>(params?: GetLightnodeHeadersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeHeaders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLightnodeHeadersQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLightnodeHeaders>>> = ({ signal }) => getLightnodeHeaders(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLightnodeHeaders>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLightnodeHeadersQueryResult = NonNullable<Awaited<ReturnType<typeof getLightnodeHeaders>>>
+export type GetLightnodeHeadersQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Block headers only (no transaction data) — for initial sync and chain verification
+ */
+
+export function useGetLightnodeHeaders<TData = Awaited<ReturnType<typeof getLightnodeHeaders>>, TError = ErrorType<unknown>>(
+ params?: GetLightnodeHeadersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeHeaders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLightnodeHeadersQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetLightnodeSyncUrl = (params: GetLightnodeSyncParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/lightnode/sync?${stringifiedParams}` : `/api/lightnode/sync`
+}
+
+/**
+ * @summary Incremental sync — returns headers added after a given height (poll this repeatedly)
+ */
+export const getLightnodeSync = async (params: GetLightnodeSyncParams, options?: RequestInit): Promise<LightnodeSyncPage> => {
+
+  return customFetch<LightnodeSyncPage>(getGetLightnodeSyncUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLightnodeSyncQueryKey = (params?: GetLightnodeSyncParams,) => {
+    return [
+    `/api/lightnode/sync`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetLightnodeSyncQueryOptions = <TData = Awaited<ReturnType<typeof getLightnodeSync>>, TError = ErrorType<unknown>>(params: GetLightnodeSyncParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeSync>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLightnodeSyncQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLightnodeSync>>> = ({ signal }) => getLightnodeSync(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLightnodeSync>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLightnodeSyncQueryResult = NonNullable<Awaited<ReturnType<typeof getLightnodeSync>>>
+export type GetLightnodeSyncQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Incremental sync — returns headers added after a given height (poll this repeatedly)
+ */
+
+export function useGetLightnodeSync<TData = Awaited<ReturnType<typeof getLightnodeSync>>, TError = ErrorType<unknown>>(
+ params: GetLightnodeSyncParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeSync>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLightnodeSyncQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetLightnodeAccountProofUrl = (address: string,) => {
+
+
+
+
+  return `/api/lightnode/proof/account/${address}`
+}
+
+/**
+ * @summary Account balance + 256-sibling SMT proof against the current state root
+ */
+export const getLightnodeAccountProof = async (address: string, options?: RequestInit): Promise<LightnodeAccountProof> => {
+
+  return customFetch<LightnodeAccountProof>(getGetLightnodeAccountProofUrl(address),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLightnodeAccountProofQueryKey = (address: string,) => {
+    return [
+    `/api/lightnode/proof/account/${address}`
+    ] as const;
+    }
+
+
+export const getGetLightnodeAccountProofQueryOptions = <TData = Awaited<ReturnType<typeof getLightnodeAccountProof>>, TError = ErrorType<unknown>>(address: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeAccountProof>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLightnodeAccountProofQueryKey(address);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLightnodeAccountProof>>> = ({ signal }) => getLightnodeAccountProof(address, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: address !== null && address !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLightnodeAccountProof>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLightnodeAccountProofQueryResult = NonNullable<Awaited<ReturnType<typeof getLightnodeAccountProof>>>
+export type GetLightnodeAccountProofQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Account balance + 256-sibling SMT proof against the current state root
+ */
+
+export function useGetLightnodeAccountProof<TData = Awaited<ReturnType<typeof getLightnodeAccountProof>>, TError = ErrorType<unknown>>(
+ address: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeAccountProof>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLightnodeAccountProofQueryOptions(address,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetLightnodeUtxoProofUrl = (txHash: string,
+    index: number,) => {
+
+
+
+
+  return `/api/lightnode/proof/utxo/${txHash}/${index}`
+}
+
+/**
+ * @summary UTXO state + 256-sibling SMT proof against the current state root
+ */
+export const getLightnodeUtxoProof = async (txHash: string,
+    index: number, options?: RequestInit): Promise<LightnodeUtxoProof> => {
+
+  return customFetch<LightnodeUtxoProof>(getGetLightnodeUtxoProofUrl(txHash,index),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLightnodeUtxoProofQueryKey = (txHash: string,
+    index: number,) => {
+    return [
+    `/api/lightnode/proof/utxo/${txHash}/${index}`
+    ] as const;
+    }
+
+
+export const getGetLightnodeUtxoProofQueryOptions = <TData = Awaited<ReturnType<typeof getLightnodeUtxoProof>>, TError = ErrorType<unknown>>(txHash: string,
+    index: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeUtxoProof>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLightnodeUtxoProofQueryKey(txHash,index);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLightnodeUtxoProof>>> = ({ signal }) => getLightnodeUtxoProof(txHash,index, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: txHash !== null && txHash !== undefined && index !== null && index !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLightnodeUtxoProof>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLightnodeUtxoProofQueryResult = NonNullable<Awaited<ReturnType<typeof getLightnodeUtxoProof>>>
+export type GetLightnodeUtxoProofQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary UTXO state + 256-sibling SMT proof against the current state root
+ */
+
+export function useGetLightnodeUtxoProof<TData = Awaited<ReturnType<typeof getLightnodeUtxoProof>>, TError = ErrorType<unknown>>(
+ txHash: string,
+    index: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeUtxoProof>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLightnodeUtxoProofQueryOptions(txHash,index,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetLightnodeChainParamsUrl = () => {
+
+
+
+
+  return `/api/lightnode/chain-params`
+}
+
+/**
+ * @summary Network parameters and current chain info — used by mobile nodes on first connect
+ */
+export const getLightnodeChainParams = async ( options?: RequestInit): Promise<LightnodeChainParams> => {
+
+  return customFetch<LightnodeChainParams>(getGetLightnodeChainParamsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLightnodeChainParamsQueryKey = () => {
+    return [
+    `/api/lightnode/chain-params`
+    ] as const;
+    }
+
+
+export const getGetLightnodeChainParamsQueryOptions = <TData = Awaited<ReturnType<typeof getLightnodeChainParams>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeChainParams>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLightnodeChainParamsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLightnodeChainParams>>> = ({ signal }) => getLightnodeChainParams({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLightnodeChainParams>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLightnodeChainParamsQueryResult = NonNullable<Awaited<ReturnType<typeof getLightnodeChainParams>>>
+export type GetLightnodeChainParamsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Network parameters and current chain info — used by mobile nodes on first connect
+ */
+
+export function useGetLightnodeChainParams<TData = Awaited<ReturnType<typeof getLightnodeChainParams>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodeChainParams>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLightnodeChainParamsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetLightnodePeersUrl = () => {
+
+
+
+
+  return `/api/lightnode/peers`
+}
+
+/**
+ * @summary Peer list for mobile P2P bootstrap
+ */
+export const getLightnodePeers = async ( options?: RequestInit): Promise<LightnodePeers> => {
+
+  return customFetch<LightnodePeers>(getGetLightnodePeersUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetLightnodePeersQueryKey = () => {
+    return [
+    `/api/lightnode/peers`
+    ] as const;
+    }
+
+
+export const getGetLightnodePeersQueryOptions = <TData = Awaited<ReturnType<typeof getLightnodePeers>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodePeers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetLightnodePeersQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLightnodePeers>>> = ({ signal }) => getLightnodePeers({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLightnodePeers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetLightnodePeersQueryResult = NonNullable<Awaited<ReturnType<typeof getLightnodePeers>>>
+export type GetLightnodePeersQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Peer list for mobile P2P bootstrap
+ */
+
+export function useGetLightnodePeers<TData = Awaited<ReturnType<typeof getLightnodePeers>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLightnodePeers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetLightnodePeersQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
