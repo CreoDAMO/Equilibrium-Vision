@@ -1,0 +1,71 @@
+## Source review: `e7bdd1c`
+
+Message: *Implement ceremony logic in mpc-ceremony crate*. Parent: `96bfc5c`. This commit is mostly **tests** (+266); the import modules were largely already on the parent. Tree at this SHA is what matters.
+
+---
+
+### Landed for real
+
+| Piece | Evidence |
+|-------|----------|
+| `mod snarkjs_import` + `mod zkey_pk` | `main.rs` |
+| `ImportVk { json, vk_out }` | CLI + exit 6 |
+| `ImportZkey { zkey, vk_out, pk_out }` | Full `pk_from_zkey` → write VK; optional PK |
+| JSON VK parser | protocol/curve/IC checks, curve subgroup |
+| `write_vk_bin` / `write_pk_bin` | ark compressed |
+| Full PK from zkey | Sections 2,3,5–9; Montgomery `Fq::new_unchecked` |
+| License note | ark-circom adaptation, no wasmer |
+| Unit tests | JSON path, Montgomery field, IC=5, write↔deserialize |
+
+**`ImportZkey` behavior (correct):**
+
+```text
+pk = pk_from_zkey(zkey)
+write_vk_bin(pk.vk)
+if pk_out: write_pk_bin(pk)
+```
+
+No more “PK not written” stub.
+
+---
+
+### Tests — what they actually prove
+
+| Suite | Guards | Does **not** prove |
+|-------|--------|---------------------|
+| `snarkjs_import` | Synthetic JSON → parse → IC len → file round-trip | Real snarkjs `verification_key.json` |
+| `zkey_pk` | Montgomery Fq / G1 identity serialize | Real `.zkey` on disk |
+| `main` | StationarityCircuit IC=5; ark setup → write → read | Cross-tool prove/verify |
+
+So: **pipeline + encoding guards are real**. **End-to-end snarkjs artifact import is not CI-covered** (needs a fixture zkey).
+
+---
+
+### Remaining honesty limits
+
+1. **No committed `.zkey` fixture** — `pk_from_zkey` is untested against a real file in CI.  
+2. **JSON VK uses normal-form field parse** (`from_be_bytes_mod_order`) — correct for snarkjs JSON; zkey path uses Montgomery — correct split.  
+3. **Keys only match the R1CS that produced the zkey** — importing a random circom zkey will not verify `StationarityCircuit` proofs.  
+4. **`contribute` still re-setups** — not true phase-2 contribution linkage (separate from import).
+
+---
+
+### Gap 5 status after `e7bdd1c`
+
+| Layer | Status |
+|-------|--------|
+| Fail-closed mainnet / PTAU policy | Closed (`1bbb6cf`+) |
+| Streaming `.ptau` + fingerprint setup | Closed |
+| `import-vk` JSON → ark VK | **Closed** |
+| `import-zkey` → ark VK + **full PK** | **Closed in code** |
+| CI against real snarkjs zkey | **Still open** (optional fixture) |
+
+---
+
+### Bottom line
+
+The **snarkjs → ark import gap is closed in source**: both CLI commands, full PK vendor path, Montgomery handling, and solid unit tests around serialization.  
+
+What is left is **operational confidence**: one real `circuit_final.zkey` smoke (local or CI fixture) prove→verify with imported keys. That is validation, not missing implementation.
+
+**Gap 5 implementation track: done.** Optional next: fixture-based integration test only.

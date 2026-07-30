@@ -1,0 +1,83 @@
+Here’s a clean step-back, grounded in what we’ve actually verified on `main` (through ~`e7bdd1c`), not README/TODO canaries.
+
+---
+
+## Where you are
+
+You’ve moved from **“ambitious testnet with known honesty gaps”** to **“hardened testnet with real mobile + ZK plumbing and an external ceremony path.”**  
+That’s a different tier than the early random-residual / placeholder-CRS state.
+
+You’re not “ship mainnet tomorrow.” You **are** past the phase where the core claims were only scaffolding.
+
+---
+
+## What’s done (verified in code)
+
+### Protocol / node
+- PoS path with fixed-point residuals, fail-closed solver policy in production  
+- SMT + `stateRoot`, persistence (including the late SMT/DEX pool work)  
+- Encrypted keystore, chain_id in signing, BFT votes with real Ed25519  
+- WASM VM hardening, deterministic-ish reward path, admin fail-closed gates  
+- Large TS + Rust test surface; CI has been green on the commits we checked  
+
+### Mobile / P2P
+- In-process libp2p stack (gossip, lightnode/sync RR, tip cache, block ring)  
+- JNI surface + MiningWorker P2P-first tip / gossip race handling  
+- Mobile validator: residual verify-at-nonce, hash continuity, BFT vote verify  
+- Sidecar body gossip + mesh tests (adopt still **continuity-first** on the wire path)  
+- Phone is a real thin full-stack participant, not a fake “mining counter”  
+
+### ZK / ceremony
+- `StationarityCircuit` + UnifiedProof dispatch in consensus  
+- ZkVM guest residual recompute (hash-fold v1, not full Lagrangian yet)  
+- PTAU: streaming parser, fingerprint-bound setup, mainnet fail-closed  
+- **snarkjs → ark**: `import-vk`, `import-zkey` with **full PK** (vendored zkey reader)  
+- Unit tests for JSON VK, Montgomery fields, ark write/read round-trips  
+
+### Bridges (scaffolding + partial logic)
+- BTC SPV-style and ETH sync-committee oriented contracts exist  
+- Host BLS wiring was in progress; not the same maturity as P2P/ceremony  
+
+---
+
+## What’s still open (real work, not polish)
+
+| Area | Gap | Why it matters |
+|------|-----|----------------|
+| **Mesh consensus** | Sidecar `validate_and_adopt` ≈ height + prevHash; full checks live in mobile validator, not always on the wire path | Closed phone mesh without a strong node still trusts continuity more than full validation |
+| **Phone submit** | HTTP submit path may still exist as fallback | “No cloud required” is true only when that path is off and peers accept blocks |
+| **ZK stationarity** | Groth16 still mostly residual+difference; ZkVM not full `joint_residual_and_gradient` | Claim “ZK Proof-of-Stationarity” is stronger with residual parity + real circuit constraints |
+| **Ceremony ops** | No CI fixture against a real `.zkey`; `contribute` isn’t true multi-party phase-2 | Import path is real; ops/prove-verify with external keys still need a dry run |
+| **Bridge** | BLS hosts / full header+receipt proofs incomplete | “Trustless bridge” isn’t claim-ready yet |
+| **Product** | QR, P2P mode UX, mining status UI | Doesn’t block protocol truth; blocks “consumer fully mobile” story |
+
+---
+
+## How to read the three big claims
+
+| Claim | Today | To make it tight |
+|-------|--------|------------------|
+| **Hardened L1 testnet** | **Yes** | Keep CI green; freeze honesty docs when you unfreeze README |
+| **Fully mobile node stack** | **Mostly yes** (code path exists) | Wire full validation on adopt + optional `HTTP_SUBMIT=0` default for “offline mode” |
+| **ZK PoS + external ceremony** | **Import + verify path yes**; circuit strength partial | Residual v2 in guest + one real zkey prove/verify dry run |
+| **Trustless bridge** | **Not yet** | Finish host imports + header/receipt verification end-to-end |
+
+---
+
+## Suggested order (no new scope explosion)
+
+1. **Operational smoke** — one real snarkjs zkey → `import-zkey` → ark prove/verify (or verify-only). Closes ceremony confidence.  
+2. **Mesh honesty** — sidecar/phone adopt calls the same checks as `mobile_validator` (or documents “continuity relay only”).  
+3. **ZK residual v2** — shared pure-integer residual in guest + Groth16 public inputs aligned.  
+4. **Bridge** — only after 1–3 if the product priority is mobile L1 first.  
+
+Skip README until those are in, per your freeze rule.
+
+---
+
+## Straight answer
+
+**Done:** security patches, mobile P2P stack, validator logic, dual-proof plumbing, PTAU policy, **full snarkjs→ark key import**.  
+**Left:** make mesh adoption as strict as the phone validator, deepen the stationarity statement, prove ceremony keys with a real artifact, then bridges/UX.
+
+You’ve closed the “is this theater?” layer for ceremony and most of mobile infrastructure. What’s left is **consistency of validation on every path** and **strength of the ZK statement** — fewer files, higher leverage than the last few thousand lines of scaffolding.
