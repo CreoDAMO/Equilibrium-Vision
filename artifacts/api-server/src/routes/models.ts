@@ -377,7 +377,7 @@ router.post("/models/:id/zkml-proof", (req, res) => {
   const id = Number(req.params["id"]);
   if (!Number.isInteger(id) || id < 0) return res.status(400).json({ error: "Invalid model id" });
 
-  const { sealHex, journalHex } = req.body ?? {};
+  const { sealHex, journalHex, modelRootHex, inputHashHex, blockHeight } = req.body ?? {};
   if (typeof sealHex !== "string" || typeof journalHex !== "string") {
     return res.status(400).json({ error: "sealHex and journalHex (hex strings) are required" });
   }
@@ -385,7 +385,13 @@ router.post("/models/:id/zkml-proof", (req, res) => {
     return res.status(400).json({ error: "sealHex and journalHex must have even length" });
   }
 
-  const result = submitZkmlReceipt(id, sealHex, journalHex);
+  const result = submitZkmlReceipt(id, {
+    sealHex,
+    journalHex,
+    modelRootHex: typeof modelRootHex === "string" ? modelRootHex : undefined,
+    inputHashHex: typeof inputHashHex === "string" ? inputHashHex : undefined,
+    blockHeight: typeof blockHeight === "number" ? blockHeight : undefined,
+  });
   if (!result.success) return res.status(400).json(result);
   logger.info({ modelId: id }, "zkml-proof stored");
   return res.json({ success: true, modelId: id });

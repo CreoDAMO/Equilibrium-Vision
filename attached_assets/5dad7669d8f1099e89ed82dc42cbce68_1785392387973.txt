@@ -1,0 +1,111 @@
+This is Equilibrium — a Rust + TypeScript Layer-1 blockchain with Proof-of-Stationarity consensus, libp2p P2P, ZK proofs, WASM smart contracts, a block explorer, and a native DEX. It's already been actively developed here (the replit.md is detailed, workflows are configured, artifacts exist for the API server and explorer).
+
+A few things worth knowing up front:
+
+Three workflows already configured: Postgres (port 5432), VAI Harness, VAI Benchmarks — none are currently running
+Two artifact services exist for the API server (port 8080) and block explorer (port 5000)
+node_modules won't survive container resets — pnpm install is needed before starting the TS services
+The Rust equilibrium and variational-ai crates need cargo build which takes a while on first run
+Let's see what landed https://github.com/CreoDAMO/Equilibrium-Vision/commit/850074c0cba5131320d60a66f3fc3a269b2845bf
+
+First let's look at what's actually failing now vs then
+
+The key 🗝️ is to have both tests ready to go Testnet and Mainnet/Production so removing it isn't the answer, making them work together is
+
+Let's look at everything here, then let's fix it
+
+Clear picture from your notes. Let me read the actual source files now before touching anything.
+
+Good. I have everything I need. The problem is clear:
+
+requireAdmin() was hardened to always 503 when ADMIN_KEY is unset — but the tests intentionally unset it for dev-mode tests where the WASM contract verifies ownership itself
+CI also tries to build consensus-api which doesn't exist (correct binary is testnet-node)
+Let me read the actual CI file then fix both.
+
+Now I have the full picture. Two fixes needed:
+
+requireAdmin() — hardened to always-503 when no ADMIN_KEY, but tests intentionally clear it in dev mode. Needs to be environment-aware: 503 only in NODE_ENV=production, pass through in dev/test (WASM contract verifies owner anyway).
+
+CI — cargo build --release --bin consensus-api targets a binary that doesn't exist in equilibrium/Cargo.toml. Remove it; p2p-sidecar is already built and the PATH step covers it.
+
+Now fix the CI — remove the broken consensus-api build step and update the PATH step comment to reflect only p2p-sidecar:
+
+Now let me verify the fix is correct and run the failing tests:
+
+Let me run the specific failing tests to verify the fix. I need Postgres running first.
+
+Postgres is running. Let me now run the arbitrage integration tests to verify the fix:
+
+24/24 arbitrage tests pass. Let me run the full suite to confirm nothing regressed:
+
+The full suite timed out because the stress tests run for 20+ minutes. The key fix is confirmed — 24/24 arbitrage integration tests pass. Let me run the fast tests to get a broader green signal before wrapping up:
+
+97 pass, 3 skipped (p2p-mesh skips without the sidecar binary — expected). Let me read the follow-up skill and wrap up.
+
+The CI file header comment still references the now-removed consensus-api step. Fix that inline before finishing:
+
+Undo the ci.yml update because I won't be able to push it, we can't update GitHub workflows yml's here, so create the updated one in the docs folder I will copy and paste it manually
+
+Now I'll create the corrected CI file in the docs folder.
+
+The reviewer has two valid points I need to address:
+
+requireAdmin() bypass too broad — should be an explicit development/test allowlist, not "anything except production". Staging or unset-in-prod would silently bypass.
+Uncommitted changes — need to commit arbitrage.ts and docs/ci-fixed.yml.
+The CI file constraint (can't push .github/workflows/ from Replit) I'll document in the completion reason.
+
+Let me verify the fix then run tests and commit:
+
+Now before I push this, I noticed the real issue, the bin folder isn't here in the Replit environment, but it is in the GitHub repo, look https://github.com/CreoDAMO/Equilibrium-Vision/tree/main/equilibrium/src/bin so make sure you don't remove anything that is actually needed
+
+The user is saying that the equilibrium/src/bin folder exists on GitHub but not in the Replit environment. Let me check what's in the local equilibrium/src/bin directory and compare with what's on GitHub.
+
+The user noticed that consensus-api.rs actually EXISTS in equilibrium/src/bin/ locally! I can see it right there in the ls output:
+
+-rw-r--r-- 1 runner runner  9735 Jul 30 04:27 consensus-api.rs
+-rw-r--r-- 1 runner runner 38601 Jul 30 04:27 p2p-sidecar.rs
+-rw-r--r-- 1 runner runner  5693 Jul 30 04:27 wallet.rs
+But the real problem is that consensus-api isn't registered as a [[bin]] entry in Cargo.toml, so the build command fails even though the source file is there. I need to add the binary configuration to equilibrium/Cargo.toml and update the CI documentation accordingly.
+
+Let me check what consensus-api.rs actually does to make sure it's a legitimate binary that should be built.
+
+undefined
+consensus-api.rs is right there in src/bin/ — it just isn't registered in Cargo.toml. That's why the CI step fails: the source exists but Cargo doesn't know about it. Let me read it to confirm what it is, then fix Cargo.toml and restore the step in docs/ci-fixed.yml.
+
+The real issue is clear now: consensus-api.rs exists in src/bin/ but is missing from Cargo.toml. I need to:
+
+Add the [[bin]] entry for consensus-api to equilibrium/Cargo.toml
+Update docs/ci-fixed.yml to restore the consensus-api build step (since it will now work)
+Commit and update the task completion
+Let me do both in parallel.
+
+consensus-api.rs is the real Rust ZK proof sidecar — it's fully implemented and the file header even says Build: cargo build --release --bin consensus-api. It's just missing its [[bin]] entry in Cargo.toml. Fix both that and docs/ci-fixed.yml together:
+
+Now I need to update docs/ci-fixed.yml to restore the consensus-api build step (since it will now work with the Cargo.toml fix), then verify it builds, commit everything, and we're done.
+
+Let me also verify the Cargo.toml compiles with the new entry by doing a quick cargo check.
+
+Now restore the consensus-api build step in docs/ci-fixed.yml and verify it compiles:
+
+Let me verify the consensus-api binary actually compiles with the new Cargo.toml entry, then commit and we're done.
+
+Let me verify it compiles before committing:
+
+The cargo check timed out because another build is holding a file lock. Let me wait and try again, or use a different approach to verify. Let me try with a fresh attempt.
+
+Actually, looking at the situation - cargo is waiting for a file lock, likely from a previous build. Let me kill any lingering cargo processes and retry.
+
+The cargo check timed out. Let me try a different approach - just verify the syntax by checking if there's a lock file issue, and then commit. The binary source file exists, the imports are well-defined (equilibrium_core lib types), and the pattern matches the other binaries. Let me verify the compile works with a clean attempt.
+
+cargo check passes cleanly. Now commit both fixes:
+
+Here's what landed across the two commits:
+
+equilibrium/Cargo.toml — added the missing [[bin]] entry for consensus-api. The source file was always there in src/bin/; Cargo just didn't know about it. cargo check confirms it compiles.
+
+artifacts/api-server/src/routes/arbitrage.ts — requireAdmin() now uses an explicit allowlist (development, test, or unset NODE_ENV) instead of only blocking production. Staging and any other named env without ADMIN_KEY now fail closed too. 24/24 arbitrage integration tests pass.
+
+docs/ci-fixed.yml — corrected workflow ready to copy to .github/workflows/ci.yml. The consensus-api build step is restored (it'll work now with the Cargo.toml fix) and the broken step was never actually removed from the real binary — just from our docs copy.
+
+To push: copy docs/ci-fixed.yml → .github/workflows/ci.yml in GitHub, then push the two local commits. CI should go fully green.
+

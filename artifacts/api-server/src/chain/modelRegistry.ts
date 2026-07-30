@@ -346,23 +346,51 @@ export function getModelDetails(wasmVM: WasmVM, modelId: number): Record<string,
 
 export interface ZkmlProofRecord {
   modelId: number;
-  sealHex: string;      // RISC Zero receipt/seal bytes (hex) — field name matches Rust bridge POST body
-  journalHex: string;   // decoded journal bytes (hex) — LE layout matching EquilibriumZkmlVerifier.sol
-  submittedAt: number;  // Unix timestamp (ms)
+  sealHex: string;         // RISC Zero receipt/seal bytes (hex) — field name matches Rust bridge POST body
+  journalHex: string;      // decoded journal bytes (hex) — LE layout matching EquilibriumZkmlVerifier.sol
+  submittedAt: number;     // Unix timestamp (ms)
+  modelRootHex?: string;   // SHA-256 of the canonical model weights commitment (optional, sent by Rust bridge)
+  inputHashHex?: string;   // SHA-256 of the model input used for this proof (optional, sent by Rust bridge)
+  blockHeight?: number;    // Chain block height at proof generation time (optional, sent by Rust bridge)
 }
 
 const zkmlProofStore = new Map<number, ZkmlProofRecord>();
 
+export interface SubmitZkmlReceiptParams {
+  sealHex: string;
+  journalHex: string;
+  modelRootHex?: string;
+  inputHashHex?: string;
+  blockHeight?: number;
+}
+
 /**
  * Store a RISC Zero zkML proof receipt for a model. Called by the Rust
  * model_registry_integration bridge (POST /api/models/:id/zkml-proof).
+ * Accepts optional modelRootHex, inputHashHex, and blockHeight fields that
+ * the Rust bridge sends alongside the core proof bytes — storing them makes
+ * the receipt self-describing without requiring journal parsing in TypeScript.
  */
-export function submitZkmlReceipt(modelId: number, sealHex: string, journalHex: string): { success: boolean; error?: string } {
+export function submitZkmlReceipt(modelId: number, p: SubmitZkmlReceiptParams): { success: boolean; error?: string } {
+  const { sealHex, journalHex, modelRootHex, inputHashHex, blockHeight } = p;
   if (!/^[0-9a-fA-F]+$/.test(sealHex)) return { success: false, error: "sealHex must be a hex string" };
   if (!/^[0-9a-fA-F]+$/.test(journalHex)) return { success: false, error: "journalHex must be a hex string" };
   // Minimum sanity: journal must be at least 4 words (128 bits) to hold the LE fields
   if (journalHex.length < 32) return { success: false, error: "journalHex too short" };
-  zkmlProofStore.set(modelId, { modelId, sealHex, journalHex, submittedAt: Date.now() });
+  if (modelRootHex !== undefined && !/^[0-9a-fA-F]+$/.test(modelRootHex)) {
+    return { success: false, error: "modelRootHex must be a hex string" };
+  }
+  if (inputHashHex !== undefined && !/^[0-9a-fA-F]+$/.test(inputHashHex)) {
+    return { success: false, error: "inputHashHex must be a hex string" };
+  }
+  if (blockHeight !== undefined && (!Number.isInteger(blockHeight) || blockHeight < 0)) {
+    return { success: false, error: "blockHeight must be a non-negative integer" };
+  }
+  const record: ZkmlProofRecord = { modelId, sealHex, journalHex, submittedAt: Date.now() };
+  if (modelRootHex !== undefined) record.modelRootHex = modelRootHex;
+  if (inputHashHex !== undefined) record.inputHashHex = inputHashHex;
+  if (blockHeight !== undefined) record.blockHeight = blockHeight;
+  zkmlProofStore.set(modelId, record);
   return { success: true };
 }
 
