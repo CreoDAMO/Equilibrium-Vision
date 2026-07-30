@@ -163,6 +163,7 @@ struct Command {
     difficulty: Option<u64>,
     /// True when the body came from a remote peer (validate_and_adopt).
     #[serde(rename = "fromPeer")]
+    #[allow(dead_code)]
     from_peer:  Option<bool>,
 }
 

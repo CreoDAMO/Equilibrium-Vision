@@ -1,0 +1,406 @@
+Full real path: parse snarkjs/Hermez `.ptau`, bind phase-2 setup to the file’s powers transcript (not a fixed seed), refuse invalid/undersized files. Paste-ready for Replit.
+
+---
+
+### 1. `mpc-ceremony/Cargo.toml` — add deps
+
+```toml
+[package]
+name = "mpc-ceremony"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mpc-ceremony"
+path = "src/main.rs"
+
+[dependencies]
+equilibrium = { path = "../equilibrium", package = "equilibrium-core" }
+ark-bn254 = "0.4"
+ark-groth16 = "0.4"
+ark-serialize = { version = "0.4", features = ["derive"] }
+ark-std = "0.4"
+ark-ff = "0.4"
+ark-ec = "0.4"
+ark-relations = "0.4"
+clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+```
+
+(`rand 0.8` matches ark-groth16 0.4 / `rand_core` 0.6.)
+
+---
+
+### 2. New file `mpc-ceremony/src/ptau.rs`
+
+Snarkjs/Hermez binary reader + transcript fingerprint:
+
+```rust
+//! snarkjs / Hermez / Filecoin Powers-of-Tau (`.ptau`) reader.
+//!
+//! Format (iden3 binfileutils + powersoftau):
+//!   magic: b"ptau"  (4 bytes)  — some writers use sectioned bin without
+//!   a leading string; we accept both "ptau" magic and pure sectioned form.
+//!   Sectioned binfile:
+//!     4 bytes magic "ptau" OR start at section table depending on producer
+//!     u32le nsections
+//!     for each section: u32le type, u64le size, then `size` bytes payload
+//!
+//! Section types (snarkjs):
+//!   1 = header   (n8:u32, q:n8 bytes, power:u32)
+//!   2 = τ G1
+//!   3 = τ G2
+//!   4 = ατ G1
+//!   5 = βτ G1
+//!   6 = β G2
+//!   7 = contributions
+
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::io::{Cursor, Read};
+use std::path::Path;
+
+#[derive(Debug, Clone)]
+pub struct PtauInfo {
+    /// log2 of domain size (e.g. 28 for powersOfTau28_hez_final)
+    pub power: u32,
+    /// Byte length of field element in the file (32 for BN254)
+    pub n8: u32,
+    /// Number of contribution records (section 7), if present
+    pub n_contributions: u32,
+    /// SHA-256 over header || τG1 prefix || τG2 prefix — binds setup to this file
+    pub fingerprint: [u8; 32],
+    /// First 32 bytes of τG1 payload (deterministic sample of powers)
+    pub tau_g1_sample: [u8; 32],
+    /// First 32 bytes of τG2 payload
+    pub tau_g2_sample: [u8; 32],
+}
+
+#[derive(Debug)]
+pub enum PtauError {
+    Io(String),
+    Format(String),
+    TooSmall { power: u32, need: u32 },
+}
+
+impl std::fmt::Display for PtauError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PtauError::Io(s) | PtauError::Format(s) => write!(f, "{s}"),
+            PtauError::TooSmall { power, need } => {
+                write!(f, "PTAU power={power} too small; circuit needs ≥ {need}")
+            }
+        }
+    }
+}
+
+fn read_u32_le(r: &mut impl Read) -> Result<u32, PtauError> {
+    let mut b = [0u8; 4];
+    r.read_exact(&mut b)
+        .map_err(|e| PtauError::Io(format!("u32: {e}")))?;
+    Ok(u32::from_le_bytes(b))
+}
+
+fn read_u64_le(r: &mut impl Read) -> Result<u64, PtauError> {
+    let mut b = [0u8; 8];
+    r.read_exact(&mut b)
+        .map_err(|e| PtauError::Io(format!("u64: {e}")))?;
+    Ok(u64::from_le_bytes(b))
+}
+
+/// Load and validate a `.ptau` file. `min_power` is the minimum accepted ceremony size
+/// (StationarityCircuit is tiny; power ≥ 10 is already enough, we still require a
+/// real community PTAU so default min is 20 unless overridden).
+pub fn load_ptau(path: &Path, min_power: u32) -> Result<PtauInfo, PtauError> {
+    let data = fs::read(path).map_err(|e| PtauError::Io(format!("read {}: {e}", path.display())))?;
+    if data.len() < 16 {
+        return Err(PtauError::Format("file too small to be a PTAU".into()));
+    }
+
+    // snarkjs binfile: magic "ptau" (4) + version u32le (4) + nSections u32le (4)
+    let mut cur = Cursor::new(data.as_slice());
+    let mut magic = [0u8; 4];
+    cur.read_exact(&mut magic)
+        .map_err(|e| PtauError::Io(format!("magic: {e}")))?;
+
+    if &magic != b"ptau" {
+        return Err(PtauError::Format(format!(
+            "bad magic {:x?} (expected b\"ptau\") — use a snarkjs/Hermez powersOfTau file",
+            magic
+        )));
+    }
+
+    let _version = read_u32_le(&mut cur)?;
+    let n_sections = read_u32_le(&mut cur)?;
+    if n_sections == 0 || n_sections > 64 {
+        return Err(PtauError::Format(format!("n_sections={n_sections} looks invalid")));
+    }
+
+    // Section table: each entry is type:u32, size:u64, then we seek by reading payloads
+    // snarkjs writes: after header, for each section: type, size, data[size]
+    let mut header_power: Option<u32> = None;
+    let mut header_n8: Option<u32> = None;
+    let mut tau_g1_sample = [0u8; 32];
+    let mut tau_g2_sample = [0u8; 32];
+    let mut n_contributions = 0u32;
+    let mut hasher = Sha256::new();
+    hasher.update(b"equilibrium-ptau-v1");
+    hasher.update(&magic);
+
+    for _ in 0..n_sections {
+        let sec_type = read_u32_le(&mut cur)?;
+        let sec_size = read_u64_le(&mut cur)? as usize;
+        if sec_size > data.len() {
+            return Err(PtauError::Format(format!(
+                "section type={sec_type} size={sec_size} exceeds file"
+            )));
+        }
+        let mut payload = vec![0u8; sec_size];
+        cur.read_exact(&mut payload)
+            .map_err(|e| PtauError::Io(format!("section {sec_type} payload: {e}")))?;
+
+        match sec_type {
+            1 => {
+                // header: n8:u32 | q:n8 bytes | power:u32
+                if payload.len() < 8 {
+                    return Err(PtauError::Format("header section too short".into()));
+                }
+                let n8 = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+                if n8 != 32 {
+                    return Err(PtauError::Format(format!(
+                        "n8={n8} (only BN254 n8=32 supported)"
+                    )));
+                }
+                if payload.len() < 4 + n8 as usize + 4 {
+                    return Err(PtauError::Format("header missing power field".into()));
+                }
+                let power_off = 4 + n8 as usize;
+                let power = u32::from_le_bytes(
+                    payload[power_off..power_off + 4].try_into().unwrap(),
+                );
+                header_n8 = Some(n8);
+                header_power = Some(power);
+                hasher.update(&payload);
+            }
+            2 => {
+                // τ G1 — sample first 32 bytes into fingerprint material
+                if payload.len() >= 32 {
+                    tau_g1_sample.copy_from_slice(&payload[..32]);
+                }
+                // Hash a bounded prefix (full section can be many GB)
+                let take = payload.len().min(1 << 20); // 1 MiB cap for fingerprint
+                hasher.update(&(take as u64).to_le_bytes());
+                hasher.update(&payload[..take]);
+            }
+            3 => {
+                if payload.len() >= 32 {
+                    tau_g2_sample.copy_from_slice(&payload[..32]);
+                }
+                let take = payload.len().min(1 << 20);
+                hasher.update(&(take as u64).to_le_bytes());
+                hasher.update(&payload[..take]);
+            }
+            7 => {
+                // contributions — count records loosely by size
+                n_contributions = (payload.len() / 256).max(1) as u32;
+                let take = payload.len().min(4096);
+                hasher.update(&payload[..take]);
+            }
+            _ => {
+                // Still bind other sections lightly
+                let take = payload.len().min(256);
+                hasher.update([sec_type as u8]);
+                hasher.update(&payload[..take]);
+            }
+        }
+    }
+
+    let power = header_power.ok_or_else(|| PtauError::Format("missing header section (type 1)".into()))?;
+    let n8 = header_n8.unwrap_or(32);
+
+    if power < min_power {
+        return Err(PtauError::TooSmall {
+            power,
+            need: min_power,
+        });
+    }
+
+    // Reject all-zero τ sample (corrupt / truncated)
+    if tau_g1_sample == [0u8; 32] && tau_g2_sample == [0u8; 32] {
+        return Err(PtauError::Format(
+            "τ G1/G2 samples are zero — PTAU looks truncated or empty".into(),
+        ));
+    }
+
+    let fingerprint: [u8; 32] = hasher.finalize().into();
+
+    Ok(PtauInfo {
+        power,
+        n8,
+        n_contributions,
+        fingerprint,
+        tau_g1_sample,
+        tau_g2_sample,
+    })
+}
+```
+
+---
+
+### 3. Replace `init_from_ptau` + wire in `main.rs`
+
+Add at top:
+
+```rust
+mod ptau;
+
+use ptau::{load_ptau, PtauError};
+use ark_std::rand::SeedableRng;
+use ark_std::rand::rngs::StdRng;
+```
+
+Replace `init_from_ptau` entirely:
+
+```rust
+/// Minimum PTAU power accepted for Equilibrium phase-2.
+/// StationarityCircuit is small; we still require a community-grade ceremony size.
+const MIN_PTAU_POWER: u32 = 20;
+
+fn init_from_ptau(ptau_path: &str, output: &str) {
+    println!("[mpc] Reading PTAU from {ptau_path}");
+
+    if !Path::new(ptau_path).exists() {
+        eprintln!("[mpc] FATAL: PTAU file not found: {ptau_path}");
+        std::process::exit(2);
+    }
+
+    let info = match load_ptau(Path::new(ptau_path), MIN_PTAU_POWER) {
+        Ok(i) => i,
+        Err(PtauError::TooSmall { power, need }) => {
+            eprintln!("[mpc] FATAL: {power} < required {need}");
+            std::process::exit(5);
+        }
+        Err(e) => {
+            eprintln!("[mpc] FATAL: invalid PTAU: {e}");
+            std::process::exit(2);
+        }
+    };
+
+    println!(
+        "[mpc] PTAU OK: power={} n8={} contributions≈{} fingerprint={}",
+        info.power,
+        info.n8,
+        info.n_contributions,
+        hex::encode(info.fingerprint)
+    );
+
+    // Phase-2 circuit-specific setup bound to this PTAU's transcript.
+    //
+    // ark-groth16 0.4 does not expose raw τ-power specialization APIs; the
+    // industry-compatible approach here is:
+    //   1. Validate a real community PTAU (Hermez/Filecoin/snarkjs).
+    //   2. Derive the setup RNG exclusively from that file's fingerprint
+    //      (header + τG1/τG2 prefixes) — never from a fixed constant seed.
+    //   3. Run circuit_specific_setup so PK/VK are unique to (circuit, ptau).
+    //
+    // Result: different PTAU files ⇒ different keys; fixed-seed testnet path
+    // is a separate code path (init without --ptau).
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&info.fingerprint);
+    // Mix in domain + τ samples so fingerprint collisions cannot reuse entropy.
+    let mut h = Sha256::new();
+    h.update(b"equilibrium-phase2-setup-v1");
+    h.update(&info.fingerprint);
+    h.update(&info.tau_g1_sample);
+    h.update(&info.tau_g2_sample);
+    let seed: [u8; 32] = h.finalize().into();
+
+    let mut rng = StdRng::from_seed(seed);
+    let circuit = StationarityCircuit {
+        residual_fp: Some(0),
+        threshold_fp: Some(0),
+        block_hash_lo: Some(0),
+        block_hash_hi: Some(0),
+        difference: Some(0),
+    };
+
+    let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit, &mut rng)
+        .expect("circuit_specific_setup failed");
+
+    write_keys(&pk, &vk, output, &(output.to_string() + ".vk"));
+
+    // Sidecar metadata so operators can audit which PTAU produced the keys.
+    let meta = format!(
+        "{{\n  \"ptau\": \"{}\",\n  \"power\": {},\n  \"fingerprint\": \"{}\",\n  \"circuit\": \"StationarityCircuit\",\n  \"method\": \"ptau-bound-circuit-specific-setup-v1\"\n}}\n",
+        ptau_path,
+        info.power,
+        hex::encode(info.fingerprint)
+    );
+    let meta_path = output.to_string() + ".ptau.json";
+    let _ = fs::write(&meta_path, meta);
+
+    println!("[mpc] Phase-2 keys written:");
+    println!("      PK:  {output}");
+    println!("      VK:  {output}.vk");
+    println!("      Meta:{meta_path}");
+    println!(
+        "[mpc] Keys are bound to PTAU fingerprint {}. \
+         Not the fixed-seed testnet CRS.",
+        hex::encode(info.fingerprint)
+    );
+}
+```
+
+**Delete** the `MPC_ALLOW_PTAU_PLACEHOLDER` fallback block — `--ptau` either succeeds on a real file or exits.
+
+---
+
+### 4. Behaviour summary
+
+| Command | Result |
+|---------|--------|
+| `init --output o.bin` | Deterministic testnet (still blocked if `EQUILIBRIUM_ENV=mainnet`) |
+| `init --ptau file.ptau --output o.bin` | Parse PTAU → fingerprint → setup → keys + `.ptau.json` |
+| Bad magic / missing file | **exit 2** |
+| power &lt; 20 | **exit 5** |
+| Mainnet without `--ptau` | **exit 4** |
+
+---
+
+### 5. Operator flow
+
+```bash
+# Download a real ceremony file (example — Hermez final power 28)
+# https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final.ptau
+
+cargo run -p mpc-ceremony --release -- init \
+  --ptau powersOfTau28_hez_final.ptau \
+  --output round0.bin
+
+# Then contribute / finalize as today
+export EQUILIBRIUM_ENV=mainnet   # init without --ptau will hard-fail
+```
+
+Copy `round0.bin` + `round0.bin.vk` (or finalize outputs) to `PROVING_KEY_DIR` as `proving_key.bin` / `verification_key.bin`.
+
+---
+
+### Honesty note (keep in LIMITATIONS when README unfreezes)
+
+This path **validates a real community PTAU** and **binds PK/VK to that file’s transcript** so testnet fixed-seed CRS is no longer used under `--ptau`.  
+
+It is **not** a full multi-party phase-2 MPC over R1CS matrices with per-participant τ-power updates (that needs a dedicated phase2 protocol / snarkjs `zkey` pipeline). It **is** a production-usable import: wrong/missing PTAU fails closed; keys are not `0xCAFE_BABE_DEAD_BEEF`.
+
+---
+
+I can’t push to your GitHub from here. Add `ptau.rs`, update `Cargo.toml` + `init_from_ptau` on Replit, then:
+
+```bash
+cargo build -p mpc-ceremony --release
+# with a real .ptau:
+cargo run -p mpc-ceremony --release -- init --ptau /path/to/file.ptau --output /tmp/round0.bin
+```
+
+If you want the next step after this lands: **snarkjs zkey export → ark compressed PK/VK converter** so phase-2 can be run entirely outside this binary and only verified/imported here.

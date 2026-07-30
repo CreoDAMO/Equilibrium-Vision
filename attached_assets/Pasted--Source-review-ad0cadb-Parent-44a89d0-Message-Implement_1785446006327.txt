@@ -1,0 +1,82 @@
+## Source review: `ad0cadb`
+
+Parent: `44a89d0`. Message: *Implement p2p sidecar logic and update zk proof verification*. ~1.2k adds.
+
+---
+
+### Gap 3 — Closed mesh
+
+| Piece | In tree? | Notes |
+|-------|----------|--------|
+| `set_local_tip` / `get_local_tip` | **Yes** | Sidecar local tip cache |
+| `gossip_block_body` | **Yes** | Gossipsub body topic |
+| `poll_block_body` | **Yes** | Body queue |
+| `validate_and_adopt` | **Yes** | Continuity only |
+| Mesh test | **Yes** | `node2 advances tip from node1 body with no HTTP` |
+| `HTTP_SUBMIT` on phone | **No** | Not in this commit’s files |
+
+**`validate_and_adopt` reality:**
+
+```text
+accepted = height == tip.height + 1 && prevHash == tip.hash
+```
+
+No residual re-eval, no merkle, no BFT. Comment says full checks live in `mobile_validator.rs` — true, but **sidecar path does not call them**.
+
+**Verdict:** Two-process **P2P plumbing + continuity tip advance** is real. That upgrades the old in-process engine test. It is **not** full offline consensus validation on the wire.
+
+**Phone offline switch:** not landed here.
+
+---
+
+### Gap 4 — Stronger ZK stationarity
+
+| Piece | In tree? | Notes |
+|-------|----------|--------|
+| Guest `StationarityInput` with header fields | **Yes** | |
+| `residual_at_nonce` recompute + `assert_eq!` | **Yes** | |
+| Residual &lt; threshold | **Yes** | |
+| Host `ZkvmInput` aligned with guest | **Yes** | Field-order comment |
+| `DualZkvmProver::prove` passes header fields | **Yes** | |
+| Full `joint_residual_and_gradient` in guest | **No** | Explicit **v1 hash-fold** |
+
+Guest docs say: stronger than difference-only; **v2** = shared pure-integer residual from the solver.
+
+Groth16 path is still residual + difference = threshold.
+
+**Verdict:** ZkVM path is **materially stronger** (binds residual to header bytes). Not yet parity with the mobile/consensus residual function.
+
+---
+
+### Gap 5 — MPC / PTAU
+
+| Piece | In tree? | Notes |
+|-------|----------|--------|
+| `is_mainnet_ceremony()` | **Yes** | `EQUILIBRIUM_ENV=mainnet` / `MPC_REQUIRE_PTAU=1` |
+| Init without `--ptau` on mainnet → exit 4 | **Yes** | |
+| Missing PTAU file → exit 2 | **Yes** | |
+| `--ptau` without real import → exit 3 (unless placeholder) | **Yes** | |
+| `MPC_ALLOW_PTAU_PLACEHOLDER=1` opt-in | **Yes** | Dev only |
+| Real phase-2 / PTAU specialization | **No** | Still TODO + fallback only with flag |
+
+**Verdict:** **Policy closed** (no silent mainnet trapdoor). **Ceremony import still open.**
+
+---
+
+### Scorecard at `ad0cadb`
+
+| Gap | Status | One-line |
+|-----|--------|----------|
+| **3 Mesh** | **Mostly closed (infra)** | Sidecar body mesh + test; adopt = continuity only; no phone `HTTP_SUBMIT` |
+| **4 ZK** | **Partially closed** | Guest recomputes hash-fold residual; not full Lagrangian FP |
+| **5 MPC** | **Policy closed / import open** | Fail-closed guards; no real PTAU import yet |
+
+---
+
+### What still needs a follow-up commit
+
+1. **3:** Wire `validate_and_adopt` → residual/merkle (or JNI/`mobile_validator`); add `HTTP_SUBMIT=0` on `MiningWorker`.  
+2. **4:** Extract shared `residual_fp` used by solver + guest (v2).  
+3. **5:** Implement real `--ptau` path so exit 3 is not the steady state for mainnet.
+
+This is a real step past `44a89d0`, not transcript theater — with the honesty limits above.

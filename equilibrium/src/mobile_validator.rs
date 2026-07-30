@@ -469,7 +469,7 @@ fn parse_hash32(hex: &str) -> Result<[u8; 32], String> {
     if !clean.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!("invalid hex hash: {hex}"));
     }
-    let padded = format!("{:0>64}", clean);
+    let padded = format!("{clean:0>64}");
     let take = if padded.len() >= 64 {
         &padded[padded.len() - 64..]
     } else {

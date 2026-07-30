@@ -2825,6 +2825,7 @@ dependencies = [
  "ark-groth16",
  "ark-relations",
  "ark-serialize",
+ "ark-snark",
  "ark-std",
  "clap",
  "equilibrium-core",

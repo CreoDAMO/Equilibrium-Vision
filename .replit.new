@@ -1,0 +1,84 @@
+modules = ["nodejs-20", "rust-stable", "bash"]
+
+[deployment]
+router = "application"
+deploymentTarget = "autoscale"
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Postgres"
+
+# ── Postgres ──────────────────────────────────────────────────────────────────
+# Idempotent bootstrap: creates role, pushes Drizzle schema, grants privileges,
+# then starts postgres in the foreground on port 5432.
+# Also runs `pnpm install --frozen-lockfile` on cold boot if node_modules is
+# absent so the schema push never fails after a fresh clone or container reset.
+#
+# The API Server and Explorer are now managed as artifacts (generated from
+# each artifact's artifact.toml — see "artifacts/api-server: API Server" and
+# "artifacts/explorer: web" in the workflow list) and start on their own;
+# they used to also be defined here as plain workflows on the same ports
+# (8080 / 5000), which caused EADDRINUSE conflicts once the artifacts were
+# registered. Removed the duplicates — do not recreate "API Server" or
+# "Explorer" workflow entries here.
+[[workflows.workflow]]
+name = "Postgres"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/start-postgres.sh"
+waitForPort = 5432
+
+# ── variational-ai: determinism harness ───────────────────────────────────────
+# Trains logistic + MLP + NTK on synthetic MNIST, hashes all intermediate
+# vectors with SHA-256, and prints the hashes. Run on two architectures and
+# diff the output to confirm cross-arch determinism.
+[[workflows.workflow]]
+name = "VAI Harness"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd variational-ai && cargo run --release --bin variational-ai-harness"
+
+# ── variational-ai: benchmark suite ───────────────────────────────────────────
+# Runs all three solver benchmarks (logistic / MLP / NTK) on synthetic MNIST
+# and prints accuracy, residual, and wall-clock time for each.
+[[workflows.workflow]]
+name = "VAI Benchmarks"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd variational-ai && cargo run --release --bin variational-ai"
+
+# ── Agent / environment ───────────────────────────────────────────────────────
+[agent]
+stack = "BEST_EFFORT_FALLBACK"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+[nix]
+channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+REQUIRE_TX_SIGNATURES = "true"
+ALLOW_TS_TRAPDOOR_PROVER = "true"

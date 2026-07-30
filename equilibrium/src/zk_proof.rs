@@ -431,6 +431,7 @@ impl DualZkvmProver {
     /// fields that the guest's `residual_at_nonce` function hashes must be
     /// supplied here so the prover can produce a valid receipt.
     #[cfg(feature = "risc0")]
+    #[allow(clippy::too_many_arguments)]
     pub fn prove(
         residual_fp:     u64,
         threshold_fp:    u64,
@@ -485,6 +486,7 @@ impl DualZkvmProver {
     }
 
     #[cfg(not(feature = "risc0"))]
+    #[allow(clippy::too_many_arguments)]
     pub fn prove(
         _residual_fp:     u64,
         _threshold_fp:    u64,
