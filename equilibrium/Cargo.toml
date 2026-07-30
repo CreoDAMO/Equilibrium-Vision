@@ -9,6 +9,10 @@ name = "testnet-node"
 path = "testnet/node/main.rs"
 
 [[bin]]
+name = "consensus-api"
+path = "src/bin/consensus-api.rs"
+
+[[bin]]
 name = "wallet"
 path = "src/bin/wallet.rs"
 

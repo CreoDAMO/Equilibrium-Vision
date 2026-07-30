@@ -180,10 +180,18 @@ jobs:
         working-directory: equilibrium
         run: cargo build --release --bin p2p-sidecar
 
+      - name: Build consensus-api binary
+        # The real Rust ZK proof sidecar (stdin/stdout JSON-RPC: prove/verify/solve/warmup).
+        # Source: equilibrium/src/bin/consensus-api.rs — registered in Cargo.toml.
+        # Tests that need the full Groth16 path shell out to this binary; the TS
+        # trapdoor prover (ALLOW_TS_TRAPDOOR_PROVER=true) is the fallback for tests
+        # that don't require the real proof path.
+        working-directory: equilibrium
+        run: cargo build --release --bin consensus-api
+
       - name: Add equilibrium release binaries to PATH
-        # Exposes p2p-sidecar (and any future equilibrium binaries) to every
-        # subsequent step, including the Vitest run, without hardcoding an
-        # absolute path.
+        # Exposes consensus-api and p2p-sidecar to every subsequent step,
+        # including the Vitest run, without hardcoding an absolute path.
         run: echo "${{ github.workspace }}/equilibrium/target/release" >> $GITHUB_PATH
 
       - name: Cache Rust build artifacts (WASM contracts)
