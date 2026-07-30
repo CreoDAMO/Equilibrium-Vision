@@ -1,0 +1,141 @@
+Skip to content
+CreoDAMO
+Equilibrium-Vision
+Repository navigation
+Code
+Issues
+Pull requests
+Agents
+Actions
+Projects
+Wiki
+Security and quality
+23
+ (23)
+Insights
+Settings
+CI
+Update governance contract logic in API server #164
+All jobs
+Run details
+Annotations
+10 errors and 1 warning
+TypeScript tests (Vitest)
+failed 45 minutes ago in 3m 13s
+Search logs
+4s
+28s
+6s
+1s
+6s
+3s
+9s
+2s
+25s
+0s
+7s
+1m 11s
+2s
+1s
+3s
+3s
+2s
+16s
+Run pnpm --filter @workspace/api-server run test
+
+> @workspace/api-server@0.0.0 test /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server
+> vitest run
+
+
+ RUN  v4.1.9 /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server
+
+stderr | src/__tests__/contracts.integration.test.ts > WasmVM — persist callback > does not throw if the persist callback rejects
+[WasmVM] contract persist failed: Error: DB down
+    at WasmVM.persistFn (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/__tests__/contracts.integration.test.ts:424:48)
+    at WasmVM.firePersist (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/chain/wasm.ts:143:12)
+    at WasmVM.deploy (/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/chain/wasm.ts:187:10)
+    at /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server/src/__tests__/contracts.integration.test.ts:427:5
+    at file:///home/runner/work/Equilibrium-Vision/Equilibrium-Vision/node_modules/.pnpm/@vitest+runner@4.1.9/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20
+
+ ❯ src/__tests__/arbitrage.stress.test.ts (14 tests | 13 failed) 252ms
+     × sets up verified model and executions 1–5 are NOT rejected with the circuit-breaker error 15ms
+     × the 6th call is rejected with 'Paused or circuit breaker tripped' 6ms
+     × after unpause, the next call is no longer blocked by the circuit breaker 8ms
+     × rejects amountIn exceeding the governance cap with 'Amount exceeds the max trade amount' 5ms
+     × pool reserves are unchanged after a cap-rejected call 4ms
+     × execute succeeds and pool reserves change even when profit < minProfit 4ms
+     × no more than 5 non-circuit-breaker results from 10 concurrent calls 7ms
+     × advancing past the window does NOT clear a tripped breaker; unpause() does 5ms
+     × 3 execs in window N, advance past it, 3 execs in window N+1 — never trips breaker 11ms
+     × lowering arbitrageMaxTradeAmount rejects a previously-passing amountIn 6ms
+     × changing arbitrageWindowBlocks live affects subsequent window checks 3ms
+     × rollbackToHeight keeps chainState.height correct and the VM stays coherent 2ms
+     × pool reserves change after a swap even if ArbitrageUnderTarget is logged 5ms
+     ✓ 20 randomised pool sets: detector does not crash, returns well-formed data 68ms
+ ✓ src/__tests__/contracts.integration.test.ts (58 tests) 340ms
+ ❯ src/__tests__/crosschain.integration.test.ts (34 tests | 4 failed) 554ms
+     ✓ GET /api/relay/info returns contract address once deployed 31ms
+     ✓ rejects registration below min bond 39ms
+     ✓ registers a relayer with sufficient bond 9ms
+     ✓ rejects duplicate registration 6ms
+     ✓ GET /api/relay/info shows 1 relayer after registration 9ms
+     ✓ rejects threshold update without admin key 5ms
+     ✓ admin can set threshold to 1 for single-relayer tests 16ms
+     ✓ rejects attestation with missing chainId 15ms
+     ✓ rejects attestation with wrong seq (skipping seq 1) 19ms
+     ✓ rejects attestation with bad signature 10ms
+     ✓ accepts a valid single-relayer attestation 11ms
+     ✓ rejects duplicate attestation for same chain+seq 16ms
+     ✓ GET status shows attestation as pending 6ms
+     ✓ 404 for non-existent attestation 7ms
+     ✓ rejects finalization before challenge window expires 12ms
+     × accepts finalization after advancing past challenge window (100 blocks) 13ms
+     × GET status shows attestation as finalized 12ms
+     × rejects double-finalization 6ms
+     ✓ rejects challenge without admin key 2ms
+     ✓ admin can challenge a fraudulent attestation 6ms
+     ✓ GET status shows attestation as challenged 4ms
+     ✓ rejects double-challenge 5ms
+     × rejects finalization of a challenged attestation 1ms
+     ✓ rejects malformed commitmentHex 2ms
+     ✓ publishes first outbound commitment with seq=1 5ms
+     ✓ publishes second outbound commitment with seq=2 7ms
+     ✓ GET outbound seq returns 2 4ms
+     ✓ rejects attestation with only 1 signature when threshold is 2 8ms
+     ✓ rejects attestation with duplicate signer 24ms
+     ✓ accepts 2-of-2 attestation with distinct valid signatures 14ms
+     ✓ GET status for 2-of-2 attestation shows both signers 5ms
+     ✓ rejects revocation without admin key 2ms
+     ✓ admin can revoke a relayer 4ms
+     ✓ revoked relayer no longer in relayer set 8ms
+ ❯ src/__tests__/chain.unit.test.ts (41 tests | 10 failed) 45ms
+     ✓ returns a 64-char lowercase hex string 3ms
+     ✓ is deterministic 0ms
+     ✓ is a double-SHA256 — differs from a single SHA256 1ms
+     ✓ avalanches — different inputs produce different outputs 0ms
+     ✓ returns 64 zeros for an empty list 0ms
+     ✓ returns the single hash unchanged 0ms
+     ✓ hashes a two-element list as hash256(a + b) 0ms
+     ✓ duplicates the last element for an odd-length list 1ms
+     ✓ produces consistent results for a four-element list 0ms
+     ✓ returns a 40-char lowercase hex string 0ms
+     ✓ is deterministic 0ms
+     ✓ different seeds produce different addresses 0ms
+     ✓ is the first 40 chars of sha256(seed) 0ms
+     ✓ encodes zero as '0' 0ms
+     ✓ uses Math.floor — not Math.round 0ms
+     ✓ encodes the default threshold 1e-7 as 100000000000 0ms
+     ✓ returns a decimal string consistent with BigInt conversion 0ms
+     ✓ result is within the BN254 scalar field 0ms
+     ✓ returns two decimal strings parseable as BigInt 1ms
+     ✓ blockHashHigh is '0' — the input fits in 128 bits 0ms
+     ✓ blockHashLow matches the expected BigInt value 0ms
+     ✓ strips a leading 0x prefix correctly 0ms
+0s
+0s
+0s
+0s
+0s
+0s
+0s
+0s

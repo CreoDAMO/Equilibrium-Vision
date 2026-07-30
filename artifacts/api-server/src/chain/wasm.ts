@@ -213,7 +213,13 @@ export class WasmVM {
     callerAddr = "",
   ): Promise<CallResult> {
     // ── Synchronous fast-path ──────────────────────────────────────────────
-    if (!isMainThread || !this.hostCtx || !WORKER_SCRIPT) {
+    // Also force sync under Vitest: the test runner uses fork-mode (not worker
+    // threads), so isMainThread===true and WORKER_SCRIPT is present — but
+    // receiveMessageOnPort() inside the spawned worker is non-blocking and
+    // returns undefined before the main-thread event loop can respond, causing
+    // "[wasm-worker] host RPC port closed unexpectedly" on every call that
+    // touches host-context (balance, debit, DEX, etc.).
+    if (!isMainThread || !this.hostCtx || !WORKER_SCRIPT || process.env["VITEST"]) {
       return this.execCall(address, methodId, args, gasLimit, callerAddr, 0);
     }
 
