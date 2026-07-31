@@ -1,0 +1,47 @@
+Status relative to that list, as of current `main` (tip is mostly CI hygiene; protocol work last verified through ~`bcf6b2b` / ceremony path):
+
+---
+
+| Area | Still open? | Status now |
+|------|-------------|------------|
+| **Mesh consensus** | **Yes — fully** | Sidecar adopt still continuity-only; full checks stay in `mobile_validator` |
+| **Phone submit** | **Yes — mostly** | HTTP fallback still in the picture unless gated off by default |
+| **ZK stationarity** | **Yes — fully** | Groth16 = residual+difference; ZkVM = hash-fold v1, not full solver residual |
+| **Ceremony ops** | **Partial** | Import + harness + artifacts **yes**; green prove/verify with CircomReduction **not confirmed**; real multi-party `contribute` still weak |
+| **Bridge** | **Yes — fully** | Still scaffolding / incomplete hosts |
+| **Product (QR / UX)** | **Yes — fully** | Unchanged; not protocol-blocking |
+
+---
+
+### Score of the six
+
+- **Closed:** 0 of 6  
+- **Meaningfully advanced:** 1 of 6 (ceremony — ~half-done)  
+- **Still open as stated:** 5 of 6  
+
+So about **~5.5 / 6 of that list is still open**. Ceremony moved from “no dry run” to “dry run exists, last mile (PASS) not verified on main.”
+
+---
+
+### What that means for the ~35%
+
+That open list **is** most of the remaining mainnet-readiness gap:
+
+| Priority | Item | Closes which % of “still open” |
+|----------|------|--------------------------------|
+| 1 | CircomReduction + smoke **PASS** | Finishes ceremony ops |
+| 2 | Sidecar adopt = mobile validator checks | Mesh consensus |
+| 3 | `HTTP_SUBMIT=0` (or equivalent) default offline mode | Phone submit |
+| 4 | Shared residual in Groth16/ZkVM | ZK stationarity |
+| 5 | Bridge (when you care) | Cross-chain claim |
+| 6 | QR / mining UX | Product story |
+
+1–4 are protocol; 5–6 are claim/product.
+
+---
+
+### Bottom line
+
+**Almost all of that table is still open.** Ceremony is the only row that moved in a real way, and it’s not green end-to-end yet. Mesh, phone offline, ZK statement strength, bridge, and product are unchanged.
+
+That’s consistent with ~65%: infrastructure in place; the list above is the remaining high-leverage work, not a new subsystem binge.
