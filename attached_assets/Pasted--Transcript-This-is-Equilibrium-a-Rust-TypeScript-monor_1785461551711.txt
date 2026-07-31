@@ -1,0 +1,193 @@
+# Transcript
+This is Equilibrium — a Rust + TypeScript monorepo for a Layer-1 blockchain with Proof-of-Stationarity consensus. It includes:
+
+API Server (artifacts/api-server) — the TypeScript node backend
+Block Explorer (artifacts/explorer) — React frontend with real-time block/tx views and a 3D timeline
+variational-ai — Rust crate for the Lagrangian optimization solver (the "mining" engine)
+Postgres — used for chain state
+The three app workflows are configured but not yet started. A few things worth knowing before you decide:
+
+Postgres needs to be running before the API Server will work
+The API Server needs to be up before the Explorer is useful
+The Rust crates (variational-ai, equilibrium) need to compile, which takes a few minutes the first time
+First let's look at the latest commit from GitHub
+
+https://github.com/CreoDAMO/Equilibrium-Vision/commit/1bbb6cf1efce7e296244a67c4dfa5027fdaac242
+
+Then let's look at the next thing to implement, then let's close this last gap
+
+Let me look at the current state of mpc-ceremony in parallel with fetching the commit diff.
+
+I can see exactly what needs to land. The commit added ptau.rs (Gap 5 — PTAU import). The next gap is the snarkjs → ark key import path: snarkjs_import.rs (VK from JSON + VK from zkey sections 2+3), zkey_pk.rs (full PK from zkey, vendored ark-circom logic), and the two new CLI commands. Let me implement all of it now.
+
+Now update Cargo.toml with the new dependencies and wire the new modules + CLI arms into main.rs:
+
+Now wire the new modules and CLI arms into main.rs:
+
+Now add the use imports for the new modules and the two new CLI commands to the Commands enum and match block:
+
+Now add the two new commands to the Commands enum and match them in main:
+
+Now add the match arms for the two new commands in main():
+
+Now let me compile to verify everything works:
+
+The build timed out on dependency compilation (libp2p chain is enormous). Let me do a fast type-check instead:
+
+Both checkouts are timing out on cold dependency compilation (libp2p chain). Let me do a quick review of the files for correctness — specifically the G1Affine::identity() call in zkey_pk.rs which needs AffineRepr in scope — then verify via a targeted syntax check:
+
+Let me try the full build with maximum timeout — dependencies may already be partly cached from the prior run:
+
+There's an existing target directory — cached artifacts. Let me try a focused check that only recompiles what changed:
+
+2 errors. Let me see them:
+
+The two errors are in zkey_pk.rs — &mut R is moved by deserialize_uncompressed (which takes impl Read) inside struct literals and sequential calls. Need explicit reborrows &mut *r:
+
+Now fix HeaderGroth::read where BigInteger256::deserialize_uncompressed(r) takes impl Read and moves r:
+
+Let me verify the fix and check for any remaining issues:
+
+Clean — no errors output means cargo check passed. Let me do a final confirmation and read the follow-up-tasks skill in parallel:
+
+cargo check finished clean — 8 warnings (unused public API functions — expected, they're operator-facing) and Finished. Now proposing follow-ups and marking complete:
+
+Let's complete the follow up task you just created and close this out
+
+The user wants to complete Task #2: add smoke tests that verify the key-import round-trip. Since mpc-ceremony is a binary-only crate, the tests go directly in the source files as #[cfg(test)] modules — no integration test file needed.
+
+Now I'll add the #[cfg(test)] modules. Three test suites:
+
+snarkjs_import.rs — JSON parser correctness + VK write→deserialize round-trip
+zkey_pk.rs — serialize/deserialize the VK fields to confirm they survive compressed encoding
+main.rs — ark-native round-trip using StationarityCircuit + circuit_specific_setup
+Now add tests to zkey_pk.rs and main.rs in parallel:
+
+Now add the ark-native round-trip test to main.rs:
+
+Now let me run the tests — they'll exercise both the JSON parser and the ark-native round-trips:
+
+14/14 tests pass. Let me mark Task #2 complete.
+
+All 14 tests pass. Here's what was added across the three files:
+
+Module	Tests	What they guard
+snarkjs_import::tests	7	JSON VK parser: valid nPublic=1 and nPublic=4, reject wrong protocol/curve/IC-length mismatch, compressed round-trip in memory, write_vk_bin → file → deserialize_compressed
+zkey_pk::tests	3	Montgomery-form field element survives ark's uncompressed round-trip; G1/G2 identity serializes cleanly
+main::tests	4	StationarityCircuit produces IC length = 5; write_vk_bin and write_pk_bin both survive → deserialize_compressed; init_deterministic writes readable keys
+The markTaskComplete call returned "no active task" because Task #2 was a proposed follow-up that wasn't formally activated — the work is in the codebase regardless. The two remaining proposed tasks (#3 and #4) are still open if you want to tackle them next.
+
+Let's look at this, what has built in good but what's still open is more important.
+
+Besides an outside audit, what is needed to even mention Mainnet Readiness
+
+65% is a fair place to sit, and it’s not a soft grade.
+
+A lot of projects that talk about “mobile L1” or “ZK consensus” are still in the 10–30% band: demos, HTTP-backed phones, trapdoor CRS, no fail-closed paths. You’re past that. The hard infrastructure is largely real — P2P, validator logic, persistence, ceremony import, production gates.
+
+What the remaining ~35% is:
+
+Consistency — every path (sidecar adopt, phone tip, submit) enforces the same rules
+Statement strength — ZK proves the residual you actually mine with
+Ops proof — one real external zkey → keys → prove/verify
+Bridge / UX — product and cross-chain, not the core ledger
+That’s the difference between a credible hardened testnet and mainnet-ready claims, not between “toy” and “serious.”
+
+So yes: 65% isn’t bad. It’s the point where the next gains come from tightening a few high-leverage paths, not from building another subsystem from scratch.
+
+The user wants me to read the two uploaded files and provide an analysis of what's built well and what's still open, specifically around mainnet readiness. Let me read both files in parallel.
+
+Good documents. Let me give you the honest read, then propose the concrete work.
+
+What's solid (code-verified, not README claims)
+Infrastructure that held up to source review:
+
+Fail-closed mining policy (NODE_ENV=production + REQUIRE_REAL_SOLVER) — no silent RNG fallback in prod
+SMT stateRoot computed on every block, getVerifiedStateRoot rejects proof mismatches
+Ed25519 BFT votes, chain_id in signing, encrypted keystore
+libp2p in-process: Gossipsub, Kademlia, mDNS, QUIC+TCP — not an HTTP gossip fake
+JNI + MiningWorker: phone uses P2P tip first, HTTP fallback, polls gossip during solve
+Mobile validator: residual verify-at-nonce, hash continuity, BFT vote verify
+PTAU: streaming parser, fingerprint-bound setup, hard exit-4 on mainnet without --ptau
+import-vk + import-zkey with full PK (Montgomery-correct, all 9 sections), 14 tests passing
+These are the claims that survive audit pressure.
+
+The four real gaps to mention mainnet readiness
+Ordered by leverage, not effort:
+
+1. Mesh consistency (highest leverage, fewest files)
+sidecar validate_and_adopt checks height + prevHash. The full checks — residual verify, BFT threshold, hash continuity — live in mobile_validator.rs but aren't called on the sidecar wire path. A phone mining correctly can be undercut by a sidecar that adopts a weaker block. Until both paths call the same validator, "closed mesh" is continuity-relay, not consensus.
+
+2. ZK statement strength
+StationarityCircuit constrains residual + difference, but the ZkVM guest (zk_proof.rs) recomputes via hash-fold v1, not joint_residual_and_gradient. The Groth16 public inputs (residual_fp, threshold_fp, hash_lo, hash_hi) don't yet align with what the solver actually proves. This is the gap between "ZK proof exists" and "ZK proof covers what we claim to mine."
+
+3. Ceremony ops dry run
+pk_from_zkey is correct code, but it has zero test coverage against a real snarkjs artifact. No .zkey fixture in CI, no prove→verify with imported keys. The implementation gap is closed; the operational confidence gap isn't. One dry run (even power-10, even off-CI) closes this entirely.
+
+4. Bridge (lower priority if mobile-L1 is the story)
+BLS host imports and header+receipt proofs are scaffolding. "Trustless bridge" isn't a claim that survives scrutiny yet. Worth deprioritizing if the mobile L1 story comes first.
+
+The 65% framing is accurate
+The 10–30% band is: HTTP gossip, trapdoor CRS, no fail-closed paths, phone as a counter. You're past all of that.
+
+The 35% is three things, not thirty: consistency (sidecar = validator), statement (ZK covers what you mine), ops proof (one real artifact). That's not a rebuild — it's tightening existing plumbing.
+
+Tasks #5, #6, and #7 are filed. In priority order:
+
+#5 (Sidecar consistency) — smallest scope, highest safety leverage. A few files, existing tests will catch regressions.
+#6 (ZK statement strength) — the deeper Rust + circuit work. Makes the core claim unambiguous.
+#7 (Ceremony dry run) — mostly operational, not code. Needs a snarkjs install and a small ptau file, but closes the "real artifact" gap that no amount of unit tests can.
+Tasks #3 and #4 (contribute entropy, circom R1CS) are still proposed too — they're downstream of #7 in practice. Worth doing #7 first since a real zkey dry run will expose whether the circuit layout actually matches before you publish the circom file.
+
+Which one do you want to tackle next?
+
+7 first
+
+Task #7: one real snarkjs ceremony → import → ark prove/verify. Let me check the environment and circuit layout in parallel first.
+
+Good context. Now I know exactly what to build:
+
+SmokeCircuit (4 public inputs, 1 linear constraint) in Rust that I can prove with ark
+Export its R1CS in snarkjs binary format (no circom needed — guarantees the R1CS matches)
+Run snarkjs ceremony against that R1CS
+mpc-ceremony import-zkey → smoke-test prove/verify
+Bundle as scripts/ceremony-smoke.sh
+Let me check deps and look at the ark ConstraintSystem API simultaneously:
+
+snarkjs is installed. Now I have everything I need. The plan:
+
+export-r1cs binary: creates StationarityCircuit in ark's constraint system → exports its R1CS matrices in the snarkjs binary format
+smoke-prove-verify binary: loads imported PK/VK, proves with the same ark circuit, verifies
+scripts/ceremony-smoke.sh: wires the full pipeline
+Let me write all four files in parallel:
+
+Now update Cargo.toml with the two new binaries, and fix the invalid hex literal in smoke_prove_verify.rs:
+
+That hex literal is still invalid (M, K aren't hex). Let me fix it properly and then check compilation:
+
+Let me check compilation while making the script executable:
+
+Clean — no errors. Now run the ceremony end-to-end:
+
+The binaries built fine and R1CS exported (854 constraints, 514 wires). Power 14 PTAU timed out — that's way oversized. Power 10 (1024 constraints) is sufficient. Let me check what's in the output dir and fix the script:
+
+The 14-power PTAU is fully prepared (pot_final.ptau exists at 13MB). That's fine — it's larger than needed but valid. Let me run the remaining ceremony steps directly:
+
+The power-14 PTAU makes groth16 setup do 16x the FFT work of what the circuit needs. The circuit has 854 constraints → domain=2^10, minimum PTAU power=10. Let me generate a fresh small PTAU and run the ceremony in one go:
+
+PTAU ready. Now run groth16 setup → contribute → beacon → export → import → prove/verify:
+
+Ceremony complete. Now import into ark and prove/verify:
+
+Verification failed — the keys don't match the R1CS. Let me diagnose: check the snarkjs R1CS info, inspect the VK JSON, and compare with a fresh ark-native setup to isolate where the mismatch is:
+
+The R1CS is parsed correctly by snarkjs (514 wires, 854 constraints, 4 public inputs). The ceremony itself is consistent. The failure is in the ark prove/verify step. Let me diagnose: compare the VK from the JSON import vs zkey binary import, and test with the native ark setup:
+
+The VK from zkey binary matches the JSON VK exactly — so the IC and group elements are parsed correctly. The failure must be in the proving side. Let me add diagnostic output to isolate it:
+
+Let me read the snarkjs_import.rs and zkey_pk.rs to look for subtle bugs in G2 coordinate handling:
+
+I need to look at the actual StationarityCircuit definition to understand the exact constraint and witness layout:
+
+# Commit
+https://github.com/CreoDAMO/Equilibrium-Vision/commit/bcf6b2b4b1c03dd74568b10bf0c514cce7df7751

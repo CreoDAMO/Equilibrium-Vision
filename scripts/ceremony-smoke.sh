@@ -49,12 +49,14 @@ log "Exporting StationarityCircuit R1CS"
 ok "R1CS exported → $OUT_DIR/stationarity.r1cs"
 
 # ── Step 3: Powers of Tau ─────────────────────────────────────────────────────
+# StationarityCircuit has ~854 constraints → domain 2^10 = 1024 is sufficient.
+# Power 10 generates a ~2MB PTAU (vs ~13MB for power 14), making the full
+# ceremony run in ~30 s instead of several minutes — suitable for CI.
 if [[ "$SKIP_PTAU" == "--skip-ptau" && -f "$OUT_DIR/pot_final.ptau" ]]; then
     log "Skipping PTAU generation (--skip-ptau)"
 else
-    log "Generating Powers of Tau (power=14, ~16k constraints max)"
-    # Power 14 supports up to 2^14 = 16384 constraints; StationarityCircuit << that
-    snarkjs powersoftau new bn128 14 "$OUT_DIR/pot_0000.ptau" -v
+    log "Generating Powers of Tau (power=10, ~1024 constraints max)"
+    snarkjs powersoftau new bn128 10 "$OUT_DIR/pot_0000.ptau" -v
     snarkjs powersoftau contribute "$OUT_DIR/pot_0000.ptau" "$OUT_DIR/pot_0001.ptau" \
         --name="ceremony-smoke-contributor" -v \
         -e="equilibrium ceremony smoke test entropy $(date +%s)"

@@ -69,9 +69,18 @@ fn write_r1cs(output: &Path) -> Result<(), String> {
     let mut prime32 = [0u8; 32];
     prime32[..prime_vec.len().min(32)].copy_from_slice(&prime_vec[..prime_vec.len().min(32)]);
 
-    // ── Helper: field element → 32-byte LE ───────────────────────────────────
+    // ── Helper: field element → 32-byte LE (Montgomery form) ─────────────────
+    //
+    // snarkjs R1CS binary stores constraint coefficients in **Montgomery form**
+    // (via ffjavascript's `Fr.toRprLE`).  ark-ff stores Fr internally as
+    // `v * R mod p` (Montgomery form) in the `.0` limbs.  Calling
+    // `into_bigint()` performs the Montgomery reduction to canonical form —
+    // that is the WRONG representation for snarkjs.  Read the raw limbs with
+    // `f.0.to_bytes_le()` instead so the ceremony keys are built from the same
+    // constraint system that ark uses during proving.
     let fe_bytes = |f: &Fr| -> [u8; 32] {
-        let v = f.into_bigint().to_bytes_le();
+        use ark_ff::BigInteger;
+        let v = f.0.to_bytes_le();
         let mut out = [0u8; 32];
         out[..v.len().min(32)].copy_from_slice(&v[..v.len().min(32)]);
         out

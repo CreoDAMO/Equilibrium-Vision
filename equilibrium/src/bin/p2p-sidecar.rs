@@ -47,6 +47,10 @@ use std::io::{BufRead, Write};
 use std::str::FromStr;
 use std::time::Duration;
 
+use equilibrium_core::mobile_validator::{
+    BftVote, ValidatorInfo, check_bft_quorum, parse_bft_votes_from_block_json,
+};
+
 use libp2p::{
     core::{muxing::StreamMuxerBox, transport::OrTransport},
     gossipsub, identify, kad, mdns, noise, quic, request_response,
@@ -165,6 +169,8 @@ struct Command {
     #[serde(rename = "fromPeer")]
     #[allow(dead_code)]
     from_peer:  Option<bool>,
+    /// Validator set for set_validators: [{address, pubkey (hex), stake}].
+    validators: Option<Value>,
 }
 
 // ── Pending response maps ──────────────────────────────────────────────────────
@@ -354,6 +360,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Local chain tip (height / hash / difficulty) for lightweight chain-continuity
     // validation in `validate_and_adopt`.
     let mut local_tip:    Option<LocalTip>   = None;
+    // Validator set loaded via `set_validators` command.  Used by
+    // `validate_and_adopt` for BFT quorum checks on peer-gossipped blocks.
+    let mut validators:   HashMap<String, ValidatorInfo> = HashMap::new();
 
     // ── Event loop ─────────────────────────────────────────────────────────────
     loop {
@@ -369,6 +378,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut gossip_queue,
                     &mut body_queue,
                     &mut local_tip,
+                    &mut validators,
                 );
                 emit(&stdout, &resp);
             }
@@ -649,6 +659,7 @@ fn handle_command(
     gossip_queue:  &mut VecDeque<String>,
     body_queue:    &mut VecDeque<Value>,
     local_tip:     &mut Option<LocalTip>,
+    validators:    &mut HashMap<String, ValidatorInfo>,
 ) -> Value {
     let cmd: Command = match serde_json::from_str(line) {
         Ok(c)  => c,
@@ -750,9 +761,50 @@ fn handle_command(
             }
         }
 
+        // Load a validator set so validate_and_adopt can check BFT quorum.
+        //
+        // Command: {"id":"…","method":"set_validators","validators":[
+        //   {"address":"…","pubkey":"<64-hex-char ed25519 public key>","stake":1000}
+        // ]}
+        //
+        // Call this once on startup (or whenever the on-chain validator set
+        // changes) before adopting peer blocks.  An empty list clears the set.
+        "set_validators" => {
+            validators.clear();
+            if let Some(list) = cmd.validators.and_then(|v| v.as_array().cloned()) {
+                for entry in list {
+                    let addr = entry.get("address")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let pubkey_hex = entry.get("pubkey")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let stake = entry.get("stake")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    if addr.is_empty() || pubkey_hex.len() != 64 { continue; }
+                    let mut pk = [0u8; 32];
+                    let mut ok = true;
+                    for i in 0..32 {
+                        match u8::from_str_radix(&pubkey_hex[i * 2..i * 2 + 2], 16) {
+                            Ok(b) => pk[i] = b,
+                            Err(_) => { ok = false; break; }
+                        }
+                    }
+                    if ok {
+                        validators.insert(addr, ValidatorInfo { pubkey: pk, bonded_stake: stake });
+                    }
+                }
+            }
+            eprintln!("[p2p-sidecar] validator set updated: {} validators", validators.len());
+            ok_resp(id)
+        }
+
         // Parse a block body, validate chain-continuity (height == tip+1,
-        // prevHash matches), and on success advance local tip — no HTTP required.
-        // Returns: `{"ok":true,"accepted":true|false}`.
+        // prevHash matches) AND BFT vote quorum (gated by REQUIRE_BFT_VOTES or
+        // presence of a loaded validator set + votes), then advance local tip.
+        // Returns: `{"ok":true,"accepted":true|false,"reason":"…"}`.
         "validate_and_adopt" => {
             // Accept body as JSON object or as a JSON-encoded string.
             let body_val = match cmd.body {
@@ -778,30 +830,67 @@ fn handle_command(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(1);
 
-            // Chain-continuity check: height must be tip+1 and prevHash must match.
-            // Full residual / ZK validation lives in mobile_validator.rs.
-            let accepted = if block_hash.is_empty() {
+            // ── Step 1: Chain-continuity check ─────────────────────────────────
+            let continuity_ok = if block_hash.is_empty() {
                 false
             } else {
                 match local_tip.as_ref() {
                     Some(tip) => height == tip.height + 1 && prev_hash == tip.hash,
-                    // No local tip yet — accept block at height 1 unconditionally
-                    // (the first block after genesis; real residual check is elsewhere).
+                    // No local tip yet — accept block at height 1 unconditionally.
                     None      => height == 1,
                 }
             };
 
-            if accepted {
-                *local_tip = Some(LocalTip {
-                    height,
-                    hash: block_hash,
-                    difficulty,
+            if !continuity_ok {
+                return serde_json::json!({
+                    "id": id, "ok": true, "accepted": false,
+                    "reason": "continuity: height/prevHash mismatch"
                 });
-                // Also buffer so subsequent poll_block_body calls can serve it.
-                body_queue.push_back(body_val);
             }
 
-            serde_json::json!({ "id": id, "ok": true, "accepted": accepted })
+            // ── Step 2: BFT vote quorum check ──────────────────────────────────
+            //
+            // Enforcement rules (mirrors mobile_validator.rs validate()):
+            //   REQUIRE_BFT_VOTES=true → always reject on quorum failure
+            //   unset / false          → enforce only when validator set is
+            //                            loaded AND votes are present
+            let require_bft = std::env::var("REQUIRE_BFT_VOTES")
+                .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+
+            let body_json = serde_json::to_string(&body_val).unwrap_or_default();
+            let votes = parse_bft_votes_from_block_json(&body_json);
+
+            let should_check_bft = require_bft
+                || (!validators.is_empty() && !votes.is_empty());
+
+            if should_check_bft {
+                match check_bft_quorum(validators, &votes, &block_hash, height) {
+                    Ok(()) => {
+                        eprintln!(
+                            "[p2p-sidecar] BFT quorum OK for block h={height} hash={block_hash:.8}"
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("[p2p-sidecar] BFT quorum FAIL h={height}: {e}");
+                        return serde_json::json!({
+                            "id": id, "ok": true, "accepted": false,
+                            "reason": format!("bft: {e}")
+                        });
+                    }
+                }
+            }
+
+            // ── Step 3: Adopt ──────────────────────────────────────────────────
+            *local_tip = Some(LocalTip {
+                height,
+                hash: block_hash,
+                difficulty,
+            });
+            // Buffer so subsequent poll_block_body calls can serve it.
+            body_queue.push_back(body_val);
+
+            serde_json::json!({ "id": id, "ok": true, "accepted": true })
         }
 
         "peers" => {

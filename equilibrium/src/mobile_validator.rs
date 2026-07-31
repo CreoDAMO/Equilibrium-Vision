@@ -640,6 +640,57 @@ pub fn parse_bft_votes_from_block_json(json: &str) -> Vec<BftVote> {
     out
 }
 
+// ── Shared residual hash-fold (ZK v2 alignment) ───────────────────────────────
+//
+// This is the same deterministic hash-fold used by the RISC Zero guest
+// (`methods/guest/src/main.rs :: residual_at_nonce`).  Extracting it here
+// makes it a shared, pure-integer function that:
+//
+//   1. The guest calls to compute the on-chain residual proxy.
+//   2. The sidecar can call when validating peer blocks from `validate_and_adopt`
+//      to check that the claimed `residual_fp` is consistent with the block header.
+//   3. The chain validator can call to cross-check the Groth16 public input.
+//
+// **v2 alignment rule**: when a peer block carries a Groth16 or ZkVM proof,
+// its `residual_fp` public input must equal `residual_fp_from_header(...)` for
+// the same header fields, or the block is rejected.
+//
+// **Upgrade path to v3**: replace this hash-fold with a pure-integer extraction
+// of `StationarySolver::joint_residual_and_gradient` once that function is
+// factored into a `no_std`-compatible `residual_core` crate.  Bump
+// `STATIONARITY_GUEST_ID` when the guest switches to v3.
+pub fn residual_fp_from_header(
+    prev_hash:       &[u8; 32],
+    merkle_root:     &[u8; 32],
+    timestamp:       u64,
+    nonce:           u64,
+    difficulty:      u64,
+    recursion_depth: u32,
+    cumulative_work: u64,
+    height:          u64,
+) -> u64 {
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(prev_hash);
+    h.update(merkle_root);
+    h.update(timestamp.to_le_bytes());
+    h.update(nonce.to_le_bytes());
+    h.update(difficulty.to_le_bytes());
+    h.update(recursion_depth.to_le_bytes());
+    h.update(cumulative_work.to_le_bytes());
+    h.update(height.to_le_bytes());
+    let digest = h.finalize();
+
+    // Fold 32 bytes into a u64 via XOR of 8-byte chunks (same as guest v1).
+    let mut acc = 0u64;
+    for chunk in digest.chunks(8) {
+        let mut buf = [0u8; 8];
+        buf[..chunk.len()].copy_from_slice(chunk);
+        acc ^= u64::from_le_bytes(buf);
+    }
+    acc
+}
+
 // ── Battery / thermal deferral stub ───────────────────────────────────────────
 
 pub fn should_validate_now() -> bool {
@@ -654,6 +705,46 @@ pub fn should_validate_now() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── residual_fp_from_header (ZK v2 shared function) ───────────────────────
+
+    #[test]
+    fn residual_fp_from_header_is_deterministic() {
+        let ph = [0xabu8; 32];
+        let mr = [0x12u8; 32];
+        let r1 = residual_fp_from_header(&ph, &mr, 1_700_000_000, 42, 1000, 2, 999, 7);
+        let r2 = residual_fp_from_header(&ph, &mr, 1_700_000_000, 42, 1000, 2, 999, 7);
+        assert_eq!(r1, r2, "same inputs must produce same hash-fold residual");
+    }
+
+    #[test]
+    fn residual_fp_from_header_differs_on_nonce() {
+        let ph = [0xabu8; 32];
+        let mr = [0x12u8; 32];
+        let r1 = residual_fp_from_header(&ph, &mr, 1_700_000_000, 42, 1000, 2, 999, 7);
+        let r2 = residual_fp_from_header(&ph, &mr, 1_700_000_000, 43, 1000, 2, 999, 7);
+        assert_ne!(r1, r2, "different nonces must produce different residuals");
+    }
+
+    #[test]
+    fn residual_fp_from_header_differs_on_prev_hash() {
+        let ph1 = [0xabu8; 32];
+        let ph2 = [0xcdu8; 32];
+        let mr  = [0x12u8; 32];
+        let r1 = residual_fp_from_header(&ph1, &mr, 1_700_000_000, 42, 1000, 2, 999, 7);
+        let r2 = residual_fp_from_header(&ph2, &mr, 1_700_000_000, 42, 1000, 2, 999, 7);
+        assert_ne!(r1, r2, "different prev_hashes must produce different residuals");
+    }
+
+    #[test]
+    fn residual_fp_from_header_nonzero_for_nonzero_input() {
+        // A concrete sanity check: the hash-fold should produce a nonzero value
+        // for a reasonable input (probability 2^{-64} ≈ 0 that it's zero).
+        let r = residual_fp_from_header(
+            &[1u8; 32], &[2u8; 32], 1_700_000_000, 1, 500, 0, 0, 1,
+        );
+        assert_ne!(r, 0, "hash-fold residual should be nonzero for non-trivial input");
+    }
 
     #[test]
     fn merkle_root_empty() {
