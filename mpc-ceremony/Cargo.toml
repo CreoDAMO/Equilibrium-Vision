@@ -7,6 +7,14 @@ edition = "2021"
 name = "mpc-ceremony"
 path = "src/main.rs"
 
+[[bin]]
+name = "export-r1cs"
+path = "src/bin/export_r1cs.rs"
+
+[[bin]]
+name = "smoke-prove-verify"
+path = "src/bin/smoke_prove_verify.rs"
+
 [dependencies]
 equilibrium = { path = "../equilibrium", package = "equilibrium-core" }
 ark-bn254 = "0.4"
