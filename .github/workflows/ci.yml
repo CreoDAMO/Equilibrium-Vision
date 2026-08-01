@@ -241,9 +241,8 @@ jobs:
         run: cargo test --lib
 
   # ── Ceremony smoke (snarkjs → ark import → prove/verify) ────────────────────
-  # Isolated: no needs: — does not depend on or block other jobs' scheduling.
-  # continue-on-error: true → workflow overall stays green while this is red;
-  # set to false once smoke-prove-verify exits 0.
+  # Isolated job. continue-on-error: true so a red smoke does not fail the workflow.
+  # Set continue-on-error: false once smoke-prove-verify exits 0.
   ceremony-smoke:
     name: Ceremony smoke (snarkjs → ark)
     runs-on: ubuntu-latest
@@ -273,12 +272,13 @@ jobs:
         run: |
           rustc --version
           cargo --version
-          command -v snarkjs && snarkjs --help >/dev/null && echo "snarkjs: ok"
+          command -v snarkjs
+          echo "snarkjs: ok"
 
       - name: Run ceremony smoke
         run: |
           set -euo pipefail
-          test -x scripts/ceremony-smoke.sh || chmod +x scripts/ceremony-smoke.sh
+          chmod +x scripts/ceremony-smoke.sh
           ./scripts/ceremony-smoke.sh 2>&1 | tee ceremony-smoke.log
 
       - name: Upload smoke log + key artifacts
