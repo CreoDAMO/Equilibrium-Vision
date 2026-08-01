@@ -1,7 +1,15 @@
 //! Circom/snarkjs-compatible R1CS→QAP reduction (ark-circom style).
 //!
 //! Not “Libsnark minus public-input padding.”
-//! Ceremony path: import zkey → prove with CircomReduction → verify.
+//!
+//! - Pad public inputs into A (same as Libsnark / ark-circom)
+//! - C := A·B on constraint slots
+//! - 2n-domain root-of-unity coset, FFT, AB−C evaluations
+//! - No /Z, no final coset IFFT
+//! - h_query_scalars: odd coefficients (setup only; ceremony uses zkey H)
+//!
+//! Ceremony: import zkey → prove with CircomReduction → verify.
+//! Do not use this type for ark setup+prove self-test of “circom consistency.”
 
 use ark_ff::{Field, One, PrimeField, Zero};
 use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};
@@ -37,12 +45,11 @@ impl R1CSToQAP for CircomReduction {
             b[i] = evaluate_constraint(&matrices.b[i], full_assignment);
         }
 
-        // Public-input padding (same as Libsnark / ark-circom)
+        // Public-input padding (Libsnark / ark-circom)
         let start = num_constraints;
         let end = start + num_inputs;
         a[start..end].copy_from_slice(&full_assignment[..num_inputs]);
 
-        // C := A·B on constraint slots (satisfied ⇒ matches R1CS C)
         let mut c = vec![zero; domain_size];
         for i in 0..num_constraints {
             c[i] = a[i] * b[i];
@@ -52,7 +59,6 @@ impl R1CSToQAP for CircomReduction {
         domain.ifft_in_place(&mut b);
         domain.ifft_in_place(&mut c);
 
-        // Coset by ω_{2n}
         let root_of_unity = {
             let domain_double = D::new(2 * domain_size)
                 .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
