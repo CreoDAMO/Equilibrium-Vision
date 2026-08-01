@@ -1,0 +1,109 @@
+Confirmed against both files. The self-test failure is expected from how `CircomReduction` is written.
+
+---
+
+## Root cause (exact)
+
+In both `circom_reduction.rs` and the inline copy in `smoke_prove_verify.rs`:
+
+| Method | Implementation | Public-input padding |
+|--------|----------------|----------------------|
+| `instance_map_with_evaluation` | **Delegates to `LibsnarkReduction`** | **Yes** (Libsnark pads A) |
+| `h_query_scalars` | **Delegates to `LibsnarkReduction`** | Libsnark H form |
+| `witness_map_from_matrices` | Custom, padding **omitted** | **No** |
+
+Self-test does:
+
+```text
+circuit_specific_setup::<CircomReduction>   // uses instance_map + h_query → Libsnark
+  → create_random_proof_with_reduction      // uses witness_map → no pad
+  → verify                                  // FAIL
+```
+
+Setup builds a QAP that **includes** public-input padding in A. Prove builds H **without** that padding. Algebraically different A ⇒ different H ⇒ `verify == false`.
+
+That is exactly CI’s:
+
+```text
+self-test FAIL — CircomReduction cannot verify its own proofs
+```
+
+Comments that say “identical to Libsnark except padding removed” are only true for **witness_map**. Setup still uses full Libsnark. Those two paths must agree.
+
+---
+
+## Important design note
+
+ark-circom’s real `CircomReduction` also delegates `instance_map` to Libsnark, but its **witness map and `h_query_scalars` are different** (2× domain, odd coefficients). It is **not** “Libsnark minus four lines of padding.”
+
+Also, ark-circom almost never runs `circuit_specific_setup::<CircomReduction>`. It:
+
+1. Loads PK from a **snarkjs zkey**
+2. Proves with `CircomReduction`
+3. Verifies against that VK
+
+Your self-test is testing a path (ark setup + Circom prove) that the circom toolchain does not use. Useful for catching inconsistency; it will stay red until instance/witness/H all match.
+
+---
+
+## What to change
+
+### Fix A — Self-test only (quick, honest)
+
+Prove the **circuit** with default Libsnark; do **not** claim Circom self-consistency via ark setup:
+
+```rust
+// Self-test: ark native only (must PASS)
+let (fresh_pk, fresh_vk) =
+    Groth16::<Bn254>::circuit_specific_setup(circuit_for_setup, &mut rng2)?;
+let fresh_proof = Groth16::<Bn254>::prove(&fresh_pk, circuit_for_prove, &mut rng3)?;
+let self_valid = Groth16::<Bn254>::verify_with_processed_vk(&fresh_pvk, &pub_in, &fresh_proof)?;
+```
+
+Ceremony path still:
+
+```rust
+Groth16::<Bn254, CircomReduction>::create_random_proof_with_reduction(circuit, &pk, &mut rng)
+```
+
+against **imported** keys only.
+
+### Fix B — Make CircomReduction actually consistent (required for snarkjs)
+
+Do **not** keep “Libsnark instance + no-pad witness.”
+
+Prefer **vendoring ark-circom’s `CircomReduction`** for ark-groth16 0.4:
+
+- Custom `witness_map_from_matrices` (2× domain / odd coeffs as in upstream)
+- Matching `h_query_scalars`
+- `instance_map` as upstream does
+
+Then self-test with `circuit_specific_setup::<CircomReduction>` only makes sense if setup and prove both use that same type **and** the reduction is self-consistent. For ceremony, prove against zkey-imported PK is the real goal.
+
+### Fix C — Wrong approach to avoid
+
+```rust
+// Do NOT "fix" by adding padding back to witness_map while claiming circom
+// That just becomes LibsnarkReduction under another name.
+```
+
+---
+
+## Doc bugs in `smoke_prove_verify.rs`
+
+Header still says CircomReduction uses “double-domain coset (root of unity of 2n)” — the code uses `F::GENERATOR` coset like Libsnark. Comments and code disagree; update comments after you pick Fix A or B.
+
+---
+
+## Recommended order
+
+1. **Self-test → default `Groth16::<Bn254>` only** (confirm circuit OK; CI moves past self-test).  
+2. **Replace hand-rolled CircomReduction with ark-circom-compatible implementation** (not “minus padding”).  
+3. **Ceremony prove** with that reduction against imported PK → expect verify true.  
+4. Optionally re-add a Circom self-test **only after** the reduction is self-consistent.
+
+---
+
+## Bottom line
+
+Current code cannot pass self-test by construction: setup is Libsnark, prove is no-pad. CI is reporting that correctly. Fix the reduction (or the self-test scope), not the workflow YAML.

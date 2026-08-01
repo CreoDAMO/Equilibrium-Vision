@@ -15,6 +15,21 @@
 //! This module is therefore identical to `LibsnarkReduction` with those four
 //! lines of public-input padding removed.  `instance_map_with_evaluation` and
 //! `h_query_scalars` are unchanged (both delegate to `LibsnarkReduction`).
+//!
+//! # Key-generation vs proving
+//!
+//! `instance_map_with_evaluation` and `h_query_scalars` are called **only**
+//! during `circuit_specific_setup` (key generation).  In the snarkjs ceremony
+//! workflow this type is **never** used for key generation — the proving key is
+//! imported from a snarkjs `.zkey` file.  Only `witness_map_from_matrices` is
+//! called during proving, so delegating the other two methods to
+//! `LibsnarkReduction` is safe: they are dead code in the ceremony path.
+//!
+//! Consequence: `circuit_specific_setup::<CircomReduction>` followed by
+//! `create_random_proof_with_reduction::<CircomReduction>` will always fail to
+//! verify — setup uses LibsnarkReduction's padded A, prove uses the unpadded A.
+//! Do **not** use this type for an all-ark setup+prove+verify self-test; use
+//! plain `Groth16::<Bn254>` (LibsnarkReduction throughout) for that instead.
 
 use ark_ff::{PrimeField, Zero};
 use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};

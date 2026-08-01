@@ -1,0 +1,94 @@
+CI isolated the real bug. Ceremony import is not the failure mode anymore.
+
+---
+
+## What the log says
+
+| Step | Result |
+|------|--------|
+| Export R1CS / snarkjs setup / import-zkey | **OK** (reached prove) |
+| PK/VK load | **OK** — `IC.len=5`, `h_query.len=1024` |
+| Domain | **OK** — 854 constraints + 5 inputs → domain 1024 |
+| **Self-test: CircomReduction setup + prove + verify** | **FAIL** |
+
+So:
+
+```text
+CircomReduction cannot verify its own proofs
+```
+
+That means the hand-rolled reduction is **internally wrong**. It is not:
+
+- stale zkeys  
+- bad R1CS magic  
+- domain mismatch  
+- CI/snarkjs install  
+
+Until self-test passes, the snarkjs ceremony path will keep failing too.
+
+---
+
+## Why self-test fails
+
+Typical broken pattern (matches your earlier debugging):
+
+| Method | Broken behavior |
+|--------|-----------------|
+| `instance_map_with_evaluation` | Delegates to **LibsnarkReduction** (public-input padding in A) |
+| `witness_map_from_matrices` | Custom path **without** that padding / different coset or H form |
+
+Setup and prove must use the **same** QAP rules. Mixed conventions ⇒ `verify == false` even on fresh keys.
+
+---
+
+## What to do next (code, not more CI)
+
+### 1. Baseline (must pass)
+
+In `smoke_prove_verify` (or a unit test):
+
+```rust
+// Default ark path — NO CircomReduction
+let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng)?;
+let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng)?;
+assert!(Groth16::<Bn254>::verify(&vk, &public, &proof)?);
+```
+
+If this fails, the circuit is wrong. If it passes, only CircomReduction is wrong.
+
+### 2. Fix CircomReduction
+
+**Best option:** vendor ark-circom’s `CircomReduction` for ark-groth16 **0.4**, don’t hand-roll.
+
+**If you keep a custom type:**  
+- instance map and witness map must share **one** public-input rule  
+- either both Libsnark-style (with pad) or both circom-style (no pad)  
+- do **not** delegate only one half to Libsnark  
+
+Self-test for Circom must be:
+
+```text
+setup_with_reduction::<CircomReduction>
+  → prove_with_reduction::<CircomReduction>
+  → verify
+```
+
+Not Libsnark setup + Circom prove.
+
+### 3. Only then re-run ceremony smoke
+
+After self-test is green, full:
+
+```text
+export-r1cs → snarkjs → import-zkey → CircomReduction prove → verify
+```
+
+---
+
+## CI status
+
+Job did its job: log is clear, artifact path is fine. Leave `continue-on-error: true` until self-test passes so the rest of CI stays green.
+
+**Next code change:** fix `circom_reduction` (or remove the self-test gate and use default ark prove only for a temporary path — that won’t validate snarkjs keys). Prefer fixing the reduction.
+
+If you paste current `circom_reduction.rs` + the self-test block in `smoke_prove_verify.rs`, we can mark the exact inconsistent lines.
