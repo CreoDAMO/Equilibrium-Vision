@@ -27,6 +27,14 @@
 // (root of unity of 2n domain), matching snarkjs's witnesscalculator output.
 
 mod circom_reduction {
+    //! Circom-compatible R1CS→QAP reduction — see circom_reduction.rs for
+    //! the canonical version; this is the self-contained inline copy used by
+    //! the smoke binary so it compiles without a [lib] target.
+    //!
+    //! Identical to LibsnarkReduction except: public inputs are NOT copied
+    //! into A at positions [num_constraints..num_constraints+num_inputs].
+    //! That is the only thing snarkjs/circom does differently.
+
     use ark_ff::{PrimeField, Zero};
     use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};
     use ark_poly::EvaluationDomain;
@@ -49,66 +57,56 @@ mod circom_reduction {
             num_constraints: usize,
             full_assignment: &[F],
         ) -> Result<Vec<F>, SynthesisError> {
-            let zero = F::zero();
-
             let domain = D::new(num_constraints + num_inputs)
                 .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
             let domain_size = domain.size();
+            eprintln!("[circom_reduction] num_constraints={num_constraints} num_inputs={num_inputs} domain_size={domain_size}");
+            let zero = F::zero();
 
-            // Evaluate A and B linear combinations for every constraint.
+            // Evaluate A and B at constraint positions only.
+            // PUBLIC INPUTS ARE NOT PADDED — the only delta from LibsnarkReduction.
             let mut a = vec![zero; domain_size];
             let mut b = vec![zero; domain_size];
-
             for i in 0..num_constraints {
                 a[i] = evaluate_constraint(&matrices.a[i], full_assignment);
                 b[i] = evaluate_constraint(&matrices.b[i], full_assignment);
             }
 
-            // NOTE: snarkjs does NOT add public inputs at positions
-            // [num_constraints..num_constraints+num_inputs] — those stay zero.
-            // LibsnarkReduction does; CircomReduction must NOT.
-
-            // Pointwise product c = a·b (before polynomial ops).
-            let mut c = vec![zero; domain_size];
-            for i in 0..num_constraints {
-                c[i] = a[i] * b[i];
-            }
-
             domain.ifft_in_place(&mut a);
             domain.ifft_in_place(&mut b);
 
-            // Shift into the circom coset: multiply by successive powers of ω₂ₙ
-            // (first root of unity of the 2n-size domain).  This makes the h
-            // polynomial evaluation points match snarkjs's H-query Lagrange bases.
-            let root_of_unity = {
-                let double_domain = D::new(2 * domain_size)
-                    .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
-                double_domain.element(1)
-            };
-            D::distribute_powers_and_mul_by_const(&mut a, root_of_unity, F::one());
-            D::distribute_powers_and_mul_by_const(&mut b, root_of_unity, F::one());
-
-            domain.fft_in_place(&mut a);
-            domain.fft_in_place(&mut b);
+            // Coset {F::GENERATOR · ωⁱ} — same generator (5 for BN254) as snarkjs.
+            let coset_domain = domain.get_coset(F::GENERATOR).unwrap();
+            coset_domain.fft_in_place(&mut a);
+            coset_domain.fft_in_place(&mut b);
 
             let mut ab = domain.mul_polynomials_in_evaluation_domain(&a, &b);
             drop(a);
             drop(b);
 
-            // Same shift for c.
+            let mut c = vec![zero; domain_size];
+            for i in 0..num_constraints {
+                c[i] = evaluate_constraint(&matrices.c[i], full_assignment);
+            }
             domain.ifft_in_place(&mut c);
-            D::distribute_powers_and_mul_by_const(&mut c, root_of_unity, F::one());
-            domain.fft_in_place(&mut c);
+            coset_domain.fft_in_place(&mut c);
 
-            // h = ab - c  encodes  (A·B − C) / t(x)
+            // Divide by Z(generator) — constant over the coset.
+            let vanishing_polynomial_over_coset = domain
+                .evaluate_vanishing_polynomial(F::GENERATOR)
+                .inverse()
+                .unwrap();
             for (ab_i, c_i) in ab.iter_mut().zip(c.iter()) {
                 *ab_i -= c_i;
+                *ab_i *= vanishing_polynomial_over_coset;
             }
+
+            // IFFT → polynomial coefficients, matching monomial H-query in zkey.
+            coset_domain.ifft_in_place(&mut ab);
 
             Ok(ab)
         }
 
-        /// Only called during key generation — delegates to LibsnarkReduction.
         fn h_query_scalars<F: PrimeField, D: EvaluationDomain<F>>(
             max_power: usize,
             t: F,
@@ -167,7 +165,7 @@ fn main() {
         eprintln!("[smoke] FATAL: deserialize PK: {e}");
         std::process::exit(1);
     });
-    println!("[smoke] PK loaded  IC.len={}", pk.vk.gamma_abc_g1.len());
+    println!("[smoke] PK loaded  IC.len={}  h_query.len={}", pk.vk.gamma_abc_g1.len(), pk.h_query.len());
 
     println!("[smoke] loading VK from {vk_path}");
     let vk_bytes = fs::read(vk_path).unwrap_or_else(|e| {
@@ -189,6 +187,56 @@ fn main() {
             vk.gamma_abc_g1.len()
         );
         std::process::exit(1);
+    }
+
+    // ── Self-consistency: fresh ark keys via CircomReduction ─────────────────
+    // If this fails CircomReduction itself is broken, independent of snarkjs.
+    println!("[smoke] self-test: generating fresh ark keys with CircomReduction …");
+    {
+        let mut rng2 = ark_std::rand::rngs::StdRng::seed_from_u64(0xDEAD_BEEF_CAFE_BABEu64);
+        let circuit_for_setup = StationarityCircuit {
+            residual_fp:   Some(RESIDUAL_FP),
+            threshold_fp:  Some(THRESHOLD_FP),
+            block_hash_lo: Some(BLOCK_HASH_LO),
+            block_hash_hi: Some(BLOCK_HASH_HI),
+            difference:    Some(DIFFERENCE),
+        };
+        let (fresh_pk, fresh_vk) =
+            Groth16::<Bn254, CircomReduction>::circuit_specific_setup(circuit_for_setup, &mut rng2)
+                .expect("[smoke] self-test setup failed");
+        let fresh_pvk = prepare_verifying_key(&fresh_vk);
+
+        let circuit_for_prove = StationarityCircuit {
+            residual_fp:   Some(RESIDUAL_FP),
+            threshold_fp:  Some(THRESHOLD_FP),
+            block_hash_lo: Some(BLOCK_HASH_LO),
+            block_hash_hi: Some(BLOCK_HASH_HI),
+            difference:    Some(DIFFERENCE),
+        };
+        let mut rng3 = ark_std::rand::rngs::StdRng::seed_from_u64(0x1234_5678u64);
+        let fresh_proof =
+            Groth16::<Bn254, CircomReduction>::create_random_proof_with_reduction(
+                circuit_for_prove, &fresh_pk, &mut rng3,
+            )
+            .expect("[smoke] self-test prove failed");
+
+        let pub_in = vec![
+            Fr::from(RESIDUAL_FP),
+            Fr::from(THRESHOLD_FP),
+            Fr::from(BLOCK_HASH_LO),
+            Fr::from(BLOCK_HASH_HI),
+        ];
+        let self_valid = Groth16::<Bn254, CircomReduction>::verify_with_processed_vk(
+            &fresh_pvk, &pub_in, &fresh_proof,
+        )
+        .expect("[smoke] self-test verify error");
+
+        if self_valid {
+            println!("[smoke] self-test PASS — CircomReduction is internally consistent ✓");
+        } else {
+            eprintln!("[smoke] self-test FAIL — CircomReduction cannot verify its own proofs");
+            std::process::exit(1);
+        }
     }
 
     // ── Build circuit with valid witness ──────────────────────────────────────

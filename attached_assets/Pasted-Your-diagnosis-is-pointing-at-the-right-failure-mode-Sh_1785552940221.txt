@@ -1,0 +1,106 @@
+Your diagnosis is pointing at the right failure mode. Short version:
+
+**Import is probably fine. Default ark prove against a snarkjs zkey is not.**
+
+---
+
+## What’s going wrong
+
+| Piece | snarkjs / circom zkey | Default ark `Groth16::prove` |
+|--------|----------------------|------------------------------|
+| H / τ handling | Circom-style (Lagrange / 2× domain odd coeffs) | Libsnark monomial path |
+| Witness map | Matches that H layout | Expects the other layout |
+| Result | Keys deserialize, IC matches | **`verify` → false** |
+
+So “FAIL — verify returned false” after a successful `import-zkey` usually means **wrong QAP reduction on prove**, not a bad ceremony or bad R1CS magic bytes.
+
+Fixing only `export_r1cs` (sort terms, `nPrvIn`, etc.) helps validity of the `.r1cs` file. It will **not** by itself make smoke exit 0 against a snarkjs PK.
+
+---
+
+## What to change
+
+### 1. Prove with `CircomReduction` (required)
+
+```rust
+// smoke_prove_verify.rs
+use ark_groth16::Groth16;
+use mpc_ceremony::circom_reduction::CircomReduction; // or local mod
+
+let proof = Groth16::<Bn254, CircomReduction>::create_random_proof_with_reduction(
+    circuit,
+    &pk,
+    &mut rng,
+)
+.expect("prove");
+```
+
+If your ark-groth16 0.4 only exposes:
+
+```rust
+Groth16::<Bn254, CircomReduction>::prove(&pk, circuit, &mut rng)
+```
+
+use that — same idea: **QAP type param must be Circom, not default.**
+
+### 2. CircomReduction must match ark 0.4’s `R1CSToQAP`
+
+Critical behaviors (from ark-circom):
+
+- `instance_map_with_evaluation` → delegate to `LibsnarkReduction`
+- `witness_map_from_matrices` → AB−C on coset (2× root-of-unity trick), **return the vector that pairs with snarkjs H**
+- `h_query_scalars` → IFFT of powers, then **odd coefficients only** (`skip(1).step_by(2)`)
+
+You do **not** re-derive H query when proving with an imported zkey — section 9 of the zkey already holds the points. The reduction only has to produce a witness vector whose MSM against those points is correct.
+
+If your local `CircomReduction` returns coset **evaluations** where ark’s prover expects **coefficients** (or the reverse), verify stays false. Align the return of `witness_map_from_matrices` with whatever ark-groth16 0.4 multiplies by `pk.h_query` (inspect that crate’s prover once in the registry).
+
+### 3. Optional isolation test (snarkjs native)
+
+If snarkjs is only in `node_modules`:
+
+```bash
+npx snarkjs groth16 fullprove input.json circuit.wasm circuit_final.zkey proof.json public.json
+npx snarkjs groth16 verify verification_key.json public.json proof.json
+```
+
+- **PASS here, FAIL in ark** → keys good; fix CircomReduction / prove API.  
+- **FAIL here too** → R1CS export or witness layout still wrong.
+
+You need a `.wasm` witness calculator for fullprove; for the ark-native circuit path, the CircomReduction prove is the one that matters.
+
+---
+
+## Domain size sanity
+
+With ~192 constraints + 5 instance vars, both stacks typically land on domain **256**. If zkey header `domainSize` ≠ what ark uses in the reduction, H length won’t match `pk.h_query.len()` and prove can fail or verify false. Log both:
+
+```text
+zkey domainSize (from HeaderGroth)
+pk.h_query.len()
+num_constraints + num_instance_variables (next power of two)
+```
+
+They must agree.
+
+---
+
+## Checklist until smoke exits 0
+
+1. `export-r1cs` → satisfied CS, sorted LCs, `nPub=4`  
+2. snarkjs setup → `circuit_final.zkey`  
+3. `import-zkey` → PK/VK deserialize, IC len 5  
+4. **Prove with `Groth16::<Bn254, CircomReduction>`**  
+5. `verify_with_processed_vk` → true  
+
+Until step 4 uses CircomReduction, treat verify-false as **expected**, not a broken ceremony.
+
+---
+
+## Side note on “dedicated server”
+
+Unrelated but from your earlier question: **no**, a dedicated server is not *required* by the protocol design (phones + P2P can participate). In **today’s** code, cloud/HTTP is still a practical bootstrap and submit fallback until mesh adopt is full-validation and HTTP submit is optional. Server = convenience/ops, not a consensus axiom.
+
+---
+
+I can’t run your Replit tree from here. Next concrete step on your machine: wire `CircomReduction` into `smoke-prove-verify`, re-run against `ceremony-smoke-out3` keys, and paste the log if it’s still false (especially `h_query.len()` vs domain size).
