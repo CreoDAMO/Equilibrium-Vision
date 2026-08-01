@@ -659,6 +659,7 @@ pub fn parse_bft_votes_from_block_json(json: &str) -> Vec<BftVote> {
 // of `StationarySolver::joint_residual_and_gradient` once that function is
 // factored into a `no_std`-compatible `residual_core` crate.  Bump
 // `STATIONARITY_GUEST_ID` when the guest switches to v3.
+#[allow(clippy::too_many_arguments)]
 pub fn residual_fp_from_header(
     prev_hash:       &[u8; 32],
     merkle_root:     &[u8; 32],
