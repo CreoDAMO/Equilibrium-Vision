@@ -4,34 +4,9 @@
 //!   cargo run --release --bin smoke-prove-verify -- \
 //!       --pk-bin proving_key.bin \
 //!       --vk-bin verification_key.bin
-//!
-//! Exit 0 = proof verifies correctly.
-//! Exit 1 = proof fails or file errors.
-//!
-//! Uses a hardcoded valid witness for StationarityCircuit:
-//!   residual_fp  = 3_000_000_000_000_000
-//!   threshold_fp = 7_000_000_000_000_000
-//!   difference   = 4_000_000_000_000_000   (= threshold - residual)
-//!   block_hash_lo = 0xDEAD_BEEF
-//!   block_hash_hi = 0xCAFE_BABE
-//!
-//! Constraint check: residual_fp + difference == threshold_fp  ✓
-
-// ── CircomReduction ──────────────────────────────────────────────────────────
-//
-// snarkjs zkeys store the H-query built without the public-input padding that
-// ark-groth16's default LibsnarkReduction adds to the A evaluation vector.
-// CircomReduction (below) omits that padding in witness_map_from_matrices so
-// the H polynomial it produces matches the bases in the imported proving key.
-//
-// NOTE: CircomReduction is used ONLY for proving against an imported snarkjs
-// key. It is NOT used for circuit_specific_setup — that path would produce
-// mismatched keys (setup via LibsnarkReduction, prove via no-pad), which is
-// why the self-test below uses plain Groth16::<Bn254> (LibsnarkReduction
-// throughout) to validate the circuit independently of key import.
 
 mod circom_reduction {
-    //! Must stay in sync with src/circom_reduction.rs (ark-circom style).
+    //! ark-circom-style H path (must match src/circom_reduction.rs).
 
     use ark_ff::{Field, One, PrimeField, Zero};
     use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};
@@ -127,5 +102,166 @@ mod circom_reduction {
             *c *= pow;
             pow *= root;
         }
+    }
+}
+
+use circom_reduction::CircomReduction;
+
+use ark_bn254::{Bn254, Fr};
+use ark_groth16::{prepare_verifying_key, Groth16, ProvingKey};
+use ark_serialize::CanonicalDeserialize;
+use ark_snark::SNARK;
+use ark_std::rand::SeedableRng;
+use equilibrium::zk_proof::StationarityCircuit;
+use std::fs;
+
+const RESIDUAL_FP: u64 = 3_000_000_000_000_000;
+const THRESHOLD_FP: u64 = 7_000_000_000_000_000;
+const BLOCK_HASH_LO: u64 = 0xDEAD_BEEF;
+const BLOCK_HASH_HI: u64 = 0xCAFE_BABE;
+const DIFFERENCE: u64 = THRESHOLD_FP - RESIDUAL_FP;
+
+fn parse_arg<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.windows(2)
+        .find(|w| w[0] == flag)
+        .map(|w| w[1].as_str())
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    let pk_path = parse_arg(&args, "--pk-bin").unwrap_or_else(|| {
+        eprintln!("usage: smoke-prove-verify --pk-bin <file> --vk-bin <file>");
+        std::process::exit(2);
+    });
+    let vk_path = parse_arg(&args, "--vk-bin").unwrap_or_else(|| {
+        eprintln!("usage: smoke-prove-verify --pk-bin <file> --vk-bin <file>");
+        std::process::exit(2);
+    });
+
+    println!("[smoke] loading PK from {pk_path}");
+    let pk_bytes = fs::read(pk_path).unwrap_or_else(|e| {
+        eprintln!("[smoke] FATAL: cannot read PK: {e}");
+        std::process::exit(1);
+    });
+    let pk = ProvingKey::<Bn254>::deserialize_compressed(&*pk_bytes).unwrap_or_else(|e| {
+        eprintln!("[smoke] FATAL: deserialize PK: {e}");
+        std::process::exit(1);
+    });
+    println!(
+        "[smoke] PK loaded  IC.len={}  h_query.len={}",
+        pk.vk.gamma_abc_g1.len(),
+        pk.h_query.len()
+    );
+
+    println!("[smoke] loading VK from {vk_path}");
+    let vk_bytes = fs::read(vk_path).unwrap_or_else(|e| {
+        eprintln!("[smoke] FATAL: cannot read VK: {e}");
+        std::process::exit(1);
+    });
+    let vk = ark_groth16::VerifyingKey::<Bn254>::deserialize_compressed(&*vk_bytes)
+        .unwrap_or_else(|e| {
+            eprintln!("[smoke] FATAL: deserialize VK: {e}");
+            std::process::exit(1);
+        });
+    let pvk = prepare_verifying_key(&vk);
+    println!("[smoke] VK loaded  IC.len={}", vk.gamma_abc_g1.len());
+
+    if vk.gamma_abc_g1.len() != 5 {
+        eprintln!(
+            "[smoke] FATAL: IC length = {}, expected 5",
+            vk.gamma_abc_g1.len()
+        );
+        std::process::exit(1);
+    }
+
+    // Self-test: default ark only (circuit check)
+    println!("[smoke] self-test: circuit correctness with default ark keys …");
+    {
+        let mut rng2 = ark_std::rand::rngs::StdRng::seed_from_u64(0xDEAD_BEEF_CAFE_BABEu64);
+        let circuit_for_setup = StationarityCircuit {
+            residual_fp: Some(RESIDUAL_FP),
+            threshold_fp: Some(THRESHOLD_FP),
+            block_hash_lo: Some(BLOCK_HASH_LO),
+            block_hash_hi: Some(BLOCK_HASH_HI),
+            difference: Some(DIFFERENCE),
+        };
+        let (fresh_pk, fresh_vk) =
+            Groth16::<Bn254>::circuit_specific_setup(circuit_for_setup, &mut rng2)
+                .expect("[smoke] self-test setup failed");
+        let fresh_pvk = prepare_verifying_key(&fresh_vk);
+
+        let circuit_for_prove = StationarityCircuit {
+            residual_fp: Some(RESIDUAL_FP),
+            threshold_fp: Some(THRESHOLD_FP),
+            block_hash_lo: Some(BLOCK_HASH_LO),
+            block_hash_hi: Some(BLOCK_HASH_HI),
+            difference: Some(DIFFERENCE),
+        };
+        let mut rng3 = ark_std::rand::rngs::StdRng::seed_from_u64(0x1234_5678u64);
+        let fresh_proof = Groth16::<Bn254>::prove(&fresh_pk, circuit_for_prove, &mut rng3)
+            .expect("[smoke] self-test prove failed");
+
+        let pub_in = vec![
+            Fr::from(RESIDUAL_FP),
+            Fr::from(THRESHOLD_FP),
+            Fr::from(BLOCK_HASH_LO),
+            Fr::from(BLOCK_HASH_HI),
+        ];
+        let self_valid =
+            Groth16::<Bn254>::verify_with_processed_vk(&fresh_pvk, &pub_in, &fresh_proof)
+                .expect("[smoke] self-test verify error");
+
+        if self_valid {
+            println!("[smoke] self-test PASS — StationarityCircuit is satisfiable ✓");
+        } else {
+            eprintln!("[smoke] self-test FAIL — circuit does not satisfy its own constraints");
+            std::process::exit(1);
+        }
+    }
+
+    let circuit = StationarityCircuit {
+        residual_fp: Some(RESIDUAL_FP),
+        threshold_fp: Some(THRESHOLD_FP),
+        block_hash_lo: Some(BLOCK_HASH_LO),
+        block_hash_hi: Some(BLOCK_HASH_HI),
+        difference: Some(DIFFERENCE),
+    };
+
+    println!("[smoke] proving with CircomReduction …");
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xC0DE_5AFE_DEAD_BEEFu64);
+    let proof = Groth16::<Bn254, CircomReduction>::create_random_proof_with_reduction(
+        circuit, &pk, &mut rng,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("[smoke] FATAL: prove failed: {e}");
+        std::process::exit(1);
+    });
+    println!("[smoke] proof generated");
+
+    let public_inputs = vec![
+        Fr::from(RESIDUAL_FP),
+        Fr::from(THRESHOLD_FP),
+        Fr::from(BLOCK_HASH_LO),
+        Fr::from(BLOCK_HASH_HI),
+    ];
+
+    println!("[smoke] verifying …");
+    let valid = Groth16::<Bn254, CircomReduction>::verify_with_processed_vk(
+        &pvk,
+        &public_inputs,
+        &proof,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("[smoke] FATAL: verify error: {e}");
+        std::process::exit(1);
+    });
+
+    if valid {
+        println!("[smoke] PASS — proof verifies with ceremony-imported keys ✓");
+        std::process::exit(0);
+    } else {
+        eprintln!("[smoke] FAIL — verify returned false");
+        std::process::exit(1);
     }
 }
