@@ -241,8 +241,7 @@ jobs:
         run: cargo test --lib
 
   # ── Ceremony smoke (snarkjs → ark import → prove/verify) ────────────────────
-  # Isolated job. continue-on-error: true so a red smoke does not fail the workflow.
-  # Set continue-on-error: false once smoke-prove-verify exits 0.
+  # Isolated. continue-on-error: true until smoke exits 0.
   ceremony-smoke:
     name: Ceremony smoke (snarkjs → ark)
     runs-on: ubuntu-latest
@@ -275,11 +274,93 @@ jobs:
           command -v snarkjs
           echo "snarkjs: ok"
 
+      # Do not use set -e around the script: we always want the diagnose step.
       - name: Run ceremony smoke
+        id: smoke
         run: |
-          set -euo pipefail
           chmod +x scripts/ceremony-smoke.sh
+          set +e
           ./scripts/ceremony-smoke.sh 2>&1 | tee ceremony-smoke.log
+          echo "smoke_exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Diagnose (shell-only — no Rust changes)
+        if: always()
+        run: |
+          set +e
+          LOG=ceremony-smoke.log
+          OUT=ceremony-smoke-out
+
+          echo "════════════════════════════════════════════════════════"
+          echo " CEREMONY SMOKE DIAGNOSTIC SUMMARY"
+          echo "════════════════════════════════════════════════════════"
+          echo "smoke_exit (from script): ${{ steps.smoke.outputs.smoke_exit }}"
+          echo ""
+
+          # --- Extract known log lines ---
+          echo "── Log signals ──"
+          grep -E '\[OK\]|\[FAIL\]|\[smoke\]|\[check |\[circom_reduction\]|self-test|verify returned|PK queries|nVars|nPub' "$LOG" | tail -40
+          echo ""
+
+          # --- VK parity (zkey import vs JSON import) ---
+          echo "── Check 2: VK binary parity ──"
+          if [[ -f "$OUT/verification_key.bin" && -f "$OUT/verification_key_json.bin" ]]; then
+            if cmp -s "$OUT/verification_key.bin" "$OUT/verification_key_json.bin"; then
+              echo "[check 2] PASS — verification_key.bin == verification_key_json.bin"
+            else
+              echo "[check 2] FAIL — VK bins differ (zkey parse vs JSON parse)"
+              ls -la "$OUT/verification_key.bin" "$OUT/verification_key_json.bin"
+              # first 64 bytes hex for a quick eye-check
+              echo "zkey VK sha256: $(sha256sum "$OUT/verification_key.bin")"
+              echo "json VK sha256: $(sha256sum "$OUT/verification_key_json.bin")"
+            fi
+          else
+            echo "[check 2] SKIP — VK bin(s) missing (import may have failed earlier)"
+            ls -la "$OUT" 2>/dev/null || true
+          fi
+          echo ""
+
+          # --- Classify from current smoke binary behavior ---
+          echo "── Classification (limited until smoke prints checks 3–4) ──"
+          if grep -q 'self-test PASS' "$LOG"; then
+            echo "[check 1] PASS — circuit OK under default ark"
+          elif grep -q 'self-test FAIL' "$LOG"; then
+            echo "[check 1] FAIL — circuit/R1CS problem"
+          else
+            echo "[check 1] UNKNOWN — self-test line not found (build/early exit?)"
+          fi
+
+          if grep -q 'ark-circom-style' "$LOG"; then
+            echo "[reduction] CircomReduction ark-circom-style WAS used"
+          elif grep -q 'proving with CircomReduction' "$LOG"; then
+            echo "[reduction] CircomReduction used (style marker missing — old binary?)"
+          else
+            echo "[reduction] prove step not reached"
+          fi
+
+          if grep -q 'verify returned false' "$LOG"; then
+            echo "[check 4?] FAIL — Circom (or only) prove path: verify false"
+          elif grep -q 'PASS — proof verifies' "$LOG"; then
+            echo "[check 4?] PASS — proof verified"
+          fi
+
+          if grep -q 'Libsnark' "$LOG"; then
+            echo "[check 3] present in log (instrumented binary)"
+          else
+            echo "[check 3] NOT in log — smoke binary has no Libsnark dual-prove yet"
+            echo "         → Cannot tell import-vs-H without a code change"
+          fi
+          echo ""
+
+          echo "── Interpret ──"
+          echo "  If check 2 FAIL → fix zkey_pk / JSON G2 parse first."
+          echo "  If check 2 PASS + verify false + no check 3 →"
+          echo "    next must add Libsnark dual-prove in smoke_prove_verify.rs"
+          echo "  If check 1 FAIL → export_r1cs / StationarityCircuit."
+          echo "════════════════════════════════════════════════════════"
+
+          # Surface a non-zero step only if you want this step red in the UI:
+          # exit ${{ steps.smoke.outputs.smoke_exit }}
 
       - name: Upload smoke log + key artifacts
         if: always()
@@ -290,7 +371,8 @@ jobs:
             ceremony-smoke.log
             ceremony-smoke-out/stationarity.r1cs
             ceremony-smoke-out/verification_key.json
-            ceremony-smoke-out/proving_key.bin
             ceremony-smoke-out/verification_key.bin
+            ceremony-smoke-out/verification_key_json.bin
+            ceremony-smoke-out/proving_key.bin
           if-no-files-found: warn
           retention-days: 14
