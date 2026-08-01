@@ -40,7 +40,7 @@ cargo build --release \
     --manifest-path mpc-ceremony/Cargo.toml \
     --bin export-r1cs \
     --bin smoke-prove-verify \
-    --bin mpc-ceremony 2>&1 | tail -5
+    --bin mpc-ceremony
 ok "binaries built"
 
 # ── Step 2: Export R1CS from StationarityCircuit ──────────────────────────────
