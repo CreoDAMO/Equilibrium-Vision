@@ -3,7 +3,8 @@
 //! Usage:
 //!   cargo run --release --bin smoke-prove-verify -- \
 //!       --pk-bin proving_key.bin \
-//!       --vk-bin verification_key.bin
+//!       --vk-bin verification_key.bin \
+//!       [--vk-json-bin verification_key_json.bin]
 
 mod circom_reduction {
     //! ark-circom-style H path (must match src/circom_reduction.rs).
@@ -108,6 +109,7 @@ mod circom_reduction {
 use circom_reduction::CircomReduction;
 
 use ark_bn254::{Bn254, Fr};
+use ark_ec::AffineRepr;
 use ark_groth16::{prepare_verifying_key, Groth16, ProvingKey};
 use ark_serialize::CanonicalDeserialize;
 use ark_snark::SNARK;
@@ -127,15 +129,34 @@ fn parse_arg<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
         .map(|w| w[1].as_str())
 }
 
+fn circuit() -> StationarityCircuit {
+    StationarityCircuit {
+        residual_fp: Some(RESIDUAL_FP),
+        threshold_fp: Some(THRESHOLD_FP),
+        block_hash_lo: Some(BLOCK_HASH_LO),
+        block_hash_hi: Some(BLOCK_HASH_HI),
+        difference: Some(DIFFERENCE),
+    }
+}
+
+fn log_proof(tag: &str, proof: &ark_groth16::Proof<Bn254>) {
+    println!(
+        "[proof:{tag}] A.is_zero={} B.is_zero={} C.is_zero={}",
+        proof.a.is_zero(),
+        proof.b.is_zero(),
+        proof.c.is_zero()
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     let pk_path = parse_arg(&args, "--pk-bin").unwrap_or_else(|| {
-        eprintln!("usage: smoke-prove-verify --pk-bin <file> --vk-bin <file>");
+        eprintln!("usage: smoke-prove-verify --pk-bin <file> --vk-bin <file> [--vk-json-bin <file>]");
         std::process::exit(2);
     });
     let vk_path = parse_arg(&args, "--vk-bin").unwrap_or_else(|| {
-        eprintln!("usage: smoke-prove-verify --pk-bin <file> --vk-bin <file>");
+        eprintln!("usage: smoke-prove-verify --pk-bin <file> --vk-bin <file> [--vk-json-bin <file>]");
         std::process::exit(2);
     });
 
@@ -175,70 +196,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Self-test: default ark only (circuit check)
-    println!("[smoke] self-test: circuit correctness with default ark keys …");
-    {
-        let mut rng2 = ark_std::rand::rngs::StdRng::seed_from_u64(0xDEAD_BEEF_CAFE_BABEu64);
-        let circuit_for_setup = StationarityCircuit {
-            residual_fp: Some(RESIDUAL_FP),
-            threshold_fp: Some(THRESHOLD_FP),
-            block_hash_lo: Some(BLOCK_HASH_LO),
-            block_hash_hi: Some(BLOCK_HASH_HI),
-            difference: Some(DIFFERENCE),
-        };
-        let (fresh_pk, fresh_vk) =
-            Groth16::<Bn254>::circuit_specific_setup(circuit_for_setup, &mut rng2)
-                .expect("[smoke] self-test setup failed");
-        let fresh_pvk = prepare_verifying_key(&fresh_vk);
-
-        let circuit_for_prove = StationarityCircuit {
-            residual_fp: Some(RESIDUAL_FP),
-            threshold_fp: Some(THRESHOLD_FP),
-            block_hash_lo: Some(BLOCK_HASH_LO),
-            block_hash_hi: Some(BLOCK_HASH_HI),
-            difference: Some(DIFFERENCE),
-        };
-        let mut rng3 = ark_std::rand::rngs::StdRng::seed_from_u64(0x1234_5678u64);
-        let fresh_proof = Groth16::<Bn254>::prove(&fresh_pk, circuit_for_prove, &mut rng3)
-            .expect("[smoke] self-test prove failed");
-
-        let pub_in = vec![
-            Fr::from(RESIDUAL_FP),
-            Fr::from(THRESHOLD_FP),
-            Fr::from(BLOCK_HASH_LO),
-            Fr::from(BLOCK_HASH_HI),
-        ];
-        let self_valid =
-            Groth16::<Bn254>::verify_with_processed_vk(&fresh_pvk, &pub_in, &fresh_proof)
-                .expect("[smoke] self-test verify error");
-
-        if self_valid {
-            println!("[smoke] self-test PASS — StationarityCircuit is satisfiable ✓");
-        } else {
-            eprintln!("[smoke] self-test FAIL — circuit does not satisfy its own constraints");
-            std::process::exit(1);
-        }
-    }
-
-    let circuit = StationarityCircuit {
-        residual_fp: Some(RESIDUAL_FP),
-        threshold_fp: Some(THRESHOLD_FP),
-        block_hash_lo: Some(BLOCK_HASH_LO),
-        block_hash_hi: Some(BLOCK_HASH_HI),
-        difference: Some(DIFFERENCE),
-    };
-
-    println!("[smoke] proving with CircomReduction …");
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xC0DE_5AFE_DEAD_BEEFu64);
-    let proof = Groth16::<Bn254, CircomReduction>::create_random_proof_with_reduction(
-        circuit, &pk, &mut rng,
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("[smoke] FATAL: prove failed: {e}");
-        std::process::exit(1);
-    });
-    println!("[smoke] proof generated");
-
     let public_inputs = vec![
         Fr::from(RESIDUAL_FP),
         Fr::from(THRESHOLD_FP),
@@ -246,22 +203,131 @@ fn main() {
         Fr::from(BLOCK_HASH_HI),
     ];
 
-    println!("[smoke] verifying …");
-    let valid = Groth16::<Bn254, CircomReduction>::verify_with_processed_vk(
-        &pvk,
-        &public_inputs,
-        &proof,
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("[smoke] FATAL: verify error: {e}");
-        std::process::exit(1);
-    });
+    let mut failures = 0u32;
 
-    if valid {
-        println!("[smoke] PASS — proof verifies with ceremony-imported keys ✓");
+    // ── Check 1: circuit self-test (default ark Libsnark) ────────────────────
+    println!("[check 1] circuit self-test (Libsnark setup+prove+verify) …");
+    {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xDEAD_BEEF_CAFE_BABEu64);
+        let (fpk, fvk) = Groth16::<Bn254>::circuit_specific_setup(circuit(), &mut rng)
+            .expect("[check 1] self-test setup failed");
+        let fpvk = prepare_verifying_key(&fvk);
+        let mut rng2 = ark_std::rand::rngs::StdRng::seed_from_u64(0x1234_5678u64);
+        let proof = Groth16::<Bn254>::prove(&fpk, circuit(), &mut rng2)
+            .expect("[check 1] self-test prove failed");
+        let ok = Groth16::<Bn254>::verify_with_processed_vk(&fpvk, &public_inputs, &proof)
+            .expect("[check 1] self-test verify error");
+        if ok {
+            println!("[check 1] PASS — circuit satisfiable under Libsnark");
+        } else {
+            println!("[check 1] FAIL — circuit broken");
+            failures += 1;
+        }
+    }
+
+    // ── Check 2: optional VK parity (zkey-bin vs json-bin) ───────────────────
+    if let Some(json_vk_path) = parse_arg(&args, "--vk-json-bin") {
+        println!("[check 2] VK parity zkey-bin vs json-bin …");
+        let jb = fs::read(json_vk_path).expect("[check 2] read json vk bin");
+        let jvk = ark_groth16::VerifyingKey::<Bn254>::deserialize_compressed(&*jb)
+            .expect("[check 2] deser json vk");
+        let same = vk.alpha_g1 == jvk.alpha_g1
+            && vk.beta_g2 == jvk.beta_g2
+            && vk.gamma_g2 == jvk.gamma_g2
+            && vk.delta_g2 == jvk.delta_g2
+            && vk.gamma_abc_g1 == jvk.gamma_abc_g1;
+        if same {
+            println!("[check 2] PASS — zkey VK == JSON VK (G1/G2 parse consistent)");
+        } else {
+            println!("[check 2] FAIL — VK mismatch (import bug in zkey or JSON path)");
+            println!(
+                "  alpha_g1 eq={}  beta_g2 eq={}  gamma_g2 eq={}  delta_g2 eq={}  IC eq={}",
+                vk.alpha_g1 == jvk.alpha_g1,
+                vk.beta_g2 == jvk.beta_g2,
+                vk.gamma_g2 == jvk.gamma_g2,
+                vk.delta_g2 == jvk.delta_g2,
+                vk.gamma_abc_g1 == jvk.gamma_abc_g1,
+            );
+            failures += 1;
+        }
+    } else {
+        println!("[check 2] SKIP — pass --vk-json-bin to enable");
+    }
+
+    // ── Check 3: Libsnark prove against IMPORTED keys ────────────────────────
+    println!("[check 3] Libsnark prove+verify vs imported PK/VK …");
+    {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xA11CEu64);
+        match Groth16::<Bn254>::create_random_proof_with_reduction(circuit(), &pk, &mut rng) {
+            Ok(proof) => {
+                log_proof("libsnark", &proof);
+                match Groth16::<Bn254>::verify_with_processed_vk(&pvk, &public_inputs, &proof) {
+                    Ok(true) => println!("[check 3] PASS — Libsnark works with snarkjs keys"),
+                    Ok(false) => {
+                        println!("[check 3] FAIL — Libsnark proof does not verify on imported keys");
+                        failures += 1;
+                    }
+                    Err(e) => {
+                        println!("[check 3] ERROR verify: {e}");
+                        failures += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("[check 3] ERROR prove: {e}");
+                failures += 1;
+            }
+        }
+    }
+
+    // ── Check 4: CircomReduction prove against IMPORTED keys ─────────────────
+    println!("[check 4] CircomReduction prove+verify vs imported PK/VK …");
+    {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xC1RC0Mu64);
+        match Groth16::<Bn254, CircomReduction>::create_random_proof_with_reduction(
+            circuit(), &pk, &mut rng,
+        ) {
+            Ok(proof) => {
+                log_proof("circom", &proof);
+                match Groth16::<Bn254, CircomReduction>::verify_with_processed_vk(
+                    &pvk, &public_inputs, &proof,
+                ) {
+                    Ok(true) => println!("[check 4] PASS — CircomReduction works with snarkjs keys"),
+                    Ok(false) => {
+                        println!("[check 4] FAIL — CircomReduction proof does not verify");
+                        failures += 1;
+                    }
+                    Err(e) => {
+                        println!("[check 4] ERROR verify: {e}");
+                        failures += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("[check 4] ERROR prove: {e}");
+                failures += 1;
+            }
+        }
+    }
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+    println!();
+    println!("════════════════════════════════════════════════════════");
+    println!("  failures={failures}");
+    if failures == 0 {
+        println!("  CEREMONY SMOKE: ALL CHECKS PASSED");
         std::process::exit(0);
     } else {
-        eprintln!("[smoke] FAIL — verify returned false");
+        println!("  CEREMONY SMOKE: DIAGNOSTIC FAILURES (see checks above)");
+        println!();
+        println!("  Interpretation guide:");
+        println!("    check 1 FAIL  → circuit / R1CS problem");
+        println!("    check 2 FAIL  → VK import mismatch (zkey vs JSON path)");
+        println!("    check 3 FAIL  → Libsnark prove/verify incompatible with imported keys");
+        println!("    check 4 FAIL  → CircomReduction H-path wrong for this zkey");
+        println!("    3 PASS, 4 FAIL → use Libsnark only; CircomReduction not compatible");
+        println!("    3 FAIL, 4 PASS → CircomReduction required for this zkey");
+        println!("    3+4 FAIL, 2 PASS → prove path / H / queries issue, not VK parse");
         std::process::exit(1);
     }
 }
