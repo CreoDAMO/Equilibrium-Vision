@@ -1,22 +1,9 @@
 //! Circom/snarkjs-compatible R1CS→QAP reduction (ark-circom style).
 //!
-//! This is **not** “LibsnarkReduction with public-input padding removed.”
-//! Real circom/snarkjs compatibility comes from a different H path:
-//!
-//! - Evaluate A/B on constraints, **then** copy public inputs into A
-//!   (same pad as Libsnark — that is correct).
-//! - Build C as A·B on those evaluation points (satisfied ⇒ matches R1CS C).
-//! - Shift into the **2n-domain root-of-unity coset**, FFT, form AB−C.
-//! - Return those coset evaluations (no /Z, no final coset IFFT).
-//! - `h_query_scalars` returns the **odd** IFFT coefficients so setup H
-//!   matches; when proving against an imported snarkjs zkey, only
-//!   `witness_map_from_matrices` is used (H points already in the PK).
-//!
-//! Do **not** use this type for a meaningful all-ark self-test of “circom
-//! consistency” unless setup and prove both use it and match the zkey layout.
+//! Not “Libsnark minus public-input padding.”
 //! Ceremony path: import zkey → prove with CircomReduction → verify.
 
-use ark_ff::{Field, PrimeField, Zero};
+use ark_ff::{Field, One, PrimeField, Zero};
 use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};
 use ark_poly::EvaluationDomain;
 use ark_relations::r1cs::{ConstraintMatrices, ConstraintSystemRef, SynthesisError};
@@ -43,7 +30,6 @@ impl R1CSToQAP for CircomReduction {
             .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
         let domain_size = domain.size();
 
-        // 1) Constraint evaluations for A and B
         let mut a = vec![zero; domain_size];
         let mut b = vec![zero; domain_size];
         for i in 0..num_constraints {
@@ -51,23 +37,22 @@ impl R1CSToQAP for CircomReduction {
             b[i] = evaluate_constraint(&matrices.b[i], full_assignment);
         }
 
-        // 2) Public-input padding into A (same as Libsnark / ark-circom)
+        // Public-input padding (same as Libsnark / ark-circom)
         let start = num_constraints;
         let end = start + num_inputs;
         a[start..end].copy_from_slice(&full_assignment[..num_inputs]);
 
-        // 3) C evaluations as A·B on the same slots (satisfied R1CS ⇒ = matrices.c)
+        // C := A·B on constraint slots (satisfied ⇒ matches R1CS C)
         let mut c = vec![zero; domain_size];
         for i in 0..num_constraints {
             c[i] = a[i] * b[i];
         }
 
-        // 4) Coefficient form
         domain.ifft_in_place(&mut a);
         domain.ifft_in_place(&mut b);
         domain.ifft_in_place(&mut c);
 
-        // 5) Coset shift by ω_{2n} (root of unity of the 2× domain) — ark-circom
+        // Coset by ω_{2n}
         let root_of_unity = {
             let domain_double = D::new(2 * domain_size)
                 .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
@@ -81,7 +66,6 @@ impl R1CSToQAP for CircomReduction {
         domain.fft_in_place(&mut b);
         domain.fft_in_place(&mut c);
 
-        // 6) AB − C on the coset (evaluations; pairs with snarkjs / circom H)
         let mut ab = domain.mul_polynomials_in_evaluation_domain(&a, &b);
         for (ab_i, c_i) in ab.iter_mut().zip(c.iter()) {
             *ab_i -= c_i;
@@ -96,18 +80,15 @@ impl R1CSToQAP for CircomReduction {
         _zt: F,
         delta_inverse: F,
     ) -> Result<Vec<F>, SynthesisError> {
-        // ark-circom: scalars for 0..2*max_power, IFFT, take odd coefficients
         let mut scalars: Vec<F> = (0..2 * max_power + 1)
             .map(|i| delta_inverse * t.pow([i as u64]))
             .collect();
-        let domain_size = scalars.len();
-        let domain = D::new(domain_size).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
+        let domain = D::new(scalars.len()).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
         domain.ifft_in_place(&mut scalars);
         Ok(scalars.into_iter().skip(1).step_by(2).collect())
     }
 }
 
-/// Multiply coeffs[i] by root^i (ark-poly `distribute_powers` equivalent).
 fn distribute_powers<F: Field>(coeffs: &mut [F], root: F) {
     let mut pow = F::one();
     for c in coeffs.iter_mut() {
