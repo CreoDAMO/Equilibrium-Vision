@@ -12,7 +12,7 @@
 mod circom_reduction {
     //! ark-circom-style H path (must match src/circom_reduction.rs).
 
-    use ark_ff::{Field, One, PrimeField, Zero};
+    use ark_ff::{Field, PrimeField};
     use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};
     use ark_poly::EvaluationDomain;
     use ark_relations::r1cs::{ConstraintMatrices, ConstraintSystemRef, SynthesisError};
@@ -181,7 +181,6 @@ fn main() {
     let mut failures = 0u32;
     let pubs = public_inputs();
 
-    // ── Load keys ────────────────────────────────────────────────────────────
     println!("[smoke] loading PK from {pk_path}");
     let pk_bytes = fs::read(pk_path).unwrap_or_else(|e| {
         eprintln!("[smoke] FATAL: cannot read PK: {e}");
@@ -221,8 +220,8 @@ fn main() {
         std::process::exit(1);
     }
 
-    // ── Check 1: circuit self-test (Libsnark only) ───────────────────────────
-    println!("[check 1] circuit self-test (Libsnark setup+prove+verify) …");
+    // Check 1: circuit self-test (Libsnark only)
+    println!("[check 1] circuit self-test (Libsnark setup+prove+verify) ...");
     {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xDEAD_BEEF_CAFE_BABEu64);
         let (fpk, fvk) = Groth16::<Bn254>::circuit_specific_setup(circuit(), &mut rng)
@@ -241,9 +240,9 @@ fn main() {
         }
     }
 
-    // ── Check 2: VK parity (zkey import vs JSON import) ───────────────────────
+    // Check 2: VK parity (zkey import vs JSON import)
     if let Some(json_path) = vk_json_path {
-        println!("[check 2] VK parity zkey-bin vs json-bin …");
+        println!("[check 2] VK parity zkey-bin vs json-bin ...");
         match fs::read(json_path) {
             Ok(jb) => match VerifyingKey::<Bn254>::deserialize_compressed(&*jb) {
                 Ok(jvk) => {
@@ -277,10 +276,10 @@ fn main() {
         println!("[check 2] SKIP — pass --vk-json-bin to enable");
     }
 
-    // ── Check 3: Libsnark prove against IMPORTED keys ────────────────────────
-    println!("[check 3] Libsnark prove+verify vs imported PK/VK …");
+    // Check 3: Libsnark prove against IMPORTED keys
+    println!("[check 3] Libsnark prove+verify vs imported PK/VK ...");
     {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xA11CEu64);
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0x0000_A11Cu64);
         match Groth16::<Bn254>::create_random_proof_with_reduction(circuit(), &pk, &mut rng) {
             Ok(proof) => {
                 log_proof("libsnark", &proof);
@@ -307,10 +306,10 @@ fn main() {
         }
     }
 
-    // ── Check 4: CircomReduction prove against IMPORTED keys ─────────────────
-    println!("[check 4] CircomReduction prove+verify vs imported PK/VK …");
+    // Check 4: CircomReduction prove against IMPORTED keys
+    println!("[check 4] CircomReduction prove+verify vs imported PK/VK ...");
     {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xC1RC0Mu64);
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xC1C0_C1C0u64);
         match Groth16::<Bn254, CircomReduction>::create_random_proof_with_reduction(
             circuit(),
             &pk,
@@ -341,9 +340,8 @@ fn main() {
         }
     }
 
-    // ── Summary ──────────────────────────────────────────────────────────────
     println!();
-    println!("════════════════════════════════════════");
+    println!("========================================");
     println!("  failures={failures}");
     if failures == 0 {
         println!("  CEREMONY SMOKE: ALL CHECKS PASSED");
@@ -351,12 +349,12 @@ fn main() {
     } else {
         println!("  CEREMONY SMOKE: DIAGNOSTIC FAILURES");
         println!("  Interpret:");
-        println!("    1 FAIL → circuit / R1CS problem");
-        println!("    2 FAIL → VK import (zkey vs JSON G1/G2 parse)");
-        println!("    3+4 FAIL, 2 PASS → prove path / H / A,B,L queries (not VK)");
-        println!("    3 FAIL, 4 PASS → use CircomReduction; Libsnark wrong for this zkey");
-        println!("    3 PASS, 4 FAIL → Circom H path wrong for this zkey");
-        println!("    3 FAIL, 4 FAIL, 2 PASS → key queries or assignment/wire mismatch");
+        println!("    1 FAIL -> circuit / R1CS problem");
+        println!("    2 FAIL -> VK import (zkey vs JSON G1/G2 parse)");
+        println!("    3+4 FAIL, 2 PASS -> prove path / H / A,B,L queries (not VK)");
+        println!("    3 FAIL, 4 PASS -> use CircomReduction; Libsnark wrong for this zkey");
+        println!("    3 PASS, 4 FAIL -> Circom H path wrong for this zkey");
+        println!("    3 FAIL, 4 FAIL, 2 PASS -> key queries or assignment/wire mismatch");
         std::process::exit(1);
     }
 }
