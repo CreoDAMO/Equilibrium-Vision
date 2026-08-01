@@ -8,9 +8,14 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="\( (dirname " \){BASH_SOURCE[0]}")"
-SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Must be run from the repository root: ./scripts/ceremony-smoke.sh
+ROOT="$(pwd)"
+if [[ ! -f "$ROOT/mpc-ceremony/Cargo.toml" ]]; then
+  echo "Run from repo root: ./scripts/ceremony-smoke.sh" >&2
+  exit 1
+fi
+OUT_DIR="$ROOT/ceremony-smoke-out"
+SKIP_PTAU=${1:-""}
 OUT_DIR="$ROOT/ceremony-smoke-out"
 SKIP_PTAU=${1:-""}
 
