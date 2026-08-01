@@ -48,7 +48,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use equilibrium_core::mobile_validator::{
-    BftVote, ValidatorInfo, check_bft_quorum, parse_bft_votes_from_block_json,
+    ValidatorInfo, check_bft_quorum, parse_bft_votes_from_block_json,
 };
 
 use libp2p::{
