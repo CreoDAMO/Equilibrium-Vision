@@ -17,6 +17,7 @@
 //!   # Finalize
 //!   cargo run --bin mpc-ceremony -- finalize --contributions-dir ./contributions --pk-out proving_key.bin --vk-out verification_key.bin
 
+mod circom_reduction;
 mod ptau;
 mod snarkjs_import;
 mod zkey_pk;

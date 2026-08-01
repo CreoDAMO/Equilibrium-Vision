@@ -17,6 +17,111 @@
 //!
 //! Constraint check: residual_fp + difference == threshold_fp  ✓
 
+// ── CircomReduction ──────────────────────────────────────────────────────────
+//
+// snarkjs zkeys store H-query bases in Lagrange form (circom convention).
+// ark-groth16's default LibsnarkReduction uses a coset at F::GENERATOR, which
+// is incompatible and makes verify() return false despite a correct key import.
+//
+// We use CircomReduction (below) which shifts into the double-domain coset
+// (root of unity of 2n domain), matching snarkjs's witnesscalculator output.
+
+mod circom_reduction {
+    use ark_ff::{PrimeField, Zero};
+    use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};
+    use ark_poly::EvaluationDomain;
+    use ark_relations::r1cs::{ConstraintMatrices, ConstraintSystemRef, SynthesisError};
+
+    pub struct CircomReduction;
+
+    impl R1CSToQAP for CircomReduction {
+        #[allow(clippy::type_complexity)]
+        fn instance_map_with_evaluation<F: PrimeField, D: EvaluationDomain<F>>(
+            cs: ConstraintSystemRef<F>,
+            t: &F,
+        ) -> Result<(Vec<F>, Vec<F>, Vec<F>, F, usize, usize), SynthesisError> {
+            LibsnarkReduction::instance_map_with_evaluation::<F, D>(cs, t)
+        }
+
+        fn witness_map_from_matrices<F: PrimeField, D: EvaluationDomain<F>>(
+            matrices: &ConstraintMatrices<F>,
+            num_inputs: usize,
+            num_constraints: usize,
+            full_assignment: &[F],
+        ) -> Result<Vec<F>, SynthesisError> {
+            let zero = F::zero();
+
+            let domain = D::new(num_constraints + num_inputs)
+                .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
+            let domain_size = domain.size();
+
+            // Evaluate A and B linear combinations for every constraint.
+            let mut a = vec![zero; domain_size];
+            let mut b = vec![zero; domain_size];
+
+            for i in 0..num_constraints {
+                a[i] = evaluate_constraint(&matrices.a[i], full_assignment);
+                b[i] = evaluate_constraint(&matrices.b[i], full_assignment);
+            }
+
+            // NOTE: snarkjs does NOT add public inputs at positions
+            // [num_constraints..num_constraints+num_inputs] — those stay zero.
+            // LibsnarkReduction does; CircomReduction must NOT.
+
+            // Pointwise product c = a·b (before polynomial ops).
+            let mut c = vec![zero; domain_size];
+            for i in 0..num_constraints {
+                c[i] = a[i] * b[i];
+            }
+
+            domain.ifft_in_place(&mut a);
+            domain.ifft_in_place(&mut b);
+
+            // Shift into the circom coset: multiply by successive powers of ω₂ₙ
+            // (first root of unity of the 2n-size domain).  This makes the h
+            // polynomial evaluation points match snarkjs's H-query Lagrange bases.
+            let root_of_unity = {
+                let double_domain = D::new(2 * domain_size)
+                    .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
+                double_domain.element(1)
+            };
+            D::distribute_powers_and_mul_by_const(&mut a, root_of_unity, F::one());
+            D::distribute_powers_and_mul_by_const(&mut b, root_of_unity, F::one());
+
+            domain.fft_in_place(&mut a);
+            domain.fft_in_place(&mut b);
+
+            let mut ab = domain.mul_polynomials_in_evaluation_domain(&a, &b);
+            drop(a);
+            drop(b);
+
+            // Same shift for c.
+            domain.ifft_in_place(&mut c);
+            D::distribute_powers_and_mul_by_const(&mut c, root_of_unity, F::one());
+            domain.fft_in_place(&mut c);
+
+            // h = ab - c  encodes  (A·B − C) / t(x)
+            for (ab_i, c_i) in ab.iter_mut().zip(c.iter()) {
+                *ab_i -= c_i;
+            }
+
+            Ok(ab)
+        }
+
+        /// Only called during key generation — delegates to LibsnarkReduction.
+        fn h_query_scalars<F: PrimeField, D: EvaluationDomain<F>>(
+            max_power: usize,
+            t: F,
+            zt: F,
+            delta_inverse: F,
+        ) -> Result<Vec<F>, SynthesisError> {
+            LibsnarkReduction::h_query_scalars::<F, D>(max_power, t, zt, delta_inverse)
+        }
+    }
+}
+
+use circom_reduction::CircomReduction;
+
 use ark_bn254::{Bn254, Fr};
 use ark_ff::PrimeField;
 use ark_groth16::{Groth16, ProvingKey, prepare_verifying_key};
@@ -32,7 +137,7 @@ const RESIDUAL_FP:   u64 = 3_000_000_000_000_000;
 const THRESHOLD_FP:  u64 = 7_000_000_000_000_000;
 const BLOCK_HASH_LO: u64 = 0xDEAD_BEEF;
 const BLOCK_HASH_HI: u64 = 0xCAFE_BABE;
-const DIFFERENCE:    u64 = THRESHOLD_FP - RESIDUAL_FP; // = 4_000_000_000_000_000
+const DIFFERENCE:    u64 = THRESHOLD_FP - RESIDUAL_FP;
 
 fn parse_arg<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.windows(2)
@@ -95,10 +200,16 @@ fn main() {
         difference:    Some(DIFFERENCE),
     };
 
-    // ── Prove ─────────────────────────────────────────────────────────────────
-    println!("[smoke] proving …");
+    // ── Prove with CircomReduction ────────────────────────────────────────────
+    // MUST use CircomReduction here — not the default LibsnarkReduction.
+    // snarkjs stores H-query in Lagrange form; LibsnarkReduction uses the wrong
+    // coset and produces proofs that fail to verify against snarkjs-ceremony keys.
+    println!("[smoke] proving with CircomReduction …");
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xC0DE_5AFE_DEAD_BEEFu64);
-    let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng).unwrap_or_else(|e| {
+    let proof = Groth16::<Bn254, CircomReduction>::create_random_proof_with_reduction(
+        circuit, &pk, &mut rng,
+    )
+    .unwrap_or_else(|e| {
         eprintln!("[smoke] FATAL: prove failed: {e}");
         std::process::exit(1);
     });
@@ -114,11 +225,15 @@ fn main() {
 
     // ── Verify ────────────────────────────────────────────────────────────────
     println!("[smoke] verifying …");
-    let valid = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &public_inputs, &proof)
-        .unwrap_or_else(|e| {
-            eprintln!("[smoke] FATAL: verify error: {e}");
-            std::process::exit(1);
-        });
+    let valid = Groth16::<Bn254, CircomReduction>::verify_with_processed_vk(
+        &pvk,
+        &public_inputs,
+        &proof,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("[smoke] FATAL: verify error: {e}");
+        std::process::exit(1);
+    });
 
     if valid {
         println!("[smoke] PASS — proof verifies with ceremony-imported keys ✓");
@@ -126,8 +241,8 @@ fn main() {
         std::process::exit(0);
     } else {
         eprintln!("[smoke] FAIL — verify returned false");
-        eprintln!("[smoke] This means the imported keys do not match the StationarityCircuit R1CS.");
-        eprintln!("[smoke] Likely cause: zkey was produced from a different circuit.");
+        eprintln!("[smoke] Keys were imported from a snarkjs ceremony but the proof did not verify.");
+        eprintln!("[smoke] Check: are the PK/VK from a ceremony over the same R1CS this binary uses?");
         std::process::exit(1);
     }
 }

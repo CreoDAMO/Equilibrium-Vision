@@ -10,8 +10,8 @@
 //! keys produced by the ceremony are guaranteed to be compatible.
 
 use ark_bn254::Fr;
-use ark_ff::{BigInteger, PrimeField};
-use ark_relations::r1cs::ConstraintSystem;
+use ark_ff::{BigInteger, One, PrimeField, Zero};
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem};
 use equilibrium::zk_proof::StationarityCircuit;
 use std::fs;
 use std::path::Path;
@@ -28,14 +28,18 @@ use std::path::Path;
 //
 // Section 2 — Constraints:
 //   for each constraint: A then B then C
-//     nTerms u32 | for each term: wireId u32 | value [u8; 32] (coeff LE)
+//     nTerms u32 | for each term: wireId u32 | value [u8; 32] (coeff in Montgomery form LE)
 //
 // Section 3 — Wire-to-label:
 //   for each wire: label u64 (= wire index)
 
+/// Declared private *inputs* in StationarityCircuit (not intermediate bit wires).
+/// `difference` + `diff_inv` = 2 signals. Bit-decomp wires are intermediates.
+const N_DECLARED_PRV_INPUTS: u32 = 2;
+
 fn write_r1cs(output: &Path) -> Result<(), String> {
-    // ── Build constraint system ───────────────────────────────────────────────
-    // Use dummy witness values; only the constraint structure is exported.
+    // ── Build constraint system with a valid satisfying witness ───────────────
+    // The witness must satisfy all constraints so is_satisfied() passes.
     let cs = ConstraintSystem::<Fr>::new_ref();
     let circuit = StationarityCircuit {
         residual_fp:   Some(3_000_000_000_000_000),
@@ -44,28 +48,42 @@ fn write_r1cs(output: &Path) -> Result<(), String> {
         block_hash_hi: Some(0xCAFE_BABE),
         difference:    Some(4_000_000_000_000_000),
     };
-    use ark_relations::r1cs::ConstraintSynthesizer;
     circuit
         .generate_constraints(cs.clone())
         .map_err(|e| format!("generate_constraints: {e}"))?;
     cs.finalize();
 
+    // Fail early rather than exporting an unsatisfiable R1CS.
+    if !cs.is_satisfied().map_err(|e| format!("is_satisfied: {e}"))? {
+        return Err("constraint system not satisfied — fix the witness before exporting".into());
+    }
+
     let matrices = cs
         .to_matrices()
         .ok_or_else(|| "to_matrices() returned None".to_string())?;
 
-    let n_instance  = matrices.num_instance_variables; // includes constant "One" (wire 0)
-    let n_witness   = matrices.num_witness_variables;
-    let n_vars      = n_instance + n_witness;           // total wires
-    let n_pub       = n_instance - 1;                   // public inputs (exclude wire 0)
-    let n_prv       = n_witness;
+    let n_instance    = matrices.num_instance_variables; // 1 (One) + n_pub
+    let n_witness     = matrices.num_witness_variables;
+    let n_vars        = n_instance + n_witness;
+    let n_pub         = n_instance - 1;                  // public inputs (excl. wire 0)
     let n_constraints = matrices.num_constraints;
 
-    println!("[r1cs] nVars={n_vars}  nPub={n_pub}  nPrv={n_prv}  nConstraints={n_constraints}");
+    // nPrvInputs in the snarkjs header = declared private signals only,
+    // NOT total witness variables (which includes intermediate bit-decomp wires).
+    let n_prv = N_DECLARED_PRV_INPUTS.min(n_witness as u32);
+
+    if n_pub != 4 {
+        return Err(format!("expected 4 public inputs, got {n_pub}"));
+    }
+
+    println!(
+        "[r1cs] nVars={n_vars}  nPub={n_pub}  nPrvDeclared={n_prv}  \
+         nWitnessTotal={n_witness}  nConstraints={n_constraints}"
+    );
 
     // ── Field prime (BN254 scalar field Fr) in LE ─────────────────────────────
-    let modulus     = <Fr as PrimeField>::MODULUS;
-    let prime_vec   = modulus.to_bytes_le();
+    let modulus   = <Fr as PrimeField>::MODULUS;
+    let prime_vec = modulus.to_bytes_le();
     let mut prime32 = [0u8; 32];
     prime32[..prime_vec.len().min(32)].copy_from_slice(&prime_vec[..prime_vec.len().min(32)]);
 
@@ -77,9 +95,8 @@ fn write_r1cs(output: &Path) -> Result<(), String> {
     // `into_bigint()` performs the Montgomery reduction to canonical form —
     // that is the WRONG representation for snarkjs.  Read the raw limbs with
     // `f.0.to_bytes_le()` instead so the ceremony keys are built from the same
-    // constraint system that ark uses during proving.
+    // Montgomery-form coefficients that ark uses during proving.
     let fe_bytes = |f: &Fr| -> [u8; 32] {
-        use ark_ff::BigInteger;
         let v = f.0.to_bytes_le();
         let mut out = [0u8; 32];
         out[..v.len().min(32)].copy_from_slice(&v[..v.len().min(32)]);
@@ -88,23 +105,40 @@ fn write_r1cs(output: &Path) -> Result<(), String> {
 
     // ── Section 1: Header ─────────────────────────────────────────────────────
     let mut hdr: Vec<u8> = Vec::new();
-    hdr.extend_from_slice(&32u32.to_le_bytes());               // n8
-    hdr.extend_from_slice(&prime32);                           // prime
-    hdr.extend_from_slice(&(n_vars as u32).to_le_bytes());     // nVars
-    hdr.extend_from_slice(&0u32.to_le_bytes());                // nOutputs
-    hdr.extend_from_slice(&(n_pub as u32).to_le_bytes());      // nPubInputs
-    hdr.extend_from_slice(&(n_prv as u32).to_le_bytes());      // nPrvInputs
-    hdr.extend_from_slice(&(n_vars as u64).to_le_bytes());     // nLabels
+    hdr.extend_from_slice(&32u32.to_le_bytes());                  // n8
+    hdr.extend_from_slice(&prime32);                              // prime
+    hdr.extend_from_slice(&(n_vars as u32).to_le_bytes());        // nVars
+    hdr.extend_from_slice(&0u32.to_le_bytes());                   // nOutputs
+    hdr.extend_from_slice(&(n_pub as u32).to_le_bytes());         // nPubInputs
+    hdr.extend_from_slice(&n_prv.to_le_bytes());                  // nPrvInputs (declared only)
+    hdr.extend_from_slice(&(n_vars as u64).to_le_bytes());        // nLabels
     hdr.extend_from_slice(&(n_constraints as u32).to_le_bytes()); // nConstraints
 
-    // ── Section 2: Constraints ────────────────────────────────────────────────
+    // ── Section 2: Constraints — terms sorted by wire_id (snarkjs requirement) ─
     let mut con: Vec<u8> = Vec::new();
     for i in 0..n_constraints {
         for mat in [&matrices.a[i], &matrices.b[i], &matrices.c[i]] {
-            con.extend_from_slice(&(mat.len() as u32).to_le_bytes());
-            for (coeff, wire_id) in mat {
-                con.extend_from_slice(&(*wire_id as u32).to_le_bytes());
-                con.extend_from_slice(&fe_bytes(coeff));
+            // Collect, sort by wire id, merge duplicates, drop zeros.
+            let mut terms: Vec<(u32, Fr)> = mat
+                .iter()
+                .filter(|(coeff, _)| !coeff.is_zero())
+                .map(|(coeff, wire)| (*wire as u32, *coeff))
+                .collect();
+            terms.sort_by_key(|(w, _)| *w);
+
+            let mut merged: Vec<(u32, Fr)> = Vec::new();
+            for (w, c) in terms {
+                match merged.last_mut() {
+                    Some(last) if last.0 == w => last.1 += c,
+                    _ => merged.push((w, c)),
+                }
+            }
+            merged.retain(|(_, c)| !c.is_zero());
+
+            con.extend_from_slice(&(merged.len() as u32).to_le_bytes());
+            for (wire_id, coeff) in merged {
+                con.extend_from_slice(&wire_id.to_le_bytes());
+                con.extend_from_slice(&fe_bytes(&coeff));
             }
         }
     }
@@ -117,9 +151,9 @@ fn write_r1cs(output: &Path) -> Result<(), String> {
 
     // ── Assemble binary ───────────────────────────────────────────────────────
     let mut out: Vec<u8> = Vec::new();
-    out.extend_from_slice(b"r1cs");                       // magic
-    out.extend_from_slice(&1u32.to_le_bytes());           // version
-    out.extend_from_slice(&3u32.to_le_bytes());           // nSections
+    out.extend_from_slice(b"r1cs");             // magic
+    out.extend_from_slice(&1u32.to_le_bytes()); // version
+    out.extend_from_slice(&3u32.to_le_bytes()); // nSections
 
     for (ty, data) in [(1u32, &hdr), (2u32, &con), (3u32, &lbl)] {
         out.extend_from_slice(&ty.to_le_bytes());

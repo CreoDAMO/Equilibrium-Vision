@@ -12,6 +12,10 @@ name = "export-r1cs"
 path = "src/bin/export_r1cs.rs"
 
 [[bin]]
+name = "dump-witness"
+path = "src/bin/dump_witness.rs"
+
+[[bin]]
 name = "smoke-prove-verify"
 path = "src/bin/smoke_prove_verify.rs"
 
@@ -33,6 +37,7 @@ num-bigint = "0.4"
 num-traits = "0.2"
 ark-ff = "0.4"
 ark-ec = "0.4"
+ark-poly = "0.4"
 
 # ── Security: minimum version pins for transitive deps (Dependabot) ──────────
 yamux = { version = ">=0.12.1", optional = true }
