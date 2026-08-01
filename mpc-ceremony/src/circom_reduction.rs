@@ -1,37 +1,22 @@
-//! Circom/snarkjs-compatible R1CS→QAP reduction.
+//! Circom/snarkjs-compatible R1CS→QAP reduction (ark-circom style).
 //!
-//! snarkjs `groth16 prove` computes the H polynomial in exactly the same way
-//! as ark-groth16's `LibsnarkReduction` — same coset (`F::GENERATOR`), same
-//! vanishing-polynomial division, same final IFFT to yield **polynomial
-//! coefficients** that pair with the monomial H-query stored in the zkey.
+//! This is **not** “LibsnarkReduction with public-input padding removed.”
+//! Real circom/snarkjs compatibility comes from a different H path:
 //!
-//! The **one difference** is that `LibsnarkReduction` copies the public-input
-//! assignments into positions `[num_constraints..num_constraints+num_inputs]`
-//! of the A evaluation vector before the IFFT, shifting A(x) by those terms.
-//! snarkjs/circom never does this.  That changes A(x), which changes H(x),
-//! which makes proofs verify `false` against a snarkjs-ceremony key even when
-//! every other step is identical.
+//! - Evaluate A/B on constraints, **then** copy public inputs into A
+//!   (same pad as Libsnark — that is correct).
+//! - Build C as A·B on those evaluation points (satisfied ⇒ matches R1CS C).
+//! - Shift into the **2n-domain root-of-unity coset**, FFT, form AB−C.
+//! - Return those coset evaluations (no /Z, no final coset IFFT).
+//! - `h_query_scalars` returns the **odd** IFFT coefficients so setup H
+//!   matches; when proving against an imported snarkjs zkey, only
+//!   `witness_map_from_matrices` is used (H points already in the PK).
 //!
-//! This module is therefore identical to `LibsnarkReduction` with those four
-//! lines of public-input padding removed.  `instance_map_with_evaluation` and
-//! `h_query_scalars` are unchanged (both delegate to `LibsnarkReduction`).
-//!
-//! # Key-generation vs proving
-//!
-//! `instance_map_with_evaluation` and `h_query_scalars` are called **only**
-//! during `circuit_specific_setup` (key generation).  In the snarkjs ceremony
-//! workflow this type is **never** used for key generation — the proving key is
-//! imported from a snarkjs `.zkey` file.  Only `witness_map_from_matrices` is
-//! called during proving, so delegating the other two methods to
-//! `LibsnarkReduction` is safe: they are dead code in the ceremony path.
-//!
-//! Consequence: `circuit_specific_setup::<CircomReduction>` followed by
-//! `create_random_proof_with_reduction::<CircomReduction>` will always fail to
-//! verify — setup uses LibsnarkReduction's padded A, prove uses the unpadded A.
-//! Do **not** use this type for an all-ark setup+prove+verify self-test; use
-//! plain `Groth16::<Bn254>` (LibsnarkReduction throughout) for that instead.
+//! Do **not** use this type for a meaningful all-ark self-test of “circom
+//! consistency” unless setup and prove both use it and match the zkey layout.
+//! Ceremony path: import zkey → prove with CircomReduction → verify.
 
-use ark_ff::{PrimeField, Zero};
+use ark_ff::{Field, PrimeField, Zero};
 use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};
 use ark_poly::EvaluationDomain;
 use ark_relations::r1cs::{ConstraintMatrices, ConstraintSystemRef, SynthesisError};
@@ -39,7 +24,6 @@ use ark_relations::r1cs::{ConstraintMatrices, ConstraintSystemRef, SynthesisErro
 pub struct CircomReduction;
 
 impl R1CSToQAP for CircomReduction {
-    /// Identical to LibsnarkReduction — only the witness map differs.
     #[allow(clippy::type_complexity)]
     fn instance_map_with_evaluation<F: PrimeField, D: EvaluationDomain<F>>(
         cs: ConstraintSystemRef<F>,
@@ -48,95 +32,86 @@ impl R1CSToQAP for CircomReduction {
         LibsnarkReduction::instance_map_with_evaluation::<F, D>(cs, t)
     }
 
-    /// Circom-compatible witness map.
-    ///
-    /// Identical to `LibsnarkReduction::witness_map_from_matrices` except that
-    /// the public-input assignments are **not** copied into A at positions
-    /// `[num_constraints..num_constraints+num_inputs]`.  Snarkjs/circom leaves
-    /// those entries zero, producing a different A polynomial and therefore a
-    /// different H polynomial — so all proofs must use the same convention as
-    /// the ceremony that generated the proving key.
-    ///
-    /// Returns **polynomial coefficients** of H(x) (after the final coset
-    /// IFFT), which pair with the monomial H-query stored in snarkjs zkeys.
     fn witness_map_from_matrices<F: PrimeField, D: EvaluationDomain<F>>(
         matrices: &ConstraintMatrices<F>,
         num_inputs: usize,
         num_constraints: usize,
         full_assignment: &[F],
     ) -> Result<Vec<F>, SynthesisError> {
+        let zero = F::zero();
         let domain = D::new(num_constraints + num_inputs)
             .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
         let domain_size = domain.size();
-        let zero = F::zero();
 
-        // Step 1: evaluate A and B linear combinations at each constraint.
-        // PUBLIC INPUTS ARE NOT ADDED — this is the only difference from
-        // LibsnarkReduction. snarkjs leaves those evaluation slots at zero.
+        // 1) Constraint evaluations for A and B
         let mut a = vec![zero; domain_size];
         let mut b = vec![zero; domain_size];
-
         for i in 0..num_constraints {
             a[i] = evaluate_constraint(&matrices.a[i], full_assignment);
             b[i] = evaluate_constraint(&matrices.b[i], full_assignment);
         }
-        // LibsnarkReduction inserts:
-        //   a[num_constraints..num_constraints+num_inputs]
-        //       = full_assignment[..num_inputs];
-        // We intentionally omit that block.
 
-        domain.ifft_in_place(&mut a);
-        domain.ifft_in_place(&mut b);
+        // 2) Public-input padding into A (same as Libsnark / ark-circom)
+        let start = num_constraints;
+        let end = start + num_inputs;
+        a[start..end].copy_from_slice(&full_assignment[..num_inputs]);
 
-        // Step 2: evaluate in the generator coset {F::GENERATOR · ωⁱ}.
-        // Same coset as LibsnarkReduction — and the same coset snarkjs uses
-        // internally (the multiplicative generator of Fr, which is 5 for BN254).
-        let coset_domain = domain.get_coset(F::GENERATOR).unwrap();
-
-        coset_domain.fft_in_place(&mut a);
-        coset_domain.fft_in_place(&mut b);
-
-        let mut ab = domain.mul_polynomials_in_evaluation_domain(&a, &b);
-        drop(a);
-        drop(b);
-
-        // Step 3: evaluate C linear combinations at each constraint.
+        // 3) C evaluations as A·B on the same slots (satisfied R1CS ⇒ = matrices.c)
         let mut c = vec![zero; domain_size];
         for i in 0..num_constraints {
-            c[i] = evaluate_constraint(&matrices.c[i], full_assignment);
+            c[i] = a[i] * b[i];
         }
 
+        // 4) Coefficient form
+        domain.ifft_in_place(&mut a);
+        domain.ifft_in_place(&mut b);
         domain.ifft_in_place(&mut c);
-        coset_domain.fft_in_place(&mut c);
 
-        // Step 4: h_coset = (AB − C) / Z(generator).
-        // Z(x) = x^n − 1 is constant over the coset {g · ωⁱ}:
-        //   Z(g · ωⁱ) = g^n − 1  (same value for every i)
-        // Multiplying by its inverse turns AB−C evaluations into H evaluations.
-        let vanishing_polynomial_over_coset = domain
-            .evaluate_vanishing_polynomial(F::GENERATOR)
-            .inverse()
-            .unwrap();
+        // 5) Coset shift by ω_{2n} (root of unity of the 2× domain) — ark-circom
+        let root_of_unity = {
+            let domain_double = D::new(2 * domain_size)
+                .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
+            domain_double.element(1)
+        };
+        distribute_powers(&mut a, root_of_unity);
+        distribute_powers(&mut b, root_of_unity);
+        distribute_powers(&mut c, root_of_unity);
+
+        domain.fft_in_place(&mut a);
+        domain.fft_in_place(&mut b);
+        domain.fft_in_place(&mut c);
+
+        // 6) AB − C on the coset (evaluations; pairs with snarkjs / circom H)
+        let mut ab = domain.mul_polynomials_in_evaluation_domain(&a, &b);
         for (ab_i, c_i) in ab.iter_mut().zip(c.iter()) {
             *ab_i -= c_i;
-            *ab_i *= vanishing_polynomial_over_coset;
         }
-
-        // Step 5: IFFT back to polynomial coefficients.
-        // The ark-groth16 prover MSMs these coefficients against the monomial
-        // H-query [Z(τ)·τ^i/δ · G1], computing H(τ)·Z(τ)/δ.
-        coset_domain.ifft_in_place(&mut ab);
 
         Ok(ab)
     }
 
-    /// Identical to LibsnarkReduction — only used during key generation.
     fn h_query_scalars<F: PrimeField, D: EvaluationDomain<F>>(
         max_power: usize,
         t: F,
-        zt: F,
+        _zt: F,
         delta_inverse: F,
     ) -> Result<Vec<F>, SynthesisError> {
-        LibsnarkReduction::h_query_scalars::<F, D>(max_power, t, zt, delta_inverse)
+        // ark-circom: scalars for 0..2*max_power, IFFT, take odd coefficients
+        let mut scalars: Vec<F> = (0..2 * max_power + 1)
+            .map(|i| delta_inverse * t.pow([i as u64]))
+            .collect();
+        let domain_size = scalars.len();
+        let domain = D::new(domain_size).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
+        domain.ifft_in_place(&mut scalars);
+        Ok(scalars.into_iter().skip(1).step_by(2).collect())
+    }
+}
+
+/// Multiply coeffs[i] by root^i (ark-poly `distribute_powers` equivalent).
+fn distribute_powers<F: Field>(coeffs: &mut [F], root: F) {
+    let mut pow = F::one();
+    for c in coeffs.iter_mut() {
+        *c *= pow;
+        pow *= root;
     }
 }
