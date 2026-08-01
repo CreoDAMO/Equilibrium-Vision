@@ -24,6 +24,32 @@ SKIP_PTAU=${1:-""}
 
 mkdir -p "$OUT_DIR"
 cd "$ROOT"
+#!/usr/bin/env bash
+# ceremony-smoke.sh — End-to-end snarkjs ceremony → ark prove/verify smoke test
+#
+# What this proves:
+#   1. The StationarityCircuit R1CS is valid and can be used for a Groth16 ceremony
+#   2. mpc-ceremony import-zkey correctly parses real snarkjs keys
+#   3. ark Groth16 prove + verify works with ceremony-imported PK/VK
+#      (instrumented smoke: checks 1-4 — circuit, VK parity, Libsnark, Circom)
+#
+# Requirements: snarkjs (npm install -g snarkjs), cargo (Rust)
+# Runtime:      \~5-10 min first run (PTAU gen + cargo build + ceremony)
+#               \~1-2 min on re-run with --skip-ptau
+#
+# Usage:
+#   ./scripts/ceremony-smoke.sh               # full run
+#   ./scripts/ceremony-smoke.sh --skip-ptau   # reuse existing PTAU in OUT_DIR
+
+set -euo pipefail
+
+SCRIPT_DIR="\( (cd " \)(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+OUT_DIR="$ROOT/ceremony-smoke-out"
+SKIP_PTAU=${1:-""}
+
+mkdir -p "$OUT_DIR"
+cd "$ROOT"
 
 log() { echo -e "\n\033[1;36m=== $* ===\033[0m"; }
 ok()  { echo -e "\033[1;32m[OK] $*\033[0m"; }
@@ -124,7 +150,7 @@ else
 fi
 
 # ── Step 9: Ark prove + verify with diagnostic checks ─────────────────────────
-# Instrumentated binary: check 1 circuit, check 2 VK parity, check 3 Libsnark,
+# Instrumented binary: check 1 circuit, check 2 VK parity, check 3 Libsnark,
 # check 4 CircomReduction. Exit 0 only if all enabled checks pass.
 log "Proving and verifying with imported keys (ark Groth16 + diagnostics)"
 ./mpc-ceremony/target/release/smoke-prove-verify \
