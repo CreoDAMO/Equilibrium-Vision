@@ -102,7 +102,7 @@ async function main() {
     process.exit(1);
   }
   const nVars = rawWitness.length / 32;
-  console.log(`[smoke-js] out=\( {OUT}  witness_nVars= \){nVars}`);
+  console.log(`[smoke-js] out=${OUT}  witness_nVars=${nVars}`);
 
   const witnessValues = [];
   for (let i = 0; i < nVars; i++) {

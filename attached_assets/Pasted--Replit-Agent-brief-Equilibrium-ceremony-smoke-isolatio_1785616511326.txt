@@ -1,0 +1,202 @@
+# Replit Agent brief — Equilibrium ceremony smoke isolation
+
+## Goal
+
+Get a **binary answer** to: are snarkjs ceremony keys + exported R1CS + witness consistent?
+
+Do **not** rewrite CircomReduction until that answer exists.
+
+---
+
+## Context (already proven in CI)
+
+| Check | Result |
+|-------|--------|
+| Circuit self-test (ark native Libsnark) | PASS |
+| VK zkey import == JSON import | PASS |
+| Libsnark prove with imported PK | FAIL |
+| CircomReduction prove with imported PK | FAIL |
+
+Interpretation: **VK is good. Problem is prove path or R1CS/witness vs zkey — not “bad alpha/beta IC”.**
+
+PK sizes: `a=514 b=514 h=1024 l=509`, `nConstraints=854`, `nPublic=4`, IC=5.
+
+---
+
+## Constraints for the agent
+
+1. **Do not** edit README / TODO for this work.  
+2. **Do not** change CircomReduction until snarkjs native prove completes.  
+3. **Do not** invent new theory — run the measurements below and report outputs.  
+4. Prefer full file replacements over fragile patches when editing Rust/JS.  
+5. All cargo commands for ceremony bins use:
+   ```bash
+   --manifest-path mpc-ceremony/Cargo.toml
+   ```
+
+---
+
+## Phase 0 — Sanity
+
+From **repo root**:
+
+```bash
+test -f mpc-ceremony/Cargo.toml
+test -f scripts/ceremony-smoke.sh
+bash -n scripts/ceremony-smoke.sh
+
+# export_r1cs MUST contain OptimizationGoal::Constraints
+grep -n "OptimizationGoal::Constraints" mpc-ceremony/src/bin/export_r1cs.rs
+grep -n "OptimizationGoal::Constraints" mpc-ceremony/src/bin/dump_witness.rs
+```
+
+If `OptimizationGoal::Constraints` is missing from `export_r1cs.rs`, stop and add it (same as dump-witness), then continue.
+
+---
+
+## Phase 1 — Fresh ceremony (or reuse OUT)
+
+```bash
+OUT=ceremony-smoke-out
+mkdir -p "$OUT"
+
+# Full pipeline if keys missing; else skip to dump
+if [ ! -f "$OUT/circuit_final.zkey" ]; then
+  chmod +x scripts/ceremony-smoke.sh
+  ./scripts/ceremony-smoke.sh 2>&1 | tee ceremony-smoke.log
+fi
+```
+
+Confirm in log:
+
+- `[r1cs] ... goal=Constraints` (or nConstraints=854)
+- VK parity PASS
+- smoke checks 1–2 PASS, 3–4 FAIL is OK for now
+
+---
+
+## Phase 2 — Dump witness (same circuit values as export)
+
+```bash
+cargo build --release --manifest-path mpc-ceremony/Cargo.toml --bin dump-witness
+
+./mpc-ceremony/target/release/dump-witness \
+  --output "$OUT/witness_raw.bin"
+```
+
+**Record:**
+
+```text
+[dump] nVars=? nInstance=? nWitness=? nConstraints=? goal=Constraints
+```
+
+`nVars` must equal **514** (same as PK `a=514`). If not, **stop** — export and dump still disagree.
+
+---
+
+## Phase 3 — Snarkjs native prove + verify
+
+### 3a Fix `scripts/snarkjs_smoke_test.mjs` if needed
+
+- Default OUT = `ceremony-smoke-out` (not `out3`)
+- Load snarkjs via `require("snarkjs")` or global install — **no** hard-coded Replit absolute path
+- Accept optional CLI arg: `node scripts/snarkjs_smoke_test.mjs ceremony-smoke-out`
+
+### 3b Run
+
+```bash
+# Ensure snarkjs available
+command -v snarkjs || npm install -g snarkjs
+
+# Prefer package resolve; script should not depend on Replit-only paths
+node scripts/snarkjs_smoke_test.mjs ceremony-smoke-out 2>&1 | tee snarkjs-smoke.log
+echo "snarkjs_exit=$?"
+```
+
+### 3c Interpret (mandatory in final report)
+
+| snarkjs exit | Meaning | Next agent action |
+|--------------|---------|-------------------|
+| **0 PASS** | Keys + R1CS + witness OK under snarkjs | Phase 4A — ark prove path |
+| **1 FAIL** (verify false) | R1CS / wtns / zkey inconsistency | Phase 4B — export/wtns |
+| Prove throws | wtns format, nVars, or zkey mismatch | Fix dump/wtns; do not touch Circom |
+
+---
+
+## Phase 4A — If snarkjs PASS (ark is the bug)
+
+Work only on ark prove against imported keys:
+
+1. Confirm smoke uses **CircomReduction** matching ark-circom `qap.rs` (public pad into A, 2n coset, return AB−C evals, no `/Z` IFFT).  
+2. Optional: prove with **matrices from the same CS** as export (print `matrix` fingerprint export vs prove).  
+3. Do **not** change zkey_pk section counts (already match ark-circom).  
+4. Re-run `smoke-prove-verify` only; report check 3/4.
+
+---
+
+## Phase 4B — If snarkjs FAIL
+
+1. Compare export vs dump:
+   ```bash
+   # From earlier logs
+   # export nVars / nConstraints vs dump nVars / nConstraints
+   ```
+2. Verify wtns: `nWitness` in header = `nVars` from dump.  
+3. Public signals order: residual, threshold, hash_lo, hash_hi.  
+4. Re-export R1CS → **full new ceremony** after any export fix.  
+5. Do not edit CircomReduction.
+
+---
+
+## Phase 5 — Report template (paste back)
+
+```text
+## Ceremony isolation report
+
+export: nVars=… nConstraints=… goal=…
+dump:   nVars=… nConstraints=… goal=…
+PK:     a=… l=… h=…
+
+snarkjs_smoke: PASS | FAIL
+  prove: ok | error: …
+  verify: true | false
+  publicSignals: […]
+
+ark smoke checks:
+  1: …
+  2: …
+  3: …
+  4: …
+
+Conclusion: <one sentence>
+Next step: <one sentence>
+```
+
+---
+
+## Files the agent may touch
+
+| File | When |
+|------|------|
+| `scripts/snarkjs_smoke_test.mjs` | Path/OUT/snarkjs load fixes |
+| `scripts/ceremony-smoke.sh` | Add dump-witness + node snarkjs step after import |
+| `mpc-ceremony/src/bin/export_r1cs.rs` | Only if goal still missing |
+| `mpc-ceremony/src/bin/dump_witness.rs` | Only if nVars ≠ export |
+| `mpc-ceremony/src/circom_reduction.rs` | **Only after snarkjs PASS** |
+
+**Do not touch** for this task: `zkey_pk.rs` (unless snarkjs PASS and PK parse still suspected), README, production consensus paths.
+
+---
+
+## Success criteria
+
+1. `snarkjs_smoke_test.mjs` runs on CI/Replit without Replit-only paths.  
+2. Log shows snarkjs PASS or FAIL with publicSignals.  
+3. Written conclusion chooses Phase 4A or 4B.  
+4. No CircomReduction drive-by edits before that.
+
+---
+
+## One-liner for the agent
+
+> Run dump-witness into `ceremony-smoke-out/witness_raw.bin`, fix and run `scripts/snarkjs_smoke_test.mjs` against that directory’s zkey/VK, and report PASS/FAIL before changing any R1CS→QAP reduction code.
