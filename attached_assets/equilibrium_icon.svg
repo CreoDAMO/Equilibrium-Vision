@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- Background: rounded square, deep navy -->
+  <rect width="192" height="192" rx="42" ry="42" fill="#04112D"/>
+
+  <!-- Subtle inner glow ring -->
+  <rect width="192" height="192" rx="42" ry="42" fill="none"
+        stroke="#1A3F77" stroke-width="4" opacity="0.6"/>
+
+  <!-- Balance scale: center post -->
+  <rect x="94" y="58" width="4" height="76" rx="2" fill="#2E81FF"/>
+
+  <!-- Base platform -->
+  <rect x="70" y="130" width="52" height="6" rx="3" fill="#2E81FF"/>
+  <!-- Base foot -->
+  <rect x="84" y="136" width="24" height="4" rx="2" fill="#1A3F77"/>
+
+  <!-- Horizontal beam -->
+  <rect x="44" y="58" width="104" height="4" rx="2" fill="#2E81FF"/>
+
+  <!-- Left chain -->
+  <line x1="58" y1="62" x2="58" y2="92" stroke="#1A3F77" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Right chain -->
+  <line x1="134" y1="62" x2="134" y2="92" stroke="#1A3F77" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Left pan -->
+  <ellipse cx="58" cy="98" rx="22" ry="8" fill="#1A3F77"/>
+  <ellipse cx="58" cy="96" rx="22" ry="7" fill="#2E81FF" opacity="0.85"/>
+
+  <!-- Right pan -->
+  <ellipse cx="134" cy="98" rx="22" ry="8" fill="#1A3F77"/>
+  <ellipse cx="134" cy="96" rx="22" ry="7" fill="#2E81FF" opacity="0.85"/>
+
+  <!-- Center pivot dot -->
+  <circle cx="96" cy="60" r="5" fill="#2E81FF"/>
+  <circle cx="96" cy="60" r="2.5" fill="#04112D"/>
+
+  <!-- Left node dot (blockchain motif) -->
+  <circle cx="36" cy="60" r="4" fill="#2E81FF" opacity="0.7"/>
+  <!-- Right node dot -->
+  <circle cx="156" cy="60" r="4" fill="#2E81FF" opacity="0.7"/>
+
+  <!-- Glow highlight on beam ends -->
+  <circle cx="58" cy="60" r="3.5" fill="#5BA4FF"/>
+  <circle cx="134" cy="60" r="3.5" fill="#5BA4FF"/>
+</svg>
