@@ -138,16 +138,16 @@ router.patch("/relay/threshold", async (req, res) => {
 });
 
 // ── POST /api/relay/attest/inbound ───────────────────────────────────────────
-// Submit an m-of-n Ed25519-attested inbound event (permissionless).
+// Submit an m-of-n BLS12-381-attested inbound event (permissionless).
 //
 // Body: {
 //   caller: string,          40-hex-char address of the submitter
 //   chainId: string,         source chain identifier (e.g. "cosmoshub-4")
 //   seq: string | number,    attestation sequence (must be exactly lastSeq+1)
 //   commitmentHex: string,   64 hex chars — 32-byte foreign state commitment
-//   signatures: [{
-//     signatureHex: string,  128 hex chars — Ed25519 signature (64 bytes)
-//     pubkeyHex: string,     64 hex chars  — Ed25519 public key (32 bytes)
+//   aggSigHex: string,       192 hex chars — BLS12-381 G2 aggregate signature (96 bytes)
+//   signers: [{
+//     pubkeyHex: string,     96 hex chars  — BLS12-381 G1 pubkey (48 bytes)
 //     signerAddress: string, 40 hex chars  — relayer address on Equilibrium
 //   }]
 // }
@@ -156,7 +156,7 @@ router.post("/relay/attest/inbound", async (req, res) => {
   const caller = requireCaller(req, res);
   if (!caller) return;
 
-  const { chainId, seq: seqRaw, commitmentHex, signatures } = req.body ?? {};
+  const { chainId, seq: seqRaw, commitmentHex, aggSigHex, signers } = req.body ?? {};
   if (typeof chainId !== "string" || !chainId.trim()) {
     res.status(400).json({ error: "chainId is required" });
     return;
@@ -166,8 +166,8 @@ router.post("/relay/attest/inbound", async (req, res) => {
     res.status(400).json({ error: "seq must be a non-negative integer or BigInt string" });
     return;
   }
-  if (!Array.isArray(signatures) || signatures.length === 0) {
-    res.status(400).json({ error: "signatures must be a non-empty array" });
+  if (!Array.isArray(signers) || signers.length === 0) {
+    res.status(400).json({ error: "signers must be a non-empty array" });
     return;
   }
 
@@ -178,7 +178,8 @@ router.post("/relay/attest/inbound", async (req, res) => {
     chainId,
     seq,
     commitmentHex,
-    signatures,
+    aggSigHex,
+    signers,
   });
 
   if (!result.success) {

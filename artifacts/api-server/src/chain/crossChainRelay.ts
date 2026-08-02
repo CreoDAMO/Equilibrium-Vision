@@ -218,10 +218,8 @@ export async function setThreshold(
   return { success: true };
 }
 
-export interface InboundSig {
-  /** 128 hex chars — Ed25519 signature (64 bytes) */
-  signatureHex: string;
-  /** 64 hex chars — Ed25519 public key (32 bytes) */
+export interface BLSSigner {
+  /** 96 hex chars — BLS12-381 G1 compressed public key (48 bytes) */
   pubkeyHex: string;
   /** 40 hex chars — relayer address on Equilibrium */
   signerAddress: string;
@@ -232,8 +230,13 @@ export interface SubmitInboundParams {
   seq: bigint;
   /** 64 hex chars (32 bytes) — the foreign-chain state commitment */
   commitmentHex: string;
+  /** 192 hex chars — BLS12-381 G2 compressed aggregate signature (96 bytes).
+   *  Produced by aggregating one signature per signer over the canonical
+   *  message `attest:{chainId}:{seq}:{commitmentHex}` (hashed to G2 via
+   *  hashToCurve before signing, matching the bls_verify host implementation). */
+  aggSigHex: string;
   /** One entry per signing relayer; must meet or exceed the threshold. */
-  signatures: InboundSig[];
+  signers: BLSSigner[];
 }
 
 export interface SubmitInboundResult {
@@ -248,8 +251,9 @@ export async function submitInboundAttestation(
 ): Promise<SubmitInboundResult> {
   const address = getCrossChainRelayAddress();
   if (!address) return { success: false, error: "CrossChainRelay not configured" };
-  if (!p.signatures.length) return { success: false, error: "At least one signature required" };
+  if (!p.signers.length) return { success: false, error: "At least one signer required" };
   if (!/^[0-9a-f]{64}$/.test(p.commitmentHex)) return { success: false, error: "commitmentHex must be 64 hex chars (32 bytes)" };
+  if (!/^[0-9a-f]{192}$/.test(p.aggSigHex)) return { success: false, error: "aggSigHex must be 192 hex chars (96-byte BLS G2 signature)" };
 
   let args: number[];
   try {
@@ -257,17 +261,16 @@ export async function submitInboundAttestation(
     const idBytes = new TextEncoder().encode(p.chainId);
     args = [
       idBytes.length,
-      ...stringToWords(p.chainId, 64),  // chain_id_words (up to 16 words)
+      ...stringToWords(p.chainId, 64),  // chain_id words (up to 16 words)
       seqLo, seqHi,
-      ...hexToWords32(p.commitmentHex), //  8 words
-      p.signatures.length,              //  n_sigs
+      ...hexToWords32(p.commitmentHex), //  8 words — commitment
+      p.signers.length,                 //  n_signers
+      ...hexToWordsN(p.aggSigHex, 96),  // 24 words — BLS G2 aggregate signature
     ];
-    for (const s of p.signatures) {
-      if (!/^[0-9a-f]{128}$/.test(s.signatureHex)) throw new Error(`signatureHex must be 128 hex chars (64-byte Ed25519 sig): got ${s.signatureHex.slice(0, 8)}…`);
-      if (!/^[0-9a-f]{64}$/.test(s.pubkeyHex)) throw new Error(`pubkeyHex must be 64 hex chars (32-byte Ed25519 pubkey): got ${s.pubkeyHex.slice(0, 8)}…`);
+    for (const s of p.signers) {
+      if (!/^[0-9a-f]{96}$/.test(s.pubkeyHex)) throw new Error(`pubkeyHex must be 96 hex chars (48-byte BLS G1 pubkey): got ${s.pubkeyHex.slice(0, 8)}…`);
       if (!/^[0-9a-f]{40}$/.test(s.signerAddress)) throw new Error(`signerAddress must be 40 hex chars: got ${s.signerAddress}`);
-      args.push(...hexToWordsN(s.signatureHex, 64)); // 16 words — Ed25519 sig
-      args.push(...hexToWordsN(s.pubkeyHex, 32));    //  8 words — Ed25519 pubkey
+      args.push(...hexToWordsN(s.pubkeyHex, 48));       // 12 words — BLS G1 pubkey
       args.push(...stringToWords(s.signerAddress, 40)); // 10 words — address
     }
   } catch (e) {

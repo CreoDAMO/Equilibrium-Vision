@@ -37,7 +37,7 @@ pnpm run typecheck:libs && pnpm run typecheck
 
 Files: 10.
 
-> **Note:** crosschain counts reflect the Ed25519 attestation interface (reverted from a BLS prototype). models count includes the inference-attestation receipt tests added post-Phase-3.
+> **Note:** crosschain suite uses BLS12-381 aggregate signatures throughout (G1 pubkeys, G2 sigs, `longSignatures` mode). models count includes the inference-attestation receipt tests added post-Phase-3.
 
 ### Rust — variational-ai
 | Test | Status |

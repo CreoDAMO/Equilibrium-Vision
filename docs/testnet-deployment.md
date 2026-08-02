@@ -151,6 +151,7 @@ curl https://node.example.com/api/healthz
 | `ADMIN_KEY` | any string | strong secret | Required for slash/relay-register/threshold/challenge routes |
 | `DATABASE_URL` | `postgresql://runner@...` | managed DB URL | Postgres connection string |
 | `P2P_BOOTSTRAP_PEERS` | empty | seed node multiaddrs | Comma-separated libp2p multiaddresses for DHT bootstrap |
+| `CROSS_CHAIN_RELAY_ADDRESS` | auto-deployed | stable hex addr | Pin relay contract across restarts (BLS ABI v2) |
 | `STRATUM_PORT` | unset | `3333` | Set to enable the Stratum v1 mining pool |
 | `CROSS_CHAIN_RELAY_ADDRESS` | auto-deployed | stable hex addr | Pin relay contract address across restarts |
 

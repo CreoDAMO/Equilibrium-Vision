@@ -145,7 +145,27 @@ party who knows the VK toxic waste could forge a proof for any valid residual.
 
 ---
 
-## 8. Mining requires `ALLOW_RANDOM_MINING=true` in non-production environments
+## 8. CrossChainRelay uses BLS aggregate signatures (not individual Ed25519 per relayer)
+
+**Affected code:**
+- `contracts/cross_chain_relay/src/lib.rs` — `method_submit_inbound`
+- `artifacts/api-server/src/chain/crossChainRelay.ts` — `SubmitInboundParams`
+
+**Behaviour:**
+`POST /api/relay/attest/inbound` now requires a single BLS12-381 G2 aggregate signature (`aggSigHex`, 192 hex chars = 96 bytes) plus an array of `signers[]` (each with a G1 pubkey, 96 hex chars = 48 bytes, and address). The contract aggregates the pubkeys on-chain via the `bls_aggregate_pubkeys` host import and verifies the aggregate signature via `bls_verify`.
+
+The signing flow for clients:
+1. Hash the canonical message `attest:{chainId}:{seq}:{commitmentHex}` to a G2 point via `G2.hashToCurve()`
+2. Each relayer signs the G2 point: `BLS.sign(msgPoint, privKey).toBytes(true)` — 96 bytes
+3. Aggregate all signatures: `BLS.aggregateSignatures([sig1, sig2, ...]).toBytes(true)` — 96 bytes
+4. Submit `aggSigHex` + `signers[]` to the API
+
+**Why BLS over Ed25519:**
+BLS aggregate signatures shrink per-relay calldata from 34 words/signer (64-byte sig + 32-byte key + 40-byte addr) to 22 words/signer + 24 words total for the aggregate sig. For n=5 relayers: 34×5=170 words (Ed25519) vs 22×5+24=134 words (BLS) — ~21% smaller, and the pairing-based security is stronger. The tradeoff is ~1 pairing check on the host side (15 000 gas units).
+
+---
+
+## 9. Mining requires `ALLOW_RANDOM_MINING=true` in non-production environments
 
 **Affected code:**
 - `artifacts/api-server/src/chain/mining-policy.ts` — `assertRandomMiningAllowed()`

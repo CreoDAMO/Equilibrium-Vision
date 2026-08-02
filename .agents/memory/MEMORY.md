@@ -4,6 +4,7 @@
 - [Rust→wasm32 toolchain](rust-wasm-toolchain.md) — rustup setup, GLIBC_TUNABLES TLS crash fix, wasm_import_module/log-name gotchas for hand-written no_std contracts
 - [ModelRegistry inference attestation](model-registry-inference-attestation.md) — why it's an Ed25519 signed receipt, not a zkML proof; scope boundary if revisited
 - [CrossChainRelay fixes](crosschain-relay-fixes.md) — 4 bugs fixed (rate limiter in tests, dup-attest check order, admin-only register, block_number sync)
+- [CrossChainRelay BLS upgrade](crosschain-bls-upgrade.md) — Ed25519 per-signer → BLS12-381 aggregate sig; signing pattern, word layout, @noble/curves v2.2.0 gotcha
 - [libp2p-yamux compat shim](libp2p-yamux-compat-shim.md) — yamux 0.12.1 stays in lock by design; Config::default() uses 0.13.x; CVE not reachable via our code
 - [GitHub CI environment](github-ci-environment.md) — CI must use explicit runner PostgreSQL credentials; chain-window tests need more than the default 20s timeout
 - [p2p-bridge callback wiring](p2p-bridge-callbacks.md) — onSyncRequest/onLightNodeRequest must be assigned in initChain(); they are undefined by default; skeleton pattern uses <Skeleton> from @/components/ui/skeleton (bg-primary/10)

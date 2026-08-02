@@ -3,18 +3,23 @@
  *
  * Exercises the full FCCP lifecycle through the HTTP API:
  *   - Relayer registration + bond escrow
- *   - m-of-n signed inbound attestation submission
+ *   - m-of-n BLS12-381-signed inbound attestation submission
  *   - Finalization after challenge window
  *   - Admin challenge + bond slashing
  *   - Outbound commitment publishing
  *   - Threshold management
  *
- * All signatures are real Ed25519 — no mocks.
+ * All signatures are real BLS12-381 (longSignatures: G1 pubkeys, G2 sigs) — no mocks.
+ * The signing flow mirrors the bls_verify host implementation in wasm.ts:
+ *   1. Hash the canonical message to a G2 point via G2.hashToCurve()
+ *   2. Sign the G2 point with the private key
+ *   3. Aggregate individual signatures into one G2 aggregate sig
+ *   4. Send aggSigHex (192 hex chars) + signers[] (pubkeyHex + signerAddress)
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomBytes, createHash } from "crypto";
 import supertest from "supertest";
-import { ed25519 } from "@noble/curves/ed25519.js";
+import { bls12_381 } from "@noble/curves/bls12-381.js";
 import app from "../app.js";
 import { initChain, stopMining, chainState, minerAddress } from "../chain/index.js";
 import { mineNextBlock } from "../chain/state.js";
@@ -24,11 +29,8 @@ import {
   buildAttestationMessage,
 } from "../chain/crossChainRelay.js";
 
-// Extend ed25519 utils type — noble/curves uses randomPrivateKey; noble/ed25519 uses randomSecretKey.
-// Fall back to Node crypto so the test is not tied to a specific noble version.
-function randomEd25519PrivKey(): Uint8Array {
-  return randomBytes(32);
-}
+const BLS = bls12_381.longSignatures; // G1 pubkeys (48 B), G2 sigs (96 B)
+const G2  = bls12_381.G2;
 
 const api = supertest(app);
 const ADMIN_KEY = "test-admin-key-crosschain";
@@ -49,26 +51,51 @@ function advanceBlocks(count: number): void {
   }
 }
 
-/**
- * Generate an Ed25519 key pair and derive the canonical Equilibrium address.
- * address = sha256(rawPubkeyBytes).slice(0, 40)
- */
-function makeRelayerKey(): { privKey: Uint8Array; pubKey: Uint8Array; address: string; pubkeyHex: string } {
-  const privKey = randomEd25519PrivKey();
-  const pubKey = ed25519.getPublicKey(privKey);
-  const address = createHash("sha256").update(pubKey).digest("hex").slice(0, 40);
-  const pubkeyHex = Buffer.from(pubKey).toString("hex");
-  return { privKey, pubKey, address, pubkeyHex };
+interface RelayerKey {
+  privKey: Uint8Array;
+  /** 96 hex chars — BLS12-381 G1 compressed pubkey (48 bytes) */
+  pubkeyHex: string;
+  /** 40 hex chars — sha256(pubkey).slice(0,40) */
+  address: string;
 }
 
 /**
- * Sign an attestation message with an Ed25519 key.
- * The message is signed as raw bytes (same as wasm.ts verify_owner_sig).
+ * Generate a BLS12-381 key pair and derive the canonical Equilibrium address.
+ * address = sha256(compressed G1 pubkey bytes).slice(0, 40)
  */
-function signAttestation(privKey: Uint8Array, msg: string): string {
+function makeRelayerKey(): RelayerKey {
+  const privKey     = randomBytes(32);
+  const pubKeyBytes = BLS.getPublicKey(privKey).toBytes(true); // 48-byte G1 compressed
+  const pubkeyHex   = Buffer.from(pubKeyBytes).toString("hex"); // 96 hex chars
+  const address     = createHash("sha256").update(pubKeyBytes).digest("hex").slice(0, 40);
+  return { privKey, pubkeyHex, address };
+}
+
+/**
+ * Sign an attestation message with a BLS12-381 private key.
+ * Returns the raw 96-byte G2 signature (compressed).
+ * The message is hashed to a G2 point first, matching bls_verify in wasm.ts.
+ */
+function signBLS(privKey: Uint8Array, msg: string): Uint8Array {
   const msgBytes = new TextEncoder().encode(msg);
-  const sig = ed25519.sign(msgBytes, privKey);
-  return Buffer.from(sig).toString("hex");
+  const msgPoint = G2.hashToCurve(msgBytes);
+  return BLS.sign(msgPoint, privKey).toBytes(true); // 96 bytes
+}
+
+/**
+ * Build the `aggSigHex` + `signers[]` body fields for a set of relayers
+ * all signing the same attestation message.
+ */
+function buildAggPayload(
+  relayers: RelayerKey[],
+  msg: string,
+): { aggSigHex: string; signers: { pubkeyHex: string; signerAddress: string }[] } {
+  const rawSigs = relayers.map((r) => signBLS(r.privKey, msg));
+  const aggSig  = BLS.aggregateSignatures(rawSigs).toBytes(true); // 96 bytes
+  return {
+    aggSigHex: Buffer.from(aggSig).toString("hex"), // 192 hex chars
+    signers: relayers.map((r) => ({ pubkeyHex: r.pubkeyHex, signerAddress: r.address })),
+  };
 }
 
 const BOND = 2_000_000_000; // 2 billion base units (> relay_min_bond default of 1B)
@@ -205,12 +232,12 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
-    const sig = signAttestation(relayer.privKey, msg);
+    const { aggSigHex, signers } = buildAggPayload([relayer], msg);
     const res = await api.post("/api/relay/attest/inbound").send({
       caller: relayer.address,
       seq: seq.toString(),
       commitmentHex: commitment,
-      signatures: [{ signatureHex: sig, pubkeyHex: relayer.pubkeyHex, signerAddress: relayer.address }],
+      aggSigHex, signers,
     });
     expect(res.status).toBe(400);
   });
@@ -220,13 +247,13 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     if (!contractAddr) return;
     const wrongSeq = 5n;
     const msg = buildAttestationMessage(chainId, wrongSeq, commitment);
-    const sig = signAttestation(relayer.privKey, msg);
+    const { aggSigHex, signers } = buildAggPayload([relayer], msg);
     const res = await api.post("/api/relay/attest/inbound").send({
       caller: relayer.address,
       chainId,
       seq: wrongSeq.toString(),
       commitmentHex: commitment,
-      signatures: [{ signatureHex: sig, pubkeyHex: relayer.pubkeyHex, signerAddress: relayer.address }],
+      aggSigHex, signers,
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/sequence/i);
@@ -235,16 +262,15 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
   it("rejects attestation with bad signature", async () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
-    const msg = buildAttestationMessage(chainId, seq, commitment);
-    const sig = signAttestation(relayer.privKey, msg);
-    // Corrupt the signature
-    const badSig = "ff".repeat(64);
+    // Corrupt the aggregate BLS signature (192 hex chars = 96 bytes)
+    const badAggSigHex = "ff".repeat(96);
     const res = await api.post("/api/relay/attest/inbound").send({
       caller: relayer.address,
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      signatures: [{ signatureHex: badSig, pubkeyHex: relayer.pubkeyHex, signerAddress: relayer.address }],
+      aggSigHex: badAggSigHex,
+      signers: [{ pubkeyHex: relayer.pubkeyHex, signerAddress: relayer.address }],
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/signature/i);
@@ -254,13 +280,13 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
-    const sig = signAttestation(relayer.privKey, msg);
+    const { aggSigHex, signers } = buildAggPayload([relayer], msg);
     const res = await api.post("/api/relay/attest/inbound").send({
       caller: relayer.address,
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      signatures: [{ signatureHex: sig, pubkeyHex: relayer.pubkeyHex, signerAddress: relayer.address }],
+      aggSigHex, signers,
     });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -272,13 +298,13 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
-    const sig = signAttestation(relayer.privKey, msg);
+    const { aggSigHex, signers } = buildAggPayload([relayer], msg);
     const res = await api.post("/api/relay/attest/inbound").send({
       caller: relayer.address,
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      signatures: [{ signatureHex: sig, pubkeyHex: relayer.pubkeyHex, signerAddress: relayer.address }],
+      aggSigHex, signers,
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/already/i);
@@ -320,13 +346,13 @@ describe("CrossChainRelay — inbound finalization after challenge window", () =
       .set("x-admin-key", ADMIN_KEY)
       .send({ caller: relayer.address, amount: BOND.toString() });
     const msg = buildAttestationMessage(chainId, seq, commitment);
-    const sig = signAttestation(relayer.privKey, msg);
+    const { aggSigHex, signers } = buildAggPayload([relayer], msg);
     await api.post("/api/relay/attest/inbound").send({
       caller: relayer.address,
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      signatures: [{ signatureHex: sig, pubkeyHex: relayer.pubkeyHex, signerAddress: relayer.address }],
+      aggSigHex, signers,
     });
   });
 
@@ -388,13 +414,13 @@ describe("CrossChainRelay — admin challenge + slashing", () => {
       .set("x-admin-key", ADMIN_KEY)
       .send({ caller: relayer.address, amount: BOND.toString() });
     const msg = buildAttestationMessage(chainId, seq, commitment);
-    const sig = signAttestation(relayer.privKey, msg);
+    const { aggSigHex, signers } = buildAggPayload([relayer], msg);
     await api.post("/api/relay/attest/inbound").send({
       caller: relayer.address,
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      signatures: [{ signatureHex: sig, pubkeyHex: relayer.pubkeyHex, signerAddress: relayer.address }],
+      aggSigHex, signers,
     });
   });
 
@@ -531,56 +557,54 @@ describe("CrossChainRelay — multi-sig attestation (2-of-2)", () => {
       .send({ threshold: 2 });
   });
 
-  it("rejects attestation with only 1 signature when threshold is 2", async () => {
+  it("rejects attestation with only 1 signer when threshold is 2", async () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
-    const sigA = signAttestation(relayerA.privKey, msg);
+    const { aggSigHex, signers } = buildAggPayload([relayerA], msg);
     const res = await api.post("/api/relay/attest/inbound").send({
       caller: relayerA.address,
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      signatures: [{ signatureHex: sigA, pubkeyHex: relayerA.pubkeyHex, signerAddress: relayerA.address }],
+      aggSigHex, signers,
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/threshold/i);
   });
 
-  it("rejects attestation with duplicate signer", async () => {
+  it("rejects attestation with duplicate signer address", async () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
-    const sigA = signAttestation(relayerA.privKey, msg);
+    // Single valid agg sig but duplicate address in signers[] — contract checks addresses first
+    const { aggSigHex } = buildAggPayload([relayerA], msg);
     const res = await api.post("/api/relay/attest/inbound").send({
       caller: relayerA.address,
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      signatures: [
-        { signatureHex: sigA, pubkeyHex: relayerA.pubkeyHex, signerAddress: relayerA.address },
-        { signatureHex: sigA, pubkeyHex: relayerA.pubkeyHex, signerAddress: relayerA.address },
+      aggSigHex,
+      signers: [
+        { pubkeyHex: relayerA.pubkeyHex, signerAddress: relayerA.address },
+        { pubkeyHex: relayerA.pubkeyHex, signerAddress: relayerA.address },
       ],
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/duplicate/i);
   });
 
-  it("accepts 2-of-2 attestation with distinct valid signatures", async () => {
+  it("accepts 2-of-2 attestation with distinct valid BLS signatures", async () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
-    const sigA = signAttestation(relayerA.privKey, msg);
-    const sigB = signAttestation(relayerB.privKey, msg);
+    const { aggSigHex, signers } = buildAggPayload([relayerA, relayerB], msg);
     const res = await api.post("/api/relay/attest/inbound").send({
       caller: relayerA.address,
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      signatures: [
-        { signatureHex: sigA, pubkeyHex: relayerA.pubkeyHex, signerAddress: relayerA.address },
-        { signatureHex: sigB, pubkeyHex: relayerB.pubkeyHex, signerAddress: relayerB.address },
-      ],
+      aggSigHex, signers,
     });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
