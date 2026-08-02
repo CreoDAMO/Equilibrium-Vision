@@ -1,0 +1,910 @@
+# [OK] PTAU ready → /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/pot_final.ptau
+=== Groth16 setup (R1CS + PTAU → zkey) ===
+[INFO] snarkJS: Reading r1cs
+[INFO] snarkJS: Reading tauG1
+[INFO] snarkJS: Reading tauG2
+[INFO] snarkJS: Reading alphatauG1
+[INFO] snarkJS: Reading betatauG1
+[INFO] snarkJS: Circuit hash:
+fbb7e70a 0b7a6310 40b1d088 b62d6f5f
+0b53f188 d33c9a62 f8909735 cb5f4be7
+d47027f4 7c53d9e5 c6f66948 c10c678c
+9f84d161 42723122 81fd71b1 116e34b2
+[OK] initial zkey → /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/circuit_0000.zkey
+=== Phase-2 contribution ===
+[DEBUG] snarkJS: Applying key: L Section: 0/509
+[DEBUG] snarkJS: Applying key: H Section: 0/1024
+[INFO] snarkJS: Circuit Hash:
+fbb7e70a 0b7a6310 40b1d088 b62d6f5f
+0b53f188 d33c9a62 f8909735 cb5f4be7
+d47027f4 7c53d9e5 c6f66948 c10c678c
+9f84d161 42723122 81fd71b1 116e34b2
+[INFO] snarkJS: Contribution Hash:
+1f4d22d9 3384a3e9 99a41284 c164b212
+ce9fae3c 21e5b4b8 d89bde07 b4ba78d2
+8ee1c33a 235c15fa bc918517 ab4e8a4c
+ea6f8d0a 1538c775 5fc5e049 73633cb4
+[OK] contribution → /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/circuit_0001.zkey
+=== Applying random beacon ===
+[INFO] snarkJS: Contribution Hash:
+48244e4a c74a8e8e 0292be16 a4f88fe1
+88a13fd2 e759a5dd 4cbe349e a74968f9
+b59def67 16bdf3b3 a06f08db 034d87e0
+4b568ba5 3d1f0cfe 31bea7b0 b42ba443
+[OK] final zkey → /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/circuit_final.zkey
+=== Exporting verification_key.json ===
+[INFO] snarkJS: EXPORT VERIFICATION KEY STARTED
+[INFO] snarkJS: > Detected protocol: groth16
+[INFO] snarkJS: EXPORT VERIFICATION KEY FINISHED
+[OK] VK JSON → /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/verification_key.json
+=== Importing zkey into ark (import-zkey) ===
+[mpc] wrote /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/verification_key.bin (392 bytes, 5 IC points)
+[mpc] wrote /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/proving_key.bin (115344 bytes)
+[mpc] PK queries: a=514 b_g1=514 b_g2=514 h=1024 l=509
+[OK] ark keys → /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/proving_key.bin + verification_key.bin
+=== Cross-check: import-vk from JSON ===
+[mpc] wrote /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/verification_key_json.bin (392 bytes, 5 IC points)
+[OK] JSON VK → /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/verification_key_json.bin
+=== VK binary parity (zkey import vs JSON import) ===
+[OK] VK bins identical — zkey and JSON import produce the same bytes
+=== Proving and verifying with imported keys (ark Groth16 + diagnostics) ===
+[smoke] loading PK from /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/proving_key.bin
+[smoke] PK loaded IC.len=5 h_query.len=1024 a=514 b_g1=514 b_g2=514 l=509
+[smoke] loading VK from /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/verification_key.bin
+[smoke] VK loaded IC.len=5
+[check 1] circuit self-test (Libsnark setup+prove+verify) ...
+[check 1] PASS — circuit satisfiable under Libsnark
+[check 2] VK parity zkey-bin vs json-bin ...
+[check 2] PASS — zkey VK == JSON VK
+[check 3] Libsnark prove+verify vs imported PK/VK ...
+[proof:libsnark] A.is_zero=false B.is_zero=false C.is_zero=false
+[check 3] FAIL — Libsnark proof does not verify on imported keys
+[check 4] CircomReduction prove+verify vs imported PK/VK ...
+[circom_reduction] ark-circom-style num_constraints=854 num_inputs=5 domain_size=1024
+[proof:circom] A.is_zero=false B.is_zero=false C.is_zero=false
+[check 4] PASS — CircomReduction works with snarkjs keys
+  failures=1
+  CEREMONY SMOKE: DIAGNOSTIC FAILURES
+  Interpret:
+    1 FAIL -> circuit / R1CS problem
+    2 FAIL -> VK import (zkey vs JSON G1/G2 parse)
+    3+4 FAIL, 2 PASS -> prove path / H / A,B,L queries (not VK)
+    3 FAIL, 4 PASS -> use CircomReduction; Libsnark wrong for this zkey
+    3 PASS, 4 FAIL -> Circom H path wrong for this zkey
+    3 FAIL, 4 FAIL, 2 PASS -> key queries or assignment/wire mismatch
+0s
+Run set +e
+set +e
+LOG=ceremony-smoke.log
+OUT=ceremony-smoke-out
+echo "════════════════════════════════════════════════════════"
+echo " CEREMONY SMOKE DIAGNOSTIC SUMMARY"
+echo "════════════════════════════════════════════════════════"
+echo "smoke_exit (from script): 1"
+echo ""
+echo "── Raw check / smoke lines ──"
+grep -E '$  check |\[smoke  $$  circom_reduction  $|$$   proof:|failures=|CEREMONY SMOKE|Interpret:' "$LOG" | tail -60
+echo ""
+# --- Shell VK parity (backup if binary skipped check 2) ---
+echo "── Shell Check 2: VK binary parity ──"
+if [[ -f "$OUT/verification_key.bin" && -f "$OUT/verification_key_json.bin" ]]; then
+if cmp -s "$OUT/verification_key.bin" "$OUT/verification_key_json.bin"; then
+echo "[shell check 2] PASS — verification_key.bin == verification_key_json.bin"
+else
+echo "[shell check 2] FAIL — VK bins differ"
+ls -la "$OUT/verification_key.bin" "$OUT/verification_key_json.bin"
+echo "zkey VK sha256: $(sha256sum "$OUT/verification_key.bin")"
+echo "json VK sha256: $(sha256sum "$OUT/verification_key_json.bin")"
+fi
+else
+echo "[shell check 2] SKIP — VK bin(s) missing"
+ls -la "$OUT" 2>/dev/null || true
+fi
+echo ""
+# --- Parse instrumented binary results ---
+echo "── Classification from smoke binary ──"
+c1="UNKNOWN"; c2="UNKNOWN"; c3="UNKNOWN"; c4="UNKNOWN"
+if grep -q '[check 1    PASS' "$LOG"; then c1=PASS
+elif grep -q '   check 1    FAIL' "$LOG"; then c1=FAIL
+fi
+if grep -q '   check 2    PASS' "$LOG"; then c2=PASS
+elif grep -q '   check 2    FAIL' "$LOG"; then c2=FAIL
+elif grep -q '   check 2    SKIP' "$LOG"; then c2=SKIP
+fi
+if grep -q '   check 3    PASS' "$LOG"; then c3=PASS
+elif grep -q '   check 3    FAIL' "$LOG"; then c3=FAIL
+elif grep -q '   check 3    ERROR' "$LOG"; then c3=ERROR
+fi
+if grep -q '   check 4    PASS' "$LOG"; then c4=PASS
+elif grep -q '   check 4    FAIL' "$LOG"; then c4=FAIL
+elif grep -q '   check 4   $$ ERROR' "$LOG"; then c4=ERROR
+fi
+echo " check 1 (circuit / Libsnark self-test): $c1"
+echo " check 2 (VK zkey vs JSON): $c2"
+echo " check 3 (Libsnark vs imported keys): $c3"
+echo " check 4 (CircomReduction vs imported): $c4"
+echo ""
+if grep -q 'ark-circom-style' "$LOG"; then
+  echo "[reduction] ark-circom-style CircomReduction WAS used"
+else
+  echo "[reduction] ark-circom-style marker NOT found"
+fi
+echo ""
+echo "── Interpret ──"
+if [[ "$c1" == "FAIL" ]]; then
+  echo " → Fix StationarityCircuit / export_r1cs first."
+elif [[ "$c2" == "FAIL" ]]; then
+  echo " → Fix zkey_pk / JSON G2 parse (VK import bug)."
+elif [[ "$c3" == "FAIL" && "$c4" == "PASS" ]]; then
+  echo " → Expected for snarkjs keys. Ship CircomReduction; ignore Libsnark for ceremony path."
+elif [[ "$c3" == "PASS" && "$c4" == "FAIL" ]]; then
+  echo " → Circom H path wrong for this zkey. Fix CircomReduction (or use Libsnark if keys allow)."
+elif [[ "$c3" == "FAIL" && "$c4" == "FAIL" && "$c2" == "PASS" ]]; then
+  echo " → VK OK. Problem is prove path: H / A,B,L queries / wire assignment vs R1CS."
+elif [[ "$c1" == "PASS" && "$c2" == "PASS" && "$c3" == "PASS" && "$c4" == "PASS" ]]; then
+  echo " → All green. Set continue-on-error: false when ready."
+elif [[ "$c3" == "UNKNOWN" || "$c4" == "UNKNOWN" ]]; then
+  echo " → Instrumented checks not in log — smoke binary may be old or crashed early."
+else
+  echo " → See check matrix above + failures= line in log."
+fi
+echo "════════════════════════════════════════════════════════"
+shell: /usr/bin/bash -e {0}
+env:
+  CARGO_HOME: /home/runner/.cargo
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  CACHE_ON_FAILURE: false
+════════════════════════════════════════════════════════
+ CEREMONY SMOKE DIAGNOSTIC SUMMARY
+════════════════════════════════════════════════════════
+smoke_exit (from script): 1
+── Raw check / smoke lines ──
+[smoke] loading PK from /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/proving_key.bin
+[smoke] PK loaded IC.len=5 h_query.len=1024 a=514 b_g1=514 b_g2=514 l=509
+[smoke] loading VK from /home/runner/work/Equilibrium-Vision/Equilibrium-Vision/ceremony-smoke-out/verification_key.bin
+[smoke] VK loaded IC.len=5
+[check 1] circuit self-test (Libsnark setup+prove+verify) ...
+[check 1] PASS — circuit satisfiable under Libsnark
+[check 2] VK parity zkey-bin vs json-bin ...
+[check 2] PASS — zkey VK == JSON VK
+[check 3] Libsnark prove+verify vs imported PK/VK ...
+[proof:libsnark] A.is_zero=false B.is_zero=false C.is_zero=false
+[check 3] FAIL — Libsnark proof does not verify on imported keys
+[check 4] CircomReduction prove+verify vs imported PK/VK ...
+[circom_reduction] ark-circom-style num_constraints=854 num_inputs=5 domain_size=1024
+[proof:circom] A.is_zero=false B.is_zero=false C.is_zero=false
+[check 4] PASS — CircomReduction works with snarkjs keys
+  failures=1
+  CEREMONY SMOKE: DIAGNOSTIC FAILURES
+  Interpret:
+── Shell Check 2: VK binary parity ──
+[shell check 2] PASS — verification_key.bin == verification_key_json.bin
+── Classification from smoke binary ──
+  check 1 (circuit / Libsnark self-test): PASS
+  check 2 (VK zkey vs JSON): PASS
+  check 3 (Libsnark vs imported keys): FAIL
+  check 4 (CircomReduction vs imported): PASS
+[reduction] ark-circom-style CircomReduction WAS used
+── Interpret ──
+  → Expected for snarkjs keys. Ship CircomReduction; ignore Libsnark for ceremony path.
+════════════════════════════════════════════════════════
+1s
+Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Run actions/upload-artifact@v4
+(node:2805) [DEP0040] DeprecationWarning: The punycode module is deprecated. Please use a userland alternative instead.
+(Use node --trace-deprecation ... to show where the warning was created)
+Multiple search paths detected. Calculating the least common ancestor of all paths
+The least common ancestor is /home/runner/work/Equilibrium-Vision/Equilibrium-Vision. This will be the root directory of the artifact
+With the provided path, there will be 6 files uploaded
+Artifact name is valid!
+Root directory input is valid!
+Beginning upload of artifact content to blob storage
+(node:2805) [DEP0169] DeprecationWarning: url.parse() behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for url.parse() vulnerabilities.
+Uploaded bytes 111244
+Finished uploading artifact content to blob storage!
+SHA256 digest of uploaded artifact zip is af7227e8ebdd1b7a20f31f50fa5047103c1c651a73d09a366daef9a1ea8e7072
+Finalizing artifact upload
+Artifact ceremony-smoke-a6cb6b933c4a81f576c879022a73c68d38006861.zip successfully finalized. Artifact ID 8829067763
+Artifact ceremony-smoke-a6cb6b933c4a81f576c879022a73c68d38006861 has been successfully uploaded! Final size is 111244 bytes. Artifact ID is 8829067763
+Artifact download URL: https://github.com/CreoDAMO/Equilibrium-Vision/actions/runs/30734449363/artifacts/8829067763
+0s
+Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Post job cleanup.
+(node:2817) [DEP0040] DeprecationWarning: The punycode module is deprecated. Please use a userland alternative instead.
+(Use node --trace-deprecation ... to show where the warning was created)
+0s
+Post job cleanup.
+Cache up-to-date.
+(node:2825) [DEP0040] DeprecationWarning: The punycode module is deprecated. Please use a userland alternative instead.
+(Use node --trace-deprecation ... to show where the warning was created)
+1s
+0sWorked for 5sThis is the win.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+CheckResultMeaning1 CircuitPASSStationarityCircuit OK2 VK parityPASSImport OK3 Libsnark + zkeyFAILExpected for snarkjs keys4 CircomReduction + zkeyPASSCeremony path works
+CI’s own line:
+Expected for snarkjs keys. Ship CircomReduction; ignore Libsnark for ceremony path.
+Canonical R1CS coeffs + ark-circom-style reduction closed the gap. Check 3 should not block shipping.
+
+What to do next
+
+Treat smoke as green when only check 3 fails
+In smoke_prove_verify.rs (or the shell wrapper): exit 0 if check 1, 2, 4 pass; record check 3 as EXPECTED_FAIL / informational.
+Production prove path
+Always Groth16::<Bn254, CircomReduction> for ceremony-imported keys. Never default Libsnark on zkeys.
+CI
+When the exit code is fixed: continue-on-error: false on ceremony-smoke.
+Optional
+Drop check 3 from failures count, or gate it behind --strict-libsnark.
+
+
+What you proved end-to-end
+textCopyexport R1CS (canonical coeffs)
+  → snarkjs setup / contribute / beacon
+  → import-zkey
+  → ark CircomReduction prove
+  → verify PASS
+That’s the real ceremony ↔ ark bridge. Libsnark-on-zkey failure is by design, not a remaining bug.
+Nice work getting this over the line.Rephrase conclusion to emphasize successWorked for 18sCeremony path: success
+The snarkjs → ark bridge works.
+You can export the StationarityCircuit R1CS, run a full snarkjs ceremony, import the keys into ark, prove with CircomReduction, and verify. That is the production path for ceremony keys, and it is green.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+What mattersResultCircuitSound under native arkVK import (zkey and JSON)Identical, correctProve + verify with CircomReductionPASS
+Libsnark failing against snarkjs keys is expected: those keys use a different H basis. That is not a defect in your stack; it is why CircomReduction exists. Ship that path and treat Libsnark-on-zkey as out of scope.
+Bottom line: Equilibrium can generate ceremony-compatible Groth16 proofs in arkworks from real snarkjs keys. The isolation goal is met.## Full remaining-gap map (Aug 2, 2026)
+Grounded in live main + the ceremony win you just confirmed. Status legend:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+TagMeaning**CLOSED**Code + tests/docs aligned**PARTIAL**Works with escape hatches; not default-safe**OPEN**Still missing or incorrect by design**LIMIT**Documented intentional constraint**OPS**External infra, not in-repo code
+
+### A. Mobile / no-server (your primary goal)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#GapStatusWhat’s realWhat remainsA1Phone tip without HTTP**CLOSED**Local cache → lightnode RR → HTTP last—A2Phone body sync without HTTP**CLOSED**querySyncBlock / querySyncBlocks + ring—A3Phone serves other phones**CLOSED**Tip + headers + last-64 bodies over RRSMT proofs stay desktop-only (no full SMT on phone)A4Phone **submit** without HTTP**PARTIAL**HTTP_SUBMIT=0 → gossip + local validatorDefault is still HTTP submit; offline is opt-inA5Phone-native process (no Express)**PARTIAL**In-process p2p_runtime swarmDesktop TS node still HTTP-centric; phones don’t need it if mesh is denseA6Bootstrap without seeds**PARTIAL**mDNS + Kad + QR inviteWide-area first contact still needs one QR/multiaddr or temporary bootstrapA7DHT bootstrap without any seed**OPEN**Kad presentNo proven zero-seed cold start across NATsA8Battery / thermal duty-cycle**PARTIAL**WorkManager + ThermalGuard + thermal marginSustained multi-hour profile not productized**Bottom line for “VM optional”:** A phone can mine, validate, tip-sync, and body-sync over P2P today. Cloud is still the **default submit path** and the easy bootstrap path. Closing A4 (default P2P submit when peers exist) is the highest-leverage remaining mobile gap.
+
+### B. Consensus / mining honesty
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#GapStatusWhat’s realWhat remainsB1Production mining uses real solver**CLOSED**mineNextBlockAsync + fail-closed policy—B2Sync mineNextBlock() RNG**OPEN**Pure Math.random() residual/nonce; used by testsGate with allowRandomMiningFallback() or rename to test-onlyB3Random residual in genesis/demo builders**PARTIAL**Acceptable for fixturesEnsure never on production pathB4Fixed-point residual consensus**CLOSED**1e18 scale TS + Rust—
+
+### C. ZK / ceremony / zkML
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#GapStatusWhat’s realWhat remainsC1Stationarity circuit**CLOSED**Check 1 PASS—C2VK import parity**CLOSED**Check 2 PASS—C3Libsnark on snarkjs zkey**LIMIT**Expected FAILDo not block shipC4CircomReduction + zkey prove/verify**CLOSED**Check 4 PASS — real ceremony pathWire as **only** production prove pathC5Smoke exit code**OPEN**Any failure → exit 1; CI continue-on-error: trueExit 0 when only check 3 fails; then drop continue-on-errorC6TS trapdoor prover**PARTIAL**Full pairing verify; trapdoor prove gated off in productionKeep disabled; prefer Rust real-witnessC7zkML / ERC-7992 DeepProve**OPEN**Ed25519 inference receipt onlyReal model-inference circuit not in repoC8Toxic-waste / ceremony ops**PARTIAL**Smoke path worksProduction CRS ceremony procedure + key custodyCeremony win moves C1–C4 into closed/limit. Remaining ZK work is **CI policy (C5)** and **zkML (C7)**, not stationarity pairing math.
+
+### D. P2P / networking
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#GapStatusWhat’s realWhat remainsD1TCP + QUIC dual transport**CLOSED**OrTransport in sidecar—D2Lightnode + sync RR**CLOSED**Wired in initChain + phone runtime—D3Handler-layer tests**CLOSED**p2p-sync.integration.test.ts—D4Two-process mesh + body**PARTIAL**p2p-mesh tests; CI builds sidecarLocal skip if binary missing; ensure CI never skipsD5Simulated gossip fallback**PARTIAL**Sidecar missing → simulated modeFine for dev; production must require sidecar or in-process swarmD6Full block/tx body over gossip**CLOSED**GOSSIP_BLOCK_BODIES + ring—D7Unified TS node without HTTP**OPEN**Bridge + HTTP coexistPure P2P desktop node is a product choice, not required for phone mesh
+
+### E. State / light clients / persistence
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#GapStatusWhat’s realWhat remainsE1SMT + stateRoot every block**CLOSED**Computed + Postgres—E2Cold-cache proof guard**CLOSED**getVerifiedStateRoot rejects mismatch—E3Safe pruning + snapshots**CLOSED**Snapshot-gated prune—E4Phone SMT proofs**LIMIT**Desktop onlyPhone is light client, not full state proverE5DEX pool persistence**CLOSED** (code)_persistPool + load pathConfirm LIMITATIONS §2 is stale or still true for edge casesE6Full history without any full node**LIMIT**Pruned rings + light syncNetwork still needs some long-lived peers for deep history
+
+### F. Contracts / WASM host (from LIMITATIONS)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#GapStatusNotesF1Arbitrage minProfit advisory**LIMIT**No multi-hop atomic revertF2Inference = Ed25519, not zkML**LIMIT** / **OPEN** for real zkMLSame as C7F3slash_account / transfer host names**LIMIT**Real ops are bond / payoutF4verify_residual blocks event loop**LIMIT** / **PARTIAL**Worker-thread path documented; confirm non-blocking in prodF5call_contract no auto-rollback**LIMIT**Contract-level undo requiredF6Arbitrage owner-gate vs permissionless detect**LIMIT**By design until governance widens
+
+### G. External / ops (not code)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#ItemStatusG1Multi-region validators / sentries**OPS**G2Postgres HA + backups**OPS**G3Edge DDoS / rate limit**OPS**G4External security audit**OPS**G5Store distribution (Play/App)**OPS** — sideload-first by designThese do **not** block “phones run the network.” They matter for public mainnet reliability and trust.
+
+### Priority order (if the goal is: cloud optional)
+**Ship-blocking for honest mainnet / mobile-default**
+
+**B2** — Gate or quarantine sync mineNextBlock RNG
+**A4** — Default P2P submit when P2PNode has peers (HTTP_SUBMIT auto-off)
+**C5** — Smoke exits 0 when only Libsnark-on-zkey fails; CI hard-fails on real fails
+**C4 wiring** — Production prove always CircomReduction; never Libsnark on ceremony keys
+**Next wave (mesh robustness)**
+**D4** — Mesh tests never silently skip in CI
+**A6/A7** — Document + harden QR-first contact; optional relay/hole-punch story
+**D5** — Production refuse pure simulated gossip
+**Explicitly deferred (honest)**
+**C7** — zkML / DeepProve circuit (large, separate program)
+**G*** — Ops and audit
+**F*** — WASM semantics limits (document, don’t pretend fixed)
+
+
+### One-line summary
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+LayerReady?PoS + fixed-point + SMT light proofsYesStationarity ceremony prove/verifyYes (CircomReduction); CI policy still softPhone as peer (tip/body/validate/mine)YesPhone as default **serverless** submitterAlmost — flip defaultzkML correctness on-chainNoPublic mainnet opsNo (external)The set is whole enough that **VM/cloud is already optional for a mesh of phones**, with two code defaults still leaning server-ward (HTTP submit, RNG sync miner) and one CI policy still treating the expected Libsnark fail as a red X.If you want implementation next: **B2 → A4 → C5** in that order closes the last “not finished” honesty gaps without waiting on zkML or Hetzner.Worked for 3sThat map is accurate and honest. A few tight confirmations from the ceremony win and the mobile work already on main:
+
+Confirmed
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+AreaCallC1–C4Correct — stationarity ceremony path is real; C3 is LIMIT not OPENC5Highest-leverage CI fix; pure policy, no crypto riskA1–A3Match the wired phone runtimeA4Right “almost” — capability exists; default still HTTPB2Still the main honesty landmine if anything calls sync mine in prodPriority B2 → A4 → C5Right order for “cloud optional + honest”
+
+One-line product truth (aligned with your summary)
+Phones can already run the mesh. What’s left for “VM optional by default” is mostly defaults and gates (submit path, RNG miner, smoke exit), not missing P2P or missing stationarity proofs. zkML and ops stay deferred without overclaiming.
+
+Suggested next slice
+
+B2 — Sync mineNextBlock cannot produce production blocks
+A4 — Peers up → P2P submit first; HTTP only if needed / explicit
+C5 — Exit 0 when only check 3 fails; then hard-fail ceremony job
+
+Say which of those three you want to implement first and we’ll draft full files, not patches.**B2 is implemented.** Sync RNG mining can no longer produce production blocks.
+### What changed
+**1. artifacts/api-server/src/chain/mining-policy.ts (full rewrite)**
+
+Same env rules as before
+New assertRandomMiningAllowed(caller?) — throws when RNG is forbidden
+Documented that both async fallback and sync miner share this policy
+**2. artifacts/api-server/src/chain/state.ts — mineNextBlock**
+Entry calls assertRandomMiningAllowed("mineNextBlock")
+JSDoc marks it **test/dev only**; production must use mineNextBlockAsync
+Name kept so existing integration tests keep compiling
+**3. artifacts/api-server/src/routes/chain.ts**
+Removed dead mineNextBlock / minerAddress imports (route never mined)
+**4. artifacts/api-server/src/__tests__/chain.unit.test.ts**
+Four tests: allow in unset env, forbid under NODE_ENV=production, override via ALLOW_RANDOM_MINING=true, mineNextBlock throws under production policy
+
+### Behaviour matrix
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+EnvmineNextBlock (sync RNG)mineNextBlockAsync (no solver)test / dev / unsetOK (tests)RNG fallback + warnNODE_ENV=production**throws****throws**REQUIRE_REAL_SOLVER=true**throws****throws**ALLOW_RANDOM_MINING=trueOKRNG fallbackProduction path was already fail-closed on async; B2 closes the sync landmine.
+
+**Next: A4** (peers up → P2P submit first; HTTP only if needed / explicit), then **C5** (smoke exit 0 when only check 3 fails).
+Say go on A4 and I’ll implement the full MiningWorker.kt default logic the same way — full file sections, not a one-line patch.

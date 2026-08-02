@@ -22,8 +22,10 @@ import java.util.concurrent.TimeUnit
  *   2. pollGossip() — abort if a peer already announced this height
  *   3. solveBlock() — Rust JNI via libequilibrium_core.so
  *   4. pollGossip() again — discard stale solution if a peer won mid-solve
- *   5. POST /api/blocks/submit — still required for body acceptance until
- *      phone implements sync RR; then setLocalTip + gossipBlock
+ *   5a. Peers present (default): gossipBlock + gossipBlockBody → validate →
+ *       setLocalTip on Accept.  HTTP submit is skipped unless HTTP_SUBMIT=1.
+ *   5b. No peers (default): POST /api/blocks/submit to cloud node.
+ *       HTTP can be force-disabled with HTTP_SUBMIT=0 even when no peers.
  *
  * Input data keys (set by MiningService):
  *   [KEY_NODE_URL]       — base URL of the Equilibrium node  (default: emulator localhost)
@@ -108,11 +110,12 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             )
         }
 
-        // ── HTTP_SUBMIT flag — set HTTP_SUBMIT=0 (or "false"/"off") to disable
-        //    cloud HTTP submit and rely purely on P2P gossip + local validation.
-        //    Useful for fully-offline mesh operation and CI mesh tests.
-        val httpSubmitEnabled = System.getenv("HTTP_SUBMIT")
-            ?.lowercase() !in setOf("0", "false", "off")
+        // HTTP_SUBMIT env — controls whether the cloud HTTP endpoint is used for submission.
+        //   (unset) + peers present  → HTTP OFF by default (P2P is the canonical path)
+        //   (unset) + no peers       → HTTP ON  by default (cloud node is still the fallback)
+        //   HTTP_SUBMIT=1/true/on    → HTTP always on  (override for testing / forced cloud)
+        //   HTTP_SUBMIT=0/false/off  → HTTP always off (fully offline mesh)
+        // Evaluated lazily below at submit-time so peer count is current.
 
         // ── 0. Ensure background validator is running ─────────────────────────
         ensureValidator()
@@ -223,7 +226,8 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             difficulty = difficulty,
         )
 
-        if (P2PNode.isRunning() && P2PNode.getConnectedPeerCount() > 0) {
+        val hasPeers = P2PNode.isRunning() && P2PNode.getConnectedPeerCount() > 0
+        if (hasPeers) {
             val bodySent = P2PNode.gossipBlockBody(blockBodyJson)
             val hashSent = P2PNode.gossipBlock(blockHash)
             if (bodySent && hashSent) {
@@ -234,16 +238,29 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
                     Log.i(TAG, "Local tip advanced after Accept")
                     return Result.success()
                 }
-                Log.w(TAG, "Self-mined body failed local validation — no tip advance, falling back to HTTP")
+                Log.w(TAG, "Self-mined body failed local validation — no tip advance")
+            } else {
+                Log.w(TAG, "P2P gossip failed — block not propagated to peers")
             }
-            Log.w(TAG, "P2P gossip failed — falling back to HTTP submit")
         }
 
-        // ── 4. HTTP fallback: submit solved block to the node ─────────────────
-        // Skipped when HTTP_SUBMIT=0 — body was already gossiped in step 3 and
-        // tip advance happens only on Accept (P2P-first, fully offline path).
+        // ── 4. HTTP submit ────────────────────────────────────────────────────
+        // Default: off when peers are present (P2P is the canonical submit path,
+        //          and it already ran in step 3).
+        //          on  when no peers (cloud node is still the only fallback).
+        // Override: HTTP_SUBMIT=1/true/on  → always HTTP
+        //           HTTP_SUBMIT=0/false/off → never HTTP
+        val httpSubmitEnabled = when (System.getenv("HTTP_SUBMIT")?.lowercase()) {
+            "1", "true", "on"   -> true
+            "0", "false", "off" -> false
+            else                -> !hasPeers  // default: HTTP only when no P2P peers
+        }
         if (!httpSubmitEnabled) {
-            Log.i(TAG, "HTTP_SUBMIT=0 — skipping cloud submit; block propagated via P2P only")
+            if (hasPeers) {
+                Log.i(TAG, "Peers present — HTTP submit skipped; P2P is canonical path")
+            } else {
+                Log.i(TAG, "HTTP_SUBMIT=0 — cloud submit disabled; no peers to fall back to")
+            }
             return Result.success()
         }
         return submitBlock(

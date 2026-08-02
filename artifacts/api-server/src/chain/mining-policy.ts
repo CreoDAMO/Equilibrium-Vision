@@ -35,3 +35,23 @@ export function allowRandomMiningFallback(): boolean {
 export function requireRealSolver(): boolean {
   return !allowRandomMiningFallback();
 }
+
+/**
+ * Assert that random-residual mining is permitted in the current environment.
+ * Throws with a clear message when it is not.
+ *
+ * Call this at the top of any sync mining helper that uses Math.random() so
+ * production code paths fail loudly instead of silently emitting fake blocks.
+ *
+ * @param caller - optional name included in the error message for diagnostics.
+ */
+export function assertRandomMiningAllowed(caller?: string): void {
+  if (!allowRandomMiningFallback()) {
+    const who = caller ? `${caller}: ` : "";
+    throw new Error(
+      `${who}RNG mining is forbidden in this environment. ` +
+      "Build the equilibrium consensus-api binary for real PoS, or set " +
+      "ALLOW_RANDOM_MINING=true / NODE_ENV=test for non-production use only.",
+    );
+  }
+}

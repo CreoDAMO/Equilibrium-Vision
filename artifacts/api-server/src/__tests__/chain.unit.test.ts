@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { hash256, sha256, merkleRoot, addressFromSeed } from "../chain/crypto.js";
 import { fpEncode, blockHashToFields } from "../chain/zk-encoding.js";
 import { generateZkProof, verifyZkProof } from "../chain/zkproof.js";
-import { ChainState } from "../chain/state.js";
+import { ChainState, mineNextBlock } from "../chain/state.js";
+import { allowRandomMiningFallback, assertRandomMiningAllowed } from "../chain/mining-policy.js";
 import type { BlockRecord } from "../chain/types.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -295,6 +296,72 @@ describe("ChainState.updateDifficulty", () => {
     state.currentDifficulty = 1_000_000;
     state.updateDifficulty();
     expect(state.currentDifficulty).toBe(1_000_000);
+  });
+});
+
+// ── mining-policy / mineNextBlock — B2 RNG gate ───────────────────────────────
+//
+// mineNextBlock() uses Math.random() and must be blocked in production so it
+// can never silently emit a fake-residual block on a live network.
+
+describe("mining-policy assertRandomMiningAllowed", () => {
+  let savedNodeEnv: string | undefined;
+  let savedRequireSolver: string | undefined;
+  let savedAllowRandom: string | undefined;
+
+  beforeEach(() => {
+    savedNodeEnv      = process.env["NODE_ENV"];
+    savedRequireSolver = process.env["REQUIRE_REAL_SOLVER"];
+    savedAllowRandom  = process.env["ALLOW_RANDOM_MINING"];
+  });
+
+  afterEach(() => {
+    if (savedNodeEnv === undefined) delete process.env["NODE_ENV"];
+    else process.env["NODE_ENV"] = savedNodeEnv;
+
+    if (savedRequireSolver === undefined) delete process.env["REQUIRE_REAL_SOLVER"];
+    else process.env["REQUIRE_REAL_SOLVER"] = savedRequireSolver;
+
+    if (savedAllowRandom === undefined) delete process.env["ALLOW_RANDOM_MINING"];
+    else process.env["ALLOW_RANDOM_MINING"] = savedAllowRandom;
+  });
+
+  it("allows RNG when NODE_ENV is unset (dev / CI default)", () => {
+    delete process.env["NODE_ENV"];
+    delete process.env["REQUIRE_REAL_SOLVER"];
+    delete process.env["ALLOW_RANDOM_MINING"];
+    expect(() => assertRandomMiningAllowed("test")).not.toThrow();
+    expect(allowRandomMiningFallback()).toBe(true);
+  });
+
+  it("blocks RNG when NODE_ENV=production", () => {
+    process.env["NODE_ENV"] = "production";
+    delete process.env["ALLOW_RANDOM_MINING"];
+    delete process.env["REQUIRE_REAL_SOLVER"];
+    expect(() => assertRandomMiningAllowed("test")).toThrow(/RNG mining is forbidden/);
+    expect(allowRandomMiningFallback()).toBe(false);
+  });
+
+  it("blocks RNG when REQUIRE_REAL_SOLVER=true regardless of NODE_ENV", () => {
+    delete process.env["NODE_ENV"];
+    process.env["REQUIRE_REAL_SOLVER"] = "true";
+    delete process.env["ALLOW_RANDOM_MINING"];
+    expect(() => assertRandomMiningAllowed()).toThrow(/RNG mining is forbidden/);
+  });
+
+  it("ALLOW_RANDOM_MINING=true overrides production lock", () => {
+    process.env["NODE_ENV"] = "production";
+    process.env["ALLOW_RANDOM_MINING"] = "true";
+    expect(() => assertRandomMiningAllowed("test")).not.toThrow();
+    expect(allowRandomMiningFallback()).toBe(true);
+  });
+
+  it("mineNextBlock throws under NODE_ENV=production", () => {
+    process.env["NODE_ENV"] = "production";
+    delete process.env["ALLOW_RANDOM_MINING"];
+    delete process.env["REQUIRE_REAL_SOLVER"];
+    const state = new ChainState();
+    expect(() => mineNextBlock(state, "a".repeat(40))).toThrow(/RNG mining is forbidden/);
   });
 });
 

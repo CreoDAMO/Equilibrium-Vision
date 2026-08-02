@@ -21,7 +21,7 @@ function bytesToHex(bytes: Uint8Array): string {
 import { SparseMerkleTree, smtKey, smtValue } from "./smt.js";
 import { merkleRoot, randomHex, addressFromSeed, hash256 } from "./crypto.js";
 import { solveBlock } from "../variational-ai/bridge.js";
-import { allowRandomMiningFallback } from "./mining-policy.js";
+import { allowRandomMiningFallback, assertRandomMiningAllowed } from "./mining-policy.js";
 import { logger } from "../lib/logger.js";
 import { GovernanceModule } from "./governance.js";
 import { drainPendingParamUpdates } from "./governanceContract.js";
@@ -1740,7 +1740,19 @@ export async function mineNextBlockAsync(
   return block;
 }
 
+/**
+ * Synchronous RNG-based miner — **test / dev only**.
+ *
+ * Uses Math.random() for the residual and nonce. Throws in production
+ * (NODE_ENV=production or REQUIRE_REAL_SOLVER=true) unless
+ * ALLOW_RANDOM_MINING=true is set, so this function can never silently
+ * emit fake blocks on a production node.
+ *
+ * For real mining use mineNextBlockAsync() which calls the Rust solver.
+ */
 export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord {
+  assertRandomMiningAllowed("mineNextBlock");
+
   const prev = state.latestBlock!;
   const height = state.height + 1;
   const now = Math.floor(Date.now() / 1000);

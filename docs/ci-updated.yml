@@ -10,6 +10,11 @@
 #   - Comment updated: 10 test files, 290+ tests.
 #   - The run label for the Vitest step now includes p2p-sync.integration and
 #     p2p-mesh.integration in the file list.
+#
+# C5 ceremony-smoke hardening (copy when ready to enforce hard CI gate):
+#   - ceremony-smoke: continue-on-error: false  (smoke-prove-verify now exits 0
+#     when only check 3 fails — Libsnark-on-zkey is expected; checks 1/2/4 fail → hard fail)
+#   - Run ceremony smoke: removed `exit 0` masking so the step result propagates
 # ─────────────────────────────────────────────────────────────────────────────
 name: CI
 

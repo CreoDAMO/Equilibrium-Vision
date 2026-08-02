@@ -179,6 +179,10 @@ fn main() {
     let vk_json_path = parse_arg(&args, "--vk-json-bin");
 
     let mut failures = 0u32;
+    // Check 3 (Libsnark against snarkjs-ceremony keys) is expected to fail:
+    // snarkjs keys use a different H basis that CircomReduction handles but
+    // Libsnark does not.  Track it separately so it does not block the exit.
+    let mut libsnark_on_zkey_expected_fail = false;
     let pubs = public_inputs();
 
     println!("[smoke] loading PK from {pk_path}");
@@ -289,9 +293,10 @@ fn main() {
                     }
                     Ok(false) => {
                         println!(
-                            "[check 3] FAIL — Libsnark proof does not verify on imported keys"
+                            "[check 3] EXPECTED_FAIL — Libsnark does not verify on snarkjs keys \
+                             (different H basis; use CircomReduction for ceremony keys)"
                         );
-                        failures += 1;
+                        libsnark_on_zkey_expected_fail = true;
                     }
                     Err(e) => {
                         println!("[check 3] ERROR verify: {e}");
@@ -344,10 +349,16 @@ fn main() {
     println!("========================================");
     println!("  failures={failures}");
     if failures == 0 {
-        println!("  CEREMONY SMOKE: ALL CHECKS PASSED");
+        if libsnark_on_zkey_expected_fail {
+            println!("  CEREMONY SMOKE: PASS");
+            println!("  (check 3 EXPECTED_FAIL — Libsnark on snarkjs zkey is by design, not a bug)");
+            println!("  Production prove path: Groth16::<Bn254, CircomReduction> — check 4 is the gate.");
+        } else {
+            println!("  CEREMONY SMOKE: ALL CHECKS PASSED");
+        }
         std::process::exit(0);
     } else {
-        println!("  CEREMONY SMOKE: DIAGNOSTIC FAILURES");
+        println!("  CEREMONY SMOKE: REAL FAILURES ({failures})");
         println!("  Interpret:");
         println!("    1 FAIL -> circuit / R1CS problem");
         println!("    2 FAIL -> VK import (zkey vs JSON G1/G2 parse)");
