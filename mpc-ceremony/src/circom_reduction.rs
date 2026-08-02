@@ -1,15 +1,7 @@
 //! Circom/snarkjs-compatible R1CS→QAP reduction (ark-circom style).
 //!
-//! Not “Libsnark minus public-input padding.”
-//!
-//! - Pad public inputs into A (same as Libsnark / ark-circom)
-//! - C := A·B on constraint slots
-//! - 2n-domain root-of-unity coset, FFT, AB−C evaluations
-//! - No /Z, no final coset IFFT
-//! - h_query_scalars: odd coefficients (setup only; ceremony uses zkey H)
-//!
-//! Ceremony: import zkey → prove with CircomReduction → verify.
-//! Do not use this type for ark setup+prove self-test of “circom consistency.”
+//! Ceremony path: import zkey → prove with CircomReduction → verify.
+//! Testnet fixed-seed CRS still uses LibsnarkReduction for setup+prove.
 
 use ark_ff::{Field, One, PrimeField, Zero};
 use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};
@@ -38,6 +30,11 @@ impl R1CSToQAP for CircomReduction {
             .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
         let domain_size = domain.size();
 
+        eprintln!(
+            "[circom_reduction] ark-circom-style num_constraints={num_constraints} \
+             num_inputs={num_inputs} domain_size={domain_size}"
+        );
+
         let mut a = vec![zero; domain_size];
         let mut b = vec![zero; domain_size];
         for i in 0..num_constraints {
@@ -45,7 +42,6 @@ impl R1CSToQAP for CircomReduction {
             b[i] = evaluate_constraint(&matrices.b[i], full_assignment);
         }
 
-        // Public-input padding (Libsnark / ark-circom)
         let start = num_constraints;
         let end = start + num_inputs;
         a[start..end].copy_from_slice(&full_assignment[..num_inputs]);
@@ -64,6 +60,7 @@ impl R1CSToQAP for CircomReduction {
                 .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
             domain_double.element(1)
         };
+
         distribute_powers(&mut a, root_of_unity);
         distribute_powers(&mut b, root_of_unity);
         distribute_powers(&mut c, root_of_unity);
@@ -76,7 +73,6 @@ impl R1CSToQAP for CircomReduction {
         for (ab_i, c_i) in ab.iter_mut().zip(c.iter()) {
             *ab_i -= c_i;
         }
-
         Ok(ab)
     }
 
@@ -89,7 +85,8 @@ impl R1CSToQAP for CircomReduction {
         let mut scalars: Vec<F> = (0..2 * max_power + 1)
             .map(|i| delta_inverse * t.pow([i as u64]))
             .collect();
-        let domain = D::new(scalars.len()).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
+        let domain_size = scalars.len();
+        let domain = D::new(domain_size).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
         domain.ifft_in_place(&mut scalars);
         Ok(scalars.into_iter().skip(1).step_by(2).collect())
     }
