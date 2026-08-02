@@ -3,7 +3,7 @@
 //! Ceremony path: import zkey → prove with CircomReduction → verify.
 //! Testnet fixed-seed CRS still uses LibsnarkReduction for setup+prove.
 
-use ark_ff::{Field, One, PrimeField, Zero};
+use ark_ff::{Field, PrimeField};
 use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};
 use ark_poly::EvaluationDomain;
 use ark_relations::r1cs::{ConstraintMatrices, ConstraintSystemRef, SynthesisError};
