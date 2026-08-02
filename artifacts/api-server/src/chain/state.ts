@@ -29,6 +29,7 @@ import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
 import { generateZkProof } from "./zkproof.js";
 import { verifyEd25519BatchDetailed } from "./batchVerify.js";
+import { withDbRetry } from "./persistence.js";
 import {
   splitValidatorReward,
   applySlashing,
@@ -229,37 +230,41 @@ export class ChainState {
   private async _persistSmtRoot(block: { height: number; hash: string }): Promise<void> {
     if (!this._dbPool || !this._stateSmt) return;
     const root = this._stateSmt.root();
-    await this._dbPool.query(
-      `INSERT INTO smt_roots (height, block_hash, state_root, created_at)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (height) DO UPDATE
-         SET state_root = EXCLUDED.state_root, created_at = NOW()`,
-      [block.height, block.hash, root],
+    await withDbRetry("persistSmtRoot", () =>
+      this._dbPool!.query(
+        `INSERT INTO smt_roots (height, block_hash, state_root, created_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (height) DO UPDATE
+           SET state_root = EXCLUDED.state_root, created_at = NOW()`,
+        [block.height, block.hash, root],
+      ),
     );
   }
 
   private async _persistPool(pool: DexPool): Promise<void> {
     if (!this._dbPool) return;
-    await this._dbPool.query(
-      `INSERT INTO dex_pools
-         (id, token_a, token_b, reserve_a, reserve_b, total_liquidity, fee,
-          volume_a, volume_b, tx_count, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         reserve_a      = EXCLUDED.reserve_a,
-         reserve_b      = EXCLUDED.reserve_b,
-         total_liquidity= EXCLUDED.total_liquidity,
-         fee            = EXCLUDED.fee,
-         volume_a       = EXCLUDED.volume_a,
-         volume_b       = EXCLUDED.volume_b,
-         tx_count       = EXCLUDED.tx_count,
-         updated_at     = NOW()`,
-      [
-        pool.id, pool.tokenA, pool.tokenB,
-        pool.reserveA, pool.reserveB, pool.totalLiquidity,
-        pool.fee ?? DEX_FEE,
-        pool.volumeA ?? 0, pool.volumeB ?? 0, pool.txCount ?? 0,
-      ],
+    await withDbRetry("persistPool", () =>
+      this._dbPool!.query(
+        `INSERT INTO dex_pools
+           (id, token_a, token_b, reserve_a, reserve_b, total_liquidity, fee,
+            volume_a, volume_b, tx_count, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           reserve_a      = EXCLUDED.reserve_a,
+           reserve_b      = EXCLUDED.reserve_b,
+           total_liquidity= EXCLUDED.total_liquidity,
+           fee            = EXCLUDED.fee,
+           volume_a       = EXCLUDED.volume_a,
+           volume_b       = EXCLUDED.volume_b,
+           tx_count       = EXCLUDED.tx_count,
+           updated_at     = NOW()`,
+        [
+          pool.id, pool.tokenA, pool.tokenB,
+          pool.reserveA, pool.reserveB, pool.totalLiquidity,
+          pool.fee ?? DEX_FEE,
+          pool.volumeA ?? 0, pool.volumeB ?? 0, pool.txCount ?? 0,
+        ],
+      ),
     );
   }
 

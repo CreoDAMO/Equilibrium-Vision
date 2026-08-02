@@ -136,15 +136,25 @@ docker run -p 8080:8080 equilibrium-node
 
 ### After a container reset
 
-```bash
-# 1. Reinstall Node dependencies (node_modules are not persisted)
-pnpm install
+Replit recycles the container on long idle or plan changes. Node modules and
+the rustup-managed toolchain are not persisted. Run:
 
-# 2. Start workflows in order: Postgres → API Server → Explorer
-# The Postgres workflow is idempotent — safe to run again anytime.
-# If workflows don't start automatically, run:
-bash scripts/start-postgres.sh
+```bash
+bash scripts/setup-replit.sh
 ```
+
+This is idempotent — safe to run any time. It:
+1. Reinstalls Node dependencies (`pnpm install`)
+2. Installs the pinned Rust 1.97.0 + `wasm32-unknown-unknown` target (needed to rebuild WASM contracts after source changes)
+3. Pushes the Drizzle schema to the managed Postgres database
+
+Then start workflows in order: **Postgres → API Server → Explorer**.
+
+> **Rebuilding a WASM contract** after changing Rust source:
+> ```bash
+> bash contracts/cross_chain_relay/build.sh   # or model_registry / arbitrage
+> ```
+> The toolchain setup only needs to be run once per container lifetime.
 
 ### Required environment variables (development)
 

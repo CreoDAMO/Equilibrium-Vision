@@ -25,35 +25,105 @@ type Db = ReturnType<typeof drizzle<{
   zkmlProofsTable: typeof zkmlProofsTable;
 }>>;
 
+// ── Pool configuration ────────────────────────────────────────────────────────
+// connectionTimeoutMillis: fail fast when Postgres is unreachable after a
+//   restart instead of hanging indefinitely (default: 0 = wait forever).
+// idleTimeoutMillis: release idle connections so a long-quiet node doesn't
+//   accumulate stale sockets that break on the next query.
+// max: keep the pool small — the chain is single-writer by design.
+const POOL_CONFIG = {
+  connectionTimeoutMillis: 5_000,
+  idleTimeoutMillis:      30_000,
+  max: 10,
+};
+
+// ── Retry helpers ─────────────────────────────────────────────────────────────
+
+/** True for connection-level errors that are transient after a PG restart. */
+function isRetryableError(err: unknown): boolean {
+  const code = (err as { code?: string }).code ?? "";
+  const msg  = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    code === "ECONNRESET"   ||
+    code === "ECONNREFUSED" ||
+    code === "ETIMEDOUT"    ||
+    code === "57P01"        || // admin_shutdown
+    code === "57P02"        || // crash_shutdown
+    code === "57P03"        || // cannot_connect_now (PG still starting)
+    msg.includes("connection terminated") ||
+    msg.includes("connection refused")    ||
+    msg.includes("econnreset")
+  );
+}
+
+/**
+ * Run `fn` up to `maxAttempts` times, retrying with exponential backoff on
+ * transient Postgres connection errors.  Non-retryable errors are re-thrown
+ * immediately.  Exported so state.ts raw-pool callers can reuse the same logic.
+ */
+export async function withDbRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  maxAttempts = 3,
+  baseDelayMs = 500,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryableError(err) || attempt === maxAttempts) throw err;
+      const delay = baseDelayMs * 2 ** (attempt - 1);
+      logger.warn({ err, attempt, nextRetryMs: delay, label }, "Postgres transient error — retrying");
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
+// ── Singleton pool shared by drizzle and getRawPool() ────────────────────────
+// One pool object prevents double connection counts and ensures both callers
+// benefit from the same error-event handler and config.
+
+let _pool: InstanceType<typeof Pool> | null = null;
 let _db: Db | null = null;
 let _initDone = false;
+
+function initPool(): InstanceType<typeof Pool> | null {
+  const url = process.env["DATABASE_URL"];
+  if (!url) {
+    _initDone = true;
+    logger.info("DATABASE_URL not set — running in-memory mode (chain will not survive restarts)");
+    return null;
+  }
+  try {
+    const pool = new Pool({ connectionString: url, ...POOL_CONFIG });
+    // Prevent unhandled-rejection crashes when an idle client encounters a
+    // network error (e.g. Postgres restart).  pg-pool removes the broken
+    // client from the pool automatically; the next query gets a fresh one.
+    pool.on("error", (err) => {
+      logger.error({ err }, "pg-pool idle client error — pool will reconnect on next query");
+    });
+    _pool = pool;
+    _db = drizzle(pool, { schema: { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zkmlProofsTable } }) as unknown as Db;
+    _initDone = true;
+    logger.info({ url: url.replace(/:[^@]*@/, ":***@") }, "Postgres persistence enabled");
+    return pool;
+  } catch (err) {
+    // Leave _initDone = false so the next call retries.
+    logger.warn({ err }, "Failed to initialise Postgres pool — will retry on next access");
+    return null;
+  }
+}
 
 /** Lazy singleton — returns null when DATABASE_URL is absent.
  *  Does NOT cache null on failure so a transient startup race
  *  (Postgres not yet ready) is retried on the next call. */
 function getDb(): Db | null {
   if (_initDone) return _db;
-
-  const url = process.env["DATABASE_URL"];
-  if (!url) {
-    // No URL configured — settle into in-memory mode permanently.
-    _initDone = true;
-    logger.info("DATABASE_URL not set — running in-memory mode (chain will not survive restarts)");
-    return null;
-  }
-
-  try {
-    const pool = new Pool({ connectionString: url });
-    _db = drizzle(pool, { schema: { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zkmlProofsTable } }) as unknown as Db;
-    // Only mark done once we have a real db handle.
-    _initDone = true;
-    logger.info({ url: url.replace(/:[^@]*@/, ":***@") }, "Postgres persistence enabled");
-    return _db;
-  } catch (err) {
-    // Leave _initDone = false so the next call retries.
-    logger.warn({ err }, "Failed to initialise Postgres pool — will retry on next access");
-    return null;
-  }
+  initPool();
+  return _db;
 }
 
 // ── Row → domain type helpers ─────────────────────────────────────────────────
@@ -191,51 +261,55 @@ export async function persistBlock(block: BlockRecord): Promise<void> {
   if (!db) return;
 
   try {
-    await db.transaction(async (tx) => {
-      await tx
-        .insert(blocksTable)
-        .values({
-          hash:           block.hash,
-          height:         block.height,
-          prevHash:       block.prevHash,
-          merkleRoot:     block.merkleRoot,
-          timestamp:      block.timestamp,
-          nonce:          block.nonce,
-          difficulty:     block.difficulty,
-          residual:       block.residual,
-          residualFp:     block.residualFp ?? Math.floor(block.residual * 1e18),
-          miner:          block.miner,
-          txCount:        block.txCount,
-          coinbaseReward: block.coinbaseReward,
-          finalized:      block.finalized ?? false,
-          zkProof:        (block.zkProof ?? null) as unknown as null,
-          stateRoot:      block.stateRoot ?? null,
-        })
-        .onConflictDoNothing();
-
-      if (block.transactions.length > 0) {
+    await withDbRetry("persistBlock", () =>
+      db.transaction(async (tx) => {
         await tx
-          .insert(transactionsTable)
-          .values(
-            block.transactions.map((t) => ({
-              hash:        t.hash,
-              blockHash:   block.hash,
-              blockHeight: block.height,
-              from:        t.from,
-              to:          t.to,
-              amount:      t.amount,
-              fee:         t.fee,
-              nonce:       t.nonce,
-              signature:   "",   // TxRecord has no signature field; placeholder for schema NOT NULL
-              status:      "confirmed" as const,
-              timestamp:   t.timestamp,
-            })),
-          )
+          .insert(blocksTable)
+          .values({
+            hash:           block.hash,
+            height:         block.height,
+            prevHash:       block.prevHash,
+            merkleRoot:     block.merkleRoot,
+            timestamp:      block.timestamp,
+            nonce:          block.nonce,
+            difficulty:     block.difficulty,
+            residual:       block.residual,
+            residualFp:     block.residualFp ?? Math.floor(block.residual * 1e18),
+            miner:          block.miner,
+            txCount:        block.txCount,
+            coinbaseReward: block.coinbaseReward,
+            finalized:      block.finalized ?? false,
+            zkProof:        (block.zkProof ?? null) as unknown as null,
+            stateRoot:      block.stateRoot ?? null,
+          })
           .onConflictDoNothing();
-      }
-    });
+
+        if (block.transactions.length > 0) {
+          await tx
+            .insert(transactionsTable)
+            .values(
+              block.transactions.map((t) => ({
+                hash:        t.hash,
+                blockHash:   block.hash,
+                blockHeight: block.height,
+                from:        t.from,
+                to:          t.to,
+                amount:      t.amount,
+                fee:         t.fee,
+                nonce:       t.nonce,
+                signature:   "",   // TxRecord has no signature field; placeholder for schema NOT NULL
+                status:      "confirmed" as const,
+                timestamp:   t.timestamp,
+              })),
+            )
+            .onConflictDoNothing();
+        }
+      }),
+    );
   } catch (err) {
-    logger.warn({ err, height: block.height, hash: block.hash }, "Failed to persist block — will retry next restart");
+    // Retries exhausted or non-retryable error — escalate to ERROR so operators
+    // know a block slot has been permanently dropped from the DB.
+    logger.error({ err, height: block.height, hash: block.hash }, "persistBlock failed after retries — block data NOT persisted to DB");
   }
 }
 
@@ -255,25 +329,13 @@ export function isDbAvailable(): boolean {
 }
 
 /**
- * Expose the raw pg.Pool so that ChainState can use it for fire-and-forget
- * persistence (DEX pools, SMT roots — Patch-05).  Returns null when
- * DATABASE_URL is absent or the pool isn't initialised yet.
+ * Expose the shared pg.Pool for ChainState's raw SQL (DEX pools, SMT roots).
+ * Returns the same pool instance used by drizzle — no second connection pool.
  */
-export function getRawPool(): import("pg").Pool | null {
-  const url = process.env["DATABASE_URL"];
-  if (!url) return null;
-  // Trigger lazy init (also caches the pool internally in this module).
-  getDb();
-  // The raw pool is the Pool passed to drizzle — reconstruct it here
-  // so ChainState doesn't depend on drizzle internals.
-  // We keep a separate singleton for the raw pool.
-  if (!_rawPool) {
-    try { _rawPool = new Pool({ connectionString: url }); } catch { return null; }
-  }
-  return _rawPool;
+export function getRawPool(): InstanceType<typeof Pool> | null {
+  if (!_initDone) initPool();
+  return _pool;
 }
-
-let _rawPool: import("pg").Pool | null = null;
 
 // ── Smart contract persistence ────────────────────────────────────────────────
 
