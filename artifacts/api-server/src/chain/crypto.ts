@@ -23,13 +23,6 @@ export function merkleRoot(hashes: string[]): string {
   return level[0];
 }
 
-export function randomHex(bytes: number): string {
-  return createHash("sha256")
-    .update(Math.random().toString() + Date.now().toString())
-    .digest("hex")
-    .slice(0, bytes * 2);
-}
-
 export function addressFromSeed(seed: string): string {
   return sha256(seed).slice(0, 40);
 }
