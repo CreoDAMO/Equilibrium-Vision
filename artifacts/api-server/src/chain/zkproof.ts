@@ -127,8 +127,10 @@ const CIRCUIT_ID = "stationarity-v2-groth16-bn254";
 
 const DEFAULT_THRESHOLD = 1e-7;
 
-/** Whether the TS trapdoor prover is allowed. False in production. */
-const ALLOW_TS_PROVER = process.env["ALLOW_TS_TRAPDOOR_PROVER"] === "true";
+/** Whether the TS trapdoor prover is allowed. Never in production. */
+const ALLOW_TS_PROVER =
+  process.env["ALLOW_TS_TRAPDOOR_PROVER"] === "true" &&
+  process.env["NODE_ENV"] !== "production";
 
 /** Proof source discriminator for validation gating. */
 export const PROOF_SOURCE_RUST = "rust-sidecar";

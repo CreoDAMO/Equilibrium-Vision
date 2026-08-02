@@ -45,6 +45,7 @@ ark-serialize = "0.4"
 ark-relations = "0.4"
 ark-r1cs-std = "0.4"
 ark-groth16 = "0.4"
+ark-poly = "0.4"
 ark-bn254 = "0.4"
 log = "0.4"
 

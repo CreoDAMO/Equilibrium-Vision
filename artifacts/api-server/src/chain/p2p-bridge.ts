@@ -127,7 +127,17 @@ class P2PBridge {
 
   start(): void {
     const binaryPath = resolveP2pSidecar();
+    const requireP2p =
+      process.env["NODE_ENV"] === "production" ||
+      process.env["REQUIRE_P2P_SIDECAR"] === "true";
+
     if (!fs.existsSync(binaryPath)) {
+      if (requireP2p) {
+        throw new Error(
+          "P2P sidecar required in production (REQUIRE_P2P_SIDECAR / NODE_ENV=production). " +
+            "Start p2p-sidecar or unset the requirement for local-only runs.",
+        );
+      }
       logger.info('p2p-sidecar binary not found — running in simulated gossip mode');
       return;
     }

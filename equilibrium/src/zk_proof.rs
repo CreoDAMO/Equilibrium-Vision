@@ -26,6 +26,7 @@ use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisE
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use ark_snark::SNARK;
 use std::sync::OnceLock;
+use crate::circom_reduction::CircomReduction;
 
 // ── RISC Zero (optional compile-time feature) ────────────────────────────────
 #[cfg(feature = "risc0")]
@@ -86,6 +87,9 @@ impl ConstraintSynthesizer<Fr> for StationarityCircuit {
 struct Groth16Keys {
     pk: ProvingKey<Bn254>,
     pvk: PreparedVerifyingKey<Bn254>,
+    /// True when PK/VK loaded from PROVING_KEY_DIR (snarkjs ceremony).
+    /// Prove must use CircomReduction. Fixed-seed testnet CRS uses Libsnark.
+    ceremony: bool,
 }
 
 unsafe impl Send for Groth16Keys {}
@@ -115,7 +119,7 @@ fn keys() -> &'static Groth16Keys {
             let pvk = prepare_verifying_key(&vk_raw);
 
             log::info!("[zk_proof] Loaded MPC proving key from {pk_path} ({} bytes)", pk_bytes.len());
-            return Groth16Keys { pk, pvk };
+            return Groth16Keys { pk, pvk, ceremony: true };
         }
 
         if is_production {
@@ -142,7 +146,7 @@ fn keys() -> &'static Groth16Keys {
         let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit, &mut rng)
             .expect("Groth16 setup failed");
         let pvk = prepare_verifying_key(&vk);
-        Groth16Keys { pk, pvk }
+        Groth16Keys { pk, pvk, ceremony: false }
     })
 }
 
@@ -309,8 +313,16 @@ fn do_prove(
         difference: Some(difference),
     };
     let mut rng = StdRng::from_entropy();
-    let ark_proof = Groth16::<Bn254>::prove(&keys().pk, circuit, &mut rng)
-        .expect("Groth16 proving failed");
+    let k = keys();
+    // Ceremony keys (snarkjs): CircomReduction only — matches smoke check 4.
+    // Fixed-seed testnet CRS: Libsnark — matches circuit_specific_setup.
+    let ark_proof = if k.ceremony {
+        Groth16::<Bn254, CircomReduction>::prove(&k.pk, circuit, &mut rng)
+            .expect("Groth16 CircomReduction proving failed")
+    } else {
+        Groth16::<Bn254>::prove(&k.pk, circuit, &mut rng)
+            .expect("Groth16 proving failed")
+    };
     proof_to_wire(&ark_proof)
 }
 

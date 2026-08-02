@@ -1,0 +1,59 @@
+3. equilibrium/Cargo.toml — add
+tomlark-poly = "0.4"
+(next to the other ark-* deps)
+
+4. equilibrium/src/zk_proof.rs — replace these sections in the existing file
+Import (with the other ark uses):
+Rustuse crate::circom_reduction::CircomReduction;
+Groth16Keys:
+Ruststruct Groth16Keys {
+    pk: ProvingKey<Bn254>,
+    pvk: PreparedVerifyingKey<Bn254>,
+    /// True when PK/VK loaded from PROVING_KEY_DIR (snarkjs ceremony).
+    /// Prove must use CircomReduction. Fixed-seed testnet CRS uses Libsnark.
+    ceremony: bool,
+}
+In keys() — disk load return:
+Rustreturn Groth16Keys { pk, pvk, ceremony: true };
+In keys() — testnet setup return:
+RustGroth16Keys { pk, pvk, ceremony: false }
+do_prove (full function):
+Rustfn do_prove(
+    residual_fp_val: u64,
+    threshold_fp_val: u64,
+    hash_lo: u64,
+    hash_hi: u64,
+    difference: u64,
+) -> Groth16ProofBytes {
+    let circuit = StationarityCircuit {
+        residual_fp: Some(residual_fp_val),
+        threshold_fp: Some(threshold_fp_val),
+        block_hash_lo: Some(hash_lo),
+        block_hash_hi: Some(hash_hi),
+        difference: Some(difference),
+    };
+    let mut rng = StdRng::from_entropy();
+    let k = keys();
+    // Ceremony keys (snarkjs): CircomReduction only — matches smoke check 4.
+    // Fixed-seed testnet CRS: Libsnark — matches circuit_specific_setup.
+    let ark_proof = if k.ceremony {
+        Groth16::<Bn254, CircomReduction>::prove(&k.pk, circuit, &mut rng)
+            .expect("Groth16 CircomReduction proving failed")
+    } else {
+        Groth16::<Bn254>::prove(&k.pk, circuit, &mut rng)
+            .expect("Groth16 proving failed")
+    };
+    proof_to_wire(&ark_proof)
+}
+Unit tests keep using the fixed-seed CRS (ceremony: false) → Libsnark path unchanged.
+
+Verify
+Bashcd equilibrium
+cargo test --lib zk_proof
+
+# With ceremony keys:
+PROVING_KEY_DIR=/path/to/ceremony-smoke-out \
+  cargo test --lib zk_proof -- --ignored   # if you add a ceremony integration test
+Or a one-off: load keys from smoke out, prove_stationarity → Groth16Verifier::from_vk_file → must Valid.
+
+Summary: Smoke already proved CircomReduction. This makes node prove use the same path whenever proving_key.bin is present. Testnet without those files stays on Libsnark.

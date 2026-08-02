@@ -1604,6 +1604,7 @@ dependencies = [
  "ark-ec 0.4.2",
  "ark-ff 0.4.2",
  "ark-groth16 0.4.0",
+ "ark-poly 0.4.2",
  "ark-r1cs-std 0.4.0",
  "ark-relations 0.4.0",
  "ark-serialize 0.4.2",

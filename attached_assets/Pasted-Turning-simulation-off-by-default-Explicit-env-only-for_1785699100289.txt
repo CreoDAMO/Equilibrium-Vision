@@ -1,0 +1,175 @@
+Turning simulation **off by default**. Explicit env only for tests/CI. Here’s the concrete set.
+
+---
+
+### Policy (all mining RNG)
+
+**Default = forbidden.** Only `ALLOW_RANDOM_MINING=true` enables RNG (tests set that).
+
+#### Full `artifacts/api-server/src/chain/mining-policy.ts`
+
+```typescript
+/**
+ * Mining policy — random-residual fallback is OFF by default.
+ *
+ * Only ALLOW_RANDOM_MINING=true enables Math.random() mining (unit tests / demos).
+ * Production, development, and unset env all require the real solver unless that
+ * flag is set. CI Vitest must set ALLOW_RANDOM_MINING=true if it still exercises
+ * the sync helper or async fallback.
+ */
+
+export function allowRandomMiningFallback(): boolean {
+  return process.env["ALLOW_RANDOM_MINING"] === "true";
+}
+
+export function requireRealSolver(): boolean {
+  return !allowRandomMiningFallback();
+}
+
+export function assertRandomMiningAllowed(caller?: string): void {
+  if (!allowRandomMiningFallback()) {
+    const who = caller ? `${caller}: ` : "";
+    throw new Error(
+      `${who}RNG mining is forbidden. ` +
+        "Use the consensus-api / variational-ai solver, or set " +
+        "ALLOW_RANDOM_MINING=true for tests only.",
+    );
+  }
+}
+```
+
+#### Vitest env (CI + local tests)
+
+In `.github/workflows/ci.yml` `ts-test` and any local vitest config:
+
+```yaml
+env:
+  DATABASE_URL: postgresql://runner@localhost:5432/equilibrium
+  ALLOW_TS_TRAPDOOR_PROVER: "true"
+  ALLOW_RANDOM_MINING: "true"   # tests only — never on production deploy
+```
+
+Production deploy: **neither** flag set.
+
+---
+
+### Sync + async miners (`state.ts`)
+
+Keep `assertRandomMiningAllowed` at the top of `mineNextBlock`.  
+Keep the async branch that **throws** when `!usedSolver && !allowRandomMiningFallback()`.
+
+No code change beyond the stricter policy above — async already throws when policy forbids RNG.
+
+---
+
+### Genesis / demo blocks — deterministic (no `Math.random`)
+
+In `buildGenesisChain` / any seed loop, replace residual/nonce/pressure with height-derived values:
+
+```typescript
+// Deterministic residual (never Math.random)
+const residual = 1e-9 * (1 + (h % 97) / 100);
+const nonce = h * 1_000_003 + 42;
+// mempoolPressure if needed:
+const mempoolPressure = 0.25 + ((h % 10) / 20);
+// validator uptime:
+uptime: 0.99,
+```
+
+For seed peers, stop using `randomHex(20)` — fixed IDs:
+
+```typescript
+state.peers = [
+  { peerId: "a".repeat(40), address: "192.168.1.10:30303", latencyMs: 12, height: 0, connected: true, syncState: "synced" },
+  { peerId: "b".repeat(40), address: "10.0.0.55:30303", latencyMs: 34, height: 0, connected: true, syncState: "synced" },
+  { peerId: "c".repeat(40), address: "172.16.0.3:30303", latencyMs: 89, height: 0, connected: false, syncState: "behind" },
+  { peerId: "d".repeat(40), address: "203.0.113.7:30303", latencyMs: 142, height: 0, connected: true, syncState: "syncing" },
+];
+```
+
+Same pattern in every `buildGenesis*` / seed peer list.
+
+---
+
+### Ceremony CI soft
+
+On current `main`, ceremony job already **propagates exit** and does **not** use `continue-on-error: true` (comments + run step).  
+Confirm `.github/workflows/ci.yml` has **no** `continue-on-error: true` under `ceremony-smoke`. If a copy still has it, delete that line and keep:
+
+```yaml
+- name: Run ceremony smoke
+  run: |
+    set -euo pipefail
+    chmod +x scripts/ceremony-smoke.sh
+    ./scripts/ceremony-smoke.sh 2>&1 | tee ceremony-smoke.log
+```
+
+---
+
+### TS trapdoor
+
+Already fails closed unless `ALLOW_TS_TRAPDOOR_PROVER=true`. Harden so production can never enable it:
+
+```typescript
+const ALLOW_TS_PROVER =
+  process.env["ALLOW_TS_TRAPDOOR_PROVER"] === "true" &&
+  process.env["NODE_ENV"] !== "production";
+```
+
+Production with the flag set still **throws**.
+
+---
+
+### Simulated gossip / missing sidecar
+
+In whatever starts `p2pBridge` / sidecar client, production must not silently no-op:
+
+```typescript
+const requireP2p =
+  process.env["NODE_ENV"] === "production" ||
+  process.env["REQUIRE_P2P_SIDECAR"] === "true";
+
+if (requireP2p && !sidecarRunning) {
+  throw new Error(
+    "P2P sidecar required in production (REQUIRE_P2P_SIDECAR / NODE_ENV=production). " +
+      "Start p2p-sidecar or unset the requirement for local-only runs.",
+  );
+}
+```
+
+Dev without sidecar stays allowed when not production and `REQUIRE_P2P_SIDECAR` unset.
+
+---
+
+### Phone with 0 peers
+
+**Cannot turn off in code alone.** With no peers, tip HTTP fallback is honest, not a fake chain. To leave simulation-like behavior:
+
+1. Start embedded P2P  
+2. Connect ≥ 1 peer (QR / multiaddr)  
+3. Optional: in P2P mode, refuse tip-from-HTTP if `REQUIRE_P2P_TIP=1`
+
+```kotlin
+// Conceptual — only when mining mode == P2P
+if (mode == P2P && peerCount == 0 && System.getenv("REQUIRE_P2P_TIP") == "1") {
+  // skip HTTP tip; wait for peers
+}
+```
+
+---
+
+### Checklist after changes
+
+| Item | Off when |
+|------|----------|
+| Sync RNG | No `ALLOW_RANDOM_MINING` → throw |
+| Async RNG | Same policy → throw without solver |
+| Genesis residual/nonce | Deterministic formulas |
+| Ceremony CI | Hard fail on real smoke fail |
+| Trapdoor | Off unless test env flag; never in `NODE_ENV=production` |
+| Sidecar | Production requires live P2P |
+| Phone mesh | Peers ≥ 1 (ops/UX) |
+
+---
+
+**Ship order:** (1) `mining-policy.ts` invert + Vitest `ALLOW_RANDOM_MINING=true`, (2) deterministic genesis residuals/peers, (3) trapdoor `NODE_ENV !== production`, (4) confirm CI ceremony hard gate, (5) production sidecar require. Phone mesh is the only one that needs a second device or QR, not a policy flip.

@@ -19,7 +19,7 @@ function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 import { SparseMerkleTree, smtKey, smtValue } from "./smt.js";
-import { merkleRoot, randomHex, addressFromSeed, hash256 } from "./crypto.js";
+import { merkleRoot, addressFromSeed, hash256 } from "./crypto.js";
 import { solveBlock } from "../variational-ai/bridge.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "./mining-policy.js";
 import { logger } from "../lib/logger.js";
@@ -1247,7 +1247,7 @@ function seedValidators(state: ChainState): void {
       slashed: false,
       slashCount: 0,
       jailed: false,
-      uptime: 0.98 + Math.random() * 0.02,
+      uptime: 0.99,
       blocksProposed: 0,
       blocksVoted: 0,
       commission: def.commission,
@@ -1337,10 +1337,10 @@ export function buildDocChainFromBlocks(doc: GenesisDocument, blocks: BlockRecor
   }
 
   state.peers = [
-    { peerId: randomHex(20), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
-    { peerId: randomHex(20), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
-    { peerId: randomHex(20), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
-    { peerId: randomHex(20), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
+    { peerId: "a".repeat(40), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: "b".repeat(40), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: "c".repeat(40), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
+    { peerId: "d".repeat(40), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
   ];
 
   for (const block of blocks) {
@@ -1363,10 +1363,10 @@ export function buildChainFromBlocks(blocks: BlockRecord[]): ChainState {
   seedValidators(state);
   seedDexPools(state);
   state.peers = [
-    { peerId: randomHex(20), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
-    { peerId: randomHex(20), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
-    { peerId: randomHex(20), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
-    { peerId: randomHex(20), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
+    { peerId: "a".repeat(40), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: "b".repeat(40), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: "c".repeat(40), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
+    { peerId: "d".repeat(40), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
   ];
 
   for (const block of blocks) {
@@ -1460,10 +1460,10 @@ export function buildGenesisChainFromDoc(doc: GenesisDocument): ChainState {
 
   // Default peers (same as dev genesis)
   state.peers = [
-    { peerId: randomHex(20), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
-    { peerId: randomHex(20), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
-    { peerId: randomHex(20), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
-    { peerId: randomHex(20), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
+    { peerId: "a".repeat(40), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: "b".repeat(40), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: "c".repeat(40), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
+    { peerId: "d".repeat(40), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
   ];
 
   return state;
@@ -1483,10 +1483,10 @@ export function buildGenesisChain(): ChainState {
 
   // Seed peers
   state.peers = [
-    { peerId: randomHex(20), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
-    { peerId: randomHex(20), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
-    { peerId: randomHex(20), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
-    { peerId: randomHex(20), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
+    { peerId: "a".repeat(40), address: "192.168.1.10:30303", latencyMs: 12,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: "b".repeat(40), address: "10.0.0.55:30303",    latencyMs: 34,  height: 0, connected: true,  syncState: "synced"  },
+    { peerId: "c".repeat(40), address: "172.16.0.3:30303",   latencyMs: 89,  height: 0, connected: false, syncState: "behind"  },
+    { peerId: "d".repeat(40), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
   ];
 
   const miners = [miner1, miner2];
@@ -1495,7 +1495,7 @@ export function buildGenesisChain(): ChainState {
 
   for (let h = 0; h <= 24; h++) {
     const miner = miners[h % 2]!;
-    const residual = Math.random() * 1e-8;
+    const residual = 1e-9 * (1 + (h % 97) / 100);
     const quality = 1.0 / (residual + 1e-6);
     const reward = Math.floor(BASE_REWARD * Math.min(quality, 1.0));
     state.ledger.credit(miner, reward);
@@ -1556,7 +1556,7 @@ export function buildGenesisChain(): ChainState {
       prevHash,
       merkleRoot: mr,
       timestamp: now,
-      nonce: Math.floor(Math.random() * 1e15),
+      nonce: h * 1_000_003 + 42,
       difficulty: state.currentDifficulty,
       residual,
       residualFp: Math.floor(residual * 1e18),

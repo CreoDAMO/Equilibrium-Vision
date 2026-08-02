@@ -4,6 +4,8 @@ pub mod crypto;
 pub mod p2p;
 pub mod p2p_runtime;
 pub mod consensus;
+// ── snarkjs / ceremony prove path ────────────────────────────────────────────
+pub mod circom_reduction;
 pub mod zk_proof;
 pub mod ffi;
 pub mod wallet;
