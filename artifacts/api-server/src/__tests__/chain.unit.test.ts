@@ -306,60 +306,54 @@ describe("ChainState.updateDifficulty", () => {
 
 describe("mining-policy assertRandomMiningAllowed", () => {
   let savedNodeEnv: string | undefined;
-  let savedRequireSolver: string | undefined;
   let savedAllowRandom: string | undefined;
 
   beforeEach(() => {
-    savedNodeEnv      = process.env["NODE_ENV"];
-    savedRequireSolver = process.env["REQUIRE_REAL_SOLVER"];
-    savedAllowRandom  = process.env["ALLOW_RANDOM_MINING"];
+    savedNodeEnv     = process.env["NODE_ENV"];
+    savedAllowRandom = process.env["ALLOW_RANDOM_MINING"];
   });
 
   afterEach(() => {
     if (savedNodeEnv === undefined) delete process.env["NODE_ENV"];
     else process.env["NODE_ENV"] = savedNodeEnv;
 
-    if (savedRequireSolver === undefined) delete process.env["REQUIRE_REAL_SOLVER"];
-    else process.env["REQUIRE_REAL_SOLVER"] = savedRequireSolver;
-
     if (savedAllowRandom === undefined) delete process.env["ALLOW_RANDOM_MINING"];
     else process.env["ALLOW_RANDOM_MINING"] = savedAllowRandom;
   });
 
-  it("allows RNG when NODE_ENV is unset (dev / CI default)", () => {
+  it("forbids RNG when ALLOW_RANDOM_MINING is unset (default-off policy)", () => {
     delete process.env["NODE_ENV"];
-    delete process.env["REQUIRE_REAL_SOLVER"];
     delete process.env["ALLOW_RANDOM_MINING"];
-    expect(() => assertRandomMiningAllowed("test")).not.toThrow();
-    expect(allowRandomMiningFallback()).toBe(true);
+    expect(() => assertRandomMiningAllowed("test")).toThrow(/RNG mining is forbidden/);
+    expect(allowRandomMiningFallback()).toBe(false);
   });
 
   it("blocks RNG when NODE_ENV=production", () => {
     process.env["NODE_ENV"] = "production";
     delete process.env["ALLOW_RANDOM_MINING"];
-    delete process.env["REQUIRE_REAL_SOLVER"];
     expect(() => assertRandomMiningAllowed("test")).toThrow(/RNG mining is forbidden/);
     expect(allowRandomMiningFallback()).toBe(false);
   });
 
-  it("blocks RNG when REQUIRE_REAL_SOLVER=true regardless of NODE_ENV", () => {
-    delete process.env["NODE_ENV"];
-    process.env["REQUIRE_REAL_SOLVER"] = "true";
-    delete process.env["ALLOW_RANDOM_MINING"];
-    expect(() => assertRandomMiningAllowed()).toThrow(/RNG mining is forbidden/);
+  it("forbids RNG in any env when ALLOW_RANDOM_MINING is absent", () => {
+    for (const env of ["development", "test", "staging", undefined]) {
+      if (env === undefined) delete process.env["NODE_ENV"];
+      else process.env["NODE_ENV"] = env;
+      delete process.env["ALLOW_RANDOM_MINING"];
+      expect(() => assertRandomMiningAllowed()).toThrow(/RNG mining is forbidden/);
+    }
   });
 
-  it("ALLOW_RANDOM_MINING=true overrides production lock", () => {
+  it("ALLOW_RANDOM_MINING=true enables RNG regardless of NODE_ENV", () => {
     process.env["NODE_ENV"] = "production";
     process.env["ALLOW_RANDOM_MINING"] = "true";
     expect(() => assertRandomMiningAllowed("test")).not.toThrow();
     expect(allowRandomMiningFallback()).toBe(true);
   });
 
-  it("mineNextBlock throws under NODE_ENV=production", () => {
-    process.env["NODE_ENV"] = "production";
+  it("mineNextBlock throws when ALLOW_RANDOM_MINING is unset", () => {
+    delete process.env["NODE_ENV"];
     delete process.env["ALLOW_RANDOM_MINING"];
-    delete process.env["REQUIRE_REAL_SOLVER"];
     const state = new ChainState();
     expect(() => mineNextBlock(state, "a".repeat(40))).toThrow(/RNG mining is forbidden/);
   });
