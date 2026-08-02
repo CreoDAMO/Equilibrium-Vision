@@ -1,20 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# docs/ci-fixed.yml
+# docs/ci-fixed.yml  →  copy to .github/workflows/ci.yml
 #
-# Copy this file over .github/workflows/ci.yml in your GitHub repo.
+# C5 (Aug 2026): Ceremony smoke is a hard gate.
+#   - smoke-prove-verify exits 0 when only check 3 is EXPECTED_FAIL (Libsnark
+#     on snarkjs zkey). Check 4 (CircomReduction) is the production gate.
+#   - continue-on-error: false — real failures (1/2/4) fail the workflow.
+#   - Run step propagates smoke script exit code (no forced exit 0).
 #
-# What changed vs the current workflow (commit 850074c0):
-#
-#   REMOVED — "Build consensus-api binary" step:
-#     (Historical note — current main still builds consensus-api when present.)
-#
-#   KEPT — ALLOW_TS_TRAPDOOR_PROVER=true in Vitest env (from 850074c0):
-#     This is correct and should stay. It unblocks all block-mining tests in CI.
-#
-#   ADDED — ceremony-smoke job:
-#     Runs scripts/ceremony-smoke.sh (export-r1cs → snarkjs → import-zkey →
-#     smoke-prove-verify). Isolated from other jobs. continue-on-error: true
-#     until CircomReduction/verify is fixed so the rest of CI stays green.
+# KEPT — ALLOW_TS_TRAPDOOR_PROVER=true in Vitest (test mining without Rust).
 # ─────────────────────────────────────────────────────────────────────────────
 name: CI
 
@@ -146,6 +139,7 @@ jobs:
       - name: Install pinned WASM contracts toolchain (1.97.0 + wasm32 target)
         run: |
           rustup toolchain install 1.97.0 --profile minimal --target wasm32-unknown-unknown --no-self-update
+
       - name: Cache Rust build artifacts (variational-ai)
         uses: Swatinem/rust-cache@v2
         with:
@@ -159,6 +153,7 @@ jobs:
         run: |
           cp variational-ai/target/release/variational-ai-cli artifacts/api-server/
           cp variational-ai/target/release/variational-ai-arbitrage-cli artifacts/api-server/
+
       - name: Cache Rust build artifacts (equilibrium)
         uses: Swatinem/rust-cache@v2
         with:
@@ -182,11 +177,13 @@ jobs:
             contracts/arbitrage -> target
             contracts/model_registry -> target
             contracts/cross_chain_relay -> target
+
       - name: Rebuild WASM contracts from source
         run: |
           bash contracts/arbitrage/build.sh
           bash contracts/model_registry/build.sh
           bash contracts/cross_chain_relay/build.sh
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -237,12 +234,11 @@ jobs:
         run: cargo test --lib
 
   # ── Ceremony smoke (snarkjs → ark import → prove/verify) ────────────────────
-  # Isolated. continue-on-error: true until smoke exits 0.
-  # Requires instrumented smoke-prove-verify (checks 1–4 + --vk-json-bin).
+  # Hard gate (C5). smoke-prove-verify exits 0 when only check 3 is EXPECTED_FAIL.
+  # Check 4 (CircomReduction) must PASS. Real failures fail this job and the workflow.
   ceremony-smoke:
     name: Ceremony smoke (snarkjs → ark)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -270,15 +266,15 @@ jobs:
           cargo --version
           command -v snarkjs
           echo "snarkjs: ok"
-      # Always reach Diagnose — do not fail the step on smoke exit ≠ 0
+
+      # Propagate script exit: 0 = PASS (check 3 EXPECTED_FAIL allowed); ≠0 = real fail
       - name: Run ceremony smoke
         id: smoke
         run: |
+          set -euo pipefail
           chmod +x scripts/ceremony-smoke.sh
-          set +e
           ./scripts/ceremony-smoke.sh 2>&1 | tee ceremony-smoke.log
-          echo "smoke_exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
-          exit 0
+
       - name: Diagnose (checks 1–4 matrix)
         if: always()
         run: |
@@ -288,12 +284,10 @@ jobs:
           echo "════════════════════════════════════════════════════════"
           echo " CEREMONY SMOKE DIAGNOSTIC SUMMARY"
           echo "════════════════════════════════════════════════════════"
-          echo "smoke_exit (from script): ${{ steps.smoke.outputs.smoke_exit }}"
           echo ""
           echo "── Raw check / smoke lines ──"
-          grep -E '\[check |\[smoke\]|\[circom_reduction\]|\[proof:|failures=|CEREMONY SMOKE|Interpret:' "$LOG" | tail -60
+          grep -E '\[check |\[smoke\]|\[circom_reduction\]|\[proof:|failures=|CEREMONY SMOKE|EXPECTED_FAIL|Interpret:' "$LOG" | tail -80
           echo ""
-          # --- Shell VK parity (backup if binary skipped check 2) ---
           echo "── Shell Check 2: VK binary parity ──"
           if [[ -f "$OUT/verification_key.bin" && -f "$OUT/verification_key_json.bin" ]]; then
             if cmp -s "$OUT/verification_key.bin" "$OUT/verification_key_json.bin"; then
@@ -301,15 +295,12 @@ jobs:
             else
               echo "[shell check 2] FAIL — VK bins differ"
               ls -la "$OUT/verification_key.bin" "$OUT/verification_key_json.bin"
-              echo "zkey VK sha256: $(sha256sum "$OUT/verification_key.bin")"
-              echo "json VK sha256: $(sha256sum "$OUT/verification_key_json.bin")"
             fi
           else
             echo "[shell check 2] SKIP — VK bin(s) missing"
             ls -la "$OUT" 2>/dev/null || true
           fi
           echo ""
-          # --- Parse instrumented binary results ---
           echo "── Classification from smoke binary ──"
           c1="UNKNOWN"; c2="UNKNOWN"; c3="UNKNOWN"; c4="UNKNOWN"
           if grep -q '\[check 1\] PASS' "$LOG"; then c1=PASS
@@ -319,7 +310,9 @@ jobs:
           elif grep -q '\[check 2\] FAIL' "$LOG"; then c2=FAIL
           elif grep -q '\[check 2\] SKIP' "$LOG"; then c2=SKIP
           fi
-          if grep -q '\[check 3\] PASS' "$LOG"; then c3=PASS
+          # Prefer EXPECTED_FAIL over plain FAIL for check 3
+          if grep -q '\[check 3\] EXPECTED_FAIL' "$LOG"; then c3=EXPECTED_FAIL
+          elif grep -q '\[check 3\] PASS' "$LOG"; then c3=PASS
           elif grep -q '\[check 3\] FAIL' "$LOG"; then c3=FAIL
           elif grep -q '\[check 3\] ERROR' "$LOG"; then c3=ERROR
           fi
@@ -343,20 +336,19 @@ jobs:
             echo "  → Fix StationarityCircuit / export_r1cs first."
           elif [[ "$c2" == "FAIL" ]]; then
             echo "  → Fix zkey_pk / JSON G2 parse (VK import bug)."
+          elif [[ "$c3" == "EXPECTED_FAIL" && "$c4" == "PASS" ]]; then
+            echo "  → Ceremony path OK. Check 3 EXPECTED_FAIL is by design; check 4 is the gate."
           elif [[ "$c3" == "FAIL" && "$c4" == "PASS" ]]; then
-            echo "  → Expected for snarkjs keys. Ship CircomReduction; ignore Libsnark for ceremony path."
-          elif [[ "$c3" == "PASS" && "$c4" == "FAIL" ]]; then
-            echo "  → Circom H path wrong for this zkey. Fix CircomReduction (or use Libsnark if keys allow)."
-          elif [[ "$c3" == "FAIL" && "$c4" == "FAIL" && "$c2" == "PASS" ]]; then
-            echo "  → VK OK. Problem is prove path: H / A,B,L queries / wire assignment vs R1CS."
-          elif [[ "$c1" == "PASS" && "$c2" == "PASS" && "$c3" == "PASS" && "$c4" == "PASS" ]]; then
-            echo "  → All green. Set continue-on-error: false when ready."
-          elif [[ "$c3" == "UNKNOWN" || "$c4" == "UNKNOWN" ]]; then
-            echo "  → Instrumented checks not in log — smoke binary may be old or crashed early."
+            echo "  → Check 4 PASS. Prefer EXPECTED_FAIL labeling in smoke binary for check 3."
+          elif [[ "$c4" == "FAIL" || "$c4" == "ERROR" ]]; then
+            echo "  → CircomReduction gate failed — production ceremony path broken."
+          elif [[ "$c1" == "PASS" && "$c2" == "PASS" && "$c4" == "PASS" ]]; then
+            echo "  → All production gates green."
           else
             echo "  → See check matrix above + failures= line in log."
           fi
           echo "════════════════════════════════════════════════════════"
+
       - name: Upload smoke log + key artifacts
         if: always()
         uses: actions/upload-artifact@v4
