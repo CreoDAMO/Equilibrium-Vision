@@ -8,6 +8,10 @@
 //!   snarkjs groth16 setup stationarity.r1cs pot_final.ptau circuit_0000.zkey
 //!
 //! MUST use the same OptimizationGoal as dump-witness and prove-time synthesis.
+//!
+//! Constraint coefficients are written in **canonical** little-endian form
+//! (`into_bigint().to_bytes_le()`), matching Atamanov/arkworks-rapidsnark and
+//! snarkjs field element convention for .r1cs section 2.
 
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField, Zero};
@@ -57,7 +61,7 @@ fn write_r1cs(output: &Path) -> Result<(), String> {
 
     println!(
         "[r1cs] nVars={n_vars}  nPub={n_pub}  nPrvDeclared={n_prv}  \
-         nWitnessTotal={n_witness}  nConstraints={n_constraints}  goal=Constraints"
+         nWitnessTotal={n_witness}  nConstraints={n_constraints}  goal=Constraints  coeffs=canonical"
     );
 
     let modulus = <Fr as PrimeField>::MODULUS;
@@ -65,10 +69,11 @@ fn write_r1cs(output: &Path) -> Result<(), String> {
     let mut prime32 = [0u8; 32];
     prime32[..prime_vec.len().min(32)].copy_from_slice(&prime_vec[..prime_vec.len().min(32)]);
 
-    // snarkjs stores LC coeffs in Montgomery form (Fr.toRprLE). ark-ff Fr.0 is
-    // already Montgomery limbs — do NOT use into_bigint() here.
+    // Canonical (standard) LE — same as dump-witness and Atamanov R1CS export.
+    // Do NOT write raw Montgomery limbs (f.0); snarkjs treats .r1cs coeffs as
+    // standard field elements.
     let fe_bytes = |f: &Fr| -> [u8; 32] {
-        let v = f.0.to_bytes_le();
+        let v = f.into_bigint().to_bytes_le();
         let mut out = [0u8; 32];
         out[..v.len().min(32)].copy_from_slice(&v[..v.len().min(32)]);
         out
