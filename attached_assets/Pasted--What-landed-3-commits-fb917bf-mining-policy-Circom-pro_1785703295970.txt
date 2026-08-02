@@ -1,0 +1,51 @@
+## What landed (3 commits)
+
+### `fb917bf` — mining policy + Circom production path
+| Item | Status |
+|------|--------|
+| RNG mining **default off** (`ALLOW_RANDOM_MINING` only) | Done |
+| Deterministic genesis residual/nonce/peers/uptime | Done |
+| TS trapdoor blocked when `NODE_ENV=production` | Done |
+| Prod requires P2P sidecar (`REQUIRE_P2P_SIDECAR` / production) | Done |
+| `circom_reduction` in `equilibrium` | Done |
+| `do_prove` → CircomReduction when ceremony keys on disk | Done |
+| `ark-poly` dep | Done |
+
+### `51524ab` — CI
+| Item | Status |
+|------|--------|
+| `ALLOW_RANDOM_MINING: "true"` on Vitest job | Done |
+| Ceremony smoke hard gate (no soft-fail) | Done (aligned with C5) |
+
+### `2c767c7` — Android product
+| Item | Status |
+|------|--------|
+| Balance-scale launcher icon (all mipmap densities) | Done |
+| Manifest / icon wiring | Done |
+
+---
+
+## Still open (honest)
+
+| Gap | Why it remains |
+|-----|----------------|
+| **Phone mesh live** | Peers still 0 until QR/multiaddr + second node; not a missing submit path |
+| **A6/A7 bootstrap** | Wide-area cold start / zero-seed DHT still soft |
+| **C7 zkML / DeepProve** | Receipt ≠ model-inference circuit |
+| **Production prove with real CRS in ops** | Code path exists; you still place ceremony keys in `PROVING_KEY_DIR` on deploy |
+| **Bridge claims** | BLS/full headers/receipts incomplete if still claimed |
+| **Ops (G\*)** | HA, audit, store distribution — outside protocol |
+| **App on your phone** | Sideload/rebuild to pick up icon + any later native changes (`installDebug` / new APK) |
+
+---
+
+## Closed for protocol honesty (this streak)
+
+- B2 RNG gate (strict default)  
+- A4 P2P-first submit (when peers exist)  
+- C5 ceremony smoke + CI  
+- Ceremony Circom prove path in node  
+- Dev simulation defaults flipped off  
+- Trapdoor / sidecar production guards  
+
+**One-liner:** Code-side “stop simulating” work for mining, genesis, ceremony, and CI is on `main`. What’s left is **mesh bootstrap on device**, **zkML if you claim it**, and **ops/deploy keys**—not another RNG or CI soft-fail.
