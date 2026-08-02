@@ -1,0 +1,149 @@
+# Full audit — `main` @ `884a2ca` (as of this check)
+
+Scope: protocol honesty, mobile peer path, ceremony, CI, bootstrap, bridge. Not a formal security audit of crypto implementations.
+
+---
+
+## Verdict in one line
+
+**Protocol honesty for mining / ceremony / CI is real on `main`.**  
+**Mobile P2P path is real in code.**  
+**Do not claim zero-seed mesh, complete trustless bridge, or zkML.**  
+**Bridge BLS from `0a4ecae` is not clearly still the live contract surface — verify before claiming aggregate BLS.**
+
+---
+
+## A. CLOSED — verified in source
+
+### A1. Mining RNG (B2)
+| Check | Result |
+|--------|--------|
+| `mining-policy.ts` | Only `ALLOW_RANDOM_MINING=true` allows RNG |
+| `mineNextBlock` | Calls `assertRandomMiningAllowed` |
+| `mineNextBlockAsync` | Throws if no solver and policy forbids RNG |
+| CI Vitest | Sets `ALLOW_RANDOM_MINING=true` (tests only) |
+
+**Pass.** Production without that flag cannot emit RNG blocks via those entrypoints.
+
+### A2. Ceremony prove path (C4) + smoke CI (C5)
+| Check | Result |
+|--------|--------|
+| `circom_reduction` module in `equilibrium` | Present |
+| `do_prove` | Ceremony keys → `Groth16::<Bn254, CircomReduction>::prove` |
+| Disk keys missing in production | Panic |
+| Fixed-seed testnet CRS | Libsnark; logged as not ZK |
+| CI ceremony job | `set -euo pipefail`, no `continue-on-error` |
+| Smoke design | Check 3 EXPECTED_FAIL; check 4 is the gate |
+
+**Pass** for “ceremony-compatible prove path exists and CI is a hard gate.”  
+**Ops still required:** real `PROVING_KEY_DIR` on deploy.
+
+### A3. Phone tip / body / submit (A1–A4)
+| Check | Result |
+|--------|--------|
+| Tip | Local cache → lightnode RR → HTTP |
+| Submit with peers | `gossipBlockBody` + `gossipBlock` → validate → `setLocalTip` on Accept |
+| HTTP default | Off when `hasPeers`; `HTTP_SUBMIT=1` forces on; `0` forces off |
+| `p2p_runtime` | `query_lightnode_tip`, sync queries, `BLOCK_RING` (64) |
+
+**Pass in code.** Runtime still needs peers ≥ 1.
+
+### A4. Bootstrap (A6 partial)
+| Check | Result |
+|--------|--------|
+| `load_bootstrap_addrs` | `BOOTSTRAP_PEERS` + `~/.equilibrium/known_peers.json` |
+| Dial on start | Yes |
+| Persist on `ConnectionEstablished` | Yes |
+| QR | `BootstrapQrActivity` + ZXing + `P2PNode.connectInvite` |
+
+**Pass as bootstrap-assisted.** Not zero-seed (A7).
+
+### A5. TS trapdoor
+| Check | Result |
+|--------|--------|
+| Allowed only if | `ALLOW_TS_TRAPDOOR_PROVER=true` **and** `NODE_ENV !== "production"` |
+
+**Pass.**
+
+### A6. Genesis residual/nonce/peers
+| Check | Result |
+|--------|--------|
+| Residual | Deterministic `1e-9 * (1 + (h % 97) / 100)` |
+| Block nonce | `h * 1_000_003 + 42` |
+| Peer IDs | Fixed `a`–`d` repeats |
+
+**Mostly pass** — see soft spots below.
+
+---
+
+## B. SOFT / residual simulation (do not ignore)
+
+| Item | Location | Severity |
+|------|----------|----------|
+| Genesis `mempoolPressure` | `Math.random()` still in demo chain builder | Low — fixtures only |
+| Genesis timestamp jitter | `Math.random()` on `now += …` | Low |
+| Testnet CRS without keys | Fixed-seed Groth16; **not** ceremony ZK | Medium if marketed as mainnet without keys |
+| Phone APK vs `main` | Device may be older build | High for demos until reinstall |
+| `known_peers` path | `~/.equilibrium/…` on phone may differ from desktop home | Medium — confirm Android path |
+
+---
+
+## C. OPEN or weaker than the map claimed
+
+### C1. Bridge “aggregate BLS” — **do not treat as closed on tip**
+On **current `main`**, `contracts/cross_chain_relay/src/lib.rs` still documents / structures **Ed25519 multi-sig** (`sig` 64 bytes, `pubkey` 32 bytes) in `submit_inbound`.  
+
+`0a4ecae` introduced BLS; tip commit `884a2ca` (“Refactor cross-chain relay…”) may have moved the surface again.  
+
+**Audit finding:** Before any BLS/aggregate claim, re-read tip contract + TS route and confirm which interface is live. Map status should be **PARTIAL / verify tip**, not “BLS landed for good.”
+
+### C2. A7 zero-seed DHT
+Kad + bootstrap list + QR only. **OPEN** as stated.
+
+### C3. zkML
+Module comments exist; not a model-inference circuit. **OPEN.**
+
+### C4. Field proof
+No substitute for two-device mesh on hardware. **OPEN as product proof.**
+
+---
+
+## D. Claim board (audit-aligned)
+
+| Claim | Allowed? |
+|--------|----------|
+| Phones can run as peers with native swarm, tip/body RR, P2P submit when peered | **Yes** (code) |
+| Cloud optional after first multiaddr / QR / seed | **Yes** |
+| RNG / trapdoor / soft ceremony CI cannot fake production | **Yes** |
+| Ceremony Circom prove path matches smoke check 4 | **Yes** (with keys on disk) |
+| Zero infrastructure / no bootstrap ever | **No** |
+| Trustless cross-chain complete | **No** |
+| zkML / DeepProve | **No** |
+| “World’s first fully mobile blockchain” | **Marketing only — not audit-backed** |
+
+---
+
+## E. Corrected position vs the ~80% blurb
+
+| Layer | Audit score |
+|--------|-------------|
+| Honesty plumbing (RNG, trapdoor, CI, ceremony wire) | **Strong** |
+| Mobile peer stack in repo | **Strong** |
+| Bootstrap-assisted mesh | **Strong in code, unproven on your handset** |
+| Bridge | **Re-verify tip — do not bank on BLS from memory of `0a4ecae`** |
+| Zero-seed / zkML / public mainnet ops | **Open** |
+
+**Safer line than “~80% done”:**  
+**Protocol-honest, bootstrap-assisted mobile peer L1 is implemented in `main`. Field validation and non-overstated bridge/zkML claims are what remain.**
+
+---
+
+## F. Before you “say that” publicly
+
+1. Reinstall APK from this `main` (path: `equilibrium/mobile/android/…`).  
+2. Two-device or phone↔sidecar: peers ≥ 1, one mine, other adopts tip/body.  
+3. Confirm tip `cross_chain_relay` signature scheme (BLS vs Ed25519) in one read of `main`.  
+4. Optional cleanup: strip remaining genesis `Math.random` for pressure/time.  
+5. Production checklist: `NODE_ENV=production`, no `ALLOW_*`, `PROVING_KEY_DIR` set, sidecar/P2P required.
+
+Until (1)+(2) pass, keep language at **code capability**, not **demonstrated global mobile mesh**.

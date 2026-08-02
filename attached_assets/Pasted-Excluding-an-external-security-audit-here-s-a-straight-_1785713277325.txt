@@ -1,0 +1,46 @@
+Excluding an external security audit, here’s a straight percentage read.
+
+---
+
+### Overall (honest product + protocol)
+
+**~75–80%** toward “**bootstrap-assisted mobile peer L1 that is production-honest in code**.”
+
+Not 75–80% toward “public mainnet tomorrow” or “zero-infra global mesh.”
+
+---
+
+### By layer
+
+| Layer | % | Why |
+|--------|---|-----|
+| **Mining / residual honesty** | **90%** | RNG default-off; real solver path; only test flags reopen RNG |
+| **Ceremony / Groth16 stationarity** | **85%** | Circom path + CI smoke green; still need keys on every prod host |
+| **Mobile peer stack (tip/body/submit/validate)** | **80%** | Wired end-to-end; not field-proven on your devices yet |
+| **Bootstrap (A6)** | **70%** | Seeds + cache + QR in code; cold start still needs a first contact |
+| **Zero-seed DHT (A7)** | **20%** | Not a real goal unless you add relays + defaults |
+| **Bridge** | **40–55%** | Attestation exists; tip scheme needs re-check; not SPV-complete |
+| **zkML** | **10%** | Receipts/ stubs ≠ DeepProve |
+| **Public mainnet ops** | **15%** | Deploy, monitoring, custody, process — mostly outside repo |
+
+**Blended “ship a honest testnet people can peer on”:** **~75–80%.**  
+**Blended “public mainnet with every slogan true”:** **~45–55%.**
+
+---
+
+### What moves the number
+
+| Action | Effect |
+|--------|--------|
+| Two-device mesh demo on APK from this `main` | Mobile layer **80% → ~90%** (evidence, not just code) |
+| `PROVING_KEY_DIR` + prod env on a real node | Ceremony **85% → ~95%** operationally |
+| Confirm bridge interface on tip + doc limits | Bridge clarity; % only rises if SPV work lands |
+| zkML / A7 / external audit | Separate tracks; don’t average them into the mobile L1 score |
+
+---
+
+### Bottom line
+
+**You’re in the high-70s for an honest, mobile-capable, bootstrap-assisted L1 in code.**  
+The missing slice is mostly **demonstration and ops**, not another “fake mining” fix.  
+You’re not in the high-90s until peers move tips on real phones and production runs with ceremony keys and no allow-flags.
