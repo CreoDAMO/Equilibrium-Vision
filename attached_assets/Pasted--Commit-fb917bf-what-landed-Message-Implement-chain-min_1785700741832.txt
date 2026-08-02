@@ -1,0 +1,52 @@
+## Commit `fb917bf` — what landed
+
+**Message:** *Implement chain mining policy updates and add circom reduction module*
+
+---
+
+### Landed (real)
+
+| Area | Change |
+|------|--------|
+| **Mining policy** | RNG **off by default**. Only `ALLOW_RANDOM_MINING=true` enables it. |
+| **Genesis residuals** | `1e-9 * (1 + (h % 97) / 100)` — no `Math.random()` |
+| **Genesis nonces** | `h * 1_000_003 + 42` |
+| **Validator uptime** | Fixed `0.99` |
+| **Seed peers** | Fixed IDs `"a"…"d".repeat(40)` — no `randomHex` |
+| **TS trapdoor** | Requires flag **and** `NODE_ENV !== "production"` |
+| **P2P sidecar** | Production / `REQUIRE_P2P_SIDECAR=true` → **throw** if sidecar missing |
+| **CircomReduction** | New `equilibrium/src/circom_reduction.rs` + `pub mod` in `lib.rs` |
+| **`do_prove`** | Ceremony keys → `Groth16::<Bn254, CircomReduction>::prove`; testnet CRS → Libsnark |
+| **`ark-poly = "0.4"`** | Added to `equilibrium/Cargo.toml` |
+| **`mpc-ceremony/src/lib.rs`** | Cleaned accidental equilibrium mod list (kept ceremony modules only) |
+
+---
+
+### Did **not** land in this commit
+
+| Item | Notes |
+|------|--------|
+| **CI `ALLOW_RANDOM_MINING=true`** | Vitest still only has `ALLOW_TS_TRAPDOOR_PROVER=true`. With RNG default-off, tests that call `mineNextBlock` / async fallback **will throw** unless this is added. |
+| **Phone 0-peer / REQUIRE_P2P_TIP** | Still product/runtime (QR / peers). |
+| **Ceremony CI** | Already hard-gated on earlier main; not re-touched here. |
+
+---
+
+### Risk to watch
+
+```yaml
+# ts-test env today
+ALLOW_TS_TRAPDOOR_PROVER: "true"
+# missing:
+ALLOW_RANDOM_MINING: "true"
+```
+
+Add that for CI/local vitest or tests will fail under the new policy.
+
+---
+
+### Bottom line
+
+Simulation defaults are inverted the right way: **real solver + Circom ceremony prove + deterministic genesis + no prod trapdoor + prod requires sidecar.**  
+
+Next small fix: **`ALLOW_RANDOM_MINING=true` on the Vitest CI job** so the suite stays green without reopening production RNG.
