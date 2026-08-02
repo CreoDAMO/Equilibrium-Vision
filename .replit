@@ -83,6 +83,10 @@ channel = "stable-25_05"
 REQUIRE_TX_SIGNATURES = "true"
 ALLOW_TS_TRAPDOOR_PROVER = "true"
 
+[userenv.development]
+ALLOW_RANDOM_MINING = "true"
+NODE_ENV = "development"
+
 [[ports]]
 localPort = 5432
 externalPort = 80
