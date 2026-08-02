@@ -122,6 +122,20 @@ extern "C" {
         pubkey_ptr: *const u8, pubkey_len: u32,
         addr_ptr: *const u8, addr_len: u32,
     ) -> i32;
+    /// Aggregate `n` BLS G1 pubkeys (48 bytes each, packed contiguously at
+    /// `pubkeys_ptr`) into a single 48-byte aggregate written to `out_ptr`.
+    /// Returns 1 on success, 0 on invalid input or error.
+    fn bls_aggregate_pubkeys(pubkeys_ptr: *const u8, n: u32, out_ptr: *mut u8) -> i32;
+    /// Verify a BLS12-381 signature (ETH2 longSignatures convention).
+    ///   pubkey_ptr  → 48-byte compressed G1 aggregate public key
+    ///   msg_ptr/len → message bytes (the canonical attest:… string)
+    ///   sig_ptr     → 96-byte compressed G2 aggregate signature
+    /// Returns 1 if valid, 0 on any failure.
+    fn bls_verify(
+        pubkey_ptr: *const u8,
+        msg_ptr: *const u8, msg_len: u32,
+        sig_ptr: *const u8,
+    ) -> i32;
 }
 
 const READ_BUF_LEN: usize = 2048;
@@ -367,8 +381,14 @@ fn method_set_threshold(args_ptr: u32) -> i32 {
     1
 }
 
-/// 3 = submit_inbound_attestation(chain_id_len, chain_id_words, seq_lo, seq_hi,
-///       commitment x8, n_sigs, [sig x16, pubkey x8, addr x10] x n_sigs)
+/// 3 = submit_inbound_attestation(
+///       chain_id_len: i32, chain_id_bytes: [u8; chain_id_len] (packed),
+///       seq_lo: i32, seq_hi: i32,
+///       commitment: [u8; 32] (8 words),
+///       n_signers: i32,
+///       agg_sig: [u8; 96] (24 words),            -- BLS G2 aggregate signature
+///       [pubkey: [u8; 48] (12 words),             -- BLS G1 public key
+///        addr:   [u8; 40] (10 words)] x n_signers)
 fn method_submit_inbound(args_ptr: u32) -> i32 {
     let chain_id_len = read_i32_word(args_ptr, 0) as u32;
     if chain_id_len == 0 || chain_id_len > 64 { return -1; }
@@ -389,11 +409,10 @@ fn method_submit_inbound(args_ptr: u32) -> i32 {
     };
     let commitment_hex = hex_encode(&commitment);
 
-    let n_sigs = read_i32_word(args_ptr, off + 10) as u32;
-    if n_sigs == 0 { return -3; }
+    let n_signers = read_i32_word(args_ptr, off + 10) as u32;
+    if n_signers == 0 { return -3; }
 
-    // Reject duplicate attestation first (before the sequence check so the
-    // caller gets a precise "already exists" error rather than "bad seq").
+    // Reject duplicate attestation first (precise "already exists" before seq check)
     if get_att_field(&chain_id, seq, "commitment").is_some() { return -5; }
 
     // Sequence must advance by exactly 1
@@ -404,36 +423,52 @@ fn method_submit_inbound(args_ptr: u32) -> i32 {
     if relayers.is_empty() { return -6; }
 
     let threshold = get_threshold() as u32;
-    let msg_str = format!("attest:{}:{}:{}", chain_id, seq, commitment_hex);
+
+    // agg_sig: 96 bytes (24 words) at word offset (off+11)
+    let agg_sig_ptr = (args_ptr as usize + ((off + 11) as usize) * 4) as *const u8;
+
+    // Each signer block: pubkey(48 bytes=12w) + addr(40 bytes=10w) = 22 words
+    // Starting at word offset (off + 11 + 24) = (off + 35)
+    let signers_base = off + 35;
 
     let mut valid_signers: Vec<String> = Vec::new();
+    // Collect all G1 pubkeys contiguously for bls_aggregate_pubkeys
+    let mut pubkeys_buf: Vec<u8> = Vec::with_capacity(n_signers as usize * 48);
 
-    // Each signer block: sig(16 words) + pubkey(8 words) + addr(10 words) = 34 words
-    let sigs_base = off + 11;
-    for i in 0..n_sigs {
-        let base = sigs_base + i * 34;
-        let sig_ptr = (args_ptr as usize + (base as usize) * 4) as *const u8;
-        let pubkey_ptr = (args_ptr as usize + ((base + 16) as usize) * 4) as *const u8;
-        let addr_ptr = (args_ptr as usize + ((base + 24) as usize) * 4) as *const u8;
+    for i in 0..n_signers {
+        let base = signers_base + i * 22;
+        let pubkey_ptr = (args_ptr as usize + (base as usize) * 4) as *const u8;
+        let addr_ptr   = (args_ptr as usize + ((base + 12) as usize) * 4) as *const u8;
         let addr = unsafe { read_mem_str(addr_ptr as u32, 40) };
 
         if !relayers.contains(&addr) { return -7; }
         if valid_signers.contains(&addr) { return -8; }
 
-        let ok = unsafe {
-            verify_owner_sig(
-                msg_str.as_ptr(), msg_str.len() as u32,
-                sig_ptr, 64,
-                pubkey_ptr, 32,
-                addr_ptr, 40,
-            )
-        } == 1;
-        if !ok { return -2; }
-
+        unsafe {
+            pubkeys_buf.extend_from_slice(core::slice::from_raw_parts(pubkey_ptr, 48));
+        }
         valid_signers.push(addr);
     }
 
     if (valid_signers.len() as u32) < threshold { return -9; }
+
+    // Aggregate all contributing G1 pubkeys into one
+    let mut agg_pubkey = [0u8; 48];
+    let aggregated = unsafe {
+        bls_aggregate_pubkeys(pubkeys_buf.as_ptr(), n_signers, agg_pubkey.as_mut_ptr())
+    } == 1;
+    if !aggregated { return -2; }
+
+    // Verify the single BLS G2 aggregate signature against the aggregate pubkey
+    let msg_str = format!("attest:{}:{}:{}", chain_id, seq, commitment_hex);
+    let ok = unsafe {
+        bls_verify(
+            agg_pubkey.as_ptr(),
+            msg_str.as_ptr(), msg_str.len() as u32,
+            agg_sig_ptr,
+        )
+    } == 1;
+    if !ok { return -2; }
 
     // Store attestation
     set_att_field(&chain_id, seq, "commitment", &commitment_hex);

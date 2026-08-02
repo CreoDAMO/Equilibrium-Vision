@@ -51,8 +51,9 @@ if [ ! -f "$WASM" ]; then
   exit 1
 fi
 
-python3 -c "
-with open('$WASM','rb') as f: data = f.read()
-with open('cross_chain_relay.hex','w') as f: f.write(data.hex())
-print(f'[cross_chain_relay] {len(data)} bytes -> cross_chain_relay.hex')
+node -e "
+const fs = require('fs');
+const data = fs.readFileSync('$WASM');
+fs.writeFileSync('cross_chain_relay.hex', data.toString('hex'));
+console.log('[cross_chain_relay] ' + data.length + ' bytes -> cross_chain_relay.hex');
 "

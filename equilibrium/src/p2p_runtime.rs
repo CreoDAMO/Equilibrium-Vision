@@ -28,6 +28,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    env,
+    fs,
+    io::Write,
+    path::PathBuf,
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -400,6 +404,71 @@ pub fn query_sync_blocks(from_height: u64, to_height: u64) -> String {
         .unwrap_or_default()
 }
 
+// ── Bootstrap peer helpers ────────────────────────────────────────────────────
+
+/// Path to the persistent known-peers JSON file: `~/.equilibrium/known_peers.json`.
+fn known_peers_path() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".equilibrium").join("known_peers.json")
+}
+
+/// Load multiaddrs to dial on startup from two sources (deduplicated):
+///   1. `BOOTSTRAP_PEERS` env var — comma-separated multiaddrs
+///   2. `~/.equilibrium/known_peers.json` — persisted from previous sessions
+fn load_bootstrap_addrs() -> Vec<Multiaddr> {
+    let mut addrs: Vec<Multiaddr> = Vec::new();
+
+    // 1. Env var
+    if let Ok(peers_env) = env::var("BOOTSTRAP_PEERS") {
+        for raw in peers_env.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            match Multiaddr::from_str(raw) {
+                Ok(a) => { addrs.push(a); }
+                Err(e) => { eprintln!("[p2p-runtime] bad BOOTSTRAP_PEERS entry '{raw}': {e}"); }
+            }
+        }
+    }
+
+    // 2. Persisted routing table
+    let path = known_peers_path();
+    if let Ok(data) = fs::read_to_string(&path) {
+        if let Ok(list) = serde_json::from_str::<Vec<String>>(&data) {
+            for raw in &list {
+                if let Ok(a) = Multiaddr::from_str(raw) {
+                    if !addrs.contains(&a) {
+                        addrs.push(a);
+                    }
+                }
+            }
+        }
+    }
+
+    addrs
+}
+
+/// Persist a dialed peer's observed multiaddr to `~/.equilibrium/known_peers.json`
+/// so future cold starts can skip manual QR pairing.
+fn persist_peer_addr(addr: &Multiaddr) {
+    let path = known_peers_path();
+    // Create parent dir if needed
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    // Read existing list
+    let mut list: Vec<String> = fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let addr_str = addr.to_string();
+    if !list.contains(&addr_str) {
+        list.push(addr_str);
+        if let Ok(json) = serde_json::to_string(&list) {
+            if let Ok(mut f) = fs::File::create(&path) {
+                let _ = f.write_all(json.as_bytes());
+            }
+        }
+    }
+}
+
 // ── Swarm event loop ──────────────────────────────────────────────────────────
 
 async fn run_swarm(rx: mpsc::Receiver<Command>, listen_tcp: u16, listen_quic: u16) {
@@ -453,6 +522,21 @@ async fn run_swarm(rx: mpsc::Receiver<Command>, listen_tcp: u16, listen_quic: u1
         }
     }
     eprintln!("[p2p-runtime] peer_id={peer_id}");
+
+    // Dial bootstrap peers (env var + persisted routing table) before entering
+    // the event loop so the swarm starts connecting immediately.
+    let bootstrap_addrs = load_bootstrap_addrs();
+    if bootstrap_addrs.is_empty() {
+        eprintln!("[p2p-runtime] no bootstrap peers configured; waiting for QR/NFC invite");
+    } else {
+        for addr in &bootstrap_addrs {
+            if let Err(e) = swarm.dial(addr.clone()) {
+                eprintln!("[p2p-runtime] bootstrap dial {addr} failed: {e}");
+            } else {
+                eprintln!("[p2p-runtime] dialing bootstrap {addr}");
+            }
+        }
+    }
 
     let blocks_hash = topic_blocks.hash();
     let bodies_hash = topic_bodies.hash();
@@ -730,7 +814,9 @@ async fn run_swarm(rx: mpsc::Receiver<Command>, listen_tcp: u16, listen_quic: u1
                         connected.insert(peer_id);
                         CONNECTED_PEER_COUNT.store(connected.len(), Ordering::Relaxed);
                         if let libp2p::core::ConnectedPoint::Dialer { address, .. } = endpoint {
-                            swarm.behaviour_mut().kad.add_address(&peer_id, address);
+                            swarm.behaviour_mut().kad.add_address(&peer_id, address.clone());
+                            // Persist address for faster reconnect on next cold start
+                            persist_peer_addr(&address);
                         }
                         let _ = swarm.behaviour_mut().kad.bootstrap();
                         eprintln!("[p2p-runtime] connected: {peer_id} ({} peers)", connected.len());

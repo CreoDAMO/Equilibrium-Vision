@@ -138,18 +138,18 @@ router.patch("/relay/threshold", async (req, res) => {
 });
 
 // ── POST /api/relay/attest/inbound ───────────────────────────────────────────
-// Submit an m-of-n signed inbound attestation (permissionless).
-// The contract verifies every signature; only relayers can sign.
+// Submit an m-of-n BLS-attested inbound event (permissionless).
+// The contract aggregates pubkeys and verifies one BLS G2 signature.
 //
 // Body: {
-//   caller: string,        40-hex-char address of the submitter
-//   chainId: string,       source chain identifier (e.g. "cosmoshub-4")
-//   seq: string | number,  attestation sequence (must be exactly lastSeq+1)
-//   commitmentHex: string, 64 hex chars — 32-byte foreign state commitment
-//   signatures: [{
-//     signatureHex: string,  128 hex chars — Ed25519 sig over the attestation msg
-//     pubkeyHex: string,     64 hex chars  — raw Ed25519 public key
-//     signerAddress: string, 40 hex chars  — sha256(pubkeyBytes)[..20]
+//   caller: string,          40-hex-char address of the submitter
+//   chainId: string,         source chain identifier (e.g. "cosmoshub-4")
+//   seq: string | number,    attestation sequence (must be exactly lastSeq+1)
+//   commitmentHex: string,   64 hex chars — 32-byte foreign state commitment
+//   aggSigHex: string,       192 hex chars — BLS G2 aggregate signature
+//   signers: [{
+//     pubkeyHex: string,     96 hex chars — BLS G1 public key (48 bytes)
+//     address: string,       40 hex chars — relayer address on Equilibrium
 //   }]
 // }
 
@@ -157,7 +157,7 @@ router.post("/relay/attest/inbound", async (req, res) => {
   const caller = requireCaller(req, res);
   if (!caller) return;
 
-  const { chainId, seq: seqRaw, commitmentHex, signatures } = req.body ?? {};
+  const { chainId, seq: seqRaw, commitmentHex, aggSigHex, signers } = req.body ?? {};
   if (typeof chainId !== "string" || !chainId.trim()) {
     res.status(400).json({ error: "chainId is required" });
     return;
@@ -167,8 +167,12 @@ router.post("/relay/attest/inbound", async (req, res) => {
     res.status(400).json({ error: "seq must be a non-negative integer or BigInt string" });
     return;
   }
-  if (!Array.isArray(signatures) || signatures.length === 0) {
-    res.status(400).json({ error: "signatures must be a non-empty array" });
+  if (typeof aggSigHex !== "string" || !/^[0-9a-f]{192}$/.test(aggSigHex)) {
+    res.status(400).json({ error: "aggSigHex must be 192 hex chars (96-byte BLS G2 aggregate signature)" });
+    return;
+  }
+  if (!Array.isArray(signers) || signers.length === 0) {
+    res.status(400).json({ error: "signers must be a non-empty array" });
     return;
   }
 
@@ -179,7 +183,8 @@ router.post("/relay/attest/inbound", async (req, res) => {
     chainId,
     seq,
     commitmentHex,
-    signatures,
+    aggSigHex,
+    signers,
   });
 
   if (!result.success) {
