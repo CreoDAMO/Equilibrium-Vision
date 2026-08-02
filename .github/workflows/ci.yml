@@ -198,6 +198,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://runner@localhost:5432/equilibrium
           ALLOW_TS_TRAPDOOR_PROVER: "true"
+          ALLOW_RANDOM_MINING: "true"   # tests only — never on production deploy
 
   # ── Rust unit tests (equilibrium) ───────────────────────────────────────────
   rust-test:
