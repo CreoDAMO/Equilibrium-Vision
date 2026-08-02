@@ -1,0 +1,571 @@
+src/__tests__/models.integration.test.ts (23 tests | 3 failed) 330ms
+     ✓ returns a numeric modelId on propose 1ms
+     ✓ GET /api/models/:id reports status 'proposed' with the proposer recorded 11ms
+     ✓ appears in GET /api/models 3ms
+     ✓ verify fails while the challenge window is still open 7ms
+     × verify succeeds once the challenge window has elapsed, flipping status to verified 3ms
+     × re-verifying an already-verified model is a no-op success 41ms
+     ✓ returns an error when the posted support set doesn't hash to the committed value 6ms
+     ✓ model remains in 'proposed' status after a rejected challenge 4ms
+     ✓ a matching challenge disproves the claim and slashes the model 6ms
+     ✓ model status flips to 'slashed' 6ms
+     ✓ shows as slashed in the model list too 3ms
+     ✓ the challenger is paid a reward and refunded their bond 0ms
+     × a slashed model can no longer be verified 1ms
+     ✓ rejects propose with a missing caller 2ms
+     ✓ rejects propose with missing numeric fields 2ms
+     ✓ GET /api/models/:id returns 404 for an unknown id 5ms
+     ✓ GET /api/models/:id returns 400 for a non-numeric id 1ms
+     ✓ rejects challenge with non-array supportData/supportLabels 6ms
+     ✓ rejects propose when the caller has insufficient balance for the bond 5ms
+     ✓ GET inference-status is 'none' before any attestation 6ms
+     ✓ accepts a validly-signed inference attestation and reflects it in status 71ms
+     ✓ rejects an attestation whose signature does not match the claimed attestor 7ms
+     ✓ returns 404 for inference-status on an unknown model id 4ms
+ ✓ src/__tests__/multisig.integration.test.ts (19 tests) 258ms
+ ✓ src/__tests__/arbitrage.integration.test.ts (24 tests) 184ms
+ ✓ src/__tests__/p2p-sync.integration.test.ts (12 tests) 56ms
+ ✓ src/__tests__/p2p-mesh.integration.test.ts (5 tests) 10443ms
+     ✓ node2 receives a gossiped block hash from node1  10017ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 21 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.1 Rapid-fire execution — circuit breaker trips after 5 calls > sets up verified model and executions 1–5 are NOT rejected with the circuit-breaker error
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:154:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.1 Rapid-fire execution — circuit breaker trips after 5 calls > the 6th call is rejected with 'Paused or circuit breaker tripped'
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:178:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.1 Rapid-fire execution — circuit breaker trips after 5 calls > after unpause, the next call is no longer blocked by the circuit breaker
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:203:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.2 Max-trade-amount cap > rejects amountIn exceeding the governance cap with 'Amount exceeds the max trade amount'
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:231:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.2 Max-trade-amount cap > pool reserves are unchanged after a cap-rejected call
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:249:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.3 Profit below minProfit — advisory only, not a revert (LIMITATIONS.md §1) > execute succeeds and pool reserves change even when profit < minProfit
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:288:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.4 Concurrent execution — circuit-breaker semantics under Promise.all > no more than 5 non-circuit-breaker results from 10 concurrent calls
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:344:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.5 Circuit breaker is sticky (no time-based self-heal) > advancing past the window does NOT clear a tripped breaker; unpause() does
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:389:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.6 Sliding window correctness — exec_count resets after window rolls > 3 execs in window N, advance past it, 3 execs in window N+1 — never trips breaker
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:438:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.7 Governance parameter hot-reload > lowering arbitrageMaxTradeAmount rejects a previously-passing amountIn
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:483:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.7 Governance parameter hot-reload > changing arbitrageWindowBlocks live affects subsequent window checks
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ src/__tests__/arbitrage.stress.test.ts:512:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.8 Rollback / reorg — wasmVM block height stays consistent > rollbackToHeight keeps chainState.height correct and the VM stays coherent
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:564:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/21]⎯
+
+ FAIL  src/__tests__/arbitrage.stress.test.ts > 2.9 Partial success — swap state IS mutated even when profit < minProfit > pool reserves change after a swap even if ArbitrageUnderTarget is logged
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:607:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/21]⎯
+
+ FAIL  src/__tests__/chain.unit.test.ts > mining-policy assertRandomMiningAllowed > allows RNG when NODE_ENV is unset (dev / CI default)
+AssertionError: expected [Function] to not throw an error but 'Error: test: RNG mining is forbidden.…' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"Error: test: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only."
+
+ ❯ src/__tests__/chain.unit.test.ts:333:57
+    331|     delete process.env["REQUIRE_REAL_SOLVER"];
+    332|     delete process.env["ALLOW_RANDOM_MINING"];
+    333|     expect(() => assertRandomMiningAllowed("test")).not.toThrow();
+       |                                                         ^
+    334|     expect(allowRandomMiningFallback()).toBe(true);
+    335|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/21]⎯
+
+ FAIL  src/__tests__/crosschain.integration.test.ts > CrossChainRelay — inbound finalization after challenge window > accepts finalization after advancing past challenge window (100 blocks)
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/crosschain.integration.test.ts:48:25
+ ❯ src/__tests__/crosschain.integration.test.ts:346:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/21]⎯
+
+ FAIL  src/__tests__/crosschain.integration.test.ts > CrossChainRelay — inbound finalization after challenge window > GET status shows attestation as finalized
+AssertionError: expected 'pending' to be 'finalized' // Object.is equality
+
+Expected: "finalized"
+Received: "pending"
+
+ ❯ src/__tests__/crosschain.integration.test.ts:359:29
+    357|     const res = await api.get(`/api/relay/attest/inbound/${chainId}/1`…
+    358|     expect(res.status).toBe(200);
+    359|     expect(res.body.status).toBe("finalized");
+       |                             ^
+    360|   });
+    361|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/21]⎯
+
+ FAIL  src/__tests__/crosschain.integration.test.ts > CrossChainRelay — inbound finalization after challenge window > rejects double-finalization
+AssertionError: expected 'Challenge window still open' to match /already finalized/i
+
+- Expected:
+/already finalized/i
+
++ Received:
+"Challenge window still open"
+
+ ❯ src/__tests__/crosschain.integration.test.ts:369:28
+    367|       .send({ caller: randomAddress() });
+    368|     expect(res.status).toBe(400);
+    369|     expect(res.body.error).toMatch(/already finalized/i);
+       |                            ^
+    370|   });
+    371| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/21]⎯
+
+ FAIL  src/__tests__/crosschain.integration.test.ts > CrossChainRelay — admin challenge + slashing > rejects finalization of a challenged attestation
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/crosschain.integration.test.ts:48:25
+ ❯ src/__tests__/crosschain.integration.test.ts:445:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/21]⎯
+
+ FAIL  src/__tests__/models.integration.test.ts > Models API — propose -> verify (undisputed) > verify succeeds once the challenge window has elapsed, flipping status to verified
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/models.integration.test.ts:30:25
+ ❯ src/__tests__/models.integration.test.ts:91:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/21]⎯
+
+ FAIL  src/__tests__/models.integration.test.ts > Models API — propose -> verify (undisputed) > re-verifying an already-verified model is a no-op success
+AssertionError: expected 400 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 400
+
+ ❯ src/__tests__/models.integration.test.ts:103:24
+    101|   it("re-verifying an already-verified model is a no-op success", asyn…
+    102|     const res = await api.post(`/api/models/${modelId}/verify`).send({…
+    103|     expect(res.status).toBe(200);
+       |                        ^
+    104|     expect(res.body.success).toBe(true);
+    105|     expect(res.body.status).toBe("verified");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/21]⎯
+
+ FAIL  src/__tests__/models.integration.test.ts > Models API — challenge slashes a model whose claimed residual is provably wrong > a slashed model can no longer be verified
+Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+     19|   if (!allowRandomMiningFallback()) {
+     20|     const who = caller ? `${caller}: ` : "";
+     21|     throw new Error(
+       |           ^
+     22|       `${who}RNG mining is forbidden. ` +
+     23|         "Use the consensus-api / variational-ai solver, or set " +
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/models.integration.test.ts:30:25
+ ❯ src/__tests__/models.integration.test.ts:217:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/21]⎯
+
+
+ Test Files  4 failed | 6 passed (10)
+      Tests  21 failed | 246 passed (267)
+   Start at  19:56:29
+   Duration  14.00s (transform 1.73s, setup 0ms, import 9.84s, tests 12.62s, environment 1ms)
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:154:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:178:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:203:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:231:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:249:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:288:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:344:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:389:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:438:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:483:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ src/__tests__/arbitrage.stress.test.ts:512:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:564:25
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/arbitrage.stress.test.ts:61:25
+ ❯ setupVerifiedModel src/__tests__/arbitrage.stress.test.ts:109:3
+ ❯ src/__tests__/arbitrage.stress.test.ts:607:5
+
+
+
+Error: AssertionError: expected [Function] to not throw an error but 'Error: test: RNG mining is forbidden.…' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"Error: test: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only."
+
+ ❯ src/__tests__/chain.unit.test.ts:333:57
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/crosschain.integration.test.ts:48:25
+ ❯ src/__tests__/crosschain.integration.test.ts:346:5
+
+
+
+Error: AssertionError: expected 'pending' to be 'finalized' // Object.is equality
+
+Expected: "finalized"
+Received: "pending"
+
+ ❯ src/__tests__/crosschain.integration.test.ts:359:29
+
+
+
+Error: AssertionError: expected 'Challenge window still open' to match /already finalized/i
+
+- Expected:
+/already finalized/i
+
++ Received:
+"Challenge window still open"
+
+ ❯ src/__tests__/crosschain.integration.test.ts:369:28
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/crosschain.integration.test.ts:48:25
+ ❯ src/__tests__/crosschain.integration.test.ts:445:5
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/models.integration.test.ts:30:25
+ ❯ src/__tests__/models.integration.test.ts:91:5
+
+
+
+Error: AssertionError: expected 400 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 400
+
+ ❯ src/__tests__/models.integration.test.ts:103:24
+
+
+
+Error: Error: mineNextBlock: RNG mining is forbidden. Use the consensus-api / variational-ai solver, or set ALLOW_RANDOM_MINING=true for tests only.
+ ❯ assertRandomMiningAllowed src/chain/mining-policy.ts:21:11
+ ❯ mineNextBlock src/chain/state.ts:1754:3
+ ❯ advanceBlocks src/__tests__/models.integration.test.ts:30:25
+ ❯ src/__tests__/models.integration.test.ts:217:5
+
+
+/home/runner/work/Equilibrium-Vision/Equilibrium-Vision/artifacts/api-server:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/api-server@0.0.0 test: `vitest run`
+Exit status 1
+Error: Process completed with exit code 1.
