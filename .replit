@@ -86,3 +86,4 @@ ALLOW_TS_TRAPDOOR_PROVER = "true"
 [[ports]]
 localPort = 5432
 externalPort = 80
+exposeLocalhost = true
