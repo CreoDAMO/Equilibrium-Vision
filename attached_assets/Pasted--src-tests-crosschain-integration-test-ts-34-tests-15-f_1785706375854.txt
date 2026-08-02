@@ -1,0 +1,45 @@
+ src/__tests__/crosschain.integration.test.ts (34 tests | 15 failed) 64824ms
+     ✓ GET /api/relay/info returns contract address once deployed 39ms
+     ✓ rejects registration below min bond 35ms
+     ✓ registers a relayer with sufficient bond 10ms
+     ✓ rejects duplicate registration 8ms
+     ✓ GET /api/relay/info shows 1 relayer after registration 20ms
+     ✓ rejects threshold update without admin key 4ms
+     ✓ admin can set threshold to 1 for single-relayer tests 7ms
+     ✓ rejects attestation with missing chainId 12ms
+     × rejects attestation with wrong seq (skipping seq 1) 10ms
+     ✓ rejects attestation with bad signature 9ms
+     × accepts a valid single-relayer attestation 11ms
+     × rejects duplicate attestation for same chain+seq 11ms
+     × GET status shows attestation as pending 25ms
+     ✓ 404 for non-existent attestation 7ms
+     × rejects finalization before challenge window expires 7ms
+     × accepts finalization after advancing past challenge window (100 blocks) 18114ms
+     × GET status shows attestation as finalized 12ms
+     × rejects double-finalization 15ms
+     ✓ rejects challenge without admin key 3ms
+     × admin can challenge a fraudulent attestation 12ms
+     × GET status shows attestation as challenged 17ms
+     × rejects double-challenge 12ms
+     ✓ rejects finalization of a challenged attestation  46075ms
+     ✓ rejects malformed commitmentHex 9ms
+     ✓ publishes first outbound commitment with seq=1 11ms
+     ✓ publishes second outbound commitment with seq=2 12ms
+     ✓ GET outbound seq returns 2 14ms
+     × rejects attestation with only 1 signature when threshold is 2 8ms
+     × rejects attestation with duplicate signer 10ms
+     × accepts 2-of-2 attestation with distinct valid signatures 13ms
+     × GET status for 2-of-2 attestation shows both signers 9ms
+     ✓ rejects revocation without admin key 2ms
+     ✓ admin can revoke a relayer 4ms
+     ✓ revoked relayer no longer in relayer set 7ms
+ ✓ src/__tests__/multisig.integration.test.ts (19 tests) 412ms
+ ✓ src/__tests__/models.integration.test.ts (23 tests) 62578ms
+     ✓ verify succeeds once the challenge window has elapsed, flipping status to verified  18494ms
+     ✓ a slashed model can no longer be verified  43562ms
+ ✓ src/__tests__/arbitrage.integration.test.ts (24 tests) 247ms
+[21:16:37.377] INFO (4890): Postgres persistence enabled
+    url: "postgresql:***@127.0.0.1:5432/equilibrium"
+ ✓ src/__tests__/p2p-sync.integration.test.ts (12 tests) 95ms
+ ✓ src/__tests__/p2p-mesh.integration.test.ts (5 tests) 10751ms
+     ✓ node2 receives a gossiped block hash from node1  10319ms

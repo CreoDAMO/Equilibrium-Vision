@@ -23,6 +23,7 @@ export default defineConfig({
     forks: { singleFork: true },
     env: {
       DATABASE_URL: "postgresql://runner@127.0.0.1:5432/equilibrium",
+      NODE_ENV: "test",
     },
     coverage: {
       provider: "v8",
