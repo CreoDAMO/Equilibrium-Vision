@@ -1,13 +1,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# docs/ci-fixed.yml  →  copy to .github/workflows/ci.yml
+# docs/ci-fixed.yml → copy to .github/workflows/ci.yml
 #
 # C5 (Aug 2026): Ceremony smoke is a hard gate.
 #   - smoke-prove-verify exits 0 when only check 3 is EXPECTED_FAIL (Libsnark
 #     on snarkjs zkey). Check 4 (CircomReduction) is the production gate.
-#   - continue-on-error: false — real failures (1/2/4) fail the workflow.
+#   - No continue-on-error — real failures (1/2/4) fail the workflow.
 #   - Run step propagates smoke script exit code (no forced exit 0).
 #
-# KEPT — ALLOW_TS_TRAPDOOR_PROVER=true in Vitest (test mining without Rust).
+# Vitest (tests only — never production deploy):
+#   ALLOW_TS_TRAPDOOR_PROVER=true  — TS trapdoor proofs in unit tests
+#   ALLOW_RANDOM_MINING=true       — RNG mining helpers after policy default-off
 # ─────────────────────────────────────────────────────────────────────────────
 name: CI
 
@@ -197,7 +199,9 @@ jobs:
         run: pnpm --filter @workspace/api-server run test
         env:
           DATABASE_URL: postgresql://runner@localhost:5432/equilibrium
+          # Tests only — never set on production deploy
           ALLOW_TS_TRAPDOOR_PROVER: "true"
+          ALLOW_RANDOM_MINING: "true"
 
   # ── Rust unit tests (equilibrium) ───────────────────────────────────────────
   rust-test:
@@ -267,7 +271,6 @@ jobs:
           command -v snarkjs
           echo "snarkjs: ok"
 
-      # Propagate script exit: 0 = PASS (check 3 EXPECTED_FAIL allowed); ≠0 = real fail
       - name: Run ceremony smoke
         id: smoke
         run: |
@@ -310,7 +313,6 @@ jobs:
           elif grep -q '\[check 2\] FAIL' "$LOG"; then c2=FAIL
           elif grep -q '\[check 2\] SKIP' "$LOG"; then c2=SKIP
           fi
-          # Prefer EXPECTED_FAIL over plain FAIL for check 3
           if grep -q '\[check 3\] EXPECTED_FAIL' "$LOG"; then c3=EXPECTED_FAIL
           elif grep -q '\[check 3\] PASS' "$LOG"; then c3=PASS
           elif grep -q '\[check 3\] FAIL' "$LOG"; then c3=FAIL
