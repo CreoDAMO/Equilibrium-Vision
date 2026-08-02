@@ -28,11 +28,12 @@ flowchart TB
         CrossChainRelay["CrossChainRelay"]
     end
 
-    subgraph Rust["Rust reference stack — equilibrium/ (standalone, no bridge to TS)"]
+    subgraph Rust["Rust reference stack — equilibrium/ (standalone; no RPC bridge to TS API)"]
         TestnetNode["testnet-node binary"]
         WalletCLI["wallet CLI binary"]
         Consensus["consensus.rs / stationary_solver.rs"]
         FFI["ffi.rs<br/>(C-ABI for mobile)"]
+        P2PSidecar["p2p-sidecar binary<br/>(spawned by API server)"]
     end
 
     subgraph VAI["variational-ai crate — shared solver, invoked as a subprocess"]
@@ -63,10 +64,12 @@ flowchart TB
 
     API -->|spawns per-request| CLI
     API -->|spawns per-request| ArbCLI
+    API -->|spawns subprocess + NDJSON stdio| P2PSidecar
     ModelRegistry -.->|re-verify on challenge| CLI
 
     TestnetNode --> Consensus
     WalletCLI --> Consensus
+    P2PSidecar --> Consensus
 
     API -->|/metrics, /metrics/stratum| Prometheus
     Prometheus --> Grafana
@@ -75,7 +78,7 @@ flowchart TB
     classDef ref fill:#374151,color:#fff,stroke:#111827;
     classDef contract fill:#7c3aed,color:#fff,stroke:#4c1d95;
     class Explorer,API,ChainState,WasmVM,Stratum,Postgres live;
-    class TestnetNode,WalletCLI,Consensus,FFI ref;
+    class TestnetNode,WalletCLI,Consensus,FFI,P2PSidecar ref;
     class ModelRegistry,Arbitrage,CrossChainRelay contract;
 ```
 
@@ -83,7 +86,7 @@ flowchart TB
 
 - **Blue (TypeScript stack)** is what you actually interact with in this Replit environment: the Explorer, the wallet, the REST/WebSocket API, and Postgres-backed persistence. This is the live testnet.
 - **Purple (WASM contracts)** are Rust crates compiled to `wasm32-unknown-unknown`, checked in as `.hex` under `contracts/`, and executed inside the TypeScript stack's own `WasmVM` (a deterministic host built on Node's `WebAssembly` global — not a separate node). CI rebuilds each contract from source and fails if the checked-in `.hex` has drifted (see `ci.yml` at the repo root).
-- **Gray (Rust reference stack)** — `equilibrium/` — is a standalone consensus engine with its own testnet-node and wallet binaries, and the FFI surface Android uses. It does **not** talk to the TypeScript API server; there is no RPC/IPC bridge between them. It exists as (a) the canonical reference implementation of Proof-of-Stationarity consensus and (b) the mobile SDK.
+- **Gray (Rust reference stack)** — `equilibrium/` — is a standalone consensus engine with its own testnet-node and wallet binaries, and the FFI surface Android uses. The `testnet-node` and `wallet` binaries do **not** talk to the TypeScript API server — there is no RPC/IPC bridge between them and the TS chain. However, `p2p-sidecar.rs` (also in gray) is the exception: the TypeScript API server **spawns it as a subprocess** and drives the real libp2p stack over NDJSON stdio via `p2p-bridge.ts`. The reference stack exists as (a) the canonical implementation of Proof-of-Stationarity consensus and (b) the mobile SDK.
 - **variational-ai** is a separate Rust crate shared by both stacks conceptually (kept in lockstep by the `fpEncode`/address-derivation rules — see README "Architecture Notes"), but only the TypeScript API server invokes it directly, as CLI subprocesses (`variational-ai-cli` for residual verification, `variational-ai-arbitrage-cli` for Bellman-Ford arbitrage scans). The Rust core links the crate's library code in-process instead.
 - **Stratum pool** is a separate TCP server inside the API server process, sharing the same `ChainState`.
 - **Prometheus/Grafana** scrape `/metrics` and `/metrics/stratum` from the API server; dashboards live in `docs/grafana/`.

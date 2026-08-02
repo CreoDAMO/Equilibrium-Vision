@@ -23,18 +23,21 @@ pnpm run typecheck:libs && pnpm run typecheck
 ### TypeScript (Vitest)
 | Suite | Tests |
 |---|---|
-| chain.unit.test.ts | 17 |
-| api.integration.test.ts | 18 |
-| contracts.integration.test.ts | 12 |
-| multisig.integration.test.ts | 20 |
-| models.integration.test.ts | 22 |
-| arbitrage.integration.test.ts | 21 |
-| crosschain.integration.test.ts | 41 |
-| **arbitrage.stress.test.ts (NEW)** | **14** |
-| **Grand total** | **245** (was 231) |
+| chain.unit.test.ts | 41 |
+| api.integration.test.ts | 32 |
+| contracts.integration.test.ts | 58 |
+| multisig.integration.test.ts | 19 |
+| models.integration.test.ts | 23 |
+| arbitrage.integration.test.ts | 24 |
+| crosschain.integration.test.ts | 34 |
+| p2p-sync.integration.test.ts | 12 |
+| p2p-mesh.integration.test.ts | 5 |
+| **arbitrage.stress.test.ts** | **14** |
+| **Grand total** | **262** |
 
-Files: 8 (was 7).  
-New tests added in Phase 2+3: **14** (9 stress scenarios + 1 fuzz block).
+Files: 10.
+
+> **Note:** crosschain counts reflect the Ed25519 attestation interface (reverted from a BLS prototype). models count includes the inference-attestation receipt tests added post-Phase-3.
 
 ### Rust — variational-ai
 | Test | Status |

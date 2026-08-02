@@ -2,7 +2,7 @@
 
 A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
 
-> **Status (July 27, 2026):** Live testnet with **290 tests (33 Rust + 257 TypeScript across 10 test files)**. **SMT `stateRoot`** computed on every block (Postgres `state_root`) + **`getVerifiedStateRoot`** rejects proofs when rebuilt SMT ≠ tip commitment. **libp2p `p2p-sidecar`**: Gossipsub, mDNS, Identify, Kademlia, light-node RR, sync RR, **TCP + QUIC** (`OrTransport`); inbound sync/light-node callbacks wired in `initChain()` and covered by `p2p-sync.integration.test.ts`. HTTP `/lightnode/*` proofs backed by the same root guard. **ModelRegistry + Arbitrage (execute live, per-caller rate limit) + CrossChainRelay** WASM contracts deployed. **`variational-ai`** deterministic NTK/MLP/logistic solvers. **Kinetic Block Timeline** at `/matrix` (Three.js/R3F). Android: JNI miner + full in-process libp2p swarm (`p2p_runtime.rs` → `P2PNode.kt`); `MiningWorker.kt` polls gossip from peers during solve. Remote load test: 149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted. See `LIMITATIONS.md` for known design constraints and `TODO.md` for remaining work.
+> **Status (August 2, 2026):** Live testnet with **262 tests (33 Rust + 229 TypeScript across 10 test files)**. **SMT `stateRoot`** computed on every block (Postgres `state_root`) + **`getVerifiedStateRoot`** rejects proofs when rebuilt SMT ≠ tip commitment. **libp2p `p2p-sidecar`**: Gossipsub, mDNS, Identify, Kademlia, light-node RR, sync RR, **TCP + QUIC** (`OrTransport`); inbound sync/light-node callbacks wired in `initChain()` and covered by `p2p-sync.integration.test.ts`. HTTP `/lightnode/*` proofs backed by the same root guard. **ModelRegistry + Arbitrage (execute live, per-caller rate limit) + CrossChainRelay** WASM contracts deployed. **`variational-ai`** deterministic NTK/MLP/logistic solvers. **Kinetic Block Timeline** at `/matrix` (Three.js/R3F). Android: JNI miner + full in-process libp2p swarm (`p2p_runtime.rs` → `P2PNode.kt`); `MiningWorker.kt` polls gossip from peers during solve. Remote load test: 149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted. See `LIMITATIONS.md` for known design constraints and `TODO.md` for remaining work.
 
 ---
 
@@ -102,7 +102,10 @@ Both services start automatically in this environment via the configured workflo
 
 ```bash
 # API node (port 8080, auto-mines a block every 15 seconds)
+# ALLOW_RANDOM_MINING=true is required in dev/testnet so the in-process TS
+# miner can run without the real consensus-api Rust binary (see LIMITATIONS §7).
 DATABASE_URL=postgresql://runner@127.0.0.1:5432/equilibrium PORT=8080 \
+  ALLOW_RANDOM_MINING=true \
   pnpm --filter @workspace/api-server run dev
 
 # Block explorer + wallet (port 5000)
@@ -142,6 +145,17 @@ pnpm install
 # If workflows don't start automatically, run:
 bash scripts/start-postgres.sh
 ```
+
+### Required environment variables (development)
+
+| Variable | Value | Purpose |
+|---|---|---|
+| `DATABASE_URL` | `postgresql://runner@127.0.0.1:5432/equilibrium` | Postgres connection |
+| `ALLOW_RANDOM_MINING` | `true` | Allows the in-process TS miner; omit in production where the real Rust solver is required |
+| `NODE_ENV` | `development` | Enables non-production code paths |
+| `ADMIN_KEY` | any secret string | Enables admin-gated routes (slash, relay register, threshold, challenge) |
+
+> **Postgres socket directory:** The Replit container does not have `/run/postgresql/`. The `start-postgres.sh` script sets `unix_socket_directories = '$PGDATA'` via `.pgdata/replit.conf` to redirect the Unix socket to the data directory. This is handled automatically by the Postgres workflow; no manual steps needed.
 
 ---
 
@@ -675,8 +689,9 @@ The `equilibrium-core` crate (not connected to the TS server — see Architectur
   - `multisig.integration.test.ts` — 19 tests: on-chain M-of-N proposal/approve/execute flow, replay protection, bitmask tracking
   - `models.integration.test.ts` — 19 tests: ModelRegistry propose → verify → challenge → slash flow, challenge window enforcement, bond mechanics
   - `arbitrage.integration.test.ts` — 24 tests: Arbitrage contract set-model/pause/unpause/execute flows, circuit breaker trip and reset, governance cap enforcement, model-verification gate
-  - `crosschain.integration.test.ts` — 34 tests: CrossChainRelay register/revoke/threshold, inbound attestation submit/duplicate/bad-seq/finalize/challenge, challenge-window enforcement, multi-sig 2-of-2 attestation, admin-key gate on registration
-  - a further 18 tests added alongside the Kinetic Block Timeline graduation and other incremental route/component work (see git history for exact file)
+  - `crosschain.integration.test.ts` — 34 tests: CrossChainRelay register/revoke/threshold, inbound Ed25519 attestation submit/duplicate/bad-seq/finalize/challenge, challenge-window enforcement, multi-sig 2-of-2 attestation, admin-key gate on registration
+  - `p2p-sync.integration.test.ts` — 12 tests: peer sync callbacks, light-node proof flow
+  - `p2p-mesh.integration.test.ts` — 5 tests: Gossipsub block-hash propagation between nodes (requires compiled p2p-sidecar binary; skip-safe without it)
 
 ### Explorer & Wallet
 - Block explorer — Dashboard, Blocks, BlockDetail (with Miner Fee Breakdown panel), TxDetail, AddressDetail, Mempool, Network, **Kinetic Block Timeline** (`/matrix` — live 3D view of mined blocks via `@react-three/fiber`; cube size = tx count, material clarity = Proof-of-Stationarity residual, mining particle + camera drift driven by real elapsed time/mempool pressure; graceful WebGL-unavailable fallback) — all pages live with real-time React Query data

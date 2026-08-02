@@ -1,6 +1,12 @@
 # ERC-7992 DeepProve — zkML Specification for Equilibrium
 
-**Status:** Draft  
+> ⚠️ **NOT YET IMPLEMENTED — FUTURE WORK**
+>
+> This document describes a planned zkML circuit architecture that does **not** exist in the current codebase. Nothing in this spec is live on the testnet. The running system uses an **Ed25519 attribution receipt** for inference attestation (not a zero-knowledge proof) — see `LIMITATIONS.md §1b` for the exact scope of what is and is not implemented.
+>
+> This file is preserved as a design reference for when the RISC Zero integration is eventually undertaken.
+
+**Status:** Draft — not implemented  
 **Target:** On-chain verifiable AI inference for Equilibrium governance / consensus  
 **Circuit framework:** RISC Zero (primary) or Groth16 (small model branches)
 

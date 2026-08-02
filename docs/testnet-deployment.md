@@ -53,6 +53,10 @@ cat > .env <<EOF
 PORT=8080
 NODE_ENV=production
 DATABASE_URL=postgresql://equ:secret@localhost:5432/equilibrium
+ADMIN_KEY=<choose-a-strong-secret>
+# ALLOW_RANDOM_MINING must NOT be set in production — the node will require
+# the real consensus-api Rust binary for block solving and will refuse to
+# start with RNG-based residuals (see LIMITATIONS.md §7).
 EOF
 
 # 6. Run with Docker Compose
@@ -123,11 +127,13 @@ docker run -d \
 cd lib/db && DATABASE_URL=postgresql://equ:secret@localhost:5432/equilibrium pnpm run push
 ```
 
+> **Replit / NixOS environments:** The default Postgres socket directory (`/run/postgresql/`) does not exist. The bundled `scripts/start-postgres.sh` handles this automatically by writing a `replit.conf` that redirects `unix_socket_directories` to `$PGDATA`. If you are setting up Postgres manually on a similar system, add `unix_socket_directories = '/path/to/pgdata'` to your `postgresql.conf`.
+
 ## Monitoring
 
 - **Prometheus** metrics at `https://node.example.com/metrics`
 - Scrape interval: 15s (matches block time)
-- Key metrics: `equ_height`, `equ_mempool_size`, `equ_peer_count`
+- Key metrics: `equilibrium_chain_height`, `equilibrium_mempool_size`, `equilibrium_peers_connected`
 
 ## Health check
 
@@ -135,6 +141,18 @@ cd lib/db && DATABASE_URL=postgresql://equ:secret@localhost:5432/equilibrium pnp
 curl https://node.example.com/api/healthz
 # → {"status":"ok"}
 ```
+
+## Key environment variables
+
+| Variable | Dev default | Production | Purpose |
+|---|---|---|---|
+| `ALLOW_RANDOM_MINING` | `true` | **unset / absent** | Dev only — permits in-process TS residual generation; fails closed in production |
+| `NODE_ENV` | `development` | `production` | Controls trapdoor ZK block, p2p-bridge hard-fail, and rate-limiter test-skip |
+| `ADMIN_KEY` | any string | strong secret | Required for slash/relay-register/threshold/challenge routes |
+| `DATABASE_URL` | `postgresql://runner@...` | managed DB URL | Postgres connection string |
+| `P2P_BOOTSTRAP_PEERS` | empty | seed node multiaddrs | Comma-separated libp2p multiaddresses for DHT bootstrap |
+| `STRATUM_PORT` | unset | `3333` | Set to enable the Stratum v1 mining pool |
+| `CROSS_CHAIN_RELAY_ADDRESS` | auto-deployed | stable hex addr | Pin relay contract address across restarts |
 
 ## Pinned Rust MSRV
 
@@ -145,3 +163,5 @@ Pin the toolchain in CI with `rust-toolchain.toml`:
 [toolchain]
 channel = "1.81"
 ```
+
+WASM contracts require **Rust 1.97.0** with the `wasm32-unknown-unknown` target. The contract `build.sh` scripts expect a rustup-managed `1.97.0` toolchain; see `.agents/memory/rust-wasm-toolchain.md` for the full setup recipe including the `GLIBC_TUNABLES` crash workaround needed in NixOS containers.

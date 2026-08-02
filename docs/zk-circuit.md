@@ -134,14 +134,13 @@ until the MPC ceremony completes).
 
 ## Sidecar Integration
 
-The Rust sidecar (`equilibrium/src/bin/consensus-api.rs`) generates real Groth16
-proofs using `ark-groth16` + `ark-bn254`.  The TypeScript fallback
-(`chain/zkproof.ts`) uses `@noble/curves` BN254 to simulate proof generation
-for testing.
+**Current state (testnet):** `chain/zkproof.ts` uses the Groth16 **trapdoor formula** to generate proofs — `π_C = (π_A·π_B − α·β − vkX·γ) · δ⁻¹` — so that the proof satisfies the full BN254 pairing equation without running a real circuit over the solver's witness. The full pairing check passes (41 unit tests cover the round-trip), but the proof does **not** cryptographically bind the claimed residual to a specific solver computation. See `LIMITATIONS.md §7` for the complete impact description.
 
-Both implementations **must** produce byte-identical `publicInputs` for the
-same block header.  The shared encoder in `chain/zk-encoding.ts` /
-`zk_proof.rs::fp_encode` guarantees this.
+The production path (aspirational): the Rust `consensus-api` binary would generate real Groth16 proofs using `ark-groth16` + `ark-bn254` given a compiled circuit and a powers-of-tau ceremony key. This binary and its circuit are not yet implemented.
+
+Both implementations **must** produce byte-identical `publicInputs` for the same block header. The shared encoder in `chain/zk-encoding.ts` / `zk_proof.rs::fp_encode` guarantees this — it is the single source of truth for `fpEncode` and `blockHashToFields`.
+
+> **Note:** `NODE_ENV=production` blocks the trapdoor path in `zkproof.ts`. Running the API server in production mode without the real Rust solver will cause `mineNextBlock()` to throw (`assertRandomMiningAllowed` guard). Set `ALLOW_RANDOM_MINING=true` explicitly for testnet deployments that accept trapdoor proofs.
 
 ---
 
