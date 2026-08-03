@@ -57,6 +57,350 @@ _Last updated: 2026-08-02 — B2 (mineNextBlock RNG gate), A4 (P2P-first phone s
 
 ---
 
+## Code Work To Finish
+
+Bridge SPV: header + receipt verification What & Why The CrossChainRelay contract currently accepts m-of-n BLS attested commitments (now complete with aggregate sigs). What it does NOT do is verify that the claimed commitment is actually rooted in a foreign-chain block header (SPV / Merkle inclusion). This is the gap between "relayers say X happened" and "the contract can independently verify X happened."
+The audit scores bridge at 40–55% precisely because attestation without on-chain header/receipt verification is not a trustless bridge — it is a federated relay. The "Trustless cross-chain complete: No" claim is a direct result.
+
+Done looks like method_submit_header (method N): accepts a foreign block header, stores its hash method_verify_receipt (or inline in submit_inbound): given a Merkle proof + stored header hash, verify the commitment is included in that header TS wrapper + route for header submission Integration tests: submit header → submit inbound with valid Merkle proof → passes; tampered proof → rejected LIMITATIONS.md updated: SPV supported for chains with compatible header format; list which chains
+
+onfirm Android known_peers.json path What & Why The bootstrap code uses /.equilibrium/known_peers.json as the peer cache path. On desktop this resolves correctly; on Android the home directory () resolves differently (typically /data/user/0//files or the app's internal storage root). If the path is wrong, the phone silently starts with zero cached peers — the bootstrap-assisted claim holds in code but fails in the field.
+The audit (section B) flags this as Medium severity and it directly blocks a clean two-device demo.
+
+Done looks like Verify where known_peers.json is written/read in the Rust p2p_runtime (path construction) Confirm the Android JNI bridge passes the correct app-local path (not a desktop home path) If the path is wrong: fix it so the file lands in the app's files dir and survives process restarts Manual test: after one connection is established, kill and restart the app; it should redial without scanning a QR code
+
+Remove stray Math.random() from genesis fixtures What & Why The audit (section B) flags two remaining Math.random() calls in the chain's genesis/demo builder:
+mempoolPressure field uses Math.random() Genesis timestamp jitter uses Math.random() on now += … These are fixture-only (low severity on their own), but they are the single remaining crack in the "no RNG in production paths" claim. The mining RNG is correctly fail-closed; these genesis fields are not. Stripping them makes the guarantee unconditional.
+
+Done looks like Both Math.random() calls replaced with deterministic expressions (e.g. block-height-derived or constant) grep -r "Math.random" artifacts/api-server/src/chain/ returns zero results Existing tests still pass (mining, genesis, state tests) Relevant files
+
+Make WASM contract rebuilds work automatically after a container reset What & Why Rebuilding any WASM contract (e.g. CrossChainRelay, ModelRegistry, Arbitrage) currently requires manually installing rustup and the pinned 1.97.0 toolchain before running build.sh. On every Replit container reset this setup is lost because $HOME/.rustup is not persisted. This means any contract source change silently can't be compiled without a multi-minute manual setup step, and the checked-in .hex drifts from source.
+Done looks like A scripts/setup-wasm-toolchain.sh script that idempotently installs rustup + 1.97.0 + wasm32 target (with the GLIBC_TUNABLES wrapper) and can be added to the Replit startup sequence OR the Nix environment (replit.nix) is updated to provide a wasm32-capable Rust toolchain directly, eliminating the rustup dependency CI already handles this correctly; the fix is for the local dev environment
+
+---
+
+You can’t close **every** remaining item in one pass without lying about scope. Split them:
+
+| Closable in code now | Larger program (not “close this weekend”) |
+|----------------------|-------------------------------------------|
+| Genesis `Math.random` leftovers | Full SPV headers/receipts |
+| Android-safe `known_peers` path | zkML / DeepProve circuit |
+| Optional `REQUIRE_P2P_TIP` | True zero-seed DHT + public relays |
+| Document BFT/thermal stubs honestly | External audit / ops |
+
+Below is everything that’s still **code soft** and how to finish it. SPV/zkML/A7 stay **open by design** until you fund those tracks.
+
+---
+
+## 1. Genesis — kill remaining `Math.random`
+
+In `artifacts/api-server/src/chain/state.ts` (demo chain builder only):
+
+```typescript
+// BEFORE
+mempoolPressure: 0.1 + Math.random() * 0.6,
+// ...
+now += 12 + Math.floor(Math.random() * 6);
+
+// AFTER
+mempoolPressure: 0.25 + ((h % 10) / 20),
+// ...
+now += 12 + (h % 6);
+```
+
+Leave `mineNextBlock` / async RNG **behind** `assertRandomMiningAllowed` / `ALLOW_RANDOM_MINING` — that’s intentional test surface, not a gap.
+
+---
+
+## 2. `known_peers` path — works on Android
+
+`HOME` is often empty/wrong on phone. In `equilibrium/src/p2p_runtime.rs`, replace path helper with:
+
+```rust
+fn known_peers_path() -> PathBuf {
+    // Prefer explicit data dir (set from Android JNI / node env).
+    if let Ok(dir) = env::var("EQUILIBRIUM_DATA_DIR") {
+        return PathBuf::from(dir).join("known_peers.json");
+    }
+    if let Ok(home) = env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".equilibrium").join("known_peers.json");
+        }
+    }
+    // Last resort: cwd (desktop dev)
+    PathBuf::from(".equilibrium").join("known_peers.json")
+}
+```
+
+Wire Android once (JNI or app start):
+
+```kotlin
+// Before P2PNode.start()
+System.setProperty is wrong for native — pass env into the process or
+// set EQUILIBRIUM_DATA_DIR via the native start API to context.filesDir.absolutePath
+```
+
+If `start()` already takes a config string, put `data_dir` there and set `EQUILIBRIUM_DATA_DIR` in Rust from that argument.
+
+---
+
+## 3. Mobile validator — don’t leave “stub” in the wrong place
+
+File header still says BFT “stubbed” while quorum code exists. Update the module docs to match reality:
+
+- BFT: real Ed25519 verify + quorum when `REQUIRE_BFT_VOTES=true`; otherwise soft.
+- Thermal/battery: **still stub** — either implement read of capacity or mark `LIMITATIONS` “thermal deferral is advisory only.”
+
+That’s honesty, not a fake close.
+
+---
+
+## 4. What you should **not** try to “close” as a single PR
+
+| Item | Why |
+|------|-----|
+| **SPV bridge** | New pipelines: BTC headers, ETH sync committee, receipt proofs, challenge periods |
+| **zkML** | New guest/circuit + image IDs + verification key story |
+| **A7 zero-seed** | Needs circuit-relay v2 operators + maybe baked-in multiaddrs (ops + product) |
+| **WASM child rollback** | Already LIMITATIONS by design; needs intentional storage snapshot protocol |
+
+Closing those “all” means multi-week programs, not leftover todos.
+
+---
+
+## 5. Updated gap board after doing 1–3
+
+| Gap | After |
+|-----|--------|
+| Genesis RNG polish | **CLOSED** |
+| known_peers on phone | **CLOSED** (with `EQUILIBRIUM_DATA_DIR`) |
+| BLS attest | **CLOSED** (`465a2c3`) |
+| Mining/ceremony/CI/A4/A6 | **CLOSED** |
+| SPV / zkML / A7 / ops | **OPEN — separate roadmap** |
+| Field mesh demo | **Not a code gap** |
+
+**Codebase % after 1–3:** roughly **~87–90%** of *mobile peer L1 + honest mining + ceremony + BLS attest* — still not 100% of every slogan.
+
+---
+
+## 6. Suggested ship order (one PR)
+
+1. Genesis deterministic pressure + time  
+2. `known_peers_path` + `EQUILIBRIUM_DATA_DIR`  
+3. Fix `mobile_validator` module comments + LIMITATIONS one-liner on thermal  
+4. Stop — do the **two-phone demo** before SPV/zkML  
+
+If you want the next message to be **paste-ready full functions** for `known_peers_path` + the exact genesis loop block from current `state.ts`, say so and we’ll do those two files only (no patch hunks).
+
+Here are the **remaining closable code gaps** only — full replacements, not “patch hunks.”
+
+Larger programs (SPV, zkML, A7 relays) stay out of this list on purpose.
+
+---
+
+## Gap 1 — Genesis fixture RNG  
+**File:** `artifacts/api-server/src/chain/state.ts`
+
+Replace the stats + time-advance lines inside the height loop:
+
+```typescript
+    state.blockStats.push({
+      height: h,
+      txCount: txs.length,
+      residual,
+      // Deterministic fixture pressure (no Math.random)
+      mempoolPressure: 0.25 + ((h % 10) / 20),
+      timestamp: now,
+      difficulty: state.currentDifficulty,
+      blockTime,
+    });
+
+    state.updateDifficulty();
+    state.runFinalityRound(block);
+    for (const p of state.peers) p.height = h;
+
+    const vMiner = state.validators.get(miner);
+    if (vMiner) {
+      vMiner.blocksProposed += 1;
+      vMiner.accumulatedRewards += reward;
+    }
+
+    prevHash = blockHash;
+    // Deterministic inter-block spacing (no Math.random)
+    now += 12 + (h % 6);
+```
+
+Mempool seed (same function): avoid `Date.now()` in the hash if you want fully deterministic fixtures:
+
+```typescript
+  for (let i = 0; i < 6; i++) {
+    const txHash = hash256(`mempool-${i}`);
+    const tx: TxRecord = {
+      hash: txHash,
+      from: alice,
+      to: carol,
+      amount: 10_000 * (i + 1),
+      fee: 100 + i * 50,
+      nonce: 100 + i,
+      blockHash: null,
+      blockHeight: null,
+      timestamp: now + i,
+      status: "pending",
+    };
+    state.mempool.add(tx);
+  }
+```
+
+Do **not** remove RNG inside `mineNextBlock` / async fallback — those stay behind `ALLOW_RANDOM_MINING`.
+
+---
+
+## Gap 2 — `known_peers` path (Android-safe)  
+**File:** `equilibrium/src/p2p_runtime.rs`
+
+Replace the path helpers:
+
+```rust
+/// Directory for durable runtime state (known peers, etc.).
+///
+/// Resolution order:
+///   1. `EQUILIBRIUM_DATA_DIR` — set by Android (`filesDir`) or ops
+///   2. `$HOME/.equilibrium` — desktop
+///   3. `./.equilibrium` — last resort
+fn data_dir() -> PathBuf {
+    if let Ok(dir) = env::var("EQUILIBRIUM_DATA_DIR") {
+        let p = PathBuf::from(dir.trim());
+        if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
+    if let Ok(home) = env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".equilibrium");
+        }
+    }
+    PathBuf::from(".equilibrium")
+}
+
+/// Path to the persistent known-peers JSON file.
+fn known_peers_path() -> PathBuf {
+    data_dir().join("known_peers.json")
+}
+```
+
+Keep `load_bootstrap_addrs` / persist logic as-is; they already call `known_peers_path()`.
+
+**Android — before native swarm start** (app process):
+
+```kotlin
+// e.g. Application.onCreate or just before P2PNode.startDefault()
+android.os.Os.setenv(
+    "EQUILIBRIUM_DATA_DIR",
+    filesDir.absolutePath,  // Context.filesDir
+    true
+)
+```
+
+If `Os.setenv` is awkward on your min SDK, extend JNI `start` to accept `dataDir: String` and set the env in Rust at the top of `start_swarm`.
+
+---
+
+## Gap 3 — Mobile validator module honesty  
+**File:** `equilibrium/src/mobile_validator.rs` (file header only)
+
+```rust
+//! Mobile block validator — residual, continuity, Merkle, optional BFT quorum.
+//!
+//! BFT: real Ed25519 vote verify + stake quorum when `REQUIRE_BFT_VOTES=true`.
+//! When unset, vote quorum is not required (mesh can advance on residual/continuity).
+//!
+//! Thermal / battery: `should_validate_now` may defer under load; capacity file
+//! reads are best-effort and may no-op on devices without sysfs paths (see LIMITATIONS).
+```
+
+Remove any top-of-file “BFT stubbed” wording that contradicts the real quorum code.
+
+---
+
+## Gap 4 — LIMITATIONS (document what’s still intentional)
+
+Append (or replace stale §9 if it still describes the old `NODE_ENV`-only policy):
+
+```markdown
+## 9. Mining RNG is off unless `ALLOW_RANDOM_MINING=true`
+
+`allowRandomMiningFallback()` returns true **only** when
+`ALLOW_RANDOM_MINING=true`. Production deploys must not set this flag.
+CI Vitest sets it for unit tests only.
+
+## 10. Thermal / battery deferral on mobile is best-effort
+
+`should_validate_now` may skip work under pressure. Reading
+`/sys/class/power_supply/...` is not available on all Android devices;
+absence of a reading does not halt the node.
+
+## 11. Peer discovery is bootstrap-assisted, not zero-seed
+
+First contact uses `BOOTSTRAP_PEERS`, persisted `known_peers.json`
+(under `EQUILIBRIUM_DATA_DIR` or `~/.equilibrium`), and/or QR multiaddr.
+There is no guaranteed global DHT join with zero prior contact across NATs.
+
+## 12. Cross-chain is BLS aggregate attestation, not full SPV
+
+Inbound attestations use one BLS12-381 G2 aggregate signature plus G1
+pubkeys. Header chains, receipt proofs, and challenge games are out of
+scope of the current relay contract.
+
+## 13. zkML / DeepProve is not implemented
+
+Model-registry / inference paths may use signed receipts. They do not
+prove arbitrary model inference in-circuit.
+```
+
+---
+
+## Gap 5 — Optional tip policy (only if you want P2P mode strict)
+
+**Conceptual** in `MiningWorker.kt` when UI mode is P2P:
+
+```kotlin
+val requireP2pTip = System.getenv("REQUIRE_P2P_TIP") == "1"
+if (requireP2pTip && P2PNode.getConnectedPeerCount() == 0) {
+    Log.w(TAG, "REQUIRE_P2P_TIP: no peers — skipping HTTP tip this cycle")
+    return Result.success() // or retry later; do not HTTP-fetch tip
+}
+```
+
+Default remains HTTP fallback when peers == 0 (honest, not simulated).
+
+---
+
+## Explicitly **not** in “remaining closable” (do not pretend)
+
+| Item | Status |
+|------|--------|
+| Full SPV bridge | Separate roadmap |
+| zkML circuit | Separate roadmap |
+| Zero-seed DHT + public relays | Ops + product |
+| External audit | Outside repo |
+| Two-phone field demo | Validation, not a missing function |
+
+---
+
+## After you land 1–4
+
+| Soft item | Result |
+|-----------|--------|
+| Genesis pressure/time RNG | **Closed** |
+| Phone peer cache path | **Closed** |
+| Validator/LIMITATIONS honesty | **Closed** |
+| BLS / mining / ceremony / A4 / A6 | Already closed |
+| SPV / zkML / A7 | Still open by design |
+
+**Codebase position then:** residual soft fixtures and mobile data-dir fixed; slogans still limited by LIMITATIONS §11–13.
+
+Ship order: **state.ts → p2p_runtime.rs → Android `EQUILIBRIUM_DATA_DIR` → LIMITATIONS → rebuild APK → two-device test.**
+
 ## 🔵 External / ops
 
 | Item | Notes |
