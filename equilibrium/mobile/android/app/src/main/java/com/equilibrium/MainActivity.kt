@@ -101,19 +101,19 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putString(KEY_P2P_MODE, mode).apply()
             // Start P2P swarm immediately when switching away from HTTP-only
             if (mode != MODE_HTTP && !P2PNode.isRunning()) {
-                P2PNode.startDefault()
+                P2PNode.startDefaultWithContext(this)
             }
         }
 
         // Auto-start P2P unless in HTTP-only mode
         if (savedMode != MODE_HTTP && !P2PNode.isRunning()) {
-            P2PNode.startDefault()
+            P2PNode.startDefaultWithContext(this)
         }
 
         // ── Start embedded node button ────────────────────────────────────────
         val bootstrapInput = findViewById<EditText>(R.id.bootstrapInput)
         findViewById<MaterialButton>(R.id.startNodeButton).setOnClickListener {
-            val started = P2PNode.startDefault()
+            val started = P2PNode.startDefaultWithContext(this)
             updateStatus.text = if (started) getString(R.string.p2p_started)
                                  else        getString(R.string.p2p_already_started)
         }

@@ -150,7 +150,7 @@ class BootstrapQrActivity : AppCompatActivity() {
             return
         }
         if (!P2PNode.isRunning()) {
-            val started = P2PNode.startDefault()
+            val started = P2PNode.startDefaultWithContext(this)
             if (!started) {
                 statusView.text = getString(R.string.error_p2p_start)
                 return
