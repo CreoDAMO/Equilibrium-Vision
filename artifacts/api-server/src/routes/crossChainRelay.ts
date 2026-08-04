@@ -24,6 +24,8 @@ import {
   revokeRelayer,
   setThreshold,
   submitInboundAttestation,
+  submitForeignHeader,
+  submitInboundAttestationSpv,
   challengeInbound,
   finalizeInbound,
   publishOutbound,
@@ -281,6 +283,124 @@ router.get("/relay/attest/inbound/:chainId/:seq", async (req, res) => {
   const signers = (storage[`${prefix}:signers`] ?? "").split(",").filter(Boolean);
   const block = storage[`${prefix}:block`] ? parseInt(storage[`${prefix}:block`]!, 10) : null;
   res.json({ chainId, seq: seq.toString(), status, commitment, signers, block });
+});
+
+// ── POST /api/relay/header/submit ────────────────────────────────────────────
+// Submit a foreign-chain block header (Merkle root) for SPV anchoring.
+// Only registered relayers may submit headers.
+//
+// Body: {
+//   caller: string,        40-hex-char relayer address
+//   chainId: string,       source chain identifier
+//   blockNum: string,      foreign block number (integer or BigInt string)
+//   merkleRootHex: string, 64 hex chars — 32-byte SHA-256 Merkle root
+// }
+
+router.post("/relay/header/submit", async (req, res) => {
+  const caller = requireCaller(req, res);
+  if (!caller) return;
+
+  const { chainId, blockNum: blockNumRaw, merkleRootHex } = req.body ?? {};
+  if (typeof chainId !== "string" || !chainId.trim()) {
+    res.status(400).json({ error: "chainId is required" });
+    return;
+  }
+  if (!/^[0-9a-f]{64}$/.test(merkleRootHex ?? "")) {
+    res.status(400).json({ error: "merkleRootHex must be 64 hex chars (32 bytes)" });
+    return;
+  }
+  let blockNum: bigint;
+  try {
+    const n = BigInt(String(blockNumRaw ?? "0"));
+    if (n < 0n) throw new Error("negative");
+    blockNum = n;
+  } catch {
+    res.status(400).json({ error: "blockNum must be a non-negative integer or BigInt string" });
+    return;
+  }
+
+  const result = await submitForeignHeader(chainState.wasmVM, caller, { chainId, blockNum, merkleRootHex });
+  if (!result.success) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ success: true, chainId, blockNum: blockNum.toString() });
+});
+
+// ── POST /api/relay/attest/inbound/spv ───────────────────────────────────────
+// Submit an m-of-n BLS-attested inbound event WITH a Merkle inclusion proof.
+// The commitment must be provably included in a previously submitted header.
+//
+// Body: {
+//   caller: string,
+//   chainId: string,
+//   seq: string | number,
+//   commitmentHex: string,   64 hex chars — foreign state commitment
+//   aggSigHex: string,       192 hex chars — BLS G2 aggregate signature
+//   signers: [{ pubkeyHex: string, signerAddress: string }],
+//   spvBlockNum: string,     block number of the submitted header to prove against
+//   proof: {
+//     leafIndex: string,     leaf position in Merkle tree
+//     siblings: string[],    sibling hashes (64 hex each), leaf→root order
+//   }
+// }
+
+router.post("/relay/attest/inbound/spv", async (req, res) => {
+  const caller = requireCaller(req, res);
+  if (!caller) return;
+
+  const { chainId, seq: seqRaw, commitmentHex, aggSigHex, signers,
+          spvBlockNum: spvBlockRaw, proof } = req.body ?? {};
+  if (typeof chainId !== "string" || !chainId.trim()) {
+    res.status(400).json({ error: "chainId is required" });
+    return;
+  }
+  const seq = parseSeq(String(seqRaw ?? ""));
+  if (seq === null) {
+    res.status(400).json({ error: "seq must be a non-negative integer or BigInt string" });
+    return;
+  }
+  if (!Array.isArray(signers) || signers.length === 0) {
+    res.status(400).json({ error: "signers must be a non-empty array" });
+    return;
+  }
+  let spvBlockNum: bigint;
+  try {
+    const n = BigInt(String(spvBlockRaw ?? "0"));
+    if (n < 0n) throw new Error("negative");
+    spvBlockNum = n;
+  } catch {
+    res.status(400).json({ error: "spvBlockNum must be a non-negative integer or BigInt string" });
+    return;
+  }
+  if (!proof || typeof proof !== "object") {
+    res.status(400).json({ error: "proof is required" });
+    return;
+  }
+  let leafIndex: bigint;
+  try {
+    leafIndex = BigInt(String(proof.leafIndex ?? "0"));
+  } catch {
+    res.status(400).json({ error: "proof.leafIndex must be a non-negative integer" });
+    return;
+  }
+  if (!Array.isArray(proof.siblings)) {
+    res.status(400).json({ error: "proof.siblings must be an array" });
+    return;
+  }
+
+  const expectedMsg = buildAttestationMessage(chainId, seq, commitmentHex ?? "");
+  const result = await submitInboundAttestationSpv(chainState.wasmVM, caller, {
+    chainId, seq, commitmentHex, aggSigHex, signers,
+    spvBlockNum,
+    proof: { leafIndex, siblings: proof.siblings },
+  });
+  if (!result.success) {
+    res.status(400).json({ error: result.error, expectedMsg });
+    return;
+  }
+  logger.info({ chainId, seq: seq.toString(), caller }, "SPV inbound attestation accepted");
+  res.json({ success: true, chainId, seq: seq.toString(), spvBlockNum: spvBlockNum.toString(), spv: true });
 });
 
 // ── GET /api/relay/outbound/:chainId/seq ─────────────────────────────────────

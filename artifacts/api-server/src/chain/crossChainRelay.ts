@@ -105,6 +105,8 @@ const METHOD = {
   GET_OUTBOUND_SEQ: 8,
   GET_THRESHOLD: 9,
   GET_RELAYER_COUNT: 10,
+  SUBMIT_HEADER: 11,
+  SUBMIT_INBOUND_SPV: 12,
 } as const;
 
 let cachedAddress: string | undefined;
@@ -460,4 +462,170 @@ export function getRelayDetails(wasmVM: WasmVM): {
 /** Build the canonical message that relayers sign for an inbound attestation. */
 export function buildAttestationMessage(chainId: string, seq: bigint, commitmentHex: string): string {
   return `attest:${chainId}:${seq}:${commitmentHex}`;
+}
+
+// ── SPV header + Merkle inclusion proof ──────────────────────────────────────
+
+export interface ForeignHeader {
+  chainId: string;
+  /** Foreign-chain block number being anchored */
+  blockNum: bigint;
+  /** 64 hex chars (32 bytes) — SHA-256 binary Merkle root of the foreign block */
+  merkleRootHex: string;
+}
+
+export interface SubmitHeaderResult {
+  success: boolean;
+  error?: string;
+  chainId?: string;
+  blockNum?: string;
+}
+
+export interface MerkleProof {
+  /**
+   * Leaf position in the bottom layer of the Merkle tree.
+   * Combined with the sibling hashes this uniquely identifies the path.
+   */
+  leafIndex: bigint;
+  /**
+   * Sibling hashes from leaf level up to (but not including) the root,
+   * each 64 hex chars (32 bytes). Empty array = single-leaf tree.
+   */
+  siblings: string[];
+}
+
+export interface SubmitInboundSpvParams extends SubmitInboundParams {
+  /** Which foreign block's header to verify inclusion against */
+  spvBlockNum: bigint;
+  /** Merkle inclusion proof that `commitmentHex` is in that block's Merkle root */
+  proof: MerkleProof;
+}
+
+/**
+ * Submit a foreign-chain block header (just its Merkle root) for SPV anchoring.
+ * Caller must be a registered relayer.
+ *
+ * ABI — method 11:
+ *   chain_id_len, chain_id_words, block_num_lo, block_num_hi, merkle_root[8 words]
+ */
+export async function submitForeignHeader(
+  wasmVM: WasmVM,
+  caller: string,
+  p: ForeignHeader,
+): Promise<SubmitHeaderResult> {
+  const address = getCrossChainRelayAddress();
+  if (!address) return { success: false, error: "CrossChainRelay not configured" };
+  if (!/^[0-9a-f]{64}$/.test(p.merkleRootHex)) {
+    return { success: false, error: "merkleRootHex must be 64 hex chars (32 bytes)" };
+  }
+  let args: number[];
+  try {
+    const [blockLo, blockHi] = i64ToWords(p.blockNum);
+    const idBytes = new TextEncoder().encode(p.chainId);
+    args = [
+      idBytes.length,
+      ...stringToWords(p.chainId, 64),
+      blockLo, blockHi,
+      ...hexToWords32(p.merkleRootHex),   // 8 words — 32-byte Merkle root
+    ];
+  } catch (e) {
+    return { success: false, error: (e as Error).message };
+  }
+  const res = await wasmVM.call(address, METHOD.SUBMIT_HEADER, args, undefined, caller);
+  if (!res.success || res.returnValue !== 1) {
+    const msgs: Record<number, string> = {
+      [-1]: "Empty or invalid chain_id",
+      [-6]: "No relayers registered",
+      [-7]: "Caller is not a registered relayer",
+    };
+    return {
+      success: false,
+      error: res.error ?? msgs[res.returnValue ?? -1] ?? `submit_header() → ${res.returnValue}`,
+    };
+  }
+  return { success: true, chainId: p.chainId, blockNum: p.blockNum.toString() };
+}
+
+/**
+ * Submit a BLS-attested inbound event WITH a Merkle inclusion proof.
+ * The commitment must be provably included in a previously submitted header.
+ *
+ * Leaf hash: SHA-256 of the commitmentHex string (UTF-8 bytes), matching the
+ * Rust `sha256_bytes(commitment_hex.as_bytes())` in `verify_merkle_proof`.
+ *
+ * ABI — method 12 (same prefix as method 3, then SPV section):
+ *   [method 3 ABI] + block_num_lo, block_num_hi, proof_depth,
+ *                    leaf_index_lo, leaf_index_hi,
+ *                    [sibling: 8 words] × proof_depth
+ */
+export async function submitInboundAttestationSpv(
+  wasmVM: WasmVM,
+  caller: string,
+  p: SubmitInboundSpvParams,
+): Promise<SubmitInboundResult> {
+  const address = getCrossChainRelayAddress();
+  if (!address) return { success: false, error: "CrossChainRelay not configured" };
+  if (!p.signers.length) return { success: false, error: "At least one signer required" };
+  if (!/^[0-9a-f]{64}$/.test(p.commitmentHex)) return { success: false, error: "commitmentHex must be 64 hex chars (32 bytes)" };
+  if (!/^[0-9a-f]{192}$/.test(p.aggSigHex)) return { success: false, error: "aggSigHex must be 192 hex chars (96-byte BLS G2 signature)" };
+  for (const sib of p.proof.siblings) {
+    if (!/^[0-9a-f]{64}$/.test(sib)) return { success: false, error: "Each Merkle sibling must be 64 hex chars (32 bytes)" };
+  }
+
+  let args: number[];
+  try {
+    const [seqLo, seqHi] = i64ToWords(p.seq);
+    const idBytes = new TextEncoder().encode(p.chainId);
+    args = [
+      idBytes.length,
+      ...stringToWords(p.chainId, 64),
+      seqLo, seqHi,
+      ...hexToWords32(p.commitmentHex),
+      p.signers.length,
+      ...hexToWordsN(p.aggSigHex, 96),
+    ];
+    for (const s of p.signers) {
+      if (!/^[0-9a-f]{96}$/.test(s.pubkeyHex)) throw new Error(`pubkeyHex must be 96 hex chars: got ${s.pubkeyHex.slice(0, 8)}…`);
+      if (!/^[0-9a-f]{40}$/.test(s.signerAddress)) throw new Error(`signerAddress must be 40 hex chars: got ${s.signerAddress}`);
+      args.push(...hexToWordsN(s.pubkeyHex, 48));
+      args.push(...stringToWords(s.signerAddress, 40));
+    }
+    // SPV section
+    const [blockLo, blockHi] = i64ToWords(p.spvBlockNum);
+    const [leafLo, leafHi]   = i64ToWords(p.proof.leafIndex);
+    args.push(blockLo, blockHi);
+    args.push(p.proof.siblings.length);
+    args.push(leafLo, leafHi);
+    for (const sib of p.proof.siblings) {
+      args.push(...hexToWords32(sib));  // 8 words per sibling
+    }
+  } catch (e) {
+    return { success: false, error: (e as Error).message };
+  }
+
+  if (args.length > 1024) {
+    return { success: false, error: `Proof too large: ${args.length} words exceeds 1024-word limit` };
+  }
+
+  const res = await wasmVM.call(address, METHOD.SUBMIT_INBOUND_SPV, args, undefined, caller);
+  if (!res.success || res.returnValue !== 1) {
+    const msgs: Record<number, string> = {
+      [-1]: "Empty or invalid chain_id",
+      [-2]: "Signature verification failed",
+      [-3]: "No signatures provided",
+      [-4]: "Bad sequence number (expected next sequential value)",
+      [-5]: "Attestation already exists for this chain+seq",
+      [-6]: "No relayers registered",
+      [-7]: "Signer is not a registered relayer",
+      [-8]: "Duplicate signer in this attestation",
+      [-9]: "Threshold not met (too few valid signatures)",
+      [-10]: "No header submitted for that block number on this chain",
+      [-11]: "Merkle inclusion proof is invalid",
+    };
+    return {
+      success: false,
+      error: res.error ?? msgs[res.returnValue ?? -1] ?? `submit_inbound_spv() → ${res.returnValue}`,
+    };
+  }
+  return { success: true };
 }

@@ -12,3 +12,4 @@
 - [Phone P2P tip cache](phone-p2p-tip-cache.md) — p2p_runtime::fetch_tip/set_local_tip + JNI + P2PNode.kt/MiningWorker.kt; phone prefers P2P tip, HTTP is fallback; poll_gossip called before and after solve for race detection; full offline still needs sync RR client (open)
 - [Replit managed DB schema push](replit-managed-db.md) — artifact workflow uses Replit's helium DB (not local Postgres); run `pnpm --filter @workspace/db run push` after fresh import
 - [verify_residual worker](verify-residual-worker.md) — Worker thread makes WASM contract calls non-blocking; sync fallback when no hostCtx or not main thread
+- [Bridge SPV](bridge-spv.md) — methods 11+12 in CrossChainRelay: submit_header stores SHA-256 Merkle root; submit_inbound_spv verifies leaf inclusion; leaf = sha256(commitmentHex UTF-8); test filler must be shared across all cases in a suite

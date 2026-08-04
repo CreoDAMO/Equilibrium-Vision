@@ -623,6 +623,199 @@ describe("CrossChainRelay — multi-sig attestation (2-of-2)", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe("CrossChainRelay — SPV header submission + Merkle inclusion proof", () => {
+  const chainId = "cosmos-spv-1";
+  const commitment = randomBytes(32).toString("hex");
+  const spvBlockNum = 42n;
+  const seq = 1n;
+  let relayer: ReturnType<typeof makeRelayerKey>;
+
+  // Merkle tree shared across all tests in this suite — built once so
+  // the same root goes into the header submission AND the SPV proof.
+  let sharedLayers: Buffer[][];
+  let sharedRoot: string;
+
+  // ── Merkle tree helpers ──────────────────────────────────────────────────
+
+  /** leaf = sha256(commitmentHex as UTF-8) — matches Rust verify_merkle_proof */
+  function leafHash(commitmentHex: string): Buffer {
+    return createHash("sha256").update(commitmentHex, "utf8").digest();
+  }
+
+  function sha256Pair(left: Buffer, right: Buffer): Buffer {
+    return createHash("sha256").update(Buffer.concat([left, right])).digest();
+  }
+
+  /**
+   * Build a balanced binary SHA-256 Merkle tree.
+   * Returns layers from leaf level up to [root].
+   * Odd-length layers duplicate the last element.
+   */
+  function buildMerkleTree(leaves: Buffer[]): Buffer[][] {
+    let layer = [...leaves];
+    while ((layer.length & (layer.length - 1)) !== 0) layer.push(layer.at(-1)!);
+    const layers: Buffer[][] = [layer];
+    while (layer.length > 1) {
+      const next: Buffer[] = [];
+      for (let i = 0; i < layer.length; i += 2) next.push(sha256Pair(layer[i]!, layer[i + 1]!));
+      layers.push((layer = next));
+    }
+    return layers;
+  }
+
+  function merkleRoot(layers: Buffer[][]): string {
+    return layers.at(-1)![0]!.toString("hex");
+  }
+
+  /** Returns siblings from leaf level up, ready for the SPV ABI. */
+  function merkleProof(layers: Buffer[][], leafIndex: number): { leafIndex: bigint; siblings: string[] } {
+    const siblings: string[] = [];
+    let idx = leafIndex;
+    for (let i = 0; i < layers.length - 1; i++) {
+      const layer = layers[i]!;
+      const sibIdx = idx % 2 === 0 ? idx + 1 : idx - 1;
+      const sib = layer[sibIdx] ?? layer[idx]!;
+      siblings.push(sib.toString("hex"));
+      idx = Math.floor(idx / 2);
+    }
+    return { leafIndex: BigInt(leafIndex), siblings };
+  }
+
+  // ── setup ────────────────────────────────────────────────────────────────
+
+  beforeAll(async () => {
+    const contractAddr = getCrossChainRelayAddress();
+    if (!contractAddr) return;
+    relayer = makeRelayerKey();
+    fund(relayer.address, RELAYER_BALANCE);
+    // Register relayer and set threshold to 1
+    await api
+      .post("/api/relay/register")
+      .set("x-admin-key", ADMIN_KEY)
+      .send({ caller: relayer.address, amount: BOND.toString() });
+    await api.patch("/api/relay/threshold").set("x-admin-key", ADMIN_KEY).send({ threshold: 1 });
+
+    // Build the Merkle tree once — the same root must go into both the
+    // header submission and the SPV inclusion proof.
+    const leaf   = leafHash(commitment);
+    const filler = Buffer.alloc(32, 0x42); // deterministic filler so tests are reproducible
+    sharedLayers = buildMerkleTree([leaf, filler]);
+    sharedRoot   = merkleRoot(sharedLayers);
+  });
+
+  // ── header tests ─────────────────────────────────────────────────────────
+
+  it("rejects header from non-relayer", async () => {
+    const contractAddr = getCrossChainRelayAddress();
+    if (!contractAddr) return;
+    const fakeRelayer = makeRelayerKey();
+    const root = randomBytes(32).toString("hex");
+    const res = await api.post("/api/relay/header/submit").send({
+      caller: fakeRelayer.address,
+      chainId,
+      blockNum: spvBlockNum.toString(),
+      merkleRootHex: root,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/relayer/i);
+  });
+
+  it("accepts a valid header from a registered relayer", async () => {
+    const contractAddr = getCrossChainRelayAddress();
+    if (!contractAddr) return;
+    const res = await api.post("/api/relay/header/submit").send({
+      caller: relayer.address,
+      chainId,
+      blockNum: spvBlockNum.toString(),
+      merkleRootHex: sharedRoot,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.blockNum).toBe(spvBlockNum.toString());
+  });
+
+  // ── SPV attestation tests ─────────────────────────────────────────────────
+
+  it("rejects SPV attestation with no submitted header", async () => {
+    const contractAddr = getCrossChainRelayAddress();
+    if (!contractAddr) return;
+    const msg = buildAttestationMessage(chainId, seq, commitment);
+    const { aggSigHex, signers } = buildAggPayload([relayer], msg);
+    const fakeProof = { leafIndex: "0", siblings: [] };
+    const res = await api.post("/api/relay/attest/inbound/spv").send({
+      caller: relayer.address,
+      chainId,
+      seq: seq.toString(),
+      commitmentHex: commitment,
+      aggSigHex,
+      signers,
+      spvBlockNum: "9999",      // no header for this block
+      proof: fakeProof,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/header/i);
+  });
+
+  it("rejects SPV attestation with a tampered Merkle proof", async () => {
+    const contractAddr = getCrossChainRelayAddress();
+    if (!contractAddr) return;
+    const msg = buildAttestationMessage(chainId, seq, commitment);
+    const { aggSigHex, signers } = buildAggPayload([relayer], msg);
+    // Use the shared valid tree but corrupt the first sibling → proof fails
+    const proof = merkleProof(sharedLayers, 0);
+    const corruptedSiblings = [
+      ("ff" + proof.siblings[0]!.slice(2)) as string,
+      ...proof.siblings.slice(1),
+    ];
+    const res = await api.post("/api/relay/attest/inbound/spv").send({
+      caller: relayer.address,
+      chainId,
+      seq: seq.toString(),
+      commitmentHex: commitment,
+      aggSigHex,
+      signers,
+      spvBlockNum: spvBlockNum.toString(),
+      proof: { leafIndex: proof.leafIndex.toString(), siblings: corruptedSiblings },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/proof/i);
+  });
+
+  it("accepts SPV attestation with valid header + correct Merkle proof", async () => {
+    const contractAddr = getCrossChainRelayAddress();
+    if (!contractAddr) return;
+    const msg = buildAttestationMessage(chainId, seq, commitment);
+    const { aggSigHex, signers } = buildAggPayload([relayer], msg);
+    const proof = merkleProof(sharedLayers, 0);
+
+    const res = await api.post("/api/relay/attest/inbound/spv").send({
+      caller: relayer.address,
+      chainId,
+      seq: seq.toString(),
+      commitmentHex: commitment,
+      aggSigHex,
+      signers,
+      spvBlockNum: spvBlockNum.toString(),
+      proof: { leafIndex: proof.leafIndex.toString(), siblings: proof.siblings },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.spv).toBe(true);
+    expect(res.body.spvBlockNum).toBe(spvBlockNum.toString());
+  });
+
+  it("GET status shows SPV attestation as pending", async () => {
+    const contractAddr = getCrossChainRelayAddress();
+    if (!contractAddr) return;
+    const res = await api.get(`/api/relay/attest/inbound/${chainId}/1`);
+    expect(res.status).toBe(200);
+    expect(res.body.commitment).toBe(commitment);
+    expect(res.body.signers).toContain(relayer.address);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe("CrossChainRelay — admin relayer revocation", () => {
   let relayer: ReturnType<typeof makeRelayerKey>;
 

@@ -224,6 +224,50 @@ fn main() {
         std::process::exit(1);
     }
 
+    // Check 0: CircomReduction self-contained (setup+prove+verify all using CircomReduction).
+    // No snarkjs ceremony keys needed — validates the math is internally consistent.
+    println!("[check 0] CircomReduction self-contained (setup+prove+verify, no snarkjs keys) ...");
+    {
+        let mut rng0 = ark_std::rand::rngs::StdRng::seed_from_u64(0xF00D_CAFE_1234_5678u64);
+        match Groth16::<Bn254, CircomReduction>::circuit_specific_setup(circuit(), &mut rng0) {
+            Ok((cpk, cvk)) => {
+                let cpvk = prepare_verifying_key(&cvk);
+                let mut rng1 = ark_std::rand::rngs::StdRng::seed_from_u64(0xABCD_EF01u64);
+                match Groth16::<Bn254, CircomReduction>::create_random_proof_with_reduction(
+                    circuit(), &cpk, &mut rng1,
+                ) {
+                    Ok(proof) => {
+                        log_proof("circom-self", &proof);
+                        match Groth16::<Bn254, CircomReduction>::verify_with_processed_vk(
+                            &cpvk, &pubs, &proof,
+                        ) {
+                            Ok(true) => {
+                                println!("[check 0] PASS — CircomReduction is internally consistent");
+                            }
+                            Ok(false) => {
+                                println!("[check 0] FAIL — CircomReduction proof does not verify \
+                                          even with its own keys (math bug)");
+                                failures += 1;
+                            }
+                            Err(e) => {
+                                println!("[check 0] ERROR verify: {e}");
+                                failures += 1;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("[check 0] ERROR prove: {e}");
+                        failures += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("[check 0] ERROR setup: {e}");
+                failures += 1;
+            }
+        }
+    }
+
     // Check 1: circuit self-test (Libsnark only)
     println!("[check 1] circuit self-test (Libsnark setup+prove+verify) ...");
     {

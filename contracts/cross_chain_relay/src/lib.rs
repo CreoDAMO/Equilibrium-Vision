@@ -65,6 +65,26 @@
 //!
 //!   9  = get_threshold()  -> current threshold value (default 2)
 //!   10 = get_relayer_count() -> number of registered relayers
+//!
+//!   11 = submit_header(
+//!          chain_id_len: i32, chain_id_bytes: [u8; chain_id_len] (packed),
+//!          block_num_lo: i32, block_num_hi: i32,
+//!          merkle_root: [u8; 32] (8 words))
+//!        Store the Merkle root for a foreign block so SPV attestations can
+//!        prove inclusion. Only registered relayers may submit headers.
+//!        -> 1 ok, -1 empty chain_id, -6 no relayers registered, -7 not a relayer
+//!
+//!   12 = submit_inbound_spv(
+//!          [same header as method 3],
+//!          block_num_lo: i32, block_num_hi: i32,   -- which submitted header
+//!          proof_depth: i32,                        -- number of sibling hashes
+//!          leaf_index_lo: i32, leaf_index_hi: i32,  -- leaf position in tree
+//!          [sibling: [u8; 32] (8 words)] × proof_depth)
+//!        Requires a stored header for the given block AND a valid SHA-256
+//!        binary Merkle inclusion proof that the commitment is in that header.
+//!        -> same codes as method 3, plus:
+//!           -10 no header submitted for that block
+//!           -11 Merkle inclusion proof invalid
 
 #![no_std]
 extern crate alloc;
@@ -217,6 +237,68 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 fn sha256_str(s: &str) -> [u8; 32] {
     Sha256::digest(s.as_bytes()).into()
+}
+
+fn sha256_bytes(data: &[u8]) -> [u8; 32] {
+    Sha256::digest(data).into()
+}
+
+// ── hex decode helpers ────────────────────────────────────────────────────────
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Decode a 64-character lowercase hex string into 32 bytes.
+fn hex_decode_32(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 { return None; }
+    let b = hex.as_bytes();
+    let mut out = [0u8; 32];
+    for (i, pair) in b.chunks(2).enumerate() {
+        let hi = hex_nibble(pair[0])?;
+        let lo = hex_nibble(pair[1])?;
+        out[i] = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+// ── Merkle proof verification ─────────────────────────────────────────────────
+//
+// Binary SHA-256 Merkle tree; leaf = sha256(commitment_hex_string).
+// Siblings provided bottom-up (leaf sibling first, root sibling last).
+// Proof passes if the computed root matches `expected_root`.
+
+fn verify_merkle_proof(
+    commitment_hex: &str,
+    mut leaf_index: u64,
+    proof_depth: usize,
+    siblings_byte_ptr: *const u8, // proof_depth × 32 bytes
+    expected_root: &[u8; 32],
+) -> bool {
+    // Leaf = sha256(commitment_hex as UTF-8 bytes)
+    let mut current = sha256_bytes(commitment_hex.as_bytes());
+    for i in 0..proof_depth {
+        let sib: [u8; 32] = unsafe {
+            let p = siblings_byte_ptr.add(i * 32);
+            core::slice::from_raw_parts(p, 32).try_into().unwrap_or([0u8; 32])
+        };
+        let mut buf = [0u8; 64];
+        if leaf_index % 2 == 0 {
+            buf[..32].copy_from_slice(&current);
+            buf[32..].copy_from_slice(&sib);
+        } else {
+            buf[..32].copy_from_slice(&sib);
+            buf[32..].copy_from_slice(&current);
+        }
+        current = sha256_bytes(&buf);
+        leaf_index >>= 1;
+    }
+    &current == expected_root
 }
 
 // ── governance parameters ────────────────────────────────────────────────────
@@ -615,6 +697,133 @@ fn method_get_relayer_count(_args_ptr: u32) -> i32 {
     get_relayer_set().len() as i32
 }
 
+/// 11 = submit_header(chain_id_len, chain_id_bytes, block_num_lo, block_num_hi,
+///                    merkle_root[8 words = 32 bytes])
+///      Only registered relayers may submit headers.
+fn method_submit_header(args_ptr: u32) -> i32 {
+    let chain_id_len = read_i32_word(args_ptr, 0) as u32;
+    if chain_id_len == 0 || chain_id_len > 64 { return -1; }
+    let chain_id_words = words_for(chain_id_len);
+    let chain_id = read_str_at(args_ptr, 1, chain_id_len);
+
+    let off = 1 + chain_id_words;
+    let block_lo = read_i32_word(args_ptr, off) as u32;
+    let block_hi = read_i32_word(args_ptr, off + 1) as u32;
+    let block_num: u64 = ((block_hi as u64) << 32) | (block_lo as u64);
+
+    // merkle_root: 32 bytes at word offset (off+2)
+    let root: [u8; 32] = unsafe {
+        let p = (args_ptr as usize + ((off + 2) as usize) * 4) as *const u8;
+        core::slice::from_raw_parts(p, 32).try_into().unwrap_or([0u8; 32])
+    };
+    let root_hex = hex_encode(&root);
+
+    let relayers = get_relayer_set();
+    if relayers.is_empty() { return -6; }
+    let caller = host_caller();
+    if !relayers.contains(&caller) { return -7; }
+
+    storage_write(&format!("hdr:{}:{}", chain_id, block_num), &root_hex);
+    host_log(&format!("HeaderSubmitted chain={} block={} root={}…", chain_id, block_num, &root_hex[..8]));
+    1
+}
+
+/// 12 = submit_inbound_spv(
+///        [same ABI as method 3 up through signers],
+///        block_num_lo, block_num_hi,   -- which stored header to verify against
+///        proof_depth,                  -- number of Merkle siblings (0 = single-leaf tree)
+///        leaf_index_lo, leaf_index_hi, -- leaf position in the Merkle tree
+///        [sibling: [u8; 32] (8 words)] × proof_depth)
+///      -> same as method 3 + -10 no header, -11 bad Merkle proof
+fn method_submit_inbound_spv(args_ptr: u32) -> i32 {
+    // ── parse chain_id, seq, commitment (same prefix as method 3) ────────────
+    let chain_id_len = read_i32_word(args_ptr, 0) as u32;
+    if chain_id_len == 0 || chain_id_len > 64 { return -1; }
+    let chain_id_words = words_for(chain_id_len);
+    let chain_id = read_str_at(args_ptr, 1, chain_id_len);
+
+    let off = 1 + chain_id_words;
+    let seq_lo = read_i32_word(args_ptr, off) as u32;
+    let seq_hi = read_i32_word(args_ptr, off + 1) as u32;
+    let seq: u64 = ((seq_hi as u64) << 32) | (seq_lo as u64);
+
+    let commitment: [u8; 32] = unsafe {
+        let p = (args_ptr as usize + ((off + 2) as usize) * 4) as *const u8;
+        core::slice::from_raw_parts(p, 32).try_into().unwrap_or([0u8; 32])
+    };
+    let commitment_hex = hex_encode(&commitment);
+
+    let n_signers = read_i32_word(args_ptr, off + 10) as u32;
+    if n_signers == 0 { return -3; }
+    if get_att_field(&chain_id, seq, "commitment").is_some() { return -5; }
+    let last_seq = get_inbound_seq(&chain_id);
+    if seq != last_seq + 1 { return -4; }
+
+    let relayers = get_relayer_set();
+    if relayers.is_empty() { return -6; }
+    let threshold = get_threshold() as u32;
+
+    let agg_sig_ptr = (args_ptr as usize + ((off + 11) as usize) * 4) as *const u8;
+    let signers_base = off + 35;
+    let mut valid_signers: Vec<String> = Vec::new();
+    let mut pubkeys_buf: Vec<u8> = Vec::new();
+
+    for i in 0..n_signers {
+        let base       = signers_base + i * 22;
+        let pubkey_ptr = (args_ptr as usize + (base as usize) * 4) as *const u8;
+        let addr_ptr   = (args_ptr as usize + ((base + 12) as usize) * 4) as *const u8;
+        let addr = unsafe { read_mem_str(addr_ptr as u32, 40) };
+        if !relayers.contains(&addr) { return -7; }
+        if valid_signers.contains(&addr) { return -8; }
+        valid_signers.push(addr);
+        let pk = unsafe { core::slice::from_raw_parts(pubkey_ptr, 48) };
+        pubkeys_buf.extend_from_slice(pk);
+    }
+    if (valid_signers.len() as u32) < threshold { return -9; }
+
+    let mut agg_pubkey = [0u8; 48];
+    if unsafe { bls_aggregate_pubkeys(pubkeys_buf.as_ptr(), n_signers as i32, agg_pubkey.as_mut_ptr()) } != 1 { return -2; }
+    let msg_str = format!("attest:{}:{}:{}", chain_id, seq, commitment_hex);
+    if unsafe { bls_verify(agg_pubkey.as_ptr(), msg_str.as_ptr(), msg_str.len() as u32, agg_sig_ptr) } != 1 { return -2; }
+
+    // ── SPV section ───────────────────────────────────────────────────────────
+    let spv_base = signers_base + n_signers * 22;
+    let spv_block_lo = read_i32_word(args_ptr, spv_base) as u32;
+    let spv_block_hi = read_i32_word(args_ptr, spv_base + 1) as u32;
+    let spv_block: u64   = ((spv_block_hi as u64) << 32) | (spv_block_lo as u64);
+    let proof_depth      = read_i32_word(args_ptr, spv_base + 2) as u32;
+    let leaf_idx_lo      = read_i32_word(args_ptr, spv_base + 3) as u32;
+    let leaf_idx_hi      = read_i32_word(args_ptr, spv_base + 4) as u32;
+    let leaf_index: u64  = ((leaf_idx_hi as u64) << 32) | (leaf_idx_lo as u64);
+
+    let root_hex = match storage_read(&format!("hdr:{}:{}", chain_id, spv_block)) {
+        None    => return -10,
+        Some(h) => h,
+    };
+    let root_bytes = match hex_decode_32(&root_hex) {
+        None    => return -10,
+        Some(b) => b,
+    };
+
+    let siblings_ptr = (args_ptr as usize + ((spv_base + 5) as usize) * 4) as *const u8;
+    if !verify_merkle_proof(&commitment_hex, leaf_index, proof_depth as usize, siblings_ptr, &root_bytes) {
+        return -11;
+    }
+
+    // ── store attestation (same as method 3, plus SPV metadata) ──────────────
+    set_att_field(&chain_id, seq, "commitment", &commitment_hex);
+    set_att_field(&chain_id, seq, "signers", &valid_signers.join(","));
+    set_att_field(&chain_id, seq, "spv", "1");
+    set_att_field(&chain_id, seq, "spv_block", &spv_block.to_string());
+    set_u64(&att_key(&chain_id, seq, "block"), unsafe { block_number() } as u64);
+    set_att_field(&chain_id, seq, "finalized", "0");
+    set_att_field(&chain_id, seq, "challenged", "0");
+    set_inbound_seq(&chain_id, seq);
+
+    host_log(&format!("InboundAttested(SPV) chain={} seq={} block={}", chain_id, seq, spv_block));
+    1
+}
+
 // ── exports ──────────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -638,6 +847,8 @@ pub extern "C" fn call(method_id: u32, args_ptr: u32, _args_len: u32) -> i32 {
         8  => method_get_outbound_seq(args_ptr),
         9  => method_get_threshold(args_ptr),
         10 => method_get_relayer_count(args_ptr),
+        11 => method_submit_header(args_ptr),
+        12 => method_submit_inbound_spv(args_ptr),
         _  => -1,
     }
 }

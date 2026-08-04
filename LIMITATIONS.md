@@ -224,23 +224,34 @@ isolated until manually connected.
 
 ---
 
-## 12. Cross-chain relay is BLS aggregate attestation, not full SPV
+## 12. Cross-chain relay: BLS attestation + optional SHA-256 Merkle SPV
 
 **Affected code:**
-- `contracts/cross_chain_relay/src/lib.rs` — `method_submit_inbound`
-- `artifacts/api-server/src/chain/crossChainRelay.ts` — `SubmitInboundParams`
+- `contracts/cross_chain_relay/src/lib.rs` — methods 3, 11, 12
+- `artifacts/api-server/src/chain/crossChainRelay.ts` — `submitInboundAttestation`, `submitForeignHeader`, `submitInboundAttestationSpv`
+- `artifacts/api-server/src/routes/crossChainRelay.ts` — `/api/relay/header/submit`, `/api/relay/attest/inbound/spv`
 
 **Behaviour:**
-Inbound attestations require a single BLS12-381 G2 aggregate signature plus
-an array of signers (G1 pubkeys). The contract aggregates pubkeys on-chain and
-verifies via the `bls_verify` host import.
+The relay supports two trust models:
 
-**What this is NOT:**
-Header-chain verification, Merkle receipt proofs, and fraud/challenge games are
-not implemented. The relay accepts commitments that m-of-n registered relayers
-agree on; it does not independently verify those commitments against a foreign
-chain's block headers. Full SPV (Bitcoin-style header relay + Merkle inclusion
-proof) is a separate roadmap item.
+1. **BLS-only attestation (method 3 / `POST /api/relay/attest/inbound`):**
+   m-of-n registered relayers sign a commitment using BLS12-381 G2 aggregate
+   signatures. No foreign-block header is required.
+
+2. **SPV-backed attestation (methods 11+12 / `POST /api/relay/attest/inbound/spv`):**
+   A registered relayer first submits a foreign block's SHA-256 binary Merkle root
+   via `POST /api/relay/header/submit`. Subsequent attestations must include a
+   Merkle inclusion proof (leaf = sha256(commitmentHex as UTF-8), siblings
+   bottom-up) that is verified on-chain before the attestation is accepted.
+   The `spv: 1` flag is stored alongside the attestation.
+
+**Scope boundaries:**
+- The Merkle root itself is only as trustworthy as the relayer who submitted it
+  (no on-chain header-chain validation against foreign block hashes).
+- The Merkle tree format is SHA-256 binary; non-compatible foreign chains (e.g.
+  Bitcoin with double-SHA256, or EVM with Keccak Patricia-Merkle) require a
+  Merkle root adapter layer outside this contract.
+- Fraud/challenge games for fraudulent headers are not implemented.
 
 ---
 
