@@ -179,3 +179,83 @@ This is a deliberate fail-closed policy. In production, every solved block must 
 
 **For testnet / development:**
 Set `ALLOW_RANDOM_MINING=true` as an environment variable (via the Replit secrets UI or your `.env` file). The Replit dev environment sets this automatically via the configured workflow environment.
+
+---
+
+## 10. Thermal / battery deferral on mobile is best-effort
+
+**Affected code:**
+- `equilibrium/src/mobile_validator.rs` — `should_validate_now`
+
+**Behaviour:**
+`should_validate_now` may defer validation under load or when battery/thermal
+thresholds are exceeded. Reading `/sys/class/power_supply/...` is not available
+on all Android devices; if the sysfs path is absent the Rust side defaults to
+`true` (always validate). The real thermal gate lives in `ThermalGuard.kt`,
+which the app calls before invoking `submitBlockForValidation`.
+
+**Impact:**
+Thermal/battery deferral is advisory, not a hard safety stop. A node under
+thermal stress will continue validating unless the app layer intervenes.
+
+---
+
+## 11. Peer discovery is bootstrap-assisted, not zero-seed
+
+**Affected code:**
+- `equilibrium/src/p2p_runtime.rs` — `load_bootstrap_addrs`, `known_peers_path`
+
+**Behaviour:**
+Initial peer contact uses three sources (in priority order):
+1. `BOOTSTRAP_PEERS` environment variable — comma-separated multiaddrs
+2. `known_peers.json` persisted under `EQUILIBRIUM_DATA_DIR` (Android) or
+   `~/.equilibrium` (desktop)
+3. QR/NFC invite scan in the app UI
+
+On Android, `EQUILIBRIUM_DATA_DIR` must be set to `context.filesDir.absolutePath`
+(or passed via `P2PNode.startWithDataDir`) before the swarm starts; otherwise
+the peer cache path defaults to an unreliable location and cold starts without
+any `BOOTSTRAP_PEERS` have no cached peers to dial.
+
+**Impact:**
+There is no guaranteed global DHT join with zero prior contact across NATs.
+A first-run phone with no `BOOTSTRAP_PEERS` and no scanned QR invite starts
+isolated until manually connected.
+
+---
+
+## 12. Cross-chain relay is BLS aggregate attestation, not full SPV
+
+**Affected code:**
+- `contracts/cross_chain_relay/src/lib.rs` — `method_submit_inbound`
+- `artifacts/api-server/src/chain/crossChainRelay.ts` — `SubmitInboundParams`
+
+**Behaviour:**
+Inbound attestations require a single BLS12-381 G2 aggregate signature plus
+an array of signers (G1 pubkeys). The contract aggregates pubkeys on-chain and
+verifies via the `bls_verify` host import.
+
+**What this is NOT:**
+Header-chain verification, Merkle receipt proofs, and fraud/challenge games are
+not implemented. The relay accepts commitments that m-of-n registered relayers
+agree on; it does not independently verify those commitments against a foreign
+chain's block headers. Full SPV (Bitcoin-style header relay + Merkle inclusion
+proof) is a separate roadmap item.
+
+---
+
+## 13. zkML / DeepProve model-inference circuit is not implemented
+
+**Affected code:**
+- `equilibrium/src/chain_state.rs` — inference receipt handling
+- `contracts/model_registry/src/lib.rs` — `method_attest_inference`
+
+**Behaviour:**
+Model-registry inference paths use Ed25519 attribution receipts (signed by the
+model operator). There is no on-chain proof that the model was actually run on
+the claimed input.
+
+**Impact:**
+`ERC-7992` / `DeepProve` style in-circuit model inference verification is future
+work. Do not treat existing inference receipts as zero-knowledge proofs of
+computation.

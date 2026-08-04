@@ -1579,7 +1579,7 @@ export function buildGenesisChain(): ChainState {
     const blockTime = prevBlock ? block.timestamp - prevBlock.timestamp : TARGET_BLOCK_TIME;
     state.blockStats.push({
       height: h, txCount: txs.length, residual,
-      mempoolPressure: 0.1 + Math.random() * 0.6,
+      mempoolPressure: 0.25 + ((h % 10) / 20),
       timestamp: now, difficulty: state.currentDifficulty, blockTime,
     });
 
@@ -1595,17 +1595,17 @@ export function buildGenesisChain(): ChainState {
     }
 
     prevHash = blockHash;
-    now += 12 + Math.floor(Math.random() * 6);
+    now += 12 + (h % 6);
   }
 
   // Seed mempool
   for (let i = 0; i < 6; i++) {
-    const txHash = hash256(`mempool-${i}-${Date.now()}`);
+    const txHash = hash256(`mempool-${i}`);
     const tx: TxRecord = {
       hash: txHash, from: alice, to: carol,
       amount: 10_000 * (i + 1), fee: 100 + i * 50, nonce: 100 + i,
       blockHash: null, blockHeight: null,
-      timestamp: Math.floor(Date.now() / 1000), status: "pending",
+      timestamp: now + i, status: "pending",
     };
     state.mempool.add(tx);
   }

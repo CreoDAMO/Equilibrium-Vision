@@ -148,6 +148,37 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_start(
     }
 }
 
+/// Start the swarm and set `EQUILIBRIUM_DATA_DIR` from the supplied Android
+/// `filesDir` path in one atomic call.  This ensures the known-peers cache is
+/// written to the app's private storage (survives process restarts) rather than
+/// relying on the `HOME` environment variable, which is unreliable on Android.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun startWithDataDir(tcpPort: Int, quicPort: Int, dataDir: String): Boolean
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_startWithDataDir(
+    mut env: JNIEnv,
+    _obj: JObject,
+    tcp_port: jint,
+    quic_port: jint,
+    data_dir: JString,
+) -> jboolean {
+    if let Ok(dir) = env.get_string(&data_dir) {
+        let dir_str = dir.to_str().unwrap_or_default().to_string();
+        if !dir_str.is_empty() {
+            // Safety: single-threaded before swarm starts; env var is process-wide.
+            std::env::set_var("EQUILIBRIUM_DATA_DIR", &dir_str);
+        }
+    }
+    if p2p_runtime::start(tcp_port.max(0) as u16, quic_port.max(0) as u16) {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_equilibrium_P2PNode_stop(
     _env: JNIEnv,

@@ -406,10 +406,34 @@ pub fn query_sync_blocks(from_height: u64, to_height: u64) -> String {
 
 // ── Bootstrap peer helpers ────────────────────────────────────────────────────
 
-/// Path to the persistent known-peers JSON file: `~/.equilibrium/known_peers.json`.
+/// Directory for durable runtime state (known peers, etc.).
+///
+/// Resolution order:
+///   1. `EQUILIBRIUM_DATA_DIR` — set by Android (`filesDir`) or ops config
+///   2. `$HOME/.equilibrium`   — desktop / server
+///   3. `./.equilibrium`       — last resort (cwd)
+fn data_dir() -> PathBuf {
+    if let Ok(dir) = env::var("EQUILIBRIUM_DATA_DIR") {
+        let p = PathBuf::from(dir.trim().to_string());
+        if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
+    if let Ok(home) = env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".equilibrium");
+        }
+    }
+    PathBuf::from(".equilibrium")
+}
+
+/// Path to the persistent known-peers JSON file.
+///
+/// On Android set `EQUILIBRIUM_DATA_DIR=<context.filesDir>` before starting
+/// the swarm so that `known_peers.json` lands in the app's private storage
+/// and survives process restarts.
 fn known_peers_path() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".equilibrium").join("known_peers.json")
+    data_dir().join("known_peers.json")
 }
 
 /// Load multiaddrs to dial on startup from two sources (deduplicated):

@@ -22,6 +22,18 @@ object P2PNode {
     @JvmStatic
     external fun start(tcpPort: Int, quicPort: Int): Boolean
 
+    /**
+     * Start the swarm and set the data directory for the peer cache in one call.
+     *
+     * Pass `context.filesDir.absolutePath` so that `known_peers.json` lands in
+     * the app's private storage and survives process restarts.  Prefer this over
+     * [start] on Android to guarantee the correct cache path.
+     *
+     * @param dataDir Absolute path to the app's files directory (Context.filesDir).
+     */
+    @JvmStatic
+    external fun startWithDataDir(tcpPort: Int, quicPort: Int, dataDir: String): Boolean
+
     @JvmStatic
     external fun stop()
 
@@ -169,7 +181,20 @@ object P2PNode {
     @JvmStatic
     external fun shouldValidateNow(): Boolean
 
+    /**
+     * Start with default ports. Does NOT set a data directory — use
+     * [startDefaultWithContext] from an Activity/Service to get the correct
+     * Android files path.
+     */
     fun startDefault(): Boolean = start(DEFAULT_TCP_PORT, DEFAULT_QUIC_PORT)
+
+    /**
+     * Preferred entry point on Android: starts with default ports and sets
+     * `EQUILIBRIUM_DATA_DIR` to `context.filesDir` so the peer cache persists
+     * across process restarts without requiring a QR re-scan.
+     */
+    fun startDefaultWithContext(context: android.content.Context): Boolean =
+        startWithDataDir(DEFAULT_TCP_PORT, DEFAULT_QUIC_PORT, context.filesDir.absolutePath)
 
     /**
      * Accept either a raw libp2p multiaddr or an

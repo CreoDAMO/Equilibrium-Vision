@@ -1,4 +1,4 @@
-//! Mobile background validator.
+//! Mobile background validator — residual, continuity, Merkle, optional BFT quorum.
 //!
 //! Spawns a thread with a 2MB stack. Enqueues blocks via MPSC channel.
 //! Validation pipeline:
@@ -6,7 +6,13 @@
 //!   2. Timestamp sanity (±2 hours)
 //!   3. Residual re-verification via joint_residual_and_gradient (no search)
 //!   4. Merkle root recomputation from tx hashes
-//!   5. BFT vote verification (stubbed)
+//!   5. BFT vote quorum — real Ed25519 verify + stake quorum when
+//!      `REQUIRE_BFT_VOTES=true`; quorum is not required when unset
+//!      (mesh can advance on residual + continuity alone).
+//!
+//! Thermal / battery: `should_validate_now` may defer under load. Capacity
+//! reads from sysfs are best-effort and may no-op on devices without the
+//! standard power-supply paths (see LIMITATIONS §10).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex};
