@@ -63,8 +63,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val nodeUrl = MiningWorker.DEFAULT_NODE_URL
-        updateChecker = UpdateChecker(nodeUrl)
+        // UpdateChecker now queries the GitHub Releases API directly —
+        // no dependency on the mining node URL (which defaults to the
+        // Android-emulator-only 10.0.2.2 address and is useless on real phones).
+        updateChecker = UpdateChecker()
 
         // Version label
         findViewById<TextView>(R.id.versionLabel).text = getString(

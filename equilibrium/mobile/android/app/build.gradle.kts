@@ -13,6 +13,10 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // Used by UpdateChecker to build the GitHub Releases API URL.
+        // Format: "owner/repo" — no trailing slash, no https:// prefix.
+        buildConfigField("String", "GITHUB_REPO", "\"CreoDAMO/Equilibrium-Vision\"")
     }
 
     // ── Release signing ──────────────────────────────────────────────────────

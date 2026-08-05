@@ -1,0 +1,146 @@
+Skip to content
+CreoDAMO
+Equilibrium-Vision
+Repository navigation
+Code
+Issues
+Pull requests
+Agents
+Actions
+Projects
+Wiki
+Security and quality
+32
+ (32)
+Insights
+Settings
+Android APK
+Android APK #19
+All jobs
+Run details
+Manually triggered 12 minutes ago
+@CreoDAMOCreoDAMO
+⁠
+ 98f6c1a
+main
+Status
+Success
+Total duration
+4m 55s
+Artifacts
+1
+
+
+Build signed release APK summary
+Gradle Root Project	Requested Tasks	Gradle Version	Build Outcome	Build Scan®
+EquilibriumMiner	:app:assembleRelease	8.13	✅	Build Scan not published
+Caching for Gradle actions was enabled - expand for details
+Cache was enabled. Action attempted to both restore and save the Gradle User Home.
+Cache cleanup was enabled. Stale files in Gradle User Home were purged before saving to the cache.
+Count	Total Size (Mb)	Total Time (ms)
+Entries Restored	8	543	12320
+Entries Saved	3	2	2443
+Cache Entry Details
+    Entry: Gradle User Home
+    Requested Key : gradle-home-v1|Linux-X64|build-apk[950eaec8589fb4acbb839cd2eb2eeef7]-98f6c1a6f495a8ed166103609c2e512574fd5a1b
+    Restored  Key : gradle-home-v1|Linux-X64|build-apk[950eaec8589fb4acbb839cd2eb2eeef7]-30551c6e1e3ef0eaddaa608da13139d679f3efdd
+              Size: 2 MB (2255995 B)
+              Time: 653 ms
+              (Entry restored: partial match found)
+    Saved     Key : gradle-home-v1|Linux-X64|build-apk[950eaec8589fb4acbb839cd2eb2eeef7]-98f6c1a6f495a8ed166103609c2e512574fd5a1b
+              Size: 2 MB (2259090 B)
+              Time: 625 ms
+              (Entry saved)
+---
+Entry: /home/runner/.gradle/caches/8.13/generated-gradle-jars/gradle-api-8.13.jar
+    Requested Key : gradle-generated-gradle-jars-v1-697f81ec8d80712ce7da03f513960371
+    Restored  Key : gradle-generated-gradle-jars-v1-697f81ec8d80712ce7da03f513960371
+              Size: 39 MB (40868777 B)
+              Time: 1646 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: contents unchanged)
+---
+Entry: /home/runner/.gradle/wrapper/dists/gradle-8.13-bin/5xuhj0ry160q40clulazy9h7d
+    Requested Key : gradle-wrapper-zips-v1-2404ef08b03d28a6a12a9811a47b570f
+    Restored  Key : gradle-wrapper-zips-v1-2404ef08b03d28a6a12a9811a47b570f
+              Size: 130 MB (136279272 B)
+              Time: 2030 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: contents unchanged)
+---
+Entry: /home/runner/.gradle/caches/modules-*/files-*/*/*/*/*
+    Requested Key : gradle-dependencies-v1-2a71ced8b1ff49f431ac103b50885f6e
+    Restored  Key : gradle-dependencies-v1-2a71ced8b1ff49f431ac103b50885f6e
+              Size: 282 MB (295972779 B)
+              Time: 3487 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: contents unchanged)
+---
+Entry: /home/runner/.gradle/caches/jars-*/*/
+    Requested Key : gradle-instrumented-jars-v1-d3380bf77ee12a4a3f3d310b8d941f00
+    Restored  Key : gradle-instrumented-jars-v1-d3380bf77ee12a4a3f3d310b8d941f00
+              Size: 0 MB (121664 B)
+              Time: 479 ms
+              (Entry restored: exact match found)
+    Saved     Key : gradle-instrumented-jars-v1-714854a6f01a95f07bfc7f3cd085a79e
+              Size: 0 MB (121787 B)
+              Time: 943 ms
+              (Entry saved)
+---
+Entry: /home/runner/.gradle/caches/*/kotlin-dsl/accessors/*/
+/home/runner/.gradle/caches/*/kotlin-dsl/scripts/*/
+    Requested Key : gradle-kotlin-dsl-v1-53a080dd115705331f1fdbd8ea076512
+    Restored  Key : gradle-kotlin-dsl-v1-53a080dd115705331f1fdbd8ea076512
+              Size: 0 MB (119290 B)
+              Time: 542 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: contents unchanged)
+---
+Entry: /home/runner/.gradle/caches/*/groovy-dsl/*/
+    Requested Key : gradle-groovy-dsl-v1-3046f5cda8704f8960c015f1a5a63671
+    Restored  Key : gradle-groovy-dsl-v1-3046f5cda8704f8960c015f1a5a63671
+              Size: 0 MB (192459 B)
+              Time: 525 ms
+              (Entry restored: exact match found)
+    Saved     Key : gradle-groovy-dsl-v1-571d5abf18f04045a17b0d001a952279
+              Size: 0 MB (194654 B)
+              Time: 875 ms
+              (Entry saved)
+---
+Entry: /home/runner/.gradle/caches/transforms-4/*/
+/home/runner/.gradle/caches/*/transforms/*/
+    Requested Key : gradle-transforms-v1-83096ac1ecb63f7aecd5abd330679a63
+    Restored  Key : gradle-transforms-v1-83096ac1ecb63f7aecd5abd330679a63
+              Size: 89 MB (93634782 B)
+              Time: 2958 ms
+              (Entry restored: exact match found)
+    Saved     Key : 
+              Size: 
+              Time: 
+              (Entry not saved: contents unchanged)
+Job summary generated at run-time
+Annotations
+2 warnings
+Build signed release APK
+Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-java@v4, actions/upload-artifact@v4, android-actions/setup-android@v3, gradle/actions/setup-gradle@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Build signed release APK
+setup-java v4 is deprecated and will no longer receive updates. Please migrate to actions/setup-java@v5.
+Artifacts
+Produced during runtime
+Name	Size	Digest	
+equilibrium-miner-release-apk
+11.8 MB	
+sha256:c400aad1784f7b1dccd65f480ef65b219306e6f93695b3c8c33e8c47cacf72aa
+Copied!
