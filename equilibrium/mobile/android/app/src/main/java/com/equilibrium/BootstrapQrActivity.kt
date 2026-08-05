@@ -107,9 +107,13 @@ class BootstrapQrActivity : AppCompatActivity() {
             return ""
         }
 
-        val peerId = P2PNode.getLocalPeerId()
-        if (peerId.isEmpty()) {
-            // Swarm is running but PeerId not yet available (race at start-up).
+        // Wrap in runCatching: getLocalPeerId() requires libequilibrium_core.so to
+        // have been rebuilt with the new JNI symbol.  An old .so will throw
+        // UnsatisfiedLinkError at call-time; treat that the same as "not ready yet".
+        val peerId = runCatching { P2PNode.getLocalPeerId() }.getOrNull()
+        if (peerId.isNullOrEmpty()) {
+            // Swarm is running but PeerId not yet available — either a start-up
+            // race or the native library predates this feature.
             statusView.text = getString(R.string.error_peer_id_unavailable)
             return ""
         }

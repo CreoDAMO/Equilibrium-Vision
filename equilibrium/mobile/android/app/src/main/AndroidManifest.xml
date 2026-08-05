@@ -43,6 +43,26 @@
         </activity>
 
         <!--
+            BootstrapQrActivity — QR display / scan screen for peer bootstrapping.
+            Not exported: only launched internally via MainActivity's "Join Network" button,
+            or via the equilibrium:// deep-link intent filter below.
+            android:launchMode="singleTop" ensures onNewIntent fires if the activity
+            is already on top when a second equilibrium:// deep-link arrives.
+        -->
+        <activity
+            android:name=".BootstrapQrActivity"
+            android:exported="false"
+            android:launchMode="singleTop">
+            <!-- Accept equilibrium://bootstrap deep-links when the QR screen is
+                 already open (e.g. user taps an NFC tag while viewing their own QR). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="equilibrium" android:host="bootstrap" />
+            </intent-filter>
+        </activity>
+
+        <!--
             MiningService — long-running foreground service.
             type="dataSync" is the least-restrictive type allowed for CPU work;
             switch to "specialUse" + declaration if the Play Store policy changes.
