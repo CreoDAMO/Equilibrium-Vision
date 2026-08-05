@@ -181,6 +181,20 @@ enum Command {
 
 static RUNNING:      AtomicBool = AtomicBool::new(false);
 static COMMANDS:     OnceLock<Mutex<Option<Sender<Command>>>> = OnceLock::new();
+/// The PeerId of the currently running swarm, as a base58 string.
+/// Empty when the swarm is not running.  Updated every time `run_swarm`
+/// starts so that QR invite URIs always reflect the live identity.
+static LOCAL_PEER_ID: OnceLock<RwLock<String>> = OnceLock::new();
+
+fn peer_id_store() -> &'static RwLock<String> {
+    LOCAL_PEER_ID.get_or_init(|| RwLock::new(String::new()))
+}
+
+/// Return the PeerId of the currently running swarm as a base58 string,
+/// or an empty string if the swarm has not started yet.
+pub fn local_peer_id() -> String {
+    peer_id_store().read().unwrap_or_else(|e| e.into_inner()).clone()
+}
 /// Inbound block hashes from remote peers — polled by MiningWorker for race detection.
 static GOSSIP_QUEUE: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 /// Live count of established connections, updated in the swarm event loop.
@@ -249,6 +263,7 @@ pub fn start(listen_tcp: u16, listen_quic: u16) -> bool {
 pub fn stop() {
     RUNNING.store(false, Ordering::Release);
     *command_slot().lock().expect("command mutex poisoned") = None;
+    *peer_id_store().write().unwrap_or_else(|e| e.into_inner()) = String::new();
 }
 
 /// Whether the swarm is currently running.
@@ -545,6 +560,8 @@ async fn run_swarm(rx: mpsc::Receiver<Command>, listen_tcp: u16, listen_quic: u1
             }
         }
     }
+    // Publish the live PeerId so Kotlin can embed it in QR invite URIs.
+    *peer_id_store().write().unwrap_or_else(|e| e.into_inner()) = peer_id.to_base58();
     eprintln!("[p2p-runtime] peer_id={peer_id}");
 
     // Dial bootstrap peers (env var + persisted routing table) before entering

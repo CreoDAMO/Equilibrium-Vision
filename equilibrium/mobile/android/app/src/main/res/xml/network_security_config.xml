@@ -1,34 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Network security configuration for Equilibrium Miner.
+  Production network security configuration for Equilibrium Miner.
 
-  Production: only HTTPS is allowed (Android default).
-  Debug: cleartext HTTP is also permitted for:
-    - 10.0.2.2  — Android emulator alias for the host machine (dev API server)
-    - 10.0.0.0/8 and 192.168.0.0/16 — LAN IP ranges used when running the
-      desktop node or p2p sidecar on the same Wi-Fi network
-
-  The P2P mesh (libp2p TCP/QUIC on port 9000/9001) does not go through
-  the Android HTTP client, so it is not affected by this config.
+  * All traffic to public hosts requires HTTPS (no cleartext).
+  * Debug builds substitute the entire file with src/debug/res/xml/
+    network_security_config.xml (which adds cleartext for local dev hosts).
+  * <debug-overrides> may ONLY contain <trust-anchors> per the Android
+    Network Security Config schema — do NOT add <domain-config> here.
 -->
 <network-security-config>
-    <!-- Production base: follow system default (HTTPS only for public hosts) -->
-    <base-config cleartextTrafficPermitted="false" />
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
 
-    <!-- Debug overrides — removed from release builds automatically -->
+    <!-- Allow user-installed CAs in ALL builds (debug + release) for
+         corporate proxies and dev mTLS certs. -->
     <debug-overrides>
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />
         </trust-anchors>
-        <domain-config cleartextTrafficPermitted="true">
-            <!-- Android emulator host alias -->
-            <domain includeSubdomains="true">10.0.2.2</domain>
-            <!-- LAN ranges for phone ↔ desktop dev testing -->
-            <domain includeSubdomains="true">192.168.0.0</domain>
-            <domain includeSubdomains="true">192.168.1.0</domain>
-            <domain includeSubdomains="true">10.0.0.0</domain>
-            <domain includeSubdomains="true">localhost</domain>
-        </domain-config>
     </debug-overrides>
 </network-security-config>

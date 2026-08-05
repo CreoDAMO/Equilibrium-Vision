@@ -137,6 +137,19 @@ object P2PNode {
     @JvmStatic
     external fun querySyncBlocks(fromHeight: Long, toHeight: Long): String
 
+    /**
+     * Return this node's PeerId as a base58 string, or an empty string if the
+     * swarm has not been started yet.
+     *
+     * Use this when building QR / NFC invite URIs — a complete libp2p multiaddr
+     * includes `/p2p/<peerId>` so the scanning phone can authenticate the remote
+     * end via the noise handshake rather than connecting blindly.
+     *
+     * Example: `/ip4/192.168.1.5/tcp/9000/p2p/QmXoypizjW3…`
+     */
+    @JvmStatic
+    external fun getLocalPeerId(): String
+
     /** Return the number of currently established peer connections. */
     @JvmStatic
     external fun getConnectedPeerCount(): Int

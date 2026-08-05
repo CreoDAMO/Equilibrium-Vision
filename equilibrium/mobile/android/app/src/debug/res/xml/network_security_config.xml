@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEBUG-ONLY network security override for Equilibrium Miner.
+
+  This file lives in src/debug/res/ so it is ONLY merged into debug APKs.
+  Release builds use src/main/res/xml/network_security_config.xml instead.
+
+  Cleartext HTTP is allowed to:
+    - 10.0.2.2      — Android emulator host-machine alias (local dev API server)
+    - 10.0.0.0/8    — Corporate LAN / mobile hotspot NAT ranges
+    - 192.168.x.x   — Home/office WiFi (most common phone↔desktop testing)
+    - localhost      — Unit tests and localhost-only services
+
+  The P2P mesh (libp2p TCP/QUIC on ports 9000/9001) does not go through
+  Android's HTTP client and is unaffected by this configuration.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Android emulator alias for the development machine -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <!-- LAN ranges used for phone ↔ desktop dev testing -->
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

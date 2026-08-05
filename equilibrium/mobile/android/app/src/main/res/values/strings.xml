@@ -55,4 +55,11 @@
     <string name="connect_invalid">✗ Invalid multiaddr or invite URI.</string>
     <string name="error_empty_addr">⚠ Enter a multiaddr or invite URI.</string>
     <string name="error_p2p_start">⚠ Could not start P2P swarm.</string>
+
+    <!-- QR invite status messages -->
+    <string name="qr_ready_hint">Scan this QR from another Equilibrium device to connect.</string>
+    <string name="error_no_wifi">⚠ No local WiFi address found — connect to WiFi first.</string>
+    <string name="error_p2p_not_started">⚠ P2P node not started — tap \'Start embedded P2P node\' on the main screen first.</string>
+    <string name="error_peer_id_unavailable">⚠ Node identity not ready yet — try again in a moment.</string>
+    <string name="error_qr_failed">⚠ QR generation failed: %1$s</string>
 </resources>

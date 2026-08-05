@@ -397,6 +397,26 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_pushBlockBody(
     p2p_runtime::push_block_body(json_str.to_str().unwrap_or_default());
 }
 
+/// Return this node's PeerId as a base58 string, or an empty string if the
+/// swarm has not been started yet.  Kotlin uses this to build complete libp2p
+/// multiaddrs (`/ip4/<ip>/tcp/9000/p2p/<peerId>`) for QR / NFC invites so
+/// the dialling peer can authenticate the remote end via the noise handshake.
+///
+/// Kotlin declaration:
+/// ```kotlin
+/// external fun getLocalPeerId(): String
+/// ```
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_getLocalPeerId(
+    env:  JNIEnv,
+    _obj: JObject,
+) -> jstring {
+    let id = p2p_runtime::local_peer_id();
+    env.new_string(&id)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
 /// Return the number of currently established peer connections.
 ///
 /// Kotlin declaration:
