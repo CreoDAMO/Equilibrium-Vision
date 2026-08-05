@@ -1,0 +1,201 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# android-apk.yml — Build, sign, and (optionally) release the Equilibrium
+# mobile miner APK.
+#
+# HOW TO INSTALL
+# ──────────────
+# Copy this file to .github/workflows/android-apk.yml in the repo.
+# It replaces the previous version of the same name.
+#
+# WHAT CHANGED FROM THE PREVIOUS VERSION
+# ───────────────────────────────────────
+# 1. workflow_dispatch now accepts two optional inputs:
+#      create_release  (boolean)  — check this to publish a GitHub Release and
+#                                   attach the APK so users can sideload it.
+#      release_tag     (string)   — the tag name to use for the release when
+#                                   triggered manually, e.g. "mobile-v0.1.0".
+#                                   Ignored when the workflow runs from a tag push.
+#
+# 2. The "Attach APK to GitHub Release" step now runs when EITHER:
+#      • a `mobile-v*` tag is pushed  (existing behaviour, unchanged), OR
+#      • create_release is ticked on a manual run  (new).
+#
+# 3. "Publish version to update-check endpoint" is also hoisted to run under
+#    the same combined condition.
+#
+# REQUIRED GITHUB SECRETS (Settings → Secrets and variables → Actions)
+# ─────────────────────────────────────────────────────────────────────
+#   ANDROID_KEYSTORE_BASE64    — base64-encoded .p12 keystore (no line-wrapping)
+#   ANDROID_KEYSTORE_PASSWORD  — keystore password
+#   ANDROID_KEY_ALIAS          — key alias inside the keystore
+#   ANDROID_KEY_PASSWORD       — password for that key
+#
+# OPTIONAL SECRETS (needed only for the node-API version ping)
+#   API_BASE_URL               — public URL of the running Equilibrium node API
+#   ADMIN_API_KEY              — X-Admin-Key header value for /api/mobile/version
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: "Publish a GitHub Release and attach the APK (lets users sideload)"
+        type: boolean
+        default: false
+      release_tag:
+        description: "Release tag (e.g. mobile-v0.1.1) — used only when create_release is checked"
+        type: string
+        default: ""
+
+  push:
+    tags:
+      - "mobile-v*"
+
+jobs:
+  build-apk:
+    name: Build signed release APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write    # needed to create / update GitHub Releases
+      actions: read
+      packages: read
+    defaults:
+      run:
+        working-directory: equilibrium
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Rust toolchain + Android targets ────────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: equilibrium -> target
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      # ── Android SDK / NDK ──────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager --install "ndk;26.3.11579264"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/26.3.11579264" >> "$GITHUB_ENV"
+
+      # ── wabt (WAT → WASM for on-chain contracts) ────────────────────────────
+      - name: Install wabt
+        run: sudo apt-get update && sudo apt-get install -y wabt
+
+      # ── Cross-compile Rust core → .so files ─────────────────────────────────
+      - name: Build JNI libraries (cargo-ndk)
+        working-directory: equilibrium/mobile/android
+        run: ./build-jni.sh release
+
+      # ── Decode signing keystore ──────────────────────────────────────────────
+      - name: Decode release keystore
+        working-directory: equilibrium/mobile/android
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d -i > app/release-keystore.p12
+
+      # ── Gradle build ────────────────────────────────────────────────────────
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build signed release APK
+        working-directory: equilibrium/mobile/android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/equilibrium/mobile/android/app/release-keystore.p12
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Clean up keystore from disk
+        if: always()
+        working-directory: equilibrium/mobile/android
+        run: rm -f app/release-keystore.p12
+
+      # ── Always upload APK as workflow artifact (90-day retention) ───────────
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: equilibrium-miner-release-apk
+          path: equilibrium/mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 90
+
+      # ── Determine whether to publish a GitHub Release ───────────────────────
+      #
+      # Runs when:
+      #   (a) a mobile-v* tag was pushed, OR
+      #   (b) the workflow was triggered manually with create_release = true.
+      #
+      # Computes RELEASE_TAG so the subsequent steps have a single source of
+      # truth regardless of which trigger fired.
+      - name: Resolve release tag
+        id: resolve_tag
+        if: |
+          startsWith(github.ref, 'refs/tags/mobile-v') ||
+          (github.event_name == 'workflow_dispatch' && inputs.create_release == 'true')
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+          else
+            TAG="${{ inputs.release_tag }}"
+            if [ -z "$TAG" ]; then
+              # Auto-generate tag from versionName in build.gradle.kts
+              VER=$(grep -oP 'versionName\s*=\s*"\K[^"]+' \
+                    "$GITHUB_WORKSPACE/equilibrium/mobile/android/app/build.gradle.kts")
+              TAG="mobile-v${VER}"
+            fi
+            echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
+          fi
+
+      # ── Publish GitHub Release ───────────────────────────────────────────────
+      - name: Attach APK to GitHub Release
+        id: gh_release
+        if: steps.resolve_tag.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          files: equilibrium/mobile/android/app/build/outputs/apk/release/app-release.apk
+          generate_release_notes: true
+
+      # ── Notify the in-app "check for updates" screen (optional) ─────────────
+      #
+      # Posts version metadata to the node API so builds that pre-date the
+      # GitHub-Releases update checker can also detect new versions.
+      # Skipped silently if API_BASE_URL is not set.
+      - name: Publish version to update-check endpoint
+        if: steps.resolve_tag.outcome == 'success' && steps.gh_release.outcome == 'success'
+        working-directory: equilibrium/mobile/android
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+        run: |
+          if [ -z "$API_BASE_URL" ]; then
+            echo "API_BASE_URL not set — skipping node-API version ping."
+            exit 0
+          fi
+          VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts)
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/app-release.apk"
+          curl -sf -X POST "${API_BASE_URL%/}/api/mobile/version" \
+            -H "Content-Type: application/json" \
+            -H "X-Admin-Key: ${ADMIN_API_KEY}" \
+            -d "{\"platform\":\"android\",\"versionCode\":${VERSION_CODE},\"versionName\":\"${VERSION_NAME}\",\"downloadUrl\":\"${DOWNLOAD_URL}\",\"releaseNotes\":\"Release ${RELEASE_TAG}\"}"
