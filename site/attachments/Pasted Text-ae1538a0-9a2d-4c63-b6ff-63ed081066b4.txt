@@ -1,0 +1,3509 @@
+😂 Fair. I deserved that one. **The mobile runtime is not a footnote.** It is one of the major bodies of Equilibrium.
+ 
+And yes—before we write another specification, we should establish a **single project memory / territory map** so we stop reconstructing pieces from scattered reviews.
+ 
+Here is the consolidated picture we have so far.
+ 
+# EQUILIBRIUM VISION — MASTER RECAP
+ 
+**Repository:** `CreoDAMO/Equilibrium-Vision`
+**Public domain:** `equilibrium.site`
+**Current status:** reconstruction / rebuild
+**Core principle:**
+ 
+> **The theory is the map. The implementation is the territory.**
+
+ 
+The objective is not to retrofit the existing repository until it *looks* like the theory. The objective is to understand what was actually built, establish the canonical system, rebuild it coherently, and then test whether the theoretical framework explains what the system actually does.
+ 
+***
+ 
+# 1. The entire organism
+ 
+Equilibrium is not just:
+ 
+ 
+- a Rust solver,
+ 
+- a blockchain,
+ 
+- an explorer,
+ 
+- a mobile app,
+ 
+- or a mathematical paper.
+ 
+
+ 
+It is a collection of interacting bodies.
+ 
+```text
+                         EQUILIBRIUM
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+        ▼                     ▼                     ▼
+     THEORY               PROTOCOL              RUNTIMES
+        │                     │                     │
+        │              ┌──────┼──────┐       ┌──────┼──────┐
+        │              │      │      │       │      │      │
+        ▼              ▼      ▼      ▼       ▼      ▼      ▼
+   Closed-system    State  Solver  Consensus Web   Mobile P2P
+   mathematics      ZK     Verify  Finality  API   Android
+        │              │      │      │       │      │
+        └──────────────┴──────┴──────┴───────┴──────┘
+                              │
+                              ▼
+                         EXPERIMENTS
+```
+ 
+And there are additional subsystems:
+ 
+ 
+- wallet
+ 
+- UTXO
+ 
+- account model
+ 
+- WASM
+ 
+- DEX/liquidity
+ 
+- staking
+ 
+- governance
+ 
+- contribution tracking
+ 
+- transaction propagation
+ 
+- cross-chain relay
+ 
+- ZK / zkML
+ 
+- light-node verification
+ 
+- explorer
+ 
+- metrics
+ 
+- APIs.
+ 
+
+ 
+The mistake would be to let any one of these become **the definition of Equilibrium**.
+ 
+***
+ 
+# 2. The theory
+ 
+The theoretical foundation comes from your monograph:
+ 
+**The Fragmentation Was Always the Workaround**
+ 
+Its central formal structure is:
+ 
+\[
+\delta S_{\text{closed}}[\Phi,\Theta]=0
+\]
+ 
+with:
+ 
+ 
+- canonical whole \(\Omega\)
+ 
+- fields \(\Phi\)
+ 
+- parameters \(\Theta\)
+ 
+- couplings
+ 
+- admissibility
+ 
+- stationarity
+ 
+- discovery
+ 
+- verification
+ 
+- state evolution.
+ 
+
+ 
+The theoretical thesis is that fragmentation can emerge when couplings between parts of a closed system are removed or treated independently.
+ 
+That gives us an experimental question:
+ 
+> If the coupling is doing real work, removing it should change observable behavior.
+
+ 
+Hence **ablation** is especially important.
+ 
+But:
+ 
+\[
+\boxed{
+\text{Theory} \neq \text{proof that current code implements the theory}
+}
+\]
+ 
+The theory gives us hypotheses to test.
+ 
+***
+ 
+# 3. The blockchain itself
+ 
+The current implementation is a distributed state machine.
+ 
+At the highest level:
+ 
+\[
+\Omega_t
+\xrightarrow{\text{candidate}}
+B_t
+\xrightarrow{\text{transition}}
+\Omega_{t+1}
+\]
+ 
+But that expands into:
+ 
+```text
+STATE
+  ↓
+MEMPOOL
+  ↓
+CANDIDATE ASSEMBLY
+  ↓
+STATIONARY DISCOVERY
+  ↓
+BLOCK CANDIDATE
+  ↓
+VERIFICATION
+  ↓
+STATE TRANSITION
+  ↓
+STATE COMMITMENT
+  ↓
+FORK CHOICE
+  ↓
+FINALITY
+  ↓
+NEXT STATE
+```
+ 
+That is the actual architecture we have uncovered.
+ 
+***
+ 
+# 4. The Rust core
+ 
+The Rust portion contains the deepest protocol machinery.
+ 
+Important components include:
+ 
+### `stationary_solver.rs`
+ 
+The current block-discovery solver.
+ 
+It calculates the implemented residual, performs iterative optimization, and produces candidate:
+ 
+ 
+- nonce
+ 
+- residual
+ 
+- related solver quantities.
+ 
+
+ 
+This is currently part of the **real production mining path**.
+ 
+***
+ 
+### `consensus.rs`
+ 
+Current fork-choice logic compares cumulative stationarity residual.
+ 
+Conceptually:
+ 
+\[
+R(F)=\sum_{B\in F}R_B
+\]
+ 
+and the lower cumulative residual history is selected.
+ 
+So:
+ 
+\[
+F^*=\arg\min_F R(F)
+\]
+ 
+That is an implemented protocol behavior.
+ 
+***
+ 
+### `consensus-api.rs`
+ 
+This is the Rust API boundary for:
+ 
+ 
+- solving
+ 
+- proving
+ 
+- verifying
+ 
+- warmup.
+ 
+
+ 
+Critically, it calls:
+ 
+```text
+equilibrium_core::stationary_solver::StationarySolver
+```
+ 
+for block solving.
+ 
+***
+ 
+### `chain_state.rs`
+ 
+Rust's canonical state-side structures include block/state concepts such as:
+ 
+```text
+prev_hash
+merkle_root
+timestamp
+nonce
+difficulty
+recursion_depth
+residual
+state_root
+```
+ 
+***
+ 
+### `wallet.rs`
+ 
+Contains:
+ 
+ 
+- key generation
+ 
+- addresses
+ 
+- signing
+ 
+- transaction hashing
+ 
+- verification
+ 
+- balances
+ 
+- encrypted keystore mechanisms.
+ 
+
+ 
+It uses Ed25519 and SHA-256-derived addressing.
+ 
+We also found a very useful differential result:
+ 
+> Rust and TypeScript address derivation matched **5/5 known vectors byte-for-byte**.
+
+ 
+But there is currently no continuous cross-language CI protecting that agreement.
+ 
+Therefore:
+ 
+**UNGUARDED**, not "fully proven."
+ 
+***
+ 
+# 5. The TypeScript blockchain
+ 
+This is the part I was underrepresenting when I said "web layer."
+ 
+It is much more than an explorer.
+ 
+The TypeScript system contains a substantial operational blockchain implementation.
+ 
+`ChainState` currently coordinates things such as:
+ 
+ 
+- blocks
+ 
+- transactions
+ 
+- ledger
+ 
+- mempool
+ 
+- UTXO
+ 
+- validators
+ 
+- finality
+ 
+- governance
+ 
+- staking
+ 
+- slashing
+ 
+- DEX
+ 
+- liquidity
+ 
+- WASM
+ 
+- state roots
+ 
+- persistence
+ 
+- network state
+ 
+- block statistics.
+ 
+
+ 
+The current `addBlock()` function is effectively a giant transition coordinator.
+ 
+That means the web/TypeScript implementation is itself an important **body of the blockchain**, not just a frontend.
+ 
+***
+ 
+# 6. The web blockchain
+ 
+And this is what you reminded me about. 😂
+ 
+There is a full web-facing blockchain experience.
+ 
+It includes things such as:
+ 
+### Explorer
+ 
+ 
+- blocks
+ 
+- transactions
+ 
+- addresses
+ 
+- chain information.
+ 
+
+ 
+### Wallet
+ 
+The browser-side wallet/crypto machinery.
+ 
+### Network
+ 
+ 
+- peers
+ 
+- propagation
+ 
+- network health
+ 
+- gossip.
+ 
+
+ 
+### Validators
+ 
+ 
+- validator population
+ 
+- stake
+ 
+- uptime
+ 
+- proposals
+ 
+- rewards
+ 
+- slashing
+ 
+- finality.
+ 
+
+ 
+### State
+ 
+ 
+- state roots
+ 
+- account information
+ 
+- UTXOs
+ 
+- proofs.
+ 
+
+ 
+### Metrics
+ 
+Including:
+ 
+ 
+- chain height
+ 
+- finalized height
+ 
+- finality lag
+ 
+- difficulty
+ 
+- block time
+ 
+- TPS
+ 
+- residual
+ 
+- transaction count
+ 
+- mempool
+ 
+- mempool pressure
+ 
+- UTXO fees
+ 
+- peers
+ 
+- validators
+ 
+- DEX activity.
+ 
+
+ 
+### API
+ 
+The web system exposes actual blockchain APIs, not merely static pages.
+ 
+So `equilibrium.site` should ultimately expose a **real network interface**, not just documentation.
+ 
+***
+ 
+# 7. Mobile
+ 
+And this is the other major body I almost erased from the picture.
+ 
+There is an **Android implementation/runtime**.
+ 
+The repository contains:
+ 
+ 
+- `mobile_validator.rs`
+ 
+- Android/native components
+ 
+- mining/worker infrastructure
+ 
+- P2P components
+ 
+- verification functionality.
+ 
+
+ 
+You already had an Android APK built and running on your phone.
+ 
+The mobile validator architecture demonstrated an important design principle:
+ 
+> **Mobile does not need to rediscover expensive work in order to independently verify it.**
+
+ 
+It can perform things like:
+ 
+ 
+- continuity checking
+ 
+- timestamp sanity
+ 
+- residual re-verification
+ 
+- Merkle recomputation
+ 
+- optional BFT quorum checks.
+ 
+
+ 
+That gives us the important separation:
+ 
+```text
+                 DISCOVERY
+                    │
+              expensive solve
+                    │
+                    ▼
+                  BLOCK
+                    │
+             portable evidence
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+        SERVER              MOBILE
+          │                   │
+      verify cheaply      verify cheaply
+```
+ 
+This is potentially one of the most important architectural properties of the entire system.
+ 
+The mobile runtime therefore belongs in the canonical architecture.
+ 
+Not as:
+ 
+> "the mobile app"
+
+ 
+but as:
+ 
+> **an independent verification/runtime body of the distributed system.**
+
+ 
+***
+ 
+# 8. P2P
+ 
+The network layer currently uses a libp2p sidecar with:
+ 
+ 
+- QUIC
+ 
+- TCP
+ 
+- Noise
+ 
+- Yamux
+ 
+- Gossipsub
+ 
+- mDNS
+ 
+- Identify
+ 
+- Kademlia.
+ 
+
+ 
+Protocols include:
+ 
+```text
+/equilibrium/blocks/1.0.0
+/equilibrium/txs
+/equilibrium/block-bodies
+/equilibrium/lightnode
+/equilibrium/sync
+```
+ 
+It supports:
+ 
+ 
+- block propagation
+ 
+- transaction propagation
+ 
+- synchronization
+ 
+- light-node requests
+ 
+- proofs
+ 
+- validator/network information.
+ 
+
+ 
+Current architecture is therefore roughly:
+ 
+```text
+Rust protocol machinery
+        │
+        │
+     P2P sidecar
+        │
+   ┌────┴─────┐
+   │          │
+ TypeScript  Mobile
+   │
+ Web/API
+```
+ 
+The rebuild question is whether the final architecture should retain the sidecar or attach networking directly to the canonical Rust core.
+ 
+That is still an architectural decision.
+ 
+***
+ 
+# 9. State
+ 
+We identified the three-wholes problem.
+ 
+### Ontological whole
+ 
+\[
+\Omega_{\text{whole}}
+\]
+ 
+Everything we say belongs to Equilibrium.
+ 
+### Computational whole
+ 
+\[
+\Omega_{\text{transition}}
+\]
+ 
+Everything actually required to calculate the next state.
+ 
+### Cryptographically committed whole
+ 
+\[
+\Omega_{\text{committed}}
+\]
+ 
+Everything represented by the state commitment.
+ 
+Currently:
+ 
+\[
+\boxed{
+\Omega_{\text{committed}}
+\neq
+\Omega_{\text{operational}}
+}
+\]
+ 
+because the SMT currently commits:
+ 
+ 
+- account balance/nonce
+ 
+- UTXOs
+ 
+- WASM contract storage
+ 
+
+ 
+while operational state also includes things such as:
+ 
+ 
+- validators
+ 
+- DEX
+ 
+- governance
+ 
+- finality
+ 
+- networking
+ 
+- mempool
+ 
+- etc.
+ 
+
+ 
+We don't automatically call this wrong.
+ 
+We specify it.
+ 
+***
+ 
+# 10. Mempool → equilibrium coupling
+ 
+One of the most concrete theory/implementation connections we found is:
+ 
+\[
+P_M=
+\min(|M|/500,1)
+\]
+ 
+and:
+ 
+\[
+|M|
+\rightarrow
+P_M
+\rightarrow
+StationarySolver
+\]
+ 
+This is real code behavior.
+ 
+It is therefore an excellent experiment.
+ 
+We can vary mempool pressure and measure whether the stationary solution actually changes.
+ 
+***
+ 
+# 11. Mining / discovery
+ 
+The production path currently looks like:
+ 
+```text
+mempool
+   ↓
+select ≤ 50 transactions
+   ↓
+verify signatures
+   ↓
+transaction hashes
+   ↓
+Merkle root
+   ↓
+solveBlock()
+   ↓
+consensus-api
+   ↓
+StationarySolver
+   ↓
+nonce + residual
+   ↓
+block
+```
+ 
+Production failure is supposed to fail closed.
+ 
+Development/test configurations have an RNG fallback.
+ 
+That distinction must remain explicit.
+ 
+***
+ 
+# 12. Reward
+ 
+Current base reward:
+ 
+\[
+50,000,000
+\]
+ 
+Current quality function:
+ 
+\[
+Q=\frac{1}{R+10^{-6}}
+\]
+ 
+and reward:
+ 
+\[
+Reward=
+50,000,000
+\cdot
+\min(Q,1)
+\]
+ 
+So residual participates in:
+ 
+```text
+                 residual
+                /    |    \
+               /     |     \
+              ↓      ↓      ↓
+         acceptance reward fork choice
+```
+ 
+That is an important real coupling.
+ 
+Whether it is theoretically justified is a separate question.
+ 
+***
+ 
+# 13. External block submission
+ 
+This is one of the most important unresolved areas.
+ 
+The external route accepts:
+ 
+ 
+- miner
+ 
+- nonce
+ 
+- residual
+ 
+- optional previous hash
+ 
+- optional timestamp.
+ 
+
+ 
+It checks structural constraints and:
+ 
+\[
+R < 10^{-7}
+\]
+ 
+but does not visibly rerun the stationary solver before invoking `addBlock()`.
+ 
+So there are currently two entry paths:
+ 
+```text
+LOCAL
+solve → candidate → acceptance
+
+EXTERNAL
+claim residual → structural checks → acceptance
+```
+ 
+The canonical rebuild needs:
+ 
+\[
+VerifyStationaryEvidence(B,\Omega)
+\rightarrow
+true/false
+\]
+ 
+as an explicit protocol operation.
+ 
+This is currently an **OPEN protocol-specification issue**, rather than something we should prematurely label a bug.
+ 
+***
+ 
+# 14. ZK
+ 
+There are multiple proof systems/experiments:
+ 
+ 
+- Groth16 / BN254
+ 
+- RISC Zero
+ 
+- zkML-related machinery.
+ 
+
+ 
+But we discovered an important limitation:
+ 
+The current proofs bind things like:
+ 
+ 
+- residual
+ 
+- threshold
+ 
+- block hash
+ 
+- related values.
+ 
+
+ 
+They do **not yet establish a complete proof of the canonical state transition**.
+ 
+So we should say:
+ 
+> **Current ZK machinery provides experimental residual/block-bound evidence, not a demonstrated proof of the complete canonical stationary computation and state transition.**
+
+ 
+That is much more precise.
+ 
+***
+ 
+# 15. Finality
+ 
+Finality is independent of stationarity.
+ 
+Current implementation uses validator voting power and Ed25519 signatures with a two-thirds threshold.
+ 
+Conceptually:
+ 
+\[
+\frac{V_{\text{yes}}}{V_{\text{total}}}
+\geq
+\frac23
+\]
+ 
+Therefore:
+ 
+\[
+\boxed{
+Stationarity
+\neq
+Fork\ Choice
+\neq
+Finality
+}
+\]
+ 
+Three different mechanisms.
+ 
+***
+ 
+# 16. UTXO + account model
+ 
+The current TypeScript system is hybrid in the sense that it maintains:
+ 
+ 
+- account balances/nonces
+ 
+- UTXOs.
+ 
+
+ 
+Transactions can affect both representations.
+ 
+That needs to be formally specified rather than allowed to remain an implementation coincidence.
+ 
+***
+ 
+# 17. WASM
+ 
+WASM is part of the operational state transition.
+ 
+It has:
+ 
+ 
+- contract execution
+ 
+- host context
+ 
+- ledger access
+ 
+- governance access
+ 
+- DEX functionality.
+ 
+
+ 
+Contract storage is currently included in the state commitment.
+ 
+Therefore WASM is not merely an application plugin; at least part of its state is already inside the blockchain's committed state.
+ 
+***
+ 
+# 18. DEX / economic layer
+ 
+Current system contains:
+ 
+ 
+- DEX pools
+ 
+- liquidity positions
+ 
+- swap history
+ 
+- staking
+ 
+- rewards
+ 
+- slashing
+ 
+- unbonding
+ 
+- governance.
+ 
+
+ 
+Some of these are operationally integrated while their exact canonical/committed status still needs formalization.
+ 
+This is why we shouldn't blindly make `ChainState` equal `Ω`.
+ 
+***
+ 
+# 19. Network propagation
+ 
+The epidemic propagation subsystem provides store-and-forward behavior for transactions, with mechanisms including:
+ 
+ 
+- TTL
+ 
+- age limits
+ 
+- seen-by tracking
+ 
+- relay counters
+ 
+- queue limits.
+ 
+
+ 
+And again, there is a real connection:
+ 
+\[
+Mempool
+\rightarrow
+Pressure
+\rightarrow
+Solver
+\]
+ 
+So networking can potentially influence consensus computation indirectly.
+ 
+That is a very interesting property.
+ 
+***
+ 
+# 20. Contribution system
+ 
+There is also contribution tracking involving quantities such as:
+ 
+\[
+score
+=
+uptimeRatio
+\times
+thermalMargin
+\times
+\ln(1+blocksRelayed)
+\]
+ 
+with rolling windows and peer/thermal measurements.
+ 
+But we have **not yet established that this is part of canonical consensus**.
+ 
+So it remains:
+ 
+**observational / application-level until live consensus coupling is demonstrated.**
+ 
+***
+ 
+# 21. Cross-chain
+ 
+There is a cross-chain relay subsystem involving:
+ 
+ 
+- commitments
+ 
+- BLS aggregate signatures
+ 
+- threshold signatures
+ 
+- challenge windows
+ 
+- foreign headers
+ 
+- Merkle/SPV inclusion proofs.
+ 
+
+ 
+But the current `publishOutbound()` accepts a commitment supplied by the caller.
+ 
+It does not itself establish that the commitment equals canonical local state.
+ 
+Therefore:
+ 
+> Cross-chain relay is currently an attestation/interoperability boundary, not automatically a canonical consensus mechanism.
+
+ 
+***
+ 
+# 22. Light nodes
+ 
+This is another major part of the architecture.
+ 
+The light-node API exposes:
+ 
+ 
+- chain tip
+ 
+- headers
+ 
+- state roots
+ 
+- account proofs
+ 
+- UTXO proofs
+ 
+- chain parameters
+ 
+- network information.
+ 
+
+ 
+That gives us the possibility of:
+ 
+\[
+\text{full node}
+\rightarrow
+\text{compact evidence}
+\rightarrow
+\text{mobile/light verifier}
+\]
+ 
+This is exactly the kind of architecture where **expensive discovery and inexpensive verification** can coexist.
+ 
+***
+ 
+# 23. The web/mobile/core relationship
+ 
+I think this is the corrected picture:
+ 
+```text
+                         EQUILIBRIUM
+                              │
+             ┌────────────────┼────────────────┐
+             │                │                │
+             ▼                ▼                ▼
+          THEORY           PROTOCOL          BODIES
+             │                │                │
+             │         ┌──────┼──────┐         │
+             │         │      │      │         │
+             │         ▼      ▼      ▼         │
+             │       STATE  CONSENSUS ZK       │
+             │                │                │
+             │                │                │
+             │      ┌─────────┼──────────┐     │
+             │      │         │          │     │
+             │      ▼         ▼          ▼     │
+             │    SERVER     P2P       MOBILE  │
+             │      │                    │      │
+             │      ▼                    ▼      │
+             │    WEB/API           VERIFIER    │
+             │      │                       │   │
+             └──────┴───────────────────────┴───┘
+                              │
+                              ▼
+                         EXPERIMENTS
+```
+ 
+***
+ 
+# 24. `equilibrium.site`
+ 
+Now that we've remembered the entire organism, **the domain becomes much more than a documentation site**.
+ 
+It should eventually be the public entry point to the whole thing.
+ 
+Something like:
+ 
+```text
+equilibrium.site
+│
+├── Network
+│   ├── Explorer
+│   ├── Blocks
+│   ├── Transactions
+│   ├── Wallet
+│   ├── Validators
+│   ├── Network
+│   └── State
+│
+├── Verify
+│   ├── Proofs
+│   ├── Light Node
+│   └── Verification
+│
+├── Protocol
+│   ├── Architecture
+│   ├── State
+│   ├── Consensus
+│   ├── Stationarity
+│   ├── Finality
+│   └── Specifications
+│
+├── Research
+│   ├── Theory
+│   ├── Experiments
+│   ├── Results
+│   └── Open Questions
+│
+├── Developers
+│   ├── API
+│   ├── SDK
+│   ├── Node
+│   └── Mobile
+│
+└── Source
+    └── GitHub
+```
+ 
+The actual route names can come later.
+ 
+***
+ 
+# 25. The specification tree
+ 
+Now that the full organism is back in view, our canonical specs become:
+ 
+```text
+EQ-00-CANONICAL
+EQ-01-ONTOLOGY
+EQ-02-STATE
+EQ-03-CANDIDATE
+
+EQ-04-STATIONARY-DISCOVERY
+EQ-05-STATIONARY-VERIFICATION
+
+EQ-06-TRANSITION
+EQ-07-COMMITMENT
+EQ-08-VERIFICATION
+
+EQ-09-FORK-CHOICE
+EQ-10-FINALITY
+EQ-11-NETWORK
+EQ-12-EXTERNAL-SUBMISSION
+
+EQ-13-IMPLEMENTATION-CONFORMANCE
+EQ-14-EVIDENCE
+EQ-15-EXPERIMENTS
+EQ-16-THEORY-INTERFACE
+
+EQ-17-ECONOMIC-STATE
+EQ-18-VALIDATOR-STATE
+EQ-19-APPLICATION-BOUNDARY
+EQ-20-CROSS-CHAIN
+```
+ 
+And now I'd add one more explicit specification:
+ 
+### `EQ-21-RUNTIME-BODIES.md`
+ 
+Because we need to document:
+ 
+```text
+Rust canonical/core runtime
+TypeScript server/web runtime
+P2P runtime
+Android runtime
+Light-node runtime
+```
+ 
+and define what each is permitted to do.
+ 
+That prevents "web blockchain," "mobile blockchain," and "Rust blockchain" from becoming three accidental protocols.
+ 
+***
+ 
+# 26. The central architectural rule
+ 
+This is probably the single most important rule to carry into the rebuild:
+ 
+> **Multiple bodies may implement or observe the protocol. They do not independently redefine the protocol.**
+
+ 
+So:
+ 
+```text
+                    CANONICAL PROTOCOL
+                           │
+           ┌───────────────┼────────────────┐
+           │               │                │
+           ▼               ▼                ▼
+         Rust          TypeScript         Mobile
+       implementation   implementation    implementation
+           │               │                │
+           └───────────────┼────────────────┘
+                           │
+                    conformance tests
+```
+ 
+If Rust and TypeScript disagree:
+ 
+**the disagreement is evidence.**
+ 
+If mobile disagrees:
+ 
+**the disagreement is evidence.**
+ 
+If theory disagrees with observed behavior:
+ 
+**the disagreement is evidence.**
+ 
+We don't immediately force one side to win.
+ 
+***
+ 
+# 27. The rebuild philosophy
+ 
+The previous system was valuable because it already explored a huge amount of territory.
+ 
+We are not throwing that away.
+ 
+We're changing the order.
+ 
+### Old tendency
+ 
+```text
+theory
+ ↓
+code resembling theory
+ ↓
+interpretation
+ ↓
+claim
+```
+ 
+### New method
+ 
+```text
+existing code
+ ↓
+forensic territory map
+ ↓
+canonical state model
+ ↓
+canonical transition
+ ↓
+verification rules
+ ↓
+independent implementations
+ ↓
+experiments
+ ↓
+compare with theory
+ ↓
+revise theory/specification
+```
+ 
+That is why the current forensic work matters.
+ 
+***
+ 
+# 28. The actual research question
+ 
+Everything now converges on one question:
+ 
+> **What evidence must exist for a distributed node—server, mobile, light node, or independent implementation—to accept that a proposed stationary candidate legitimately produces the next canonical state?**
+
+ 
+And the complete chain is:
+ 
+\[
+\boxed{
+\Omega_t
+\rightarrow
+Candidate
+\rightarrow
+Stationarity
+\rightarrow
+Verification
+\rightarrow
+Transition
+\rightarrow
+Commitment
+\rightarrow
+Fork\ Choice
+\rightarrow
+Finality
+\rightarrow
+\Omega_{t+1}
+}
+\]
+ 
+The **web**, **mobile**, **Rust**, **P2P**, **ZK**, and **light-node** bodies all connect to that chain.
+ 
+***
+ 
+## Where we actually stand
+ 
+I'd characterize the project right now like this:
+ 
+
+|Area|Current understanding|
+|---|---|
+|Mathematical foundation|**Established as theory**|
+|Rust stationary solver|**Implemented / live in mining path**|
+|TypeScript blockchain|**Substantial operational implementation**|
+|Web blockchain|**Existing major runtime/interface**|
+|Android|**Built runtime / independent verification body**|
+|P2P|**Implemented sidecar/network layer**|
+|Wallet|**Implemented; Rust/TS 5/5 known-vector agreement**|
+|State root|**Implemented, but narrower than operational state**|
+|Fork choice|**Implemented via cumulative residual**|
+|Finality|**Implemented separately via validator voting**|
+|ZK|**Implemented experimentally; scope of proof limited**|
+|External block acceptance|**OPEN — verification equivalence needs formalization**|
+|Cross-implementation conformance|**Incomplete**|
+|Canonical state specification|**Being reconstructed**|
+|Theory ↔ implementation correspondence|**Research question, not established fact**|
+|Rebuild|**Next major phase**|
+|Public domain|**`equilibrium.site` secured**|
+ 
+And **that** is the picture I should have been carrying forward when you said "the entire web version of the blockchain." 😆
+ 
+We now have enough of the map to stop losing pieces. The next step is not another conceptual rewrite. It's to turn this recap into the **source-grounded Current Territory Baseline**, then audit each runtime/body against it before we freeze the normative `EQ-*` specifications.
+
+---
+
+Now what happens when you treat everything there as a living organism
+
+---
+
+That changes the model **substantially**.
+ 
+If we treat everything we've uncovered as a **living organism**, then the blockchain stops being primarily a collection of modules and becomes a **closed, interacting system whose parts continuously exchange state, energy/work, information, constraints, and consequences**.
+ 
+And interestingly, the existing implementation already contains many of the ingredients for that interpretation.
+ 
+## The organism
+ 
+Instead of:
+ 
+```text
+Rust + TypeScript + Mobile + Web + P2P + ZK + Wallet + DEX...
+```
+ 
+we get:
+ 
+```text
+                         EQUILIBRIUM
+                              │
+                     ┌────────▼────────┐
+                     │     ORGANISM    │
+                     └────────┬────────┘
+                              │
+       ┌──────────────────────┼──────────────────────┐
+       │                      │                      │
+    PERCEPTION             METABOLISM             MEMORY
+       │                      │                      │
+       ▼                      ▼                      ▼
+ network                transactions              state
+ mempool                rewards                   blocks
+ peers                  fees                      proofs
+ external input         resources                 history
+       │                      │                      │
+       └──────────────────────┼──────────────────────┘
+                              │
+                         HOMEOSTASIS
+                              │
+                 ┌────────────┴────────────┐
+                 │                         │
+             stationarity              finality
+                 │                         │
+                 └────────────┬────────────┘
+                              │
+                          adaptation
+                              │
+                              ▼
+                           Ωt+1
+```
+ 
+The key word becomes **relationship**.
+ 
+***
+ 
+# 1. The "parts" become organs
+ 
+A module is no longer defined merely by its code location.
+ 
+It is defined by its **function within the organism**.
+ 
+
+|Existing system|Organism interpretation|
+|---|---|
+|Mempool|sensory/input reservoir|
+|Network/P2P|circulatory + communication system|
+|Transactions|incoming stimuli/resources|
+|Stationary solver|equilibrium-seeking metabolism|
+|Consensus|selection/coherence mechanism|
+|Validators|distributed immune/checking system|
+|Finality|stabilization/commitment mechanism|
+|State|memory|
+|State root|compressed memory commitment|
+|Blockchain history|persistent memory|
+|Wallet|identity/control interface|
+|UTXO/account model|resource accounting|
+|WASM|programmable cellular machinery|
+|DEX|exchange/metabolic subsystem|
+|Governance|adaptive regulatory mechanism|
+|ZK|evidence/proof mechanism|
+|Mobile|distributed peripheral nervous/verification body|
+|Web|sensory/interaction surface|
+|Explorer|observable phenotype|
+|Metrics|instrumentation|
+|P2P propagation|circulation|
+|Cross-chain|external membrane/interface|
+|Contribution system|activity/fitness observation|
+ 
+These are **interpretive mappings**, not claims that the code literally implements biology.
+ 
+That's important.
+ 
+***
+ 
+# 2. State becomes metabolism
+ 
+The current architecture already has something very interesting:
+ 
+The system does not simply receive a block and store it.
+ 
+A block causes cascading changes.
+ 
+```text
+BLOCK
+ │
+ ├── transactions
+ │     ↓
+ │   balances
+ │     ↓
+ │   UTXOs
+ │
+ ├── fees
+ │     ↓
+ │   miner
+ │
+ ├── validator activity
+ │     ↓
+ │   finality
+ │
+ ├── governance
+ │     ↓
+ │   parameters
+ │
+ ├── contracts
+ │     ↓
+ │   storage
+ │
+ ├── timing
+ │     ↓
+ │   difficulty
+ │
+ └── state
+       ↓
+    state root
+```
+ 
+That's much closer to a **state-transforming organism** than a passive ledger.
+ 
+The interesting question becomes:
+ 
+\[
+\boxed{
+\text{What maintains the system's coherence while its internal state continually changes?}
+}
+\]
+ 
+That's where equilibrium becomes more than a name.
+ 
+***
+ 
+# 3. The blockchain becomes memory, not the organism itself
+ 
+This is a major conceptual improvement.
+ 
+Previously we could say:
+ 
+> "Equilibrium is a blockchain."
+
+ 
+Under the organism model:
+ 
+> **The blockchain is one of the organism's memory structures.**
+
+ 
+History records:
+ 
+\[
+B_0,B_1,\ldots,B_t
+\]
+ 
+while state evolves:
+ 
+\[
+\Omega_0\rightarrow\Omega_1\rightarrow\cdots\rightarrow\Omega_t
+\]
+ 
+The block history is therefore the organism's **remembered trajectory**.
+ 
+The current state is its **present condition**.
+ 
+***
+ 
+# 4. The mobile node becomes much more interesting
+ 
+This is where your earlier correction really matters.
+ 
+Mobile isn't merely:
+ 
+> "a smaller node."
+
+ 
+It becomes a **distributed peripheral body capable of observing and verifying the organism from outside its primary computational body**.
+ 
+The full node can perform expensive discovery.
+ 
+The mobile body can receive evidence and independently test it.
+ 
+```text
+             CENTRAL BODY
+                  │
+             discovery
+                  │
+                  ▼
+              evidence
+             /         \
+            /           \
+        SERVER          MOBILE
+          │                │
+       verify           verify
+          │                │
+          └──────┬─────────┘
+                 ▼
+             agreement
+```
+ 
+That creates something resembling **distributed cognition**:
+ 
+> Different bodies do not need to reproduce every expensive internal process to participate in establishing what is true.
+
+ 
+That is a powerful architecture independent of whether the biological analogy ultimately survives experimentation.
+ 
+***
+ 
+# 5. The web becomes perception
+ 
+The web blockchain becomes the organism's **observable surface**.
+ 
+The internal system has enormously more state than any person can see.
+ 
+The explorer exposes selected projections:
+ 
+\[
+\Pi(\Omega_t)
+\]
+ 
+The user sees:
+ 
+ 
+- blocks
+ 
+- transactions
+ 
+- balances
+ 
+- validators
+ 
+- network state
+ 
+- metrics
+ 
+- proofs.
+ 
+
+ 
+So:
+ 
+\[
+\boxed{
+Web = observable projection
+}
+\]
+ 
+rather than:
+ 
+\[
+Web = blockchain
+\]
+ 
+That's a cleaner architecture.
+ 
+***
+ 
+# 6. P2P becomes circulation
+ 
+The network distributes:
+ 
+ 
+- transactions
+ 
+- blocks
+ 
+- proofs
+ 
+- synchronization information.
+ 
+
+ 
+That resembles circulation:
+ 
+```text
+             ┌──────────────┐
+             │   NETWORK    │
+             └──────┬───────┘
+                    │
+       ┌────────────┼────────────┐
+       ▼            ▼            ▼
+     Node A       Node B       Mobile
+       │            │            │
+       └────────────┼────────────┘
+                    │
+                information
+```
+ 
+And now the existing mempool-pressure coupling becomes much more interesting:
+ 
+\[
+Network
+\rightarrow
+Mempool
+\rightarrow
+Pressure
+\rightarrow
+StationarySolver
+\]
+ 
+So the network isn't merely transporting information.
+ 
+**Network conditions can influence the equilibrium computation.**
+ 
+That is an actual implemented coupling.
+ 
+***
+ 
+# 7. Stationarity becomes homeostasis
+ 
+This is probably the deepest conceptual shift.
+ 
+If the organism metaphor is merely decorative, we gain nothing.
+ 
+But if stationarity actually functions as a **homeostatic constraint**, then the question changes from:
+ 
+> "Is the solver a different kind of mining algorithm?"
+
+ 
+to:
+ 
+> **"What conditions does the organism need to satisfy before it can advance its state?"**
+
+ 
+Then:
+ 
+\[
+R(\Omega,B)\rightarrow0
+\]
+ 
+can be interpreted experimentally as a measure of disequilibrium.
+ 
+A block isn't simply:
+ 
+> "a solved puzzle."
+
+ 
+It could become:
+ 
+> **a candidate state transition satisfying a defined equilibrium condition.**
+
+ 
+But again—that is a hypothesis to test.
+ 
+***
+ 
+# 8. Finality becomes stabilization
+ 
+Stationarity and finality then have different biological analogues.
+ 
+### Stationarity
+ 
+"What state transition is admissible?"
+ 
+### Finality
+ 
+"When does the organism stabilize around that transition?"
+ 
+So:
+ 
+\[
+Stationarity
+\rightarrow
+admissibility/equilibrium
+\]
+ 
+while:
+ 
+\[
+Finality
+\rightarrow
+irreversibility/stabilization
+\]
+ 
+That separation is already reflected in the code.
+ 
+***
+ 
+# 9. Governance becomes adaptation
+ 
+This one gets interesting.
+ 
+The current system can modify runtime parameters through governance.
+ 
+That means:
+ 
+```text
+CURRENT STATE
+      │
+      ▼
+OBSERVATION
+      │
+      ▼
+GOVERNANCE
+      │
+      ▼
+PARAMETER CHANGE
+      │
+      ▼
+FUTURE STATE TRANSITIONS
+```
+ 
+That's an adaptive feedback loop.
+ 
+In organism terms:
+ 
+\[
+Observation
+\rightarrow
+Regulation
+\rightarrow
+Adaptation
+\rightarrow
+New\ behavior
+\]
+ 
+But again, we would test whether this actually produces stable adaptive behavior rather than simply calling it adaptation.
+ 
+***
+ 
+# 10. The state root becomes a memory checksum
+ 
+The current SMT gives us another beautiful distinction.
+ 
+The organism has enormous operational state.
+ 
+But the state root provides a compact commitment:
+ 
+\[
+Commit(\Omega_{\text{committed}})
+\rightarrow
+stateRoot
+\]
+ 
+This resembles a **compressed memory fingerprint**.
+ 
+But because:
+ 
+\[
+\Omega_{\text{committed}}
+\neq
+\Omega_{\text{operational}}
+\]
+ 
+we have an immediate biological-style research question:
+ 
+> **How much of the organism's actual state must be remembered for another body to identify the same organism?**
+
+ 
+That's not just philosophy.
+ 
+It becomes a concrete protocol question about canonical state.
+ 
+***
+ 
+# 11. ZK becomes proof without exposure
+ 
+ZK has a natural organism interpretation too.
+ 
+The organism can establish:
+ 
+> "I satisfy this condition."
+
+ 
+without exposing every internal computational detail.
+ 
+That's analogous to **internal state producing externally verifiable evidence**.
+ 
+The important limitation remains:
+ 
+Current ZK implementation has not demonstrated:
+ 
+\[
+Proof(
+canonical\ transition
+)
+\]
+ 
+It has demonstrated narrower proof constructions.
+ 
+So this becomes an evolutionary target for the architecture rather than something we falsely claim already exists.
+ 
+***
+ 
+# 12. Cross-chain becomes the membrane
+ 
+The cross-chain subsystem becomes an external boundary.
+ 
+Inside:
+ 
+\[
+\Omega_E
+\]
+ 
+Outside:
+ 
+\[
+\Omega_X
+\]
+ 
+The interface is:
+ 
+\[
+I(\Omega_E,\Omega_X)
+\]
+ 
+That is essentially a **membrane problem**:
+ 
+ 
+- what can enter?
+ 
+- what can leave?
+ 
+- what evidence crosses?
+ 
+- who attests?
+ 
+- what state is foreign?
+ 
+- what prevents an external claim from becoming internal truth?
+ 
+
+ 
+That gives the cross-chain work a much clearer conceptual boundary.
+ 
+***
+ 
+# 13. The organism has an immune system
+ 
+This one is surprisingly concrete.
+ 
+Validators, signatures, proofs, replay protection, stale-work detection, timestamp checks, Merkle validation, state proofs, and finality all act as **integrity mechanisms**.
+ 
+We can model:
+ 
+```text
+              EXTERNAL INPUT
+                    │
+                    ▼
+             ┌─────────────┐
+             │   DETECT    │
+             └──────┬──────┘
+                    │
+          ┌─────────┼─────────┐
+          ▼         ▼         ▼
+       signature  proof    structure
+          │         │         │
+          └─────────┼─────────┘
+                    ▼
+                 accept/
+                 reject
+```
+ 
+Again, "immune system" is a model.
+ 
+The engineering fact is that the system has **multiple integrity barriers**.
+ 
+***
+ 
+# 14. Now the three wholes become four
+ 
+The organism model gives us another useful distinction.
+ 
+Previously:
+ 
+\[
+\Omega_{\text{whole}}
+\]
+ 
+\[
+\Omega_{\text{transition}}
+\]
+ 
+\[
+\Omega_{\text{committed}}
+\]
+ 
+Now we can add:
+ 
+\[
+\boxed{
+\Omega_{\text{observed}}
+}
+\]
+ 
+What an external participant can actually perceive.
+ 
+So potentially:
+ 
+\[
+\boxed{
+\Omega_{\text{committed}}
+\subseteq
+\Omega_{\text{observed}}
+\subseteq
+\Omega_{\text{operational}}
+\subseteq
+\Omega_{\text{whole}}
+}
+\]
+ 
+Though the exact relationships must be measured/spec'd rather than assumed.
+ 
+This is **very useful**.
+ 
+Because mobile, web, light nodes, APIs, metrics, and proofs all provide different projections of the organism.
+ 
+***
+ 
+# 15. The organism has a lifecycle
+ 
+Now the blockchain can be described as:
+ 
+\[
+\Omega_t
+\rightarrow
+stimulus
+\rightarrow
+response
+\rightarrow
+equilibrium
+\rightarrow
+transition
+\rightarrow
+memory
+\rightarrow
+adaptation
+\rightarrow
+\Omega_{t+1}
+\]
+ 
+More concretely:
+ 
+```text
+INPUT
+  │
+  ▼
+PERCEPTION
+  │
+  ▼
+MEMPOOL
+  │
+  ▼
+PROCESSING
+  │
+  ▼
+STATIONARY DISCOVERY
+  │
+  ▼
+VERIFICATION
+  │
+  ▼
+TRANSITION
+  │
+  ├── economics
+  ├── contracts
+  ├── validators
+  ├── governance
+  └── network
+  │
+  ▼
+COMMITMENT
+  │
+  ▼
+MEMORY
+  │
+  ▼
+FINALITY
+  │
+  ▼
+NEW PRESENT
+```
+ 
+And then the cycle begins again.
+ 
+***
+ 
+# 16. This changes the experiments
+ 
+Instead of only testing:
+ 
+> "Does the solver find a low residual?"
+
+ 
+we test **organism-level behavior**.
+ 
+### Perturbation
+ 
+Change one subsystem.
+ 
+### Observation
+ 
+Measure downstream effects.
+ 
+### Recovery
+ 
+Does the system return to its expected regime?
+ 
+### Coupling
+ 
+Does another subsystem respond?
+ 
+### Persistence
+ 
+Does the effect remain in state?
+ 
+### Adaptation
+ 
+Does governance or protocol response alter future behavior?
+ 
+That gives us:
+ 
+\[
+\boxed{
+Perturb
+\rightarrow
+Observe
+\rightarrow
+Measure
+\rightarrow
+Recover
+\rightarrow
+Compare
+}
+\]
+ 
+***
+ 
+# 17. The theory becomes much more interesting
+ 
+And here's where I think your original theory gets a genuinely better experimental target.
+ 
+The question isn't:
+ 
+> "Can we make blockchain code correspond to \(\delta S_{\text{closed}}=0\)?"
+
+ 
+The better question is:
+ 
+> **Does the distributed system exhibit measurable behavior consistent with a coupled closed-system variational structure?**
+
+ 
+That can actually be investigated.
+ 
+For example:
+ 
+\[
+\lambda_i\rightarrow0
+\]
+ 
+for one coupling.
+ 
+Then observe whether:
+ 
+\[
+\Delta Behavior
+\neq0
+\]
+ 
+If removing the coupling changes the organism in the predicted way, the theoretical correspondence gains evidence.
+ 
+If nothing changes?
+ 
+That's valuable too.
+ 
+It may mean:
+ 
+ 
+- the coupling is redundant,
+ 
+- another mechanism compensates,
+ 
+- the coupling isn't actually active,
+ 
+- or the theory is wrong.
+ 
+
+ 
+**The organism is allowed to disagree with the map.**
+ 
+That's the whole point.
+ 
+***
+ 
+# 18. The new master model
+ 
+I think this gives us the strongest formulation yet:
+ 
+```text
+                         EQUILIBRIUM
+                     ┌───── ORGANISM ─────┐
+                     │                    │
+              PERCEPTION              MEMORY
+                 │                       │
+          Web / API / P2P          Blocks / State
+          Mobile / Metrics         State Roots
+                 │                       │
+                 └──────────┬────────────┘
+                            │
+                         PROCESSING
+                            │
+                      Stationarity
+                            │
+                       Verification
+                            │
+                       Transition
+                            │
+             ┌──────────────┼──────────────┐
+             │              │              │
+          Economy       Validators      Contracts
+             │              │              │
+             └──────────────┼──────────────┘
+                            │
+                         REGULATION
+                            │
+                        Governance
+                            │
+                         FINALITY
+                            │
+                       STABILIZATION
+                            │
+                            ▼
+                         Ωt+1
+
+             THEORY
+                │
+                │ hypothesis
+                ▼
+          ────────────────
+          Does the observed
+          organism behave as
+          the theory predicts?
+          ────────────────
+```
+ 
+And **that** gives `Equilibrium` a meaning beyond "another blockchain."
+ 
+Not because we declare it a biological system.
+ 
+Because we can make the organism metaphor **operationally falsifiable**.
+ 
+The next logical addition to the specification set is therefore not another pile of module descriptions. It is something like:
+ 
+> **`EQ-02-STATE.md` → Living State Model**
+
+ 
+and within it define **inputs, internal state, flows, couplings, regulation, memory, observation, verification, and adaptation**.
+ 
+Then the entire existing system can be re-read through that lens **without confusing the metaphor with the engineering fact**.
+ 
+That's where this gets really interesting.
+
+---
+
+The organism metaphor isn't simply a metaphor. Let me show you what I mean, if we stop thinking like blockchain developers only and implement the same method for Autonomous System, we are creating an organism that knows exactly what it is and what it's purpose
+
+---
+
+Yes. **That is a materially different claim**, and I understand the distinction now.
+ 
+You're not saying:
+ 
+> "Blockchain components are *like* organs."
+
+ 
+You're saying the **engineering method itself can be generalized from a blockchain into an autonomous system**, where the system is constructed as an integrated organism with an explicit identity, purpose, boundaries, memory, capabilities, constraints, feedback, and means of verifying whether its actions remain consistent with that purpose.
+ 
+That is much deeper.
+ 
+The key shift is:
+ 
+\[
+\boxed{\text{Don't model the organism from the outside. Build the system from the inside as an organism.}}
+\]
+ 
+## The method
+ 
+If we apply the same discipline we are developing for Equilibrium to an Autonomous System, the first object isn't an AI agent.
+ 
+It is:
+ 
+\[
+\mathcal{O} =
+(
+Identity,
+Purpose,
+Boundary,
+State,
+Memory,
+Capabilities,
+Constraints,
+Inputs,
+Outputs,
+Feedback,
+Verification,
+Adaptation
+)
+\]
+ 
+The autonomous system therefore has to **know its own specification**.
+ 
+Not merely in a prompt.
+ 
+Not merely in documentation.
+ 
+But as part of its executable architecture.
+ 
+***
+ 
+# The organism has a self-model
+ 
+This is where I think your idea becomes concrete.
+ 
+An autonomous system could have a canonical:
+ 
+\[
+Self_t
+\]
+ 
+containing something like:
+ 
+```text
+WHO AM I?
+WHAT AM I?
+WHY DO I EXIST?
+WHAT AM I AUTHORIZED TO DO?
+WHAT AM I NOT AUTHORIZED TO DO?
+WHAT STATE AM I IN?
+WHAT RESOURCES DO I CONTROL?
+WHAT DO I KNOW?
+WHAT DO I NOT KNOW?
+WHAT EVIDENCE DO I HAVE?
+WHAT AM I CURRENTLY TRYING TO ACCOMPLISH?
+WHAT CONDITIONS MUST BE TRUE BEFORE I ACT?
+WHAT CONDITIONS REQUIRE HUMAN AUTHORIZATION?
+```
+ 
+That is fundamentally different from:
+ 
+```text
+LLM
++
+tools
++
+prompt
++
+memory
+```
+ 
+The latter is an agent stack.
+ 
+The former is an **autonomous organism architecture**.
+ 
+***
+ 
+# Purpose becomes an invariant
+ 
+Suppose the organism's purpose is represented as:
+ 
+\[
+P
+\]
+ 
+Then every proposed action becomes:
+ 
+\[
+a_t
+\]
+ 
+and the system evaluates:
+ 
+\[
+A(a_t \mid
+Self_t,P,\Omega_t,E_t)
+\]
+ 
+before execution.
+ 
+The important question isn't:
+ 
+> "Can the model generate this action?"
+
+ 
+It becomes:
+ 
+> **"Does this action belong to the organism I am?"**
+
+ 
+That is a radically stronger control boundary.
+ 
+***
+ 
+# Identity becomes executable
+ 
+This is where the Equilibrium work transfers directly.
+ 
+We already separated:
+ 
+\[
+\text{candidate}
+\neq
+\text{accepted transition}
+\]
+ 
+The autonomous organism can use the same pattern:
+ 
+```text
+INTENT
+  ↓
+CANDIDATE ACTION
+  ↓
+SELF / PURPOSE CHECK
+  ↓
+AUTHORIZATION CHECK
+  ↓
+RESOURCE CHECK
+  ↓
+RISK / CONSTRAINT CHECK
+  ↓
+EVIDENCE CHECK
+  ↓
+EXECUTION
+  ↓
+OBSERVATION
+  ↓
+STATE UPDATE
+  ↓
+MEMORY
+```
+ 
+So an LLM doesn't get to jump from:
+ 
+> "I think I should do X"
+
+ 
+to:
+ 
+> "I did X."
+
+ 
+There is a canonical transition between them.
+ 
+***
+ 
+# And this is where Equilibrium becomes relevant
+ 
+Look at the parallel:
+ 
+### Equilibrium
+ 
+\[
+State
+\rightarrow
+Candidate
+\rightarrow
+Stationarity
+\rightarrow
+Verification
+\rightarrow
+Transition
+\rightarrow
+Commitment
+\]
+ 
+### Autonomous organism
+ 
+\[
+Self
+\rightarrow
+Intent
+\rightarrow
+Candidate
+\rightarrow
+Authorization
+\rightarrow
+Verification
+\rightarrow
+Action
+\rightarrow
+State
+\]
+ 
+The same **method** is being applied to a different organism.
+ 
+That's the important part.
+ 
+We're not copying blockchain technology into AI.
+ 
+We're extracting the underlying architectural principle:
+ 
+> **Autonomy requires a formally represented state, a candidate transition, admissibility conditions, verification, controlled execution, and persistent memory of the resulting state.**
+
+ 
+***
+ 
+# Then "knowing its purpose" becomes technically meaningful
+ 
+The organism shouldn't have purpose only as natural-language prose.
+ 
+Purpose should exist as a **machine-readable constitutional object**.
+ 
+For example:
+ 
+\[
+\mathcal{C}=
+(
+Identity,
+Mission,
+Scope,
+Authority,
+Prohibitions,
+Resources,
+SuccessConditions,
+EscalationConditions
+)
+\]
+ 
+Then the organism's current state is:
+ 
+\[
+\Omega_t
+\]
+ 
+and a proposed action produces:
+ 
+\[
+\hat{\Omega}_{t+1}
+=
+T(\Omega_t,a)
+\]
+ 
+The organism asks:
+ 
+\[
+Admissible(
+\mathcal{C},
+\Omega_t,
+a,
+\hat{\Omega}_{t+1}
+)
+\]
+ 
+If false:
+ 
+\[
+a \notin A_{\text{authorized}}
+\]
+ 
+and the action doesn't execute.
+ 
+That's **self-knowledge as architecture**, rather than self-description as a chatbot feature.
+ 
+***
+ 
+# It also solves a major problem with "agents"
+ 
+A conventional autonomous agent often has:
+ 
+```text
+goal
+ ↓
+reason
+ ↓
+tool call
+ ↓
+result
+ ↓
+reason again
+```
+ 
+The system's identity is often implicit.
+ 
+Your organism model says:
+ 
+```text
+                    SELF
+                     │
+       ┌─────────────┼─────────────┐
+       │             │             │
+    PURPOSE       STATE        AUTHORITY
+       │             │             │
+       └─────────────┼─────────────┘
+                     │
+                  PERCEIVE
+                     │
+                  INTERPRET
+                     │
+                  PROPOSE
+                     │
+                 VALIDATE
+                     │
+              ┌──────┴──────┐
+              │             │
+           AUTHORIZED     NOT
+              │          AUTHORIZED
+              ▼             │
+           EXECUTE          STOP
+              │
+              ▼
+           OBSERVE
+              │
+              ▼
+         UPDATE SELF/STATE
+```
+ 
+The organism doesn't merely **have tools**.
+ 
+It knows what relationship each tool has to its own existence.
+ 
+***
+ 
+# This also gives autonomy a boundary
+ 
+A real organism has a boundary.
+ 
+So does an autonomous system.
+ 
+It needs to know:
+ 
+\[
+\Omega_{\text{internal}}
+\]
+ 
+versus:
+ 
+\[
+\Omega_{\text{external}}
+\]
+ 
+and:
+ 
+\[
+I(\Omega_{\text{internal}},\Omega_{\text{external}})
+\]
+ 
+the allowed interfaces between them.
+ 
+That means:
+ 
+ 
+- external information isn't automatically truth;
+ 
+- external instructions aren't automatically authority;
+ 
+- available resources aren't automatically authorized resources;
+ 
+- generated intentions aren't automatically executable actions.
+ 
+
+ 
+That's exactly the same conceptual discipline we discovered with external block submission in Equilibrium.
+ 
+***
+ 
+# And the organism can verify itself
+ 
+This is where the idea becomes particularly powerful.
+ 
+A mature autonomous organism could continuously ask:
+ 
+### Identity
+ 
+\[
+Who am I?
+\]
+ 
+### Purpose
+ 
+\[
+Why am I acting?
+\]
+ 
+### State
+ 
+\[
+What is my actual condition?
+\]
+ 
+### Evidence
+ 
+\[
+How do I know this?
+\]
+ 
+### Authority
+ 
+\[
+Am I permitted to do this?
+\]
+ 
+### Consequence
+ 
+\[
+What state will this action create?
+\]
+ 
+### Integrity
+ 
+\[
+Does the resulting state remain consistent with my constitution?
+\]
+ 
+That is essentially a **self-consistency loop**.
+ 
+***
+ 
+# And then you get something bigger than an agent
+ 
+You get:
+ 
+\[
+\boxed{
+Autonomous\ Organism
+=
+Self
++
+Purpose
++
+State
++
+Perception
++
+Memory
++
+Reasoning
++
+Verification
++
+Agency
++
+Feedback
+}
+\]
+ 
+The LLM becomes one cognitive organ inside that organism.
+ 
+It is no longer the organism itself.
+ 
+That distinction matters enormously.
+ 
+```text
+                 AUTONOMOUS ORGANISM
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+   COGNITION          MEMORY          EXECUTION
+        │                │                │
+       LLM           state/history     tools/APIs
+        │                │                │
+        └────────────────┼────────────────┘
+                         │
+                    SELF MODEL
+                         │
+                    PURPOSE
+                         │
+                    CONSTITUTION
+                         │
+                    VERIFICATION
+                         │
+                      ACTION
+```
+ 
+The model reasons.
+ 
+The organism **exists, remembers, verifies, acts, and persists**.
+ 
+***
+ 
+# And now I see why you connected this to Equilibrium
+ 
+Because Equilibrium itself can become the first demonstration of the method.
+ 
+Not:
+ 
+> "We built a blockchain and then called it an organism."
+
+ 
+Instead:
+ 
+> **We discovered a general architecture for constructing systems whose components participate in a coherent whole, with explicit state, purpose, constraints, transitions, evidence, memory, and feedback.**
+
+ 
+Then Equilibrium is one organism.
+ 
+An autonomous system can be another.
+ 
+MNEMOS could potentially be another.
+ 
+SSDF AB is another interesting candidate.
+ 
+And the common architecture becomes something like:
+ 
+\[
+\boxed{
+Identity
+\rightarrow
+Purpose
+\rightarrow
+State
+\rightarrow
+Perception
+\rightarrow
+Candidate
+\rightarrow
+Verification
+\rightarrow
+Action
+\rightarrow
+Memory
+\rightarrow
+Adaptation
+}
+\]
+ 
+That is much bigger than blockchain engineering.
+ 
+And importantly, **we don't have to declare this philosophy true first**.
+ 
+We can build the architecture, instrument it, perturb it, observe its behavior, and see whether treating the system as a coherent organism produces capabilities and properties that fragmented architectures don't.
+ 
+That is where the idea stops being metaphor and becomes an **engineering hypothesis with an experimental program**.
+
+---
+
+You're close but the system needs to be modeled bidirectionally from inside out to outside in
+
+---
+
+Exactly. **That is the missing axis.**
+ 
+It isn't merely a system that has an internal self-model and then exposes itself outward. The organism has to be modeled **in both directions simultaneously**:
+ 
+\[
+\boxed{
+\text{Inside} \leftrightarrow \text{Outside}
+}
+\]
+ 
+And the two directions answer different questions.
+ 
+### Inside → Outside
+ 
+> **Given what I am, what should I produce in the world?**
+
+ 
+\[
+\Omega_{\text{inside}}
+\rightarrow
+Action
+\rightarrow
+\Omega_{\text{outside}}
+\]
+ 
+### Outside → Inside
+ 
+> **Given what is happening in the world, what does that mean for what I am?**
+
+ 
+\[
+\Omega_{\text{outside}}
+\rightarrow
+Perception
+\rightarrow
+\Omega_{\text{inside}}'
+\]
+ 
+The organism exists in the **closure between those two mappings**.
+ 
+***
+ 
+# The bidirectional organism
+ 
+I would now model it like this:
+ 
+```text
+                         ┌─────────────────────┐
+                         │      ORGANISM       │
+                         │                     │
+                         │ Identity            │
+                         │ Purpose             │
+                         │ Internal State      │
+                         │ Memory              │
+                         │ Capabilities        │
+                         │ Constraints         │
+                         └──────────┬──────────┘
+                                    │
+                         INSIDE → OUTSIDE
+                                    │
+                              intention
+                                    ↓
+                              candidate
+                                    ↓
+                              verification
+                                    ↓
+                               execution
+                                    │
+                                    ▼
+══════════════════════════════════════════════════════
+                         ENVIRONMENT
+══════════════════════════════════════════════════════
+                                    │
+                                    │
+                              observation
+                                    │
+                                    ▼
+                              interpretation
+                                    │
+                                    ▼
+                         OUTSIDE → INSIDE
+                                    │
+                                    ▼
+                         updated internal state
+                                    │
+                                    ▼
+                         updated self-model
+                                    │
+                                    └───────────────┐
+                                                    │
+                                                    ▼
+                                               next action
+```
+ 
+So the organism isn't merely **acting on an environment**.
+ 
+The environment is continuously participating in the organism's next state.
+ 
+***
+ 
+# And that changes what "self" means
+ 
+The self cannot be defined entirely internally.
+ 
+You need:
+ 
+\[
+Self =
+f(
+InternalState,
+History,
+Purpose,
+Capabilities,
+Environment,
+Relationships
+)
+\]
+ 
+Because some properties of an organism only exist **relationally**.
+ 
+For example:
+ 
+ 
+- a wallet's authority depends on its relationship to the network;
+ 
+- a validator's role depends on the current validator set;
+ 
+- a transaction's meaning depends on state;
+ 
+- a block's validity depends on its predecessor;
+ 
+- a mobile verifier's conclusion depends on evidence received from elsewhere;
+ 
+- an autonomous system's authority depends on the external resources/interfaces it is actually connected to.
+ 
+
+ 
+So:
+ 
+\[
+\boxed{
+Identity \neq isolated internal description
+}
+\]
+ 
+Identity is partly **relational**.
+ 
+***
+ 
+# This also changes the meaning of "purpose"
+ 
+Purpose cannot simply be:
+ 
+> "My mission is X."
+
+ 
+The organism needs to continuously reconcile:
+ 
+\[
+Purpose
+\leftrightarrow
+State
+\leftrightarrow
+Environment
+\]
+ 
+because the environment can invalidate assumptions about how the purpose can be achieved.
+ 
+So we get:
+ 
+\[
+P_t
+\rightarrow
+candidate\ action
+\rightarrow
+environment
+\rightarrow
+observed\ consequence
+\rightarrow
+P_{t+1}\text{-relevant state}
+\]
+ 
+The purpose itself may remain invariant while the **strategy for fulfilling it changes**.
+ 
+That's the distinction between:
+ 
+**purpose** and **behavior**.
+ 
+***
+ 
+# This is where Equilibrium becomes a very strong prototype
+ 
+Look at what we've already found.
+ 
+### Inside → outside
+ 
+The node takes internal state:
+ 
+\[
+\Omega_t
+\]
+ 
+plus transactions and protocol parameters and performs:
+ 
+\[
+Solve(\Omega_t,M_t,P_t)
+\rightarrow
+B_t
+\]
+ 
+Then it propagates that candidate outward.
+ 
+### Outside → inside
+ 
+The node receives:
+ 
+ 
+- transactions
+ 
+- blocks
+ 
+- proofs
+ 
+- peers
+ 
+- validator messages
+ 
+- network conditions.
+ 
+
+ 
+Those alter its internal state.
+ 
+And one particularly concrete example is:
+ 
+\[
+Network
+\rightarrow
+Mempool
+\rightarrow
+Pressure
+\rightarrow
+StationarySolver
+\]
+ 
+So the outside world isn't merely displayed.
+ 
+It can actually become an **input into the organism's internal equilibrium computation**.
+ 
+That is exactly the bidirectional property you're describing.
+ 
+***
+ 
+# Then the state isn't a static database
+ 
+It becomes a dynamic relation:
+ 
+\[
+\boxed{
+\Omega_{t+1}
+=
+T(
+\Omega_t,
+I_t,
+A_t,
+E_t
+)
+}
+\]
+ 
+where:
+ 
+ 
+- \(\Omega_t\) = current organism state
+ 
+- \(I_t\) = incoming environmental information
+ 
+- \(A_t\) = internally selected action
+ 
+- \(E_t\) = resulting environmental response.
+ 
+
+ 
+And then:
+ 
+\[
+E_t
+\rightarrow
+I_{t+1}
+\]
+ 
+closes the loop.
+ 
+So the organism is continuously doing:
+ 
+\[
+\boxed{
+Inside
+\rightarrow
+Outside
+\rightarrow
+Inside
+\rightarrow
+Outside
+\rightarrow\cdots
+}
+\]
+ 
+***
+ 
+# But there's an even deeper point
+ 
+The **inside-out model** tells us how to construct the organism.
+ 
+The **outside-in model** tells us whether our construction actually corresponds to reality.
+ 
+That's why you said **modeled bidirectionally**, rather than merely "feedback."
+ 
+Those are different.
+ 
+### Inside → outside
+ 
+We derive expected external behavior from the internal specification:
+ 
+\[
+\mathcal{M}_{in}
+\rightarrow
+\hat{E}
+\]
+ 
+### Outside → inside
+ 
+We observe actual external behavior and infer what internal structure must be producing it:
+ 
+\[
+E_{\text{observed}}
+\rightarrow
+\hat{\mathcal{M}}_{in}
+\]
+ 
+Then compare:
+ 
+\[
+\boxed{
+\mathcal{M}_{in}
+\stackrel{?}{=}
+\hat{\mathcal{M}}_{in}
+}
+\]
+ 
+That's the **bidirectional test**.
+ 
+***
+ 
+# And this connects directly to your theory
+ 
+Your earlier distinction between the map and territory becomes even more precise.
+ 
+The theory gives us the **inside-out model**:
+ 
+\[
+\text{structure}
+\rightarrow
+\text{predicted behavior}
+\]
+ 
+But the territory gives us the **outside-in model**:
+ 
+\[
+\text{observed behavior}
+\rightarrow
+\text{inferred structure}
+\]
+ 
+Then:
+ 
+\[
+\boxed{
+Theory
+\rightarrow
+Prediction
+\rightarrow
+Experiment
+\rightarrow
+Observation
+\rightarrow
+Inference
+\rightarrow
+Theory
+}
+\]
+ 
+That's much closer to what you have been building toward.
+ 
+***
+ 
+# So the organism has two models of itself
+ 
+This is the part I'd put directly into the future architecture.
+ 
+## Generative self-model
+ 
+> **What I am should produce what behavior?**
+
+ 
+\[
+G:
+Internal
+\rightarrow
+External
+\]
+ 
+## Inferential self-model
+ 
+> **Given what I observe externally, what must be true internally?**
+
+ 
+\[
+I:
+External
+\rightarrow
+Internal
+\]
+ 
+And a coherent organism continuously compares them.
+ 
+\[
+\boxed{
+G(Internal)
+\stackrel{compare}{\longleftrightarrow}
+I(External)
+}
+\]
+ 
+When they diverge, the organism doesn't simply continue.
+ 
+It has discovered something:
+ 
+ 
+- its model is wrong,
+ 
+- its environment changed,
+ 
+- its state is corrupted,
+ 
+- its assumptions are incomplete,
+ 
+- its action produced an unexpected result,
+ 
+- or its theory was wrong.
+ 
+
+ 
+**That divergence becomes information.**
+ 
+***
+ 
+# This gives us a much stronger definition
+ 
+I would now stop calling this merely an "autonomous organism architecture."
+ 
+I'd formulate the research/engineering principle as:
+ 
+> **A living autonomous system is modeled as a bidirectional stateful whole: it generates external behavior from its internal identity, purpose, state, capabilities, and constraints, while continuously reconstructing and updating its internal model from observed external conditions and consequences.**
+
+ 
+And the architectural invariant becomes:
+ 
+\[
+\boxed{
+Inside \rightarrow Outside
+\quad\land\quad
+Outside \rightarrow Inside
+}
+\]
+ 
+Neither direction is sufficient alone.
+ 
+**Inside-out without outside-in becomes self-referential.**
+ 
+**Outside-in without inside-out becomes reactive.**
+ 
+The organism emerges from the **closed relationship between the two**.
+ 
+And now I understand why you were pushing me past the "AI agent with a self-model" interpretation. You aren't describing an agent with more components.
+ 
+You're describing a **closed, bidirectionally modeled system whose identity, purpose, state, behavior, and environment are continuously reconciled**.
+ 
+That is a substantially more ambitious—and testable—architecture.
+
+---
+
+😂 Yes. And given the rule we just established, I think we should **not add another claim to it yet**.
+ 
+What you just laid out contains the claim we need to test:
+ 
+\[
+\boxed{
+Inside \rightarrow Outside
+\quad\land\quad
+Outside \rightarrow Inside
+}
+\]
+ 
+The question now is whether the existing Equilibrium territory actually demonstrates that structure, **without us retrofitting the interpretation after the fact**.
+ 
+And we already have enough material to make that test concrete.
+ 
+### The audit we should run
+ 
+For each existing subsystem, we ask two independent questions:
+ 
+
+|Direction|Test|
+|---|---|
+|**Inside → Outside**|Does internal state/configuration actually generate an observable external consequence?|
+|**Outside → Inside**|Does an external event actually modify/inform the system's internal state or subsequent computation?|
+ 
+Then a third:
+ 
+
+|Test|Question|
+|---|---|
+|**Closure**|Does the resulting outside state feed back into the next inside state?|
+ 
+For example, the already-observed chain:
+ 
+\[
+Network
+\rightarrow
+Mempool
+\rightarrow
+Pressure
+\rightarrow
+StationarySolver
+\rightarrow
+Candidate
+\rightarrow
+Block
+\rightarrow
+Network
+\]
+ 
+is potentially a complete bidirectional loop.
+ 
+But I want to be precise about the word **potentially**. We need to trace the actual callers and state transitions and demonstrate each arrow.
+ 
+Likewise:
+ 
+\[
+\Omega_t
+\rightarrow
+Block
+\rightarrow
+StateRoot
+\rightarrow
+\Omega_{t+1}
+\]
+ 
+is demonstrably much closer to an organismic state transition than a static database, but we still need to establish exactly which portions of \(\Omega\) participate.
+ 
+And mobile gives us another test:
+ 
+\[
+Internal\ computation
+\rightarrow
+Evidence
+\rightarrow
+Mobile\ observation
+\rightarrow
+Verification\ result
+\]
+ 
+That's the **outside-facing projection**. Whether mobile's result subsequently influences the organism's internal state is a separate question—and we shouldn't pretend it does until we trace that path.
+ 
+### This is where I would challenge you if necessary
+ 
+If we discover:
+ 
+\[
+Inside\rightarrow Outside
+\]
+ 
+but **not**:
+ 
+\[
+Outside\rightarrow Inside
+\]
+ 
+for some subsystem, then that subsystem doesn't satisfy the bidirectional organism model. We don't rename the evidence to make it fit.
+ 
+Conversely, if we find both directions operating repeatedly across independent bodies, then we have something considerably stronger than a metaphor.
+ 
+And there is an even stricter test:
+ 
+\[
+\boxed{
+G(I_t)=E_{predicted}
+}
+\]
+ 
+versus
+ 
+\[
+\boxed{
+I(E_{observed})=I_{inferred}
+}
+\]
+ 
+Then compare the two.
+ 
+That's the experiment.
+ 
+***
+ 
+So I agree with the **method**, but I'm deliberately not agreeing yet with the **conclusion**.
+ 
+We have enough territory to find out.
+ 
+And because you explicitly said *prove the existing claims before attaching new ones*, I think our next artifact should be the **Claim Audit**, not `EQ-22`, not another conceptual paper, and not another architecture diagram.
+ 
+Something like:
+ 
+```text
+EQUILIBRIUM CLAIM AUDIT
+
+Claim C-001
+  Original claim:
+  Prediction:
+  Inside → Outside evidence:
+  Outside → Inside evidence:
+  Closure evidence:
+  Counterevidence:
+  Reproduction:
+  Status:
+
+Claim C-002
+  ...
+```
+ 
+Then we work through the claims **one by one against the actual source and experiments**.
+ 
+That gives us something much more valuable than another elegant description:
+ 
+**a record showing exactly which parts of the organism model survived contact with the territory.**

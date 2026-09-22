@@ -14,6 +14,8 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * MainActivity — landing screen for the sideloaded miner app.
@@ -130,6 +132,48 @@ class MainActivity : AppCompatActivity() {
         // ── Join network (QR / share) ─────────────────────────────────────────
         findViewById<MaterialButton>(R.id.joinNetworkBtn).setOnClickListener {
             startActivity(Intent(this, BootstrapQrActivity::class.java))
+        }
+
+        // Same packet the website serves: continuity, residual, merkle, header.
+        // This activity does not search for a nonce.
+        findViewById<MaterialButton>(R.id.verifySiteButton).setOnClickListener {
+            val base = findViewById<EditText>(R.id.siteUrlInput).text.toString().trim().trimEnd('/')
+            val lightStatus = findViewById<TextView>(R.id.lightStatus)
+            if (base.isEmpty()) {
+                lightStatus.text = getString(R.string.light_need_url)
+                return@setOnClickListener
+            }
+            lightStatus.text = getString(R.string.checking_updates)
+            Thread {
+                try {
+                    val conn = (URL("$base/api/light?network=testnet").openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 8000
+                        readTimeout = 8000
+                        requestMethod = "GET"
+                    }
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(text)
+                    val agree = json.optJSONObject("bidirectional")?.optBoolean("agree") ?: false
+                    val checks = json.optJSONArray("checks")
+                    var pass = 0
+                    val total = checks?.length() ?: 0
+                    if (checks != null) {
+                        for (i in 0 until checks.length()) {
+                            if (checks.getJSONObject(i).optBoolean("ok")) pass++
+                        }
+                    }
+                    val line = getString(
+                        R.string.light_result,
+                        json.optInt("height"),
+                        if (agree) "agree" else "diverge",
+                        pass,
+                        total,
+                    )
+                    handler.post { lightStatus.text = line }
+                } catch (e: Exception) {
+                    handler.post { lightStatus.text = getString(R.string.light_failed, e.message ?: "error") }
+                }
+            }.start()
         }
 
         // ── Update check ──────────────────────────────────────────────────────

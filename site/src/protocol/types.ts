@@ -1,0 +1,311 @@
+export type NetworkId = "testnet" | "mainnet";
+
+export interface Couplings {
+  hash: number;
+  structural: number;
+  continuity: number;
+  mempool: number;
+  fees: number;
+}
+
+export const DEFAULT_COUPLINGS: Couplings = {
+  hash: 1,
+  structural: 1,
+  continuity: 1,
+  mempool: 1,
+  fees: 1,
+};
+
+export interface NetworkParams {
+  id: NetworkId;
+  chainId: number;
+  name: string;
+  domain: string;
+  targetBlockTimeMs: number;
+  residualThreshold: number;
+  territoryThreshold: number;
+  initialDifficulty: number;
+  baseReward: number;
+  halvingInterval: number;
+  maxTxPerBlock: number;
+  mempoolCap: number;
+  finalityQuorum: number;
+  finalityLag: number;
+  allowFaucet: boolean;
+  faucetAmount: number;
+}
+
+export interface AccountState {
+  balance: number;
+  nonce: number;
+}
+
+export interface TxRecord {
+  hash: string;
+  from: string;
+  to: string;
+  amount: number;
+  fee: number;
+  nonce: number;
+  timestamp: number;
+  status: "pending" | "confirmed" | "failed";
+  signature: string;
+  publicKey: string;
+  blockHash: string | null;
+  blockHeight: number | null;
+}
+
+export interface ResidualBreakdown {
+  canonical: number;
+  canonicalFp: number;
+  territory: number;
+  territoryFp: number;
+  violations: {
+    hash: number;
+    structural: number;
+    continuity: number;
+    mempool: number;
+    fees: number;
+  };
+  lambdas: Couplings;
+  hFrac: number;
+  hashVal: string;
+}
+
+export interface BlockRecord {
+  hash: string;
+  height: number;
+  prevHash: string;
+  merkleRoot: string;
+  stateRoot: string;
+  timestamp: number;
+  nonce: number;
+  difficulty: number;
+  residual: number;
+  residualFp: number;
+  territoryResidual: number;
+  committedPressure: number;
+  recursionDepth: number;
+  coinbaseReward: number;
+  miner: string;
+  txCount: number;
+  transactions: TxRecord[];
+  finalized: boolean;
+  couplings: Couplings;
+  breakdown: ResidualBreakdown;
+  solverIterations: number;
+  verified: boolean;
+  verifyNotes: string[];
+}
+
+export interface ValidatorRecord {
+  address: string;
+  moniker: string;
+  bondedStake: number;
+  accumulatedRewards: number;
+  slashed: boolean;
+  jailed: boolean;
+  uptime: number;
+  blocksProposed: number;
+  commission: number;
+}
+
+export interface Delegation {
+  delegator: string;
+  validator: string;
+  amount: number;
+}
+
+export interface Proposal {
+  id: number;
+  title: string;
+  proposer: string;
+  deposit: number;
+  yes: number;
+  no: number;
+  abstain: number;
+  status: "open" | "passed" | "failed" | "executed";
+  couplingKey?: keyof Couplings;
+  couplingValue?: number;
+}
+
+export interface ModelClaim {
+  id: number;
+  uri: string;
+  residualFp: number;
+  supportHash: string;
+  status: "proposed" | "verified" | "slashed";
+  proposedAt: number;
+}
+
+export interface FinalityRound {
+  height: number;
+  blockHash: string;
+  votes: number;
+  votingPower: number;
+  totalVotingPower: number;
+  finalized: boolean;
+}
+
+export interface DexPool {
+  id: string;
+  tokenA: string;
+  tokenB: string;
+  reserveA: number;
+  reserveB: number;
+  fee: number;
+  txCount: number;
+}
+
+export interface SwapEvent {
+  poolId: string;
+  trader: string;
+  amountIn: number;
+  amountOut: number;
+  tokenIn: string;
+  tokenOut: string;
+  timestamp: number;
+}
+
+export interface BlockStat {
+  height: number;
+  residual: number;
+  territoryResidual: number;
+  mempoolPressure: number;
+  difficulty: number;
+  blockTime: number;
+  txCount: number;
+  timestamp: number;
+}
+
+export interface PeerRecord {
+  peerId: string;
+  address: string;
+  latencyMs: number;
+  height: number;
+  connected: boolean;
+  kind: "server" | "mobile" | "light" | "validator";
+}
+
+export type FlowDir = "in" | "out" | "close";
+
+export interface OrganismEvent {
+  id: number;
+  t: number;
+  dir: FlowDir;
+  organ:
+    | "network"
+    | "mempool"
+    | "solver"
+    | "verify"
+    | "transition"
+    | "memory"
+    | "finality"
+    | "wallet"
+    | "governance"
+    | "mesh";
+  message: string;
+}
+
+export interface VerificationReport {
+  ok: boolean;
+  verifyEvals: number;
+  checks: Array<{
+    name: string;
+    ok: boolean;
+    detail: string;
+  }>;
+}
+
+export interface Wholes {
+  committed: string[];
+  observed: string[];
+  operational: string[];
+  whole: string[];
+}
+
+export interface ExperimentArm {
+  residual: number;
+  iterations: number;
+  nonce: number;
+  reward: number;
+  pressure: number;
+  couplings: Couplings;
+}
+
+export interface PairedResult {
+  kind: "paired";
+  key: keyof Couplings;
+  inject: number;
+  pressureAtSolve: number;
+  withLambda: ExperimentArm;
+  withoutLambda: ExperimentArm;
+  deltaR: number;
+  deltaIters: number;
+  causal: boolean;
+}
+
+export interface BidirectionalTrial {
+  height: number;
+  claimedR: number;
+  inferredR: number;
+  agree: boolean;
+  discoveryIters: number;
+  verifyEvals: number;
+  forgedRejected: boolean;
+}
+
+export interface PersistedBody {
+  blocks: BlockRecord[];
+  accounts: Array<[string, AccountState]>;
+  validators: ValidatorRecord[];
+  mempool: TxRecord[];
+  txs: TxRecord[];
+  pools: DexPool[];
+  delegations: Delegation[];
+  proposals: Proposal[];
+  models: ModelClaim[];
+  difficulty: number;
+  couplings: Couplings;
+  lastMineAt: number;
+}
+
+export interface ChainSnapshot {
+  network: NetworkId;
+  params: NetworkParams;
+  height: number;
+  finalizedHeight: number;
+  finalityLag: number;
+  latestHash: string;
+  genesisHash: string;
+  difficulty: number;
+  lastResidual: number;
+  lastTerritoryResidual: number;
+  mempoolSize: number;
+  mempoolPressure: number;
+  tps: number;
+  totalTxCount: number;
+  validatorCount: number;
+  totalBonded: number;
+  supply: number;
+  peers: PeerRecord[];
+  recentBlocks: BlockRecord[];
+  recentTxs: TxRecord[];
+  mempool: TxRecord[];
+  validators: ValidatorRecord[];
+  stats: BlockStat[];
+  events: OrganismEvent[];
+  pools: DexPool[];
+  swaps: SwapEvent[];
+  couplings: Couplings;
+  wholes: Wholes;
+  lastVerify: VerificationReport | null;
+  miner: string;
+  treasury: string;
+  persisted: boolean;
+  delegations: Delegation[];
+  proposals: Proposal[];
+  models: ModelClaim[];
+  lastPaired: PairedResult | null;
+  lastBidirectional: BidirectionalTrial | null;
+}

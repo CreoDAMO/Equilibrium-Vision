@@ -1,0 +1,889 @@
+Absolutely. Here is the current evidence ledger, separating what the territory has demonstrated from what remains hypothesis/open.
+
+EQUILIBRIUM — CURRENT CLAIM & EXPERIMENT SUMMARY
+
+Core rule
+
+> The theory is the map. The implementation is the territory.
+
+
+
+And the methodology is now:
+
+\[
+\boxed{
+Claim
+\rightarrow
+Prediction
+\rightarrow
+Test
+\rightarrow
+Evidence
+\rightarrow
+Status
+}
+\]
+
+No new architectural claims are added until existing claims survive testing.
+
+
+---
+
+1. What Equilibrium is right now
+
+The running site is not being treated as documentation.
+
+It is a live organism/kernel experiment with:
+
+testnet
+
+mainnet
+
+Proof of Stationarity
+
+block verification
+
+independent browser verification
+
+finality
+
+mempool
+
+pressure
+
+ablation experiments
+
+mobile/light verification
+
+wallet
+
+claim audit
+
+state/DEX/validator views.
+
+
+The important distinction is:
+
+\[
+\boxed{\text{source exists} \neq \text{runtime exists}}
+\]
+
+The current public runtime therefore does not claim that every subsystem in the repository is already part of the live organism.
+
+
+---
+
+2. Proof of Stationarity
+
+Current claim
+
+Every live block has a stationarity computation rather than an arbitrary/random residual.
+
+Current evidence
+
+The kernel:
+
+1. searches for a nonce,
+
+
+2. produces a candidate,
+
+
+3. publishes residual information,
+
+
+4. independently recomputes the residual during verification.
+
+
+
+The current model distinguishes:
+
+\[
+R_{\text{territory}}
+\]
+
+from
+
+\[
+R_{\text{canonical}}
+\]
+
+with canonical \(R\) governing:
+
+block admission,
+
+coinbase/reward,
+
+fork-choice.
+
+
+Status
+
+LIVE
+
+The important remaining distinction is that this demonstrates an implemented computational mechanism; it does not establish that the mechanism is mathematically identical to the full theoretical variational system.
+
+
+---
+
+3. VerifyStationaryEvidence
+
+This is now a central protocol operation.
+
+Verification checks the block/evidence rather than simply trusting a miner's claimed residual.
+
+The live path includes checks around:
+
+continuity
+
+timestamp
+
+Merkle commitment
+
+residual
+
+header hash
+
+threshold
+
+signatures.
+
+
+The old conceptual concern was:
+
+> What happens if an external party simply tells the node what \(R\) is?
+
+
+
+The current runtime instead reconstructs the relevant evidence.
+
+Status
+
+LIVE / ADVERSARIAL TESTED
+
+
+---
+
+4. Forged-residual experiment
+
+The experiment:
+
+\[
+R_{\text{real}}
+\rightarrow
+R_{\text{forge}}
+\rightarrow
+\text{submit}
+\]
+
+The membrane rejects the forged residual.
+
+That matters because it demonstrates that an external claim cannot simply redefine the internally verifiable quantity.
+
+Conceptually:
+
+\[
+\text{external claim}
+\rightarrow
+\text{reconstruction}
+\rightarrow
+\text{comparison}
+\rightarrow
+\boxed{\text{reject}}
+\]
+
+Status
+
+LIVE / ADVERSARIAL TEST PASSED
+
+This is one of the strongest pieces of evidence so far.
+
+
+---
+
+5. Stationarity ≠ Finality
+
+The live system explicitly separates:
+
+\[
+\boxed{\text{Stationarity}}
+\]
+
+from
+
+\[
+\boxed{\text{Finality}}
+\]
+
+A block can be:
+
+valid,
+
+verified,
+
+part of the current tip,
+
+
+while still being:
+
+unfinalized.
+
+
+The current observed BFT lag is approximately 2 blocks.
+
+The home page exposes this rather than hiding the distinction.
+
+Status
+
+LIVE
+
+This validates the architectural separation between candidate/block validity and subsequent BFT finalization.
+
+
+---
+
+6. Inside → Outside
+
+The proposed organism model says:
+
+\[
+G(I_t)\rightarrow E_t
+\]
+
+Internal state should produce observable external behavior.
+
+The live kernel gives us an actual experimental path:
+
+\[
+Internal\ State
+\rightarrow
+Stationary\ Discovery
+\rightarrow
+Block
+\rightarrow
+External\ Evidence
+\]
+
+The browser can then observe what the kernel actually produced.
+
+Status
+
+LIVE / TESTABLE
+
+This is no longer merely a diagram.
+
+
+---
+
+7. Outside → Inside
+
+The second half is:
+
+\[
+I(E_t)\rightarrow \hat I_t
+\]
+
+The browser/local verifier takes external evidence and reconstructs what that evidence implies.
+
+That includes recomputing the tip rather than simply displaying the node's answer.
+
+The important comparison is:
+
+\[
+G(I_t)
+\stackrel{?}{=}
+I(E_t)
+\]
+
+Current result
+
+Agreement is observable in the Verify surface.
+
+Status
+
+LIVE MEASUREMENT
+
+We should still be careful not to generalize this one successful correspondence into a proof that every possible state transition is bidirectionally closed.
+
+
+---
+
+8. Bidirectional organism experiment
+
+This is the major conceptual transition.
+
+The original statement was:
+
+> Inside → outside and outside → inside.
+
+
+
+That has now become an experiment.
+
+The organism isn't merely being described as:
+
+> “blockchain components resemble biological organs.”
+
+
+
+Instead, the engineering hypothesis is being tested through:
+
+\[
+\boxed{
+Inside
+\rightarrow
+Outside
+\rightarrow
+Inside'
+}
+\]
+
+The critical observable is whether the reconstructed internal interpretation agrees with what generated the external evidence.
+
+Status
+
+EXPERIMENTALLY SUPPORTED IN THE TESTED PATH
+
+Not yet a universal proof of organismhood.
+
+
+---
+
+9. Mobile/light body
+
+The Android/light validation model is now clearer.
+
+It does not rediscover the expensive stationary solution.
+
+Instead it performs the cheap verification path:
+
+continuity
+
+timestamp
+
+residual recomputation
+
+Merkle verification
+
+header commitment
+
+optional thermal defer.
+
+
+So:
+
+\[
+\boxed{
+Discovery = expensive
+}
+\]
+
+while:
+
+\[
+\boxed{
+Verification = cheap
+}
+\]
+
+That is an important architectural property for a distributed organism with different computational bodies.
+
+Status
+
+IMPLEMENTED / TESTABLE
+
+The Android/source body itself should not be counted as part of the live public runtime merely because the source exists.
+
+
+---
+
+10. Mempool pressure
+
+The intended coupling is:
+
+\[
+Network
+\rightarrow
+Mempool
+\rightarrow
+Pressure
+\rightarrow
+Solver
+\]
+
+The pressure experiment has now produced two different observations.
+
+Earlier run
+
+12 transactions:
+
+\[
+R:1.931e^{-4}\rightarrow1.063e^{-3}
+\]
+
+but pressure reported:
+
+\[
+0\rightarrow0
+\]
+
+That exposed a measurement inconsistency.
+
+We did not accept the result as proof.
+
+Newer run
+
+The experiment now reports:
+
+\[
+P:0.002\rightarrow0
+\]
+
+and:
+
+\[
+R:4.207e^{-4}\rightarrow7.642e^{-5}
+\]
+
+with:
+
+\[
+\Delta R=-3.442e^{-4}
+\]
+
+So the pressure measurement is now actually changing.
+
+And importantly:
+
+> More pressure did not mean a larger residual in this particular run.
+
+
+
+The residual improved.
+
+Why that's important
+
+We should not invent:
+
+\[
+P\uparrow\Rightarrow R\uparrow
+\]
+
+That isn't demonstrated.
+
+Instead, the correct claim is:
+
+> Pressure is an observable environmental/input variable, and its effect on the stationary computation must be established by controlled ablation.
+
+
+
+Status
+
+PARTIAL / ABLATION TEST IN PROGRESS
+
+
+---
+
+11. The λ₃ ablation
+
+The pressure coupling is:
+
+\[
+\lambda_3
+\]
+
+The experiment can set:
+
+\[
+\lambda_3=0
+\]
+
+and mine under that constitution.
+
+That gives us the correct experimental question:
+
+\[
+Behavior_{\lambda_3=1}
+\stackrel{?}{\neq}
+Behavior_{\lambda_3=0}
+\]
+
+The current ablated run demonstrated that pressure itself can change while the constitution is altered.
+
+But one run does not yet prove that λ₃ contributes causally to solver behavior.
+
+Status
+
+OPEN
+
+The decisive experiment is a paired controlled run:
+
+same starting state
+
+same transaction workload
+
+same other λ values
+
+\(\lambda_3=1\)
+
+\(\lambda_3=0\)
+
+
+Then compare:
+
+\[
+R,\quad
+\text{iterations},\quad
+\text{nonce},\quad
+\text{objective/solver behavior}.
+\]
+
+
+---
+
+12. What the ablation philosophy has established
+
+This is now an explicit scientific rule of the site:
+
+> If \(\lambda_i\rightarrow0\) does not change behavior, the coupling may not be doing work.
+
+
+
+And:
+
+> That is allowed.
+
+
+
+This is critical.
+
+The organism is allowed to disagree with the map.
+
+Therefore:
+
+\[
+\boxed{
+\text{Theory does not get veto power over observation.}
+}
+\]
+
+A failed coupling is evidence, not something to hide.
+
+
+---
+
+13. Committed state vs operational state
+
+Current model:
+
+\[
+\boxed{
+\Omega_{\text{committed}}
+\subset
+\Omega_{\text{operational}}
+}
+\]
+
+The state commitment includes core state such as:
+
+account balances/nonces
+
+UTXOs
+
+WASM contract storage.
+
+
+But operational state also includes things such as:
+
+validators
+
+DEX pools
+
+governance
+
+network state
+
+mempool
+
+finality machinery.
+
+
+DEX reserves can therefore move without rewriting the current state root.
+
+Status
+
+OBSERVED / EXPLICIT DESIGN PROPERTY
+
+This is not currently being claimed as “the entire organism is cryptographically committed.”
+
+Quite the opposite: the boundary is visible.
+
+
+---
+
+14. Mempool pressure and header commitment
+
+The current design commits pressure-related information in the block header so a light body can reconstruct the relevant value without blindly trusting the miner's reported \(P\).
+
+That strengthens:
+
+\[
+External\ Evidence
+\rightarrow
+Independent\ Verification
+\]
+
+Status
+
+LIVE / TESTABLE
+
+The exact canonical semantics still deserve continued testing.
+
+
+---
+
+15. Wallet
+
+The live surface provides:
+
+Ed25519 key generation
+
+SHA-256-derived address
+
+testnet faucet
+
+signing
+
+broadcast.
+
+
+The Rust/TS address derivation previously matched across 5/5 differential vectors.
+
+Testnet/mainnet are distinguished:
+
+\[
+ChainID_{testnet}=2
+\]
+
+\[
+ChainID_{mainnet}=1
+\]
+
+and mainnet refuses the faucet.
+
+Status
+
+LIVE, with the cross-implementation equivalence previously 5/5 but UNGUARDED because continuous CI had not yet been established.
+
+
+---
+
+16. What we explicitly do NOT claim
+
+This is just as important as what we claim.
+
+Theory ≠ implementation proof
+
+We do not claim:
+
+\[
+\delta S_{\text{closed}}[\Phi,\Theta]=0
+\]
+
+has thereby been proven to govern the entire running blockchain.
+
+ZK ≠ full transition proof
+
+We do not claim current ZK proves:
+
+\[
+\Omega_t\rightarrow\Omega_{t+1}
+\]
+
+cryptographically.
+
+Source body ≠ live body
+
+We do not claim:
+
+libp2p mesh is part of the current public runtime,
+
+Android APK is part of the current public runtime,
+
+
+merely because those bodies exist in the repository.
+
+Specification ≠ evidence
+
+A statement in a spec doesn't upgrade itself to FACT.
+
+
+---
+
+17. The organism model we can legitimately retain
+
+At this point, the defensible abstraction is:
+
+\[
+\boxed{
+\mathcal O=
+(
+Identity,
+Purpose,
+State,
+Memory,
+Capabilities,
+Constraints,
+Inputs,
+Outputs,
+Verification,
+Feedback
+)
+}
+\]
+
+with two directions:
+
+\[
+G:
+Inside\rightarrow Outside
+\]
+
+and
+
+\[
+I:
+Outside\rightarrow Inside
+\]
+
+and a feedback loop:
+
+\[
+\boxed{
+Inside_t
+\rightarrow
+Outside_t
+\rightarrow
+Inside_{t+1}
+}
+\]
+
+The Equilibrium runtime is now providing actual experimental territory for that model, rather than merely serving as an illustration.
+
+But we still shouldn't claim that the complete generalized autonomous-organism theory is proven.
+
+
+---
+
+18. Current evidence ledger
+
+LIVE / DEMONSTRATED
+
+Proof-of-Stationarity block discovery
+
+independent residual verification
+
+canonical residual
+
+territory vs canonical residual publication
+
+VerifyStationaryEvidence path
+
+forged residual rejection
+
+Stationarity/finality separation
+
+live finality lag
+
+inside → outside block production
+
+outside → inside browser reconstruction
+
+bidirectional comparison
+
+testnet/mainnet separation
+
+wallet/sign/broadcast path
+
+pressure can be observed changing
+
+
+PARTIAL / EXPERIMENTAL
+
+pressure → solver causal coupling
+
+λ₃ contribution
+
+complete bidirectional closure
+
+mobile as an independently exercised runtime body
+
+broader claim-audit C-001–C-010
+
+
+OPEN
+
+full canonical replay
+
+complete operational-state commitment
+
+Rust ↔ TS full differential conformance
+
+full transition ZK proof
+
+real production persistence
+
+real libp2p mesh
+
+full mobile runtime deployment
+
+stronger automated regression/conformance suite.
+
+
+EXPLICITLY NOT CLAIMED
+
+theory proves code
+
+ZK proves complete state transition
+
+every repository subsystem is live
+
+every theoretical coupling is computationally meaningful
+
+organism abstraction is already a universal theorem.
+
+
+
+---
+
+19. The most important result so far
+
+Honestly, it's not the fact that the residual works.
+
+It's this:
+
+> The running system is now capable of disagreeing with the theory and exposing that disagreement as an experiment.
+
+
+
+The previous pressure run exposed a measurement inconsistency.
+
+The newer run corrected the pressure observation but did not magically produce the causal conclusion we might have wanted.
+
+That is exactly the behavior we wanted from the territory.
+
+So the project has moved from:
+
+\[
+\text{“Here is a theory and an implementation.”}
+\]
+
+toward:
+
+\[
+\boxed{
+\text{“Here is a running system that can test whether the theory actually explains its behavior.”}
+}
+\]
+
+And from here, we should resist adding claims until the existing C-001–C-010 audit is actually populated with these measurements.

@@ -1,0 +1,123 @@
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { OrganismLoop } from "@/components/organism-loop";
+import { Stat } from "@/components/stat";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useNetwork } from "@/lib/network-context";
+import { getSnapshot } from "@/lib/chain-api";
+import { formatAmount, formatSci, timeAgo, truncateHash } from "@/lib/format";
+import { HashLink } from "@/components/hash-link";
+
+export const Route = createFileRoute("/")({
+  loader: () => getSnapshot({ data: { network: "testnet" } }),
+  component: Home,
+});
+
+function Home() {
+  const initial = Route.useLoaderData();
+  const { snap, network } = useNetwork();
+  const data = snap ?? initial;
+
+  return (
+    <div className="space-y-10">
+      <section className="relative overflow-hidden rounded-xl bg-surface px-5 py-10 shadow-[var(--shadow-border)] sm:px-10 sm:py-14">
+        <div className="eq-grid pointer-events-none absolute inset-0" />
+        <div className="relative max-w-2xl">
+          <Badge tone="muted">equilibrium.site · {network}</Badge>
+          <h1 className="mt-4 font-display text-4xl leading-[1.1] tracking-tight sm:text-5xl">
+            A closed system that has to keep proving it is still itself.
+          </h1>
+          <p className="mt-5 max-w-xl text-base leading-relaxed text-muted">
+            Equilibrium is not a module list. It is an organism: perception, metabolism,
+            memory, verification, and adaptation — modelled inside-out and outside-in.
+            Testnet and mainnet run here, live, with a real stationary solver. No random
+            residuals.
+          </p>
+          <div className="mt-7 flex flex-wrap gap-3">
+            <Button asChild>
+              <Link to="/explorer">Open the explorer</Link>
+            </Button>
+            <Button variant="secondary" asChild>
+              <Link to="/experiments">Run an ablation</Link>
+            </Button>
+            <Button variant="ghost" asChild>
+              <Link to="/verify">Verify the tip</Link>
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      {data ? (
+        <>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label="Height" value={formatAmount(data.height)} hint={`finalized ${data.finalizedHeight} · lag ${data.height - data.finalizedHeight}`} />
+            <Stat label="Canonical R" value={formatSci(data.lastResidual)} hint={`territory ${formatSci(data.lastTerritoryResidual)}`} />
+            <Stat label="Mempool P" value={data.mempoolPressure.toFixed(3)} hint={`${data.mempoolSize} queued`} />
+            <Stat label="Validators" value={data.validatorCount} hint={`${formatAmount(data.totalBonded)} bonded`} />
+          </div>
+
+          <OrganismLoop
+            events={data.events}
+            residual={data.lastResidual}
+            pressure={data.mempoolPressure}
+          />
+
+          <section className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-xl">Latest blocks</h2>
+                <Link to="/explorer" className="text-sm text-accent">
+                  All
+                </Link>
+              </div>
+              <ul className="mt-4 divide-y divide-border">
+                {data.recentBlocks.slice(0, 6).map((b) => (
+                  <li key={b.hash} className="flex items-center justify-between gap-3 py-3 text-sm">
+                    <div>
+                      <HashLink kind="block" value={b.hash} />
+                      <div className="text-xs text-muted" suppressHydrationWarning>
+                        #{b.height} · {b.txCount} tx · {timeAgo(b.timestamp)}
+                      </div>
+                    </div>
+                    <div className="text-right font-mono text-xs text-muted">
+                      <div>R {formatSci(b.residual, 2)}</div>
+                      {b.verified ? <span className="text-ok">verified</span> : <span className="text-danger">unverified</span>}
+                      {b.finalized ? <span className="ml-2 text-muted">final</span> : <span className="ml-2 text-warn">pending</span>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">
+              <h2 className="font-display text-xl">What this node will not claim</h2>
+              <ul className="mt-4 space-y-3 text-sm leading-relaxed text-muted">
+                <li>The theory does not prove the code. Ablation tests the couplings.</li>
+                <li>
+                  Territory residual from the Rust solver saturates. Canonical residual is the
+                  rebuild quantity used for admission.
+                </li>
+                <li>
+                  ZK does not prove the full state transition. Light bodies recompute residual;
+                  they do not re-solve.
+                </li>
+                <li>
+                  Tip {truncateHash(data.latestHash)} · genesis {truncateHash(data.genesisHash)}
+                </li>
+              </ul>
+              <div className="mt-5 flex flex-wrap gap-3">
+                <Button variant="secondary" size="sm" asChild>
+                  <Link to="/audit">Claim audit</Link>
+                </Button>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link to="/protocol">EQ specifications</Link>
+                </Button>
+              </div>
+            </div>
+          </section>
+        </>
+      ) : (
+        <p className="text-sm text-muted">Waking the {network} kernel…</p>
+      )}
+    </div>
+  );
+}

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Equilibrium Miner</string>
+    <string name="app_name">Equilibrium</string>
 
     <!-- Update checker -->
     <string name="node_url_hint">Node URL</string>
@@ -62,4 +62,12 @@
     <string name="error_p2p_not_started">⚠ P2P node not started — tap \'Start embedded P2P node\' on the main screen first.</string>
     <string name="error_peer_id_unavailable">⚠ Node identity not ready yet — try again in a moment.</string>
     <string name="error_qr_failed">⚠ QR generation failed: %1$s</string>
+
+    <!-- Same cheap-verify packet as the public site (/api/light) -->
+    <string name="light_section">Light verifier</string>
+    <string name="site_url_hint">https://equilibrium.site</string>
+    <string name="verify_site_button">Verify like the site</string>
+    <string name="light_need_url">Enter the site origin. The app calls /api/light — it does not re-solve.</string>
+    <string name="light_result">Height %1$d · %2$s · checks %3$d/%4$d\nDiscovery stays on the node. This body only recomputes.</string>
+    <string name="light_failed">Verifier request failed: %1$s</string>
 </resources>
