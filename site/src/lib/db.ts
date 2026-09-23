@@ -1,7 +1,7 @@
 import { pendingMigrations } from "../../scripts/migration-plan.mjs";
 
 /** Which database backend is active. */
-export type DbSource = "neon" | "pglite";
+export type DbSource = "neon" | "pglite" | "memory";
 
 // An empty/whitespace DATABASE_URL (an easy misconfig in deploy UIs) must mean
 // "unset" — otherwise production would silently run on the PGLite fallback.
@@ -15,8 +15,13 @@ const databaseUrl =
  * sandbox), otherwise a local embedded **PGLite** (Postgres compiled to WASM) so
  * the app has a working database even with nothing configured — the live preview
  * included. Swap in Neon later by just setting `DATABASE_URL`; no code changes.
+ *
+ * `EQ_PGLITE=0` refuses the embedded database. Render's start script sets that:
+ * an in-memory PGLite is larger than the starter instance, and it does not
+ * survive a restart, so loading it only gets the process killed.
  */
-export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
+const pgliteDisabled = process.env.EQ_PGLITE === "0";
+export const dbSource: DbSource = databaseUrl ? "neon" : pgliteDisabled ? "memory" : "pglite";
 
 /**
  * Minimal shared SQL surface, satisfied by both Neon and PGLite. Both the
@@ -179,6 +184,11 @@ async function createSql(): Promise<Sql> {
     throw new Error(
       "@/lib/db is server-only — call getSql() from a createServerFn handler " +
         "or a server route loader, never from client code.",
+    );
+  }
+  if (dbSource === "memory") {
+    throw new Error(
+      "No DATABASE_URL. Chain state stays in this process. Set DATABASE_URL to persist it.",
     );
   }
   return dbSource === "neon" ? createNeonSql() : createPgliteSql();

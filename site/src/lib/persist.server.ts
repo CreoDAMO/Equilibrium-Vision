@@ -1,8 +1,9 @@
-import { getSql } from "@/lib/db";
+import { dbSource, getSql } from "@/lib/db";
 import { OrganismNode } from "@/protocol/chain";
 import type { NetworkId, PersistedBody } from "@/protocol/types";
 
 export async function persistNode(node: OrganismNode): Promise<void> {
+  if (dbSource === "memory") return;
   try {
     const sql = await getSql();
     const body: PersistedBody = node.toBody();
@@ -53,6 +54,7 @@ export async function persistNode(node: OrganismNode): Promise<void> {
 }
 
 export async function persistExperiment(network: NetworkId, kind: string, result: unknown): Promise<void> {
+  if (dbSource === "memory") return;
   try {
     const sql = await getSql();
     await sql.query(`insert into eq_experiments (network, kind, result) values ($1, $2, $3)`, [
@@ -66,6 +68,7 @@ export async function persistExperiment(network: NetworkId, kind: string, result
 }
 
 export async function listExperiments(network: NetworkId, limit = 12) {
+  if (dbSource === "memory") return [];
   try {
     const sql = await getSql();
     return await sql.query<{
@@ -84,6 +87,11 @@ export async function listExperiments(network: NetworkId, limit = 12) {
 }
 
 export async function restoreNode(network: NetworkId): Promise<OrganismNode> {
+  if (dbSource === "memory") {
+    const node = new OrganismNode(network);
+    node.persisted = false;
+    return node;
+  }
   try {
     const sql = await getSql();
     const rows = await sql.query<{ body: unknown }>(
@@ -117,6 +125,7 @@ export async function recordBidirectional(
     verifyEvals: number;
   },
 ): Promise<void> {
+  if (dbSource === "memory") return;
   try {
     const sql = await getSql();
     await sql.query(
@@ -137,6 +146,7 @@ export async function recordBidirectional(
 }
 
 export async function listBidirectional(network: NetworkId, limit = 24) {
+  if (dbSource === "memory") return [];
   try {
     const sql = await getSql();
     return await sql.query<{
@@ -165,6 +175,7 @@ export async function recordMeshSighting(input: {
   agree: boolean;
   detail: string;
 }): Promise<void> {
+  if (dbSource === "memory") return;
   try {
     const sql = await getSql();
     await sql.query(
@@ -185,6 +196,7 @@ export async function recordMeshSighting(input: {
 }
 
 export async function listMesh(network: NetworkId, limit = 16) {
+  if (dbSource === "memory") return [];
   try {
     const sql = await getSql();
     return await sql.query<{

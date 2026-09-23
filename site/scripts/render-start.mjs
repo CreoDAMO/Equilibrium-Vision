@@ -42,7 +42,16 @@ if (!existsSync(viteJs)) {
 const child = spawn(process.execPath, [viteJs, "preview", "--host", "0.0.0.0", "--port", port], {
   stdio: "inherit",
   cwd: root,
-  env: { ...process.env, ...appEnv(), PORT: port },
+  env: {
+    ...process.env,
+    ...appEnv(),
+    PORT: port,
+    // In-memory PGLite measured ~470 MB on top of the server and does not
+    // survive a restart. The starter instance is 512 MB, so loading it gets
+    // the process killed on the first health check. Real Postgres still wins
+    // when DATABASE_URL is set.
+    EQ_PGLITE: "0",
+  },
 });
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
