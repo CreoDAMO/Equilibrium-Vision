@@ -155,6 +155,8 @@ export default defineConfig(({ command, isPreview }) => ({
     host: process.env.PORT ? "0.0.0.0" : "127.0.0.1",
     port: Number(process.env.PORT) || 8081,
     strictPort: true,
+    // Vite refuses unknown Host headers. Render's public name is not localhost.
+    allowedHosts: [".onrender.com", ".equilibrium.site"],
   },
   resolve: { tsconfigPaths: true },
   plugins: [
