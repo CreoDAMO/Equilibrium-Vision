@@ -87,6 +87,8 @@ export interface BlockRecord {
   committedPressure: number;
   recursionDepth: number;
   coinbaseReward: number;
+  /** Portion of the coinbase credited to the miner's liquid balance. The rest is staked rewards. */
+  liquidIssuance?: number;
   miner: string;
   txCount: number;
   transactions: TxRecord[];
@@ -242,7 +244,71 @@ export interface PairedResult {
   withoutLambda: ExperimentArm;
   deltaR: number;
   deltaIters: number;
+  /** |ΔR| above noise. A constant λ can do this without moving the nonce. */
+  formulaEffect: boolean;
+  /** Winning nonce differed. Only nonce-dependent terms can do this. */
+  discoveryEffect: boolean;
+  rewardEffect: boolean;
+  /** True if formula or discovery moved. Not a claim that λ changed the search. */
   causal: boolean;
+}
+
+export interface CouplingEffect {
+  key: keyof Couplings;
+  formulaEffect: boolean;
+  discoveryEffect: boolean;
+  rewardEffect: boolean;
+  deltaR: number;
+  nonceWith: number;
+  nonceWithout: number;
+}
+
+/** One closed transition: solver, verify, mempool, governance, stake, finality, restore. */
+export interface WholeReport {
+  height: number;
+  primedTxs: number;
+  pressure: number;
+  baseline: {
+    nonce: number;
+    residual: number;
+    reward: number;
+    liquid: number;
+    verified: boolean;
+  };
+  couplings: CouplingEffect[];
+  mempool: {
+    txs: number;
+    discoveryEffect: boolean;
+    nonceWithTxs: number;
+    nonceEmpty: number;
+  };
+  governance: {
+    applied: boolean;
+    key: keyof Couplings;
+    discoveryEffect: boolean;
+    formulaEffect: boolean;
+    nonceAfter: number;
+  };
+  stake: {
+    minerBonded: boolean;
+    reward: number;
+    liquidIssuance: number;
+    distributed: number;
+  };
+  finality: {
+    healthyFinalized: boolean;
+    jailedFinalized: boolean;
+    separatedFromStationarity: boolean;
+  };
+  persistence: {
+    restartEqual: boolean;
+    height: number;
+    hash: string;
+    stateRoot: string;
+    residual: number;
+  };
+  verifyAgrees: boolean;
+  sourceLaw: string;
 }
 
 export interface BidirectionalTrial {
@@ -307,5 +373,6 @@ export interface ChainSnapshot {
   proposals: Proposal[];
   models: ModelClaim[];
   lastPaired: PairedResult | null;
+  lastWhole: WholeReport | null;
   lastBidirectional: BidirectionalTrial | null;
 }

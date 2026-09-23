@@ -1,12 +1,14 @@
 # Render blueprint for the public organism.
 # Rust libp2p and the Android APK are not this service.
 # Attach Postgres so the chain survives a restart (DATABASE_URL).
+# vite is a devDependency. NODE_ENV=production would omit it, and the start
+# command invokes node_modules/vite/bin/vite.js directly (not PATH).
 services:
   - type: web
     name: equilibrium
     runtime: node
     plan: starter
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     startCommand: node scripts/render-start.mjs
     healthCheckPath: /api/light
     envVars:

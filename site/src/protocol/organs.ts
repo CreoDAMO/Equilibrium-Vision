@@ -23,7 +23,7 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     title: "Staking",
     layer: "committed",
     live: true,
-    summary: "Register, delegate, undelegate, slash, unjail. Active set is bonded stake. This kernel runs the economics, not the WASM bump allocator.",
+    summary: "Register, delegate, slash, claim. The block producer is bonded. Commission is liquid; the rest of the coinbase is split by stake inside the same transition. Not the WASM bump allocator.",
     methods: [
       { id: 0, name: "register", note: "genesis validators already registered" },
       { id: 1, name: "delegate", note: "debit EQU, raise bondedStake" },

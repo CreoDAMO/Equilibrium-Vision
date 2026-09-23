@@ -130,12 +130,11 @@ export const CLAIMS: Claim[] = [
 export function liveEvidence(snap: ChainSnapshot): Record<string, string> {
   const tip = snap.recentBlocks[0];
   const lag = snap.height - snap.finalizedHeight;
-  const paired =
-    snap.lastPaired?.key === "mempool"
-      ? snap.lastPaired.causal
-        ? `paired λ₃ changed behavior · ΔR ${snap.lastPaired.deltaR.toExponential(2)}`
-        : "paired λ₃ did not change this pair"
-      : "paired λ₃ not run";
+  const paired = snap.lastPaired
+    ? `λ_${snap.lastPaired.key} formula ${snap.lastPaired.formulaEffect ? "yes" : "no"} · discovery ${snap.lastPaired.discoveryEffect ? "yes" : "no"} · ΔR ${snap.lastPaired.deltaR.toExponential(2)}`
+    : snap.lastWhole
+      ? `whole transition · restore ${snap.lastWhole.persistence.restartEqual ? "equal" : "diverged"} · stake ${snap.lastWhole.stake.distributed}`
+      : "paired λ not run on this kernel";
   return {
     "C-001": `P=${snap.mempoolPressure.toFixed(3)} · |M|=${snap.mempoolSize} · R=${snap.lastResidual.toExponential(3)} · ${paired}`,
     "C-002": `height ${snap.height} · finalized ${snap.finalizedHeight} · visible lag ${lag} (protocol lag ${snap.finalityLag})`,

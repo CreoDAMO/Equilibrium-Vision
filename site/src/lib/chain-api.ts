@@ -73,7 +73,7 @@ export const requestFaucet = createServerFn({ method: "POST" })
 export const runExperiment = createServerFn({ method: "POST" })
   .validator(
     Network.extend({
-      kind: z.enum(["ablate", "pressure", "paired"]),
+      kind: z.enum(["ablate", "pressure", "paired", "whole"]),
       couplings: z
         .object({
           hash: z.number(),
@@ -91,6 +91,11 @@ export const runExperiment = createServerFn({ method: "POST" })
     const { getNode, persist } = await import("./node.server");
     const { persistExperiment } = await import("./persist.server");
     const node = await getNode(data.network);
+    if (data.kind === "whole") {
+      const result = node.measureWhole();
+      await persistExperiment(data.network, "whole", result);
+      return result;
+    }
     if (data.kind === "paired") {
       const result = node.pairedAblation(data.key ?? "mempool", data.inject ?? 12);
       await persistExperiment(data.network, "paired", result);

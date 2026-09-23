@@ -19,6 +19,7 @@ import type {
   ValidatorRecord,
   VerificationReport,
   Wholes,
+  WholeReport,
 } from "./types";
 import { DEFAULT_COUPLINGS } from "./types";
 import { NETWORKS } from "./networks";
@@ -74,6 +75,8 @@ export class OrganismNode {
   proposals: Proposal[] = [];
   models: ModelClaim[] = [];
   lastPaired: PairedResult | null = null;
+  lastWhole: WholeReport | null = null;
+  private clock: number | null = null;
   private faucetClaims = new Map<string, number>();
 
   constructor(network: NetworkId, opts?: { skipBootstrap?: boolean }) {
@@ -123,6 +126,7 @@ export class OrganismNode {
     n.couplings = { ...this.couplings };
     n.difficulty = this.difficulty;
     n.lastMineAt = this.lastMineAt;
+    n.clock = this.clock;
     n.delegations = this.delegations.map((d) => ({ ...d }));
     n.proposals = this.proposals.map((p) => ({ ...p }));
     n.models = this.models.map((m) => ({ ...m }));
@@ -214,6 +218,7 @@ export class OrganismNode {
       { id: "EQU-USDC", tokenA: "EQU", tokenB: "USDC", reserveA: 10_000_000, reserveB: 10_000_000, fee: 0.003, txCount: 0 },
     ];
     this.seedPeers();
+    this.bondProducer();
     const genesis = this.composeBlock({
       height: 0,
       prevHash: "0".repeat(64),
@@ -221,16 +226,9 @@ export class OrganismNode {
       txs: [],
       miner: this.miner.address,
     });
-    genesis.finalized = true;
-    this.blocks.push(genesis);
-    this.lastVerify = verifyStationaryEvidence({
-      block: genesis,
-      prev: null,
-      mempoolPressure: 0,
-      cumulativeWork: 0,
-      params: this.params,
-      now: GENESIS_TIME,
-    });
+    this.commit(genesis);
+    const committed = this.blocks[this.blocks.length - 1];
+    if (committed) committed.finalized = true;
     this.emit("out", "memory", `${this.params.name} genesis committed ${genesis.hash.slice(0, 12)}…`);
     this.lastMineAt = Date.now();
     const premine = this.network === "testnet" ? 8 : 4;
@@ -241,6 +239,44 @@ export class OrganismNode {
     this.maybeActivity(true);
     this.maybeActivity(true);
     this.maybeActivity(true);
+  }
+
+  /** Move producer stake out of liquid so the coinbase has a validator to pay. */
+  private bondProducer() {
+    if (this.validators.has(this.miner.address)) return;
+    const bond = 500_000;
+    if (!this.debit(this.miner.address, bond)) return;
+    this.validators.set(this.miner.address, {
+      address: this.miner.address,
+      moniker: "Foundation miner",
+      bondedStake: bond,
+      accumulatedRewards: 0,
+      slashed: false,
+      jailed: false,
+      uptime: 1,
+      blocksProposed: 0,
+      commission: 0.1,
+    });
+    this.emit("close", "governance", "producer bonded · staking is inside the transition");
+  }
+
+  /** Passed governance messages change λ before the solve, not after. */
+  private applyGovernance() {
+    for (const p of this.proposals) {
+      if (p.status !== "passed") continue;
+      if (p.couplingKey && typeof p.couplingValue === "number" && Number.isFinite(p.couplingValue)) {
+        this.couplings = { ...this.couplings, [p.couplingKey]: Math.max(0, p.couplingValue) };
+        this.emit("close", "governance", `executed #${p.id} · λ_${p.couplingKey}=${p.couplingValue}`);
+      }
+      p.status = "executed";
+    }
+  }
+
+  private issuanceSplit(miner: string, reward: number): { liquid: number; staked: number } {
+    const minerV = this.validators.get(miner);
+    if (!minerV || minerV.jailed || minerV.slashed) return { liquid: reward, staked: 0 };
+    const liquid = Math.floor(reward * minerV.commission);
+    return { liquid, staked: reward - liquid };
   }
 
   private composeBlock(args: {
@@ -277,7 +313,8 @@ export class OrganismNode {
         }),
       ),
     );
-    const root = this.simulateRoot(args.txs, args.miner, reward);
+    const split = this.issuanceSplit(args.miner, reward);
+    const root = this.simulateRoot(args.txs, args.miner, split.liquid);
     const hash = canonicalHeaderHash({
       prevHash: args.prevHash,
       merkleRoot: mr,
@@ -311,6 +348,7 @@ export class OrganismNode {
       committedPressure: pressure,
       recursionDepth: 2,
       coinbaseReward: reward,
+      liquidIssuance: split.liquid,
       miner: args.miner,
       txCount: txs.length,
       transactions: txs,
@@ -336,9 +374,11 @@ export class OrganismNode {
   }
 
   mine(): BlockRecord {
+    this.bondProducer();
+    this.applyGovernance();
     const prev = this.tip!;
     const height = prev.height + 1;
-    const now = Math.max(prev.timestamp + 1, Math.floor(Date.now() / 1000));
+    const now = Math.max(prev.timestamp + 1, this.clock ?? Math.floor(Date.now() / 1000));
     const selected: TxRecord[] = [];
     for (const tx of [...this.mempool.values()].sort((a, b) => b.fee - a.fee)) {
       if (selected.length >= this.params.maxTxPerBlock) break;
@@ -375,7 +415,7 @@ export class OrganismNode {
       this.mempool.delete(tx.hash);
       this.txIndex.set(tx.hash, tx);
     }
-    this.credit(block.miner, block.coinbaseReward);
+    this.credit(block.miner, block.liquidIssuance ?? block.coinbaseReward);
     const applied = stateRootOf(this.ledger);
     if (applied !== block.stateRoot) {
       block.verified = false;
@@ -408,14 +448,12 @@ export class OrganismNode {
   }
 
   private distribute(block: BlockRecord) {
-    const minerV = [...this.validators.values()].find((x) => x.address === block.miner);
-    if (!minerV) return;
-    const keep = Math.floor(block.coinbaseReward * minerV.commission);
-    minerV.accumulatedRewards += keep;
-    const rest = block.coinbaseReward - keep;
+    const staked = block.coinbaseReward - (block.liquidIssuance ?? block.coinbaseReward);
+    if (staked <= 0) return;
     const live = [...this.validators.values()].filter((x) => !x.jailed && !x.slashed);
-    const total = live.reduce((s, x) => s + x.bondedStake, 0) || 1;
-    for (const x of live) x.accumulatedRewards += Math.floor((rest * x.bondedStake) / total);
+    const total = live.reduce((s, x) => s + x.bondedStake, 0);
+    if (total <= 0) return;
+    for (const x of live) x.accumulatedRewards += Math.floor((staked * x.bondedStake) / total);
   }
 
   private adjustDifficulty(blockTime: number) {
@@ -426,23 +464,26 @@ export class OrganismNode {
   }
 
   private runFinality(block: BlockRecord) {
-    const live = [...this.validators.values()].filter((x) => !x.jailed && !x.slashed);
-    const total = live.reduce((s, x) => s + x.bondedStake, 0);
+    const all = [...this.validators.values()];
+    const live = all.filter((x) => !x.jailed && !x.slashed);
+    const total = all.reduce((s, x) => s + x.bondedStake, 0);
+    const voting = live.reduce((s, x) => s + x.bondedStake, 0);
     const cutoff = block.height - this.params.finalityLag;
     for (const b of this.blocks) {
       if (b.finalized || b.height > cutoff) continue;
-      const ok = total > 0 && total / total >= this.params.finalityQuorum;
+      const ratio = total > 0 ? voting / total : 0;
+      const ok = ratio >= this.params.finalityQuorum;
       this.finality.set(b.height, {
         height: b.height,
         blockHash: b.hash,
         votes: live.length,
-        votingPower: total,
+        votingPower: voting,
         totalVotingPower: total,
         finalized: ok,
       });
       if (ok) {
         b.finalized = true;
-        this.emit("close", "finality", `Ω${b.height} stabilized · lag ${this.params.finalityLag}`);
+        this.emit("close", "finality", `Ω${b.height} stabilized · ${(ratio * 100).toFixed(0)}% · lag ${this.params.finalityLag}`);
       }
     }
   }
@@ -610,11 +651,160 @@ export class OrganismNode {
       },
       deltaR: b.residual - a.residual,
       deltaIters: b.solverIterations - a.solverIterations,
+      formulaEffect: Math.abs(b.residual - a.residual) > 1e-12,
+      discoveryEffect: a.nonce !== b.nonce,
+      rewardEffect: a.coinbaseReward !== b.coinbaseReward,
       causal: Math.abs(b.residual - a.residual) > 1e-12 || a.nonce !== b.nonce,
     };
     this.lastPaired = result;
-    this.emit("in", "governance", `paired λ_${key} · ΔR=${result.deltaR.toExponential(3)} · causal=${result.causal}`);
+    this.emit("in", "governance", `paired λ_${key} · ΔR=${result.deltaR.toExponential(3)} · formula=${result.formulaEffect} · discovery=${result.discoveryEffect}`);
     return result;
+  }
+
+  toBody(): PersistedBody {
+    return {
+      blocks: this.blocks,
+      accounts: [...this.ledger.entries()],
+      validators: [...this.validators.values()],
+      mempool: [...this.mempool.values()],
+      txs: [...this.txIndex.values()],
+      pools: this.pools,
+      delegations: this.delegations,
+      proposals: this.proposals,
+      models: this.models,
+      difficulty: this.difficulty,
+      couplings: this.couplings,
+      lastMineAt: this.lastMineAt,
+    };
+  }
+
+  /**
+   * One transition, not five pages.
+   * Forks only — the live chain is not rewritten by the measurement.
+   */
+  measureWhole(): WholeReport {
+    const primed = this.fork();
+    primed.clock = Math.max((primed.tip?.timestamp ?? 0) + 1, Math.floor(Date.now() / 1000));
+    for (let i = 0; i < 8; i++) primed.maybeActivity(true);
+    const base = primed.fork();
+    const a = base.mine();
+    const keys = ["hash", "structural", "continuity", "mempool", "fees"] as const;
+    const couplings = keys.map((key) => {
+      const arm = primed.fork();
+      arm.couplings = { ...arm.couplings, [key]: 0 };
+      const b = arm.mine();
+      return {
+        key,
+        formulaEffect: Math.abs(b.residual - a.residual) > 1e-12,
+        discoveryEffect: b.nonce !== a.nonce,
+        rewardEffect: b.coinbaseReward !== a.coinbaseReward,
+        deltaR: b.residual - a.residual,
+        nonceWith: a.nonce,
+        nonceWithout: b.nonce,
+      };
+    });
+
+    const empty = primed.fork();
+    const txs = empty.mempool.size;
+    empty.mempool.clear();
+    const cleared = empty.mine();
+
+    const gov = primed.fork();
+    gov.proposals.push({
+      id: 4242,
+      title: "set λ_structural = 0",
+      proposer: gov.miner.address,
+      deposit: 0,
+      yes: 1,
+      no: 0,
+      abstain: 0,
+      status: "passed",
+      couplingKey: "structural",
+      couplingValue: 0,
+    });
+    const gblock = gov.mine();
+    const applied = gov.proposals.find((p) => p.id === 4242)?.status === "executed";
+
+    const rewardBefore = [...primed.validators.values()].reduce((s, v) => s + v.accumulatedRewards, 0);
+    const rewardAfter = [...base.validators.values()].reduce((s, v) => s + v.accumulatedRewards, 0);
+
+    const healthy = primed.fork();
+    const h0 = healthy.height;
+    healthy.mine();
+    healthy.mine();
+    healthy.mine();
+    const healthyBlock = healthy.blocks.find((b) => b.height === h0 + 1);
+
+    const jailed = primed.fork();
+    for (const v of jailed.validators.values()) v.jailed = true;
+    const j0 = jailed.height;
+    jailed.mine();
+    jailed.mine();
+    jailed.mine();
+    const jailedBlock = jailed.blocks.find((b) => b.height === j0 + 1);
+
+    const restored = OrganismNode.restore(base.network, base.toBody());
+    const supplyOf = (n: OrganismNode) => [...n.ledger.values()].reduce((s, acc) => s + acc.balance, 0);
+    const restartEqual =
+      restored.height === base.height &&
+      restored.tip?.hash === base.tip?.hash &&
+      restored.tip?.stateRoot === base.tip?.stateRoot &&
+      restored.tip?.residual === base.tip?.residual &&
+      restored.difficulty === base.difficulty &&
+      supplyOf(restored) === supplyOf(base);
+
+    const report: WholeReport = {
+      height: a.height,
+      primedTxs: primed.mempool.size,
+      pressure: primed.mempoolPressure,
+      baseline: {
+        nonce: a.nonce,
+        residual: a.residual,
+        reward: a.coinbaseReward,
+        liquid: a.liquidIssuance ?? a.coinbaseReward,
+        verified: a.verified,
+      },
+      couplings,
+      mempool: {
+        txs,
+        discoveryEffect: txs > 0 && cleared.nonce !== a.nonce,
+        nonceWithTxs: a.nonce,
+        nonceEmpty: cleared.nonce,
+      },
+      governance: {
+        applied: Boolean(applied),
+        key: "structural",
+        discoveryEffect: gblock.nonce !== a.nonce,
+        formulaEffect: Math.abs(gblock.residual - a.residual) > 1e-12,
+        nonceAfter: gblock.nonce,
+      },
+      stake: {
+        minerBonded: base.validators.has(base.miner.address),
+        reward: a.coinbaseReward,
+        liquidIssuance: a.liquidIssuance ?? a.coinbaseReward,
+        distributed: rewardAfter - rewardBefore,
+      },
+      finality: {
+        healthyFinalized: Boolean(healthyBlock?.finalized),
+        jailedFinalized: Boolean(jailedBlock?.finalized),
+        separatedFromStationarity: Boolean(
+          healthyBlock?.finalized && healthyBlock.verified && jailedBlock && !jailedBlock.finalized && jailedBlock.verified,
+        ),
+      },
+      persistence: {
+        restartEqual,
+        height: base.height,
+        hash: base.tip?.hash ?? "",
+        stateRoot: base.tip?.stateRoot ?? "",
+        residual: base.tip?.residual ?? 0,
+      },
+      verifyAgrees: Boolean(a.verified && base.lastVerify?.ok),
+      sourceLaw:
+        "Inside one transaction set, λ_mempool, λ_continuity, and λ_fees do not depend on the nonce — the Rust joint gradient of mempool pressure is 0. They can change R and leave the nonce where it was. λ_structural does depend on the nonce, so a passed governance message sets it before the solve. The mempool changes discovery by changing the transaction set, not by the size of λ₃. Reward stays put while both residuals sit under the threshold, because quality is clipped at 1. Stake receives the coinbase that is not the producer's commission. Finality is lagged voting power, not the residual.",
+    };
+    this.lastWhole = report;
+    this.emit("close", "transition", `whole · verify ${report.baseline.verified ? "ok" : "fail"} · restore ${restartEqual ? "equal" : "diverged"}`);
+    return report;
   }
 
   delegate(delegator: string, validator: string, amount: number): { ok: boolean; error?: string } {
@@ -796,6 +986,7 @@ export class OrganismNode {
       proposals: this.proposals.slice(0, 8),
       models: this.models.slice(0, 8),
       lastPaired: this.lastPaired,
+      lastWhole: this.lastWhole,
       lastBidirectional,
     };
   }

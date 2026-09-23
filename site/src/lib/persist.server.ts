@@ -5,20 +5,7 @@ import type { NetworkId, PersistedBody } from "@/protocol/types";
 export async function persistNode(node: OrganismNode): Promise<void> {
   try {
     const sql = await getSql();
-    const body: PersistedBody = {
-      blocks: node.blocks,
-      accounts: [...node.ledger.entries()],
-      validators: [...node.validators.values()],
-      mempool: [...node.mempool.values()],
-      txs: [...node.txIndex.values()],
-      pools: node.pools,
-      delegations: node.delegations,
-      proposals: node.proposals,
-      models: node.models,
-      difficulty: node.difficulty,
-      couplings: node.couplings,
-      lastMineAt: node.lastMineAt,
-    };
+    const body: PersistedBody = node.toBody();
     const tip = node.tip;
     await sql.query(
       `insert into eq_chain_meta (network, difficulty, couplings, height, last_mine_at, body, updated_at)
