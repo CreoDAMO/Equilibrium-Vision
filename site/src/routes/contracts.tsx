@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { stakeAction } from "@/lib/chain-api";
+import { stakeAction, submitBtcHeader } from "@/lib/chain-api";
+import { BTC_GENESIS_HEADER_HEX } from "@/protocol/btc";
 import { useNetwork } from "@/lib/network-context";
 import { useWallet } from "@/lib/wallet-context";
 import { CONTRACT_ORGANS } from "@/protocol/organs";
@@ -18,6 +19,20 @@ function ContractsPage() {
   const { wallet } = useWallet();
   const qc = useQueryClient();
   const [amount, setAmount] = useState("1000");
+  const [headerHex, setHeaderHex] = useState(BTC_GENESIS_HEADER_HEX);
+  const [btcHeight, setBtcHeight] = useState("0");
+  const admit = useMutation({
+    mutationFn: () =>
+      submitBtcHeader({
+        data: { network, headerHex, height: Number(btcHeight) },
+      }),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success(`Header admitted · ${r.hash?.slice(0, 16)}… · no credit`);
+        qc.invalidateQueries({ queryKey: ["snapshot", network] });
+      } else toast.error(r.error ?? "refused");
+    },
+  });
   const [title, setTitle] = useState("Adjust λ₃");
   const [validator, setValidator] = useState("");
   const act = useMutation({
@@ -45,11 +60,32 @@ function ContractsPage() {
       <header>
         <h1 className="font-display text-4xl tracking-tight">Contracts</h1>
         <p className="mt-2 max-w-2xl text-muted">
-          Every crate under contracts/ is listed. Live means this kernel runs the economics.
-          WASM bytecode is not executed. BTC, ETH, and the Solidity ZKML verifier stay source-only
-          so they cannot wear a false badge.
+          Staking, governance, and the model registry already run inside this kernel.
+          A Bitcoin header that passes proof of work is now admitted into the next state root.
+          It does not mint EQU. ETH sync, the Solidity ZKML verifier, and WASM bytecode stay out.
         </p>
       </header>
+
+      <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-3">
+        <h2 className="font-display text-xl">Admit a Bitcoin header</h2>
+        <p className="text-sm text-muted">
+          The box starts with Bitcoin genesis. Proof of work is checked. After the first header,
+          the next one must extend the tip. Nothing is credited. Admitted tip:{" "}
+          {snap?.btc.tipHeight ?? "none"}
+          {snap?.btc.tipHash ? ` · ${snap.btc.tipHash.slice(0, 16)}…` : ""}.
+        </p>
+        <textarea
+          className="min-h-24 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
+          value={headerHex}
+          onChange={(e) => setHeaderHex(e.target.value)}
+        />
+        <div className="flex gap-2">
+          <Input value={btcHeight} onChange={(e) => setBtcHeight(e.target.value)} className="max-w-28" />
+          <Button variant="secondary" onClick={() => admit.mutate()} disabled={admit.isPending}>
+            Admit header
+          </Button>
+        </div>
+      </section>
 
       <div className="grid gap-4">
         {CONTRACT_ORGANS.map((c) => (

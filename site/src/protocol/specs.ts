@@ -78,7 +78,7 @@ export const SPECS: SpecDoc[] = [
     summary: "Header hash binds prev, merkle, state root, nonce, residual, miner, height.",
     body: [
       "This rebuild replaces the territory formula hash256(`block-${height}-${prev}-${now}`).",
-      "stateRoot is a merkle of address:balance:nonce leaves — narrower than Ω_operational, by specification.",
+      "stateRoot merkle-izes account leaves, pool reserves, and the admitted BTC header tip. Peers and the mempool are outside it.",
     ],
   },
   {

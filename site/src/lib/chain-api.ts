@@ -143,8 +143,21 @@ export const swapPool = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
+    const { getNode } = await import("./node.server");
+    return (await getNode(data.network)).swap(data.poolId, data.trader, data.tokenIn, data.amountIn);
+  });
+
+export const submitBtcHeader = createServerFn({ method: "POST" })
+  .validator(
+    Network.extend({
+      headerHex: z.string(),
+      height: z.number(),
+    }),
+  )
+  .handler(async ({ data }) => {
     const { getNode, persist } = await import("./node.server");
-    const res = (await getNode(data.network)).swap(data.poolId, data.trader, data.tokenIn, data.amountIn);
+    const node = await getNode(data.network);
+    const res = node.submitBtcHeader(data.headerHex, data.height);
     if (res.ok) await persist(data.network);
     return res;
   });

@@ -63,11 +63,11 @@ export const CLAIMS: Claim[] = [
     id: "C-005",
     title: "Committed state ⊂ operational state",
     original: "SMT commits accounts, UTXOs, contract storage — not validators, DEX, mempool, peers.",
-    prediction: "stateRoot changes when balances change, not when a peer disconnects.",
-    insideOut: "stateRoot is a merkle of address:balance:nonce leaves.",
+    prediction: "stateRoot changes when balances, pool reserves, or the admitted BTC tip change. A peer disconnect does not.",
+    insideOut: "stateRoot merkle-izes account leaves, pool reserves, and the BTC header tip. Peers stay outside it.",
     outsideIn: "Wholes panel lists committed vs operational vs observed vs whole.",
-    closure: "A light node can prove an account against stateRoot without the peer table.",
-    counter: "If DEX reserves were silently in the root, the subset relation would be wrong.",
+    closure: "A light node can prove an account or a pool reserve against stateRoot without the peer table.",
+    counter: "If a peer disconnect changed the root, or a swap that was included did not, the commitment would be wrong.",
     status: "survived",
   },
   {
@@ -142,7 +142,7 @@ export function liveEvidence(snap: ChainSnapshot): Record<string, string> {
       ? `${snap.lastVerify.checks.filter((c) => c.ok).length}/${snap.lastVerify.checks.length} checks on last compose`
       : "no report yet",
     "C-004": `canonical ${snap.lastResidual.toExponential(3)} · territory ${snap.lastTerritoryResidual.toExponential(3)}`,
-    "C-005": `state root ${tip?.stateRoot.slice(0, 12) ?? "—"} · DEX pools ${snap.pools.length} stay operational`,
+    "C-005": `state root ${tip?.stateRoot.slice(0, 12) ?? "—"} · pools ${snap.pools.length} in the root · BTC tip ${snap.btc.tipHeight ?? "none"}`,
     "C-006": snap.lastBidirectional
       ? `discovery ${snap.lastBidirectional.discoveryIters} · verify ${snap.lastBidirectional.verifyEvals} · agree ${snap.lastBidirectional.agree}`
       : "no trial",

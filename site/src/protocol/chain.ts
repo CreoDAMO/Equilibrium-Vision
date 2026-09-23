@@ -20,6 +20,7 @@ import type {
   VerificationReport,
   Wholes,
   WholeReport,
+  BtcHeaderRecord,
 } from "./types";
 import { DEFAULT_COUPLINGS } from "./types";
 import { NETWORKS } from "./networks";
@@ -28,6 +29,9 @@ import { evaluateResidual, solveStationary } from "./solver";
 import { verifyStationaryEvidence } from "./verify";
 import { signTx, verifyTx, type Keypair } from "./wallet";
 import { minerReward, slashAmount } from "./coinomics";
+import { applySwap, poolAddress, quoteSwap } from "./dex";
+import { decodeHeaderHex, parseBtcHeader, verifyBtcMerkle, verifyBtcPow } from "./btc";
+import { hexToBytes } from "./bytes";
 import {
   activityKeys,
   GENESIS_ALLOCATIONS,
@@ -41,11 +45,17 @@ let eventSeq = 1;
 let proposalSeq = 1;
 let modelSeq = 1;
 
-function stateRootOf(accounts: Map<string, AccountState>): string {
-  const leaves = [...accounts.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([addr, acc]) => sha256Hex(`${addr}:${acc.balance}:${acc.nonce}`));
-  return merkleRoot(leaves.length ? leaves : ["0".repeat(64)]);
+function stateRootOf(accounts: Map<string, AccountState>, pools: DexPool[], btcTip: string): string {
+  const leaves = [
+    ...[...accounts.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([addr, acc]) => sha256Hex(`${addr}:${acc.balance}:${acc.nonce}`)),
+    ...[...pools]
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .map((p) => sha256Hex(`pool:${p.id}:${p.reserveA}:${p.reserveB}:${p.txCount}`)),
+    sha256Hex(`btc:${btcTip}`),
+  ];
+  return merkleRoot(leaves);
 }
 
 export class OrganismNode {
@@ -65,6 +75,7 @@ export class OrganismNode {
   events: OrganismEvent[] = [];
   pools: DexPool[] = [];
   swaps: SwapEvent[] = [];
+  btcHeaders: BtcHeaderRecord[] = [];
   peers: PeerRecord[] = [];
   couplings: Couplings = { ...DEFAULT_COUPLINGS };
   lastVerify: VerificationReport | null = null;
@@ -96,7 +107,8 @@ export class OrganismNode {
     n.validators = new Map((body.validators ?? []).map((v) => [v.address, v]));
     n.mempool = new Map((body.mempool ?? []).map((t) => [t.hash, t]));
     n.txIndex = new Map((body.txs ?? []).map((t) => [t.hash, t]));
-    n.pools = body.pools ?? n.pools;
+    n.pools = (body.pools ?? n.pools).map((p) => ({ ...p, address: p.address || poolAddress(p.id) }));
+    n.btcHeaders = body.btcHeaders ?? [];
     n.delegations = body.delegations ?? [];
     n.proposals = body.proposals ?? [];
     n.models = body.models ?? [];
@@ -123,6 +135,7 @@ export class OrganismNode {
     n.finality = new Map(this.finality);
     n.stats = this.stats.map((s) => ({ ...s }));
     n.pools = this.pools.map((p) => ({ ...p }));
+    n.btcHeaders = this.btcHeaders.map((h) => ({ ...h }));
     n.couplings = { ...this.couplings };
     n.difficulty = this.difficulty;
     n.lastMineAt = this.lastMineAt;
@@ -138,24 +151,58 @@ export class OrganismNode {
     if (this.events.length > 80) this.events.pop();
   }
 
+  private btcLeaf(): string {
+    const tip = this.btcHeaders[this.btcHeaders.length - 1];
+    return tip ? `${tip.hash}:${tip.height}` : "none";
+  }
+
+  private applyEffects(
+    ledger: Map<string, AccountState>,
+    pools: DexPool[],
+    txs: TxRecord[],
+    miner: string,
+    reward: number,
+    swaps?: SwapEvent[],
+  ) {
+    const credit = (addr: string, amount: number) => {
+      const acc = ledger.get(addr) ?? { balance: 0, nonce: 0 };
+      acc.balance += amount;
+      ledger.set(addr, acc);
+    };
+    for (const tx of txs) {
+      const sender = ledger.get(tx.from) ?? { balance: 0, nonce: 0 };
+      sender.balance -= tx.amount + tx.fee;
+      sender.nonce += 1;
+      ledger.set(tx.from, sender);
+      credit(miner, tx.fee);
+      const pool = pools.find((p) => (p.address || poolAddress(p.id)) === tx.to);
+      if (pool) {
+        const out = applySwap(pool, pool.tokenA, tx.amount);
+        if (out > 0 && swaps) {
+          swaps.unshift({
+            poolId: pool.id,
+            trader: tx.from,
+            amountIn: tx.amount,
+            amountOut: out,
+            tokenIn: pool.tokenA,
+            tokenOut: pool.tokenB,
+            timestamp: tx.timestamp,
+          });
+          if (swaps.length > 40) swaps.pop();
+        }
+      } else {
+        credit(tx.to, tx.amount);
+      }
+    }
+    credit(miner, reward);
+  }
+
   private simulateRoot(txs: TxRecord[], miner: string, reward: number): string {
     const copy = new Map<string, AccountState>();
     for (const [k, v] of this.ledger) copy.set(k, { ...v });
-    const credit = (addr: string, amount: number) => {
-      const acc = copy.get(addr) ?? { balance: 0, nonce: 0 };
-      acc.balance += amount;
-      copy.set(addr, acc);
-    };
-    for (const tx of txs) {
-      const sender = copy.get(tx.from) ?? { balance: 0, nonce: 0 };
-      sender.balance -= tx.amount + tx.fee;
-      sender.nonce += 1;
-      copy.set(tx.from, sender);
-      credit(tx.to, tx.amount);
-      credit(miner, tx.fee);
-    }
-    credit(miner, reward);
-    return stateRootOf(copy);
+    const pools = this.pools.map((p) => ({ ...p }));
+    this.applyEffects(copy, pools, txs, miner, reward);
+    return stateRootOf(copy, pools, this.btcLeaf());
   }
 
   private credit(addr: string, amount: number) {
@@ -216,7 +263,7 @@ export class OrganismNode {
     this.pools = [
       { id: "EQU-WBTC", tokenA: "EQU", tokenB: "WBTC", reserveA: 10_000_000, reserveB: 100, fee: 0.003, txCount: 0 },
       { id: "EQU-USDC", tokenA: "EQU", tokenB: "USDC", reserveA: 10_000_000, reserveB: 10_000_000, fee: 0.003, txCount: 0 },
-    ];
+    ].map((p) => ({ ...p, address: poolAddress(p.id) }));
     this.seedPeers();
     this.bondProducer();
     const genesis = this.composeBlock({
@@ -379,6 +426,7 @@ export class OrganismNode {
     const prev = this.tip!;
     const height = prev.height + 1;
     const now = Math.max(prev.timestamp + 1, this.clock ?? Math.floor(Date.now() / 1000));
+    const preview = this.pools.map((p) => ({ ...p }));
     const selected: TxRecord[] = [];
     for (const tx of [...this.mempool.values()].sort((a, b) => b.fee - a.fee)) {
       if (selected.length >= this.params.maxTxPerBlock) break;
@@ -386,6 +434,9 @@ export class OrganismNode {
         this.mempool.delete(tx.hash);
         continue;
       }
+      const pool = preview.find((p) => (p.address || poolAddress(p.id)) === tx.to);
+      if (pool && quoteSwap(pool, pool.tokenA, tx.amount) <= 0) continue;
+      if (pool) applySwap(pool, pool.tokenA, tx.amount);
       selected.push(tx);
     }
     this.emit("in", "mempool", `pressure ${this.mempoolPressure.toFixed(3)} · ${this.mempool.size} queued · ${selected.length} selected`);
@@ -405,18 +456,19 @@ export class OrganismNode {
   }
 
   private commit(block: BlockRecord) {
+    this.applyEffects(
+      this.ledger,
+      this.pools,
+      block.transactions,
+      block.miner,
+      block.liquidIssuance ?? block.coinbaseReward,
+      this.swaps,
+    );
     for (const tx of block.transactions) {
-      const sender = this.account(tx.from);
-      sender.balance -= tx.amount + tx.fee;
-      sender.nonce += 1;
-      this.ledger.set(tx.from, sender);
-      this.credit(tx.to, tx.amount);
-      this.credit(block.miner, tx.fee);
       this.mempool.delete(tx.hash);
       this.txIndex.set(tx.hash, tx);
     }
-    this.credit(block.miner, block.liquidIssuance ?? block.coinbaseReward);
-    const applied = stateRootOf(this.ledger);
+    const applied = stateRootOf(this.ledger, this.pools, this.btcLeaf());
     if (applied !== block.stateRoot) {
       block.verified = false;
       block.verifyNotes = [...block.verifyNotes, `stateRoot post-apply mismatch`];
@@ -557,35 +609,68 @@ export class OrganismNode {
     return { ok: true, tx };
   }
 
-  swap(poolId: string, trader: string, tokenIn: string, amountIn: number): { ok: boolean; error?: string; amountOut?: number } {
+  swap(poolId: string, _trader: string, tokenIn: string, amountIn: number): {
+    ok: boolean;
+    error?: string;
+    amountOut?: number;
+    poolAddress?: string;
+  } {
     const pool = this.pools.find((p) => p.id === poolId);
     if (!pool) return { ok: false, error: "unknown pool" };
-    const isA = tokenIn === pool.tokenA;
-    const reserveIn = isA ? pool.reserveA : pool.reserveB;
-    const reserveOut = isA ? pool.reserveB : pool.reserveA;
-    const dx = amountIn * (1 - pool.fee);
-    const amountOut = Math.floor((dx * reserveOut) / (reserveIn + dx));
-    if (amountOut <= 0) return { ok: false, error: "zero output" };
-    if (isA) {
-      pool.reserveA += amountIn;
-      pool.reserveB -= amountOut;
-    } else {
-      pool.reserveB += amountIn;
-      pool.reserveA -= amountOut;
+    const amountOut = quoteSwap(pool, tokenIn, amountIn);
+    if (tokenIn !== pool.tokenA) {
+      return { ok: false, error: "only a signed EQU transfer to the pool is a swap", amountOut, poolAddress: pool.address };
     }
-    pool.txCount += 1;
-    this.swaps.unshift({
-      poolId,
-      trader,
-      amountIn,
-      amountOut,
-      tokenIn,
-      tokenOut: isA ? pool.tokenB : pool.tokenA,
-      timestamp: Math.floor(Date.now() / 1000),
+    if (amountOut <= 0) return { ok: false, error: "zero output", poolAddress: pool.address };
+    return { ok: true, amountOut, poolAddress: pool.address };
+  }
+
+  /**
+   * Admit a Bitcoin header the way contracts/btc_spv_bridge does:
+   * proof of work, then continuity against the tip. No EQU is credited.
+   */
+  submitBtcHeader(hex: string, height: number): { ok: boolean; error?: string; hash?: string } {
+    const raw = decodeHeaderHex(hex);
+    if (!raw) return { ok: false, error: "header must be 80 bytes of hex" };
+    if (!Number.isInteger(height) || height < 0) return { ok: false, error: "height must be a non-negative integer" };
+    if (!verifyBtcPow(raw)) return { ok: false, error: "bad proof of work" };
+    const parsed = parseBtcHeader(raw);
+    const tip = this.btcHeaders[this.btcHeaders.length - 1];
+    if (tip) {
+      if (height !== tip.height + 1) return { ok: false, error: "height does not extend the tip" };
+      if (parsed.prevHash !== tip.hash) return { ok: false, error: "prev hash does not match the tip" };
+    }
+    if (this.btcHeaders.some((h) => h.hash === parsed.hash)) return { ok: false, error: "header already admitted" };
+    this.btcHeaders.push({
+      hash: parsed.hash,
+      height,
+      prevHash: parsed.prevHash,
+      merkleRoot: parsed.merkleRoot,
+      bits: parsed.bits,
     });
-    if (this.swaps.length > 40) this.swaps.pop();
-    this.emit("in", "wallet", `swap ${amountIn} ${tokenIn} → ${amountOut} on ${poolId} (operational)`);
-    return { ok: true, amountOut };
+    if (this.btcHeaders.length > 2016) this.btcHeaders.shift();
+    this.emit("in", "verify", `BTC header ${height} admitted · ${parsed.hash.slice(0, 16)}… · no credit`);
+    return { ok: true, hash: parsed.hash };
+  }
+
+  /** Merkle inclusion against an admitted header. Still does not mint. */
+  verifyBtcTransfer(txHashHex: string, proofHex: string[], blockHeight: number): { ok: boolean; error?: string } {
+    const header = this.btcHeaders.find((h) => h.height === blockHeight);
+    if (!header) return { ok: false, error: "no admitted header at that height" };
+    const tip = this.btcHeaders[this.btcHeaders.length - 1];
+    if (!tip || tip.height - header.height < 6) return { ok: false, error: "fewer than 6 confirmations" };
+    let txHash: Uint8Array;
+    let root: Uint8Array;
+    const proof: Uint8Array[] = [];
+    try {
+      txHash = hexToBytes(txHashHex);
+      root = hexToBytes(header.merkleRoot);
+      for (const entry of proofHex) proof.push(hexToBytes(entry));
+    } catch {
+      return { ok: false, error: "proof is not hex" };
+    }
+    if (!verifyBtcMerkle(txHash, proof, root)) return { ok: false, error: "merkle proof rejected" };
+    return { ok: true };
   }
 
   experiment(kind: "ablate" | "pressure", payload: { couplings?: Couplings; inject?: number }) {
@@ -669,6 +754,7 @@ export class OrganismNode {
       mempool: [...this.mempool.values()],
       txs: [...this.txIndex.values()],
       pools: this.pools,
+      btcHeaders: this.btcHeaders,
       delegations: this.delegations,
       proposals: this.proposals,
       models: this.models,
@@ -976,6 +1062,11 @@ export class OrganismNode {
       events: this.events,
       pools: this.pools,
       swaps: this.swaps,
+      btc: {
+        count: this.btcHeaders.length,
+        tipHash: this.btcHeaders[this.btcHeaders.length - 1]?.hash ?? null,
+        tipHeight: this.btcHeaders[this.btcHeaders.length - 1]?.height ?? null,
+      },
       couplings: this.couplings,
       wholes: this.wholes(),
       lastVerify: this.lastVerify,

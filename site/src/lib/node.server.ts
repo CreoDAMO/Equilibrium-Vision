@@ -4,30 +4,30 @@ import { persistNode, recordBidirectional, restoreNode } from "./persist.server"
 import { evaluateResidual } from "@/protocol/solver";
 
 const g = globalThis as unknown as {
-  __eqReadyV5?: Promise<void>;
-  __eqTestnetV5?: OrganismNode;
-  __eqMainnetV5?: OrganismNode;
-  __eqTimersV5?: boolean;
+  __eqReadyV6?: Promise<void>;
+  __eqTestnetV6?: OrganismNode;
+  __eqMainnetV6?: OrganismNode;
+  __eqTimersV6?: boolean;
 };
 
 async function ensure() {
-  if (!g.__eqReadyV5) {
-    g.__eqReadyV5 = (async () => {
-      g.__eqTestnetV5 = await restoreNode("testnet");
-      g.__eqMainnetV5 = await restoreNode("mainnet");
-      if (!g.__eqTimersV5) {
-        g.__eqTimersV5 = true;
+  if (!g.__eqReadyV6) {
+    g.__eqReadyV6 = (async () => {
+      g.__eqTestnetV6 = await restoreNode("testnet");
+      g.__eqMainnetV6 = await restoreNode("mainnet");
+      if (!g.__eqTimersV6) {
+        g.__eqTimersV6 = true;
         setInterval(() => {
           try {
-            const t = g.__eqTestnetV5?.tick() ?? null;
-            const m = g.__eqMainnetV5?.tick() ?? null;
-            if (t && g.__eqTestnetV5) {
-              g.__eqTestnetV5.persisted = true;
-              void persistNode(g.__eqTestnetV5);
+            const t = g.__eqTestnetV6?.tick() ?? null;
+            const m = g.__eqMainnetV6?.tick() ?? null;
+            if (t && g.__eqTestnetV6) {
+              g.__eqTestnetV6.persisted = true;
+              void persistNode(g.__eqTestnetV6);
             }
-            if (m && g.__eqMainnetV5) {
-              g.__eqMainnetV5.persisted = true;
-              void persistNode(g.__eqMainnetV5);
+            if (m && g.__eqMainnetV6) {
+              g.__eqMainnetV6.persisted = true;
+              void persistNode(g.__eqMainnetV6);
             }
           } catch (err) {
             console.error("[equilibrium] miner tick", err);
@@ -35,16 +35,16 @@ async function ensure() {
         }, 1000);
       }
     })().catch((err) => {
-      g.__eqReadyV5 = undefined;
+      g.__eqReadyV6 = undefined;
       throw err;
     });
   }
-  await g.__eqReadyV5;
+  await g.__eqReadyV6;
 }
 
 export async function getNode(network: NetworkId): Promise<OrganismNode> {
   await ensure();
-  return network === "mainnet" ? g.__eqMainnetV5! : g.__eqTestnetV5!;
+  return network === "mainnet" ? g.__eqMainnetV6! : g.__eqTestnetV6!;
 }
 
 export async function persist(network: NetworkId) {

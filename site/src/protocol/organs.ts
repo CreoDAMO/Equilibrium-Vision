@@ -65,7 +65,7 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     title: "Arbitrage",
     layer: "operational",
     live: true,
-    summary: "Variational-AI solver over DEX reserves. Does not sit in the state root.",
+    summary: "Variational-AI solver over DEX reserves. The reserves themselves are in the state root. This scanner does not move them.",
     methods: [{ id: 0, name: "scan", note: "read-only over operational pools" }],
   },
   {
@@ -85,9 +85,12 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     path: "contracts/btc_spv_bridge",
     title: "BTC SPV bridge",
     layer: "whole",
-    live: false,
-    summary: "Rust contract exists in the repo. Not a live light-client in this public runtime.",
-    methods: [{ id: 0, name: "submit_header", note: "source body only" }],
+    live: true,
+    summary: "Header admission from the Rust contract: proof of work, then prev-hash continuity. An admitted header enters the next state root. No EQU is minted. A transfer proof checks merkle and 6 confirmations and still does not credit.",
+    methods: [
+      { id: 0, name: "submit_header", note: "PoW + continuity, no credit" },
+      { id: 1, name: "verify_transfer", note: "merkle + 6 confirmations, still no credit" },
+    ],
   },
   {
     id: "eth_sync_bridge",

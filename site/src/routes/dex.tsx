@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { swapPool } from "@/lib/chain-api";
 import { useNetwork } from "@/lib/network-context";
 import { useWallet } from "@/lib/wallet-context";
+import { quoteSwap } from "@/protocol/dex";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatAmount } from "@/lib/format";
@@ -13,25 +13,23 @@ export const Route = createFileRoute("/dex")({ component: DexPage });
 
 function DexPage() {
   const { snap, network } = useNetwork();
-  const { wallet } = useWallet();
+  const { wallet, send } = useWallet();
   const qc = useQueryClient();
   const [amount, setAmount] = useState("1000");
   const swap = useMutation({
-    mutationFn: (poolId: string) =>
-      swapPool({
-        data: {
-          network,
-          poolId,
-          trader: wallet?.address ?? snap?.treasury ?? "",
-          tokenIn: "EQU",
-          amountIn: Number(amount),
-        },
-      }),
+    mutationFn: async (poolId: string) => {
+      const pool = snap?.pools.find((p) => p.id === poolId);
+      if (!pool || !wallet) return { ok: false as const, error: "unlock a wallet" };
+      const quoted = quoteSwap(pool, "EQU", Number(amount));
+      if (quoted <= 0) return { ok: false as const, error: "zero output" };
+      const res = await send(pool.address, Number(amount), 100);
+      return { ...res, amountOut: quoted };
+    },
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success(`Out ${r.amountOut}`);
+        toast.success(`Queued · about ${r.amountOut} out in the next block`);
         qc.invalidateQueries({ queryKey: ["snapshot", network] });
-      } else toast.error(r.error);
+      } else toast.error(r.error ?? "refused");
     },
   });
 
@@ -42,8 +40,8 @@ function DexPage() {
       <header>
         <h1 className="font-display text-4xl tracking-tight">DEX</h1>
         <p className="mt-2 max-w-xl text-muted">
-          Constant-product pools from genesis. Application organ: reserves are
-          operational state, not Ω_committed. A swap does not rewrite the state root.
+          A swap is a signed EQU transfer to the pool. The next block applies the
+          constant-product reserves and commits them in the state root.
         </p>
       </header>
       <div className="grid gap-4 sm:grid-cols-2">

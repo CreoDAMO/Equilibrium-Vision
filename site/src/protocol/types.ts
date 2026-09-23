@@ -157,6 +157,16 @@ export interface DexPool {
   reserveB: number;
   fee: number;
   txCount: number;
+  /** Signed EQU transfers to this address are swaps of tokenA. */
+  address: string;
+}
+
+export interface BtcHeaderRecord {
+  hash: string;
+  height: number;
+  prevHash: string;
+  merkleRoot: string;
+  bits: number;
 }
 
 export interface SwapEvent {
@@ -331,6 +341,7 @@ export interface PersistedBody {
   delegations: Delegation[];
   proposals: Proposal[];
   models: ModelClaim[];
+  btcHeaders?: BtcHeaderRecord[];
   difficulty: number;
   couplings: Couplings;
   lastMineAt: number;
@@ -363,6 +374,7 @@ export interface ChainSnapshot {
   events: OrganismEvent[];
   pools: DexPool[];
   swaps: SwapEvent[];
+  btc: { count: number; tipHash: string | null; tipHeight: number | null };
   couplings: Couplings;
   wholes: Wholes;
   lastVerify: VerificationReport | null;
