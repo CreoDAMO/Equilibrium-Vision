@@ -155,7 +155,7 @@ function LoopPage() {
                 </li>
                 <li>
                   {snap?.constitution?.q1
-                    ? `Q1 holds: successor does not read the clock. Q2: ${snap.constitution.admittingNonces} admitting nonces ${snap.constitution.admittingShareState ? "share one Ω while their residuals differ" : "do not share one Ω"}. Timestamp moves Ω: ${snap.constitution.timestampChangesOmega ? "yes" : "no"}. Miner moves Ω: ${snap.constitution.minerChangesOmega ? "yes" : "no"}. Off-band vote is a different Ω: ${snap.constitution.offBandVoteIsDifferentOmega ? "yes" : "no"}.`
+                    ? `Q1 holds: successor does not read the clock. Q2: at least ${snap.constitution.admittingNonces} admitting nonces in ${snap.constitution.nonceWindow} ${snap.constitution.admittingShareState ? "share one Ω while their residuals differ" : "do not share one Ω"}. Timestamp moves Ω: ${snap.constitution.timestampChangesOmega ? "yes" : "no"}. Miner moves Ω: ${snap.constitution.minerChangesOmega ? "yes" : "no"}. Off-band vote is a different Ω: ${snap.constitution.offBandVoteIsDifferentOmega ? "yes" : "no"}.`
                     : "The constitutional witness has not been run."}
                 </li>
                 <li>The stationarity relation binds the header. It is not a Groth16 of Ωt → Ωt+1.</li>

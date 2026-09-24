@@ -106,7 +106,7 @@ function Home() {
                 </li>
                 <li>
                   {data.constitution?.q1
-                    ? `The transition is successor, not this process. One next state once transactions, evidence, miner, and timestamp are fixed. ${data.constitution.admittingNonces} nonces in ${data.constitution.nonceWindow} satisfy the residual predicate${data.constitution.admittingShareState ? " and share one Ω" : ""}. A vote changes Ω only inside the block.`
+                    ? `The transition is successor, not this process. One next state once transactions, evidence, miner, and timestamp are fixed. At least ${data.constitution.admittingNonces} nonces in a window of ${data.constitution.nonceWindow} satisfy the residual predicate${data.constitution.admittingShareState ? " and share one Ω" : ""}. A vote changes Ω only inside the block.`
                     : "The transition relation did not close. The page is not claiming a constitution it could not run."}
                 </li>
               </ul>
