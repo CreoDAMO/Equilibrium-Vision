@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { stakeAction, submitBtcHeader } from "@/lib/chain-api";
+import { stakeAction, submitBtcHeader, executeContract, bootstrapEth, admitEthHeader } from "@/lib/chain-api";
 import { BTC_GENESIS_HEADER_HEX } from "@/protocol/btc";
 import { useNetwork } from "@/lib/network-context";
 import { useWallet } from "@/lib/wallet-context";
@@ -29,6 +29,36 @@ function ContractsPage() {
     onSuccess: (r) => {
       if (r.ok) {
         toast.success(`Header admitted · ${r.hash?.slice(0, 16)}… · no credit`);
+        qc.invalidateQueries({ queryKey: ["snapshot", network] });
+      } else toast.error(r.error ?? "refused");
+    },
+  });
+  const wasm = useMutation({
+    mutationFn: () =>
+      executeContract({
+        data: { network, method: "init", caller: wallet?.address ?? "0".repeat(40) },
+      }),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success(`wasm init returned ${r.code} · storage enters the next state root`);
+        qc.invalidateQueries({ queryKey: ["snapshot", network] });
+      } else toast.error(r.error ?? "refused");
+    },
+  });
+  const ethBoot = useMutation({
+    mutationFn: () => bootstrapEth({ data: { network } }),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Committee key installed in this process · not Ethereum's · no credit");
+        qc.invalidateQueries({ queryKey: ["snapshot", network] });
+      } else toast.error(r.error ?? "refused");
+    },
+  });
+  const ethAdmit = useMutation({
+    mutationFn: () => admitEthHeader({ data: { network } }),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Beacon header admitted · no credit");
         qc.invalidateQueries({ queryKey: ["snapshot", network] });
       } else toast.error(r.error ?? "refused");
     },
@@ -60,9 +90,10 @@ function ContractsPage() {
       <header>
         <h1 className="font-display text-4xl tracking-tight">Contracts</h1>
         <p className="mt-2 max-w-2xl text-muted">
-          Staking, governance, and the model registry already run inside this kernel.
-          A Bitcoin header that passes proof of work is now admitted into the next state root.
-          It does not mint EQU. ETH sync, the Solidity ZKML verifier, and WASM bytecode stay out.
+          Staking, governance, and the model registry run inside this kernel.
+          The compiled arbitrage contract executes here. An admitted Bitcoin header and an admitted
+          beacon header enter the next state root. Neither credits EQU. The stationarity relation
+          binds the header hash. It is not a Groth16 of the transition.
         </p>
       </header>
 
@@ -84,6 +115,37 @@ function ContractsPage() {
           <Button variant="secondary" onClick={() => admit.mutate()} disabled={admit.isPending}>
             Admit header
           </Button>
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-3">
+          <h2 className="font-display text-xl">Arbitrage WASM</h2>
+          <p className="text-sm text-muted">
+            init runs the compiled contract. Storage is a leaf of the next state root.
+            The host refuses dex_multi_swap, so pools do not move from here.
+            Entries now: {snap?.wasmStorage.length ?? 0}.
+          </p>
+          <Button variant="secondary" onClick={() => wasm.mutate()} disabled={wasm.isPending || !wallet}>
+            Execute init
+          </Button>
+          {!wallet ? <p className="text-xs text-subtle">Create a wallet first. The caller is the owner.</p> : null}
+        </div>
+        <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-3">
+          <h2 className="font-display text-xl">ETH sync header</h2>
+          <p className="text-sm text-muted">
+            Bootstrap installs a BLS key this process generated. It is not Ethereum's sync committee.
+            The next header is signed with that key, checked at quorum 342/512, and enters the state root.
+            No EQU is minted. Tip slot: {snap?.eth.tipSlot ?? "none"}.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => ethBoot.mutate()} disabled={ethBoot.isPending || snap?.eth.bootstrapped}>
+              Bootstrap key
+            </Button>
+            <Button variant="ghost" onClick={() => ethAdmit.mutate()} disabled={ethAdmit.isPending || !snap?.eth.bootstrapped}>
+              Admit next header
+            </Button>
+          </div>
         </div>
       </section>
 

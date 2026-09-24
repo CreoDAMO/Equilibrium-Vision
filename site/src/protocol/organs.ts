@@ -1,7 +1,7 @@
 /**
- * Application organs that already existed in the source repo
- * (contracts/ and lib/) and were not on the public runtime.
- * WASM bytecode is not executed here. Semantics are.
+ * Application organs from contracts/ and lib/.
+ * A live organ participates in this process's transition.
+ * A source-only organ does not, and is not badged live.
  */
 
 export type OrganLayer = "committed" | "operational" | "observed" | "whole";
@@ -65,8 +65,12 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     title: "Arbitrage",
     layer: "operational",
     live: true,
-    summary: "Variational-AI solver over DEX reserves. The reserves themselves are in the state root. This scanner does not move them.",
-    methods: [{ id: 0, name: "scan", note: "read-only over operational pools" }],
+    summary: "The compiled arbitrage.wasm runs inside this process. init, pause, and unpause write contract storage, and that storage is a leaf of the next state root. A WASM swap cannot move the pools; the signed EQU transfer does that.",
+    methods: [
+      { id: 0, name: "init", note: "executed wasm, stores owner" },
+      { id: 2, name: "pause", note: "executed wasm, owner only" },
+      { id: 4, name: "execute", note: "host dex_multi_swap refuses; pools stay on the signed path" },
+    ],
   },
   {
     id: "cross_chain_relay",
@@ -97,17 +101,20 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     path: "contracts/eth_sync_bridge",
     title: "ETH sync bridge",
     layer: "whole",
-    live: false,
-    summary: "Rust contract exists in the repo. Not a live sync committee verifier here.",
-    methods: [{ id: 0, name: "submit_update", note: "source body only" }],
+    live: true,
+    summary: "BLS verification of a beacon-style header, quorum 342/512, then parent continuity. The admitted tip is in the next state root. No EQU is minted. A key this process generates is not Ethereum's sync committee.",
+    methods: [
+      { id: 0, name: "bootstrap", note: "install an aggregate pubkey" },
+      { id: 2, name: "submit_header", note: "BLS + quorum + continuity, no credit" },
+    ],
   },
   {
     id: "zkml_verifier",
     path: "contracts/EquilibriumZkmlVerifier.sol",
     title: "ZKML verifier",
     layer: "whole",
-    live: false,
-    summary: "Solidity verifier for residual/threshold/hash. Does not prove Ωt → Ωt+1. C-007 remains open.",
-    methods: [{ id: 0, name: "verify", note: "not wired; would be a false badge" }],
+    live: true,
+    summary: "Every block records the stationarity relation against its own header hash: residual, threshold, and the hash that already binds the state root. A Groth16 proof of the solver executing inside the circuit is still not attached.",
+    methods: [{ id: 0, name: "bind", note: "relation on the committed header, not a Groth16 of Ωt → Ωt+1" }],
   },
 ];

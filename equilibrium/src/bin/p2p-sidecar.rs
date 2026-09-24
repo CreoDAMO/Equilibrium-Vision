@@ -801,10 +801,8 @@ fn handle_command(
             ok_resp(id)
         }
 
-        // Parse a block body, validate chain-continuity (height == tip+1,
-        // prevHash matches) AND BFT vote quorum (gated by REQUIRE_BFT_VOTES or
-        // presence of a loaded validator set + votes), then advance local tip.
-        // Returns: `{"ok":true,"accepted":true|false,"reason":"…"}`.
+        // Continuity and optional BFT are a report. They do not move the tip.
+        // The organism commits, then calls set_local_tip. This process is not a chain.
         "validate_and_adopt" => {
             // Accept body as JSON object or as a JSON-encoded string.
             let body_val = match cmd.body {
@@ -826,9 +824,6 @@ fn handle_command(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let difficulty = body_val.get("difficulty")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1);
 
             // ── Step 1: Chain-continuity check ─────────────────────────────────
             let continuity_ok = if block_hash.is_empty() {
@@ -881,16 +876,14 @@ fn handle_command(
                 }
             }
 
-            // ── Step 3: Adopt ──────────────────────────────────────────────────
-            *local_tip = Some(LocalTip {
-                height,
-                hash: block_hash,
-                difficulty,
-            });
-            // Buffer so subsequent poll_block_body calls can serve it.
-            body_queue.push_back(body_val);
-
-            serde_json::json!({ "id": id, "ok": true, "accepted": true })
+            // Report only. The tip moves when the organism calls set_local_tip.
+            serde_json::json!({
+                "id": id,
+                "ok": true,
+                "accepted": true,
+                "adopted": false,
+                "reason": "continuity ok · the organism has not committed this"
+            })
         }
 
         "peers" => {

@@ -147,6 +147,43 @@ export const swapPool = createServerFn({ method: "POST" })
     return (await getNode(data.network)).swap(data.poolId, data.trader, data.tokenIn, data.amountIn);
   });
 
+export const executeContract = createServerFn({ method: "POST" })
+  .validator(
+    Network.extend({
+      method: z.enum(["init", "pause", "unpause"]),
+      caller: z.string(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const { getNode, persist } = await import("./node.server");
+    const node = await getNode(data.network);
+    const res = await node.executeContract(data.method, data.caller);
+    if (res.ok) await persist(data.network);
+    return res;
+  });
+
+export const bootstrapEth = createServerFn({ method: "POST" })
+  .validator(Network)
+  .handler(async ({ data }) => {
+    const { getNode, persist } = await import("./node.server");
+    const node = await getNode(data.network);
+    const res = node.bootstrapEth();
+    if (res.ok) await persist(data.network);
+    return res;
+  });
+
+export const admitEthHeader = createServerFn({ method: "POST" })
+  .validator(Network)
+  .handler(async ({ data }) => {
+    const { getNode, persist } = await import("./node.server");
+    const node = await getNode(data.network);
+    const signed = node.signNextEthHeader("11".repeat(32), "22".repeat(32));
+    if (!signed.ok || !signed.header) return { ok: false, error: signed.error ?? "could not sign" };
+    const res = node.submitEthHeader(signed.header);
+    if (res.ok) await persist(data.network);
+    return res;
+  });
+
 export const submitBtcHeader = createServerFn({ method: "POST" })
   .validator(
     Network.extend({

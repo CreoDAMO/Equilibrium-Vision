@@ -21,6 +21,7 @@ import type {
   Wholes,
   WholeReport,
   BtcHeaderRecord,
+  EthHeaderRecord,
 } from "./types";
 import { DEFAULT_COUPLINGS } from "./types";
 import { NETWORKS } from "./networks";
@@ -31,6 +32,20 @@ import { signTx, verifyTx, type Keypair } from "./wallet";
 import { minerReward, slashAmount } from "./coinomics";
 import { applySwap, poolAddress, quoteSwap } from "./dex";
 import { decodeHeaderHex, parseBtcHeader, verifyBtcMerkle, verifyBtcPow } from "./btc";
+import { callArbitrage } from "./wasm-host";
+import {
+  ETH_MIN_PARTICIPANTS,
+  ethKeygen,
+  hashEthHeader,
+  hexOf,
+  hexToBytes as ethHex,
+  signEthHeader,
+  verifyEthHeader,
+  countParticipants,
+  participationMask,
+} from "./eth-light";
+import { onPlaneMessage } from "./network-plane";
+import { stationarityRelation } from "./relation";
 import { hexToBytes } from "./bytes";
 import {
   activityKeys,
@@ -45,7 +60,13 @@ let eventSeq = 1;
 let proposalSeq = 1;
 let modelSeq = 1;
 
-function stateRootOf(accounts: Map<string, AccountState>, pools: DexPool[], btcTip: string): string {
+function stateRootOf(
+  accounts: Map<string, AccountState>,
+  pools: DexPool[],
+  btcTip: string,
+  ethTip: string,
+  wasmLeaf: string,
+): string {
   const leaves = [
     ...[...accounts.entries()]
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -54,6 +75,8 @@ function stateRootOf(accounts: Map<string, AccountState>, pools: DexPool[], btcT
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       .map((p) => sha256Hex(`pool:${p.id}:${p.reserveA}:${p.reserveB}:${p.txCount}`)),
     sha256Hex(`btc:${btcTip}`),
+    sha256Hex(`eth:${ethTip}`),
+    sha256Hex(`wasm:${wasmLeaf}`),
   ];
   return merkleRoot(leaves);
 }
@@ -76,6 +99,11 @@ export class OrganismNode {
   pools: DexPool[] = [];
   swaps: SwapEvent[] = [];
   btcHeaders: BtcHeaderRecord[] = [];
+  ethHeaders: EthHeaderRecord[] = [];
+  ethPubkey = "";
+  private ethSecret: Uint8Array | null = null;
+  wasmStorage = new Map<string, string>();
+  announcements: string[] = [];
   peers: PeerRecord[] = [];
   couplings: Couplings = { ...DEFAULT_COUPLINGS };
   lastVerify: VerificationReport | null = null;
@@ -89,6 +117,7 @@ export class OrganismNode {
   lastWhole: WholeReport | null = null;
   private clock: number | null = null;
   private faucetClaims = new Map<string, number>();
+  private commitListeners: Array<(block: BlockRecord) => void> = [];
 
   constructor(network: NetworkId, opts?: { skipBootstrap?: boolean }) {
     this.network = network;
@@ -109,6 +138,9 @@ export class OrganismNode {
     n.txIndex = new Map((body.txs ?? []).map((t) => [t.hash, t]));
     n.pools = (body.pools ?? n.pools).map((p) => ({ ...p, address: p.address || poolAddress(p.id) }));
     n.btcHeaders = body.btcHeaders ?? [];
+    n.ethHeaders = body.ethHeaders ?? [];
+    n.ethPubkey = body.ethPubkey ?? "";
+    n.wasmStorage = new Map(body.wasmStorage ?? []);
     n.delegations = body.delegations ?? [];
     n.proposals = body.proposals ?? [];
     n.models = body.models ?? [];
@@ -136,6 +168,10 @@ export class OrganismNode {
     n.stats = this.stats.map((s) => ({ ...s }));
     n.pools = this.pools.map((p) => ({ ...p }));
     n.btcHeaders = this.btcHeaders.map((h) => ({ ...h }));
+    n.ethHeaders = this.ethHeaders.map((h) => ({ ...h }));
+    n.ethPubkey = this.ethPubkey;
+    n.ethSecret = this.ethSecret ? new Uint8Array(this.ethSecret) : null;
+    n.wasmStorage = new Map(this.wasmStorage);
     n.couplings = { ...this.couplings };
     n.difficulty = this.difficulty;
     n.lastMineAt = this.lastMineAt;
@@ -154,6 +190,19 @@ export class OrganismNode {
   private btcLeaf(): string {
     const tip = this.btcHeaders[this.btcHeaders.length - 1];
     return tip ? `${tip.hash}:${tip.height}` : "none";
+  }
+
+  private ethLeaf(): string {
+    const tip = this.ethHeaders[this.ethHeaders.length - 1];
+    return tip ? `${tip.slot}:${tip.hash}` : "none";
+  }
+
+  private wasmLeaf(): string {
+    if (!this.wasmStorage.size) return "none";
+    return [...this.wasmStorage.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${k}=${v}`)
+      .join("|");
   }
 
   private applyEffects(
@@ -202,7 +251,7 @@ export class OrganismNode {
     for (const [k, v] of this.ledger) copy.set(k, { ...v });
     const pools = this.pools.map((p) => ({ ...p }));
     this.applyEffects(copy, pools, txs, miner, reward);
-    return stateRootOf(copy, pools, this.btcLeaf());
+    return stateRootOf(copy, pools, this.btcLeaf(), this.ethLeaf(), this.wasmLeaf());
   }
 
   private credit(addr: string, amount: number) {
@@ -406,6 +455,7 @@ export class OrganismNode {
       verified: false,
       verifyNotes: [],
     };
+    block.relation = stationarityRelation(block, this.params.residualThreshold);
     const report = verifyStationaryEvidence({
       block,
       prev: this.tip,
@@ -420,12 +470,12 @@ export class OrganismNode {
     return block;
   }
 
-  mine(): BlockRecord {
+  mine(at?: number): BlockRecord {
     this.bondProducer();
     this.applyGovernance();
     const prev = this.tip!;
     const height = prev.height + 1;
-    const now = Math.max(prev.timestamp + 1, this.clock ?? Math.floor(Date.now() / 1000));
+    const now = Math.max(prev.timestamp + 1, at ?? this.clock ?? Math.floor(Date.now() / 1000));
     const preview = this.pools.map((p) => ({ ...p }));
     const selected: TxRecord[] = [];
     for (const tx of [...this.mempool.values()].sort((a, b) => b.fee - a.fee)) {
@@ -449,6 +499,8 @@ export class OrganismNode {
       miner: this.miner.address,
     });
     this.commit(block);
+    this.announcements.push(block.hash);
+    if (this.announcements.length > 32) this.announcements.shift();
     this.emit("out", "solver", `R=${block.residual.toExponential(3)} nonce=${block.nonce} iters=${block.solverIterations}`);
     this.emit("close", "memory", `Ω${height} committed · stateRoot ${block.stateRoot.slice(0, 10)}…`);
     this.lastMineAt = Date.now();
@@ -468,7 +520,7 @@ export class OrganismNode {
       this.mempool.delete(tx.hash);
       this.txIndex.set(tx.hash, tx);
     }
-    const applied = stateRootOf(this.ledger, this.pools, this.btcLeaf());
+    const applied = stateRootOf(this.ledger, this.pools, this.btcLeaf(), this.ethLeaf(), this.wasmLeaf());
     if (applied !== block.stateRoot) {
       block.verified = false;
       block.verifyNotes = [...block.verifyNotes, `stateRoot post-apply mismatch`];
@@ -497,6 +549,13 @@ export class OrganismNode {
       p.height = block.height;
       p.latencyMs = Math.max(8, Math.round(p.latencyMs + (Math.random() - 0.5) * 6));
     }
+    if (!block.verified) return;
+    for (const listener of this.commitListeners) listener(block);
+  }
+
+  /** Fired after a block is committed and verified. Transports may speak. They may not commit. */
+  onCommitted(listener: (block: BlockRecord) => void) {
+    this.commitListeners.push(listener);
   }
 
   private distribute(block: BlockRecord) {
@@ -673,6 +732,140 @@ export class OrganismNode {
     return { ok: true };
   }
 
+  /** Execute the compiled arbitrage contract. Storage then enters the next state root. */
+  async executeContract(method: "init" | "pause" | "unpause", caller: string): Promise<{
+    ok: boolean;
+    code: number;
+    logs: string[];
+    error?: string;
+  }> {
+    const owner = caller.slice(0, 40).padEnd(40, "0");
+    const methodId = method === "init" ? 0 : method === "pause" ? 2 : 3;
+    const args = method === "init" ? new TextEncoder().encode(owner) : new Uint8Array();
+    const result = await callArbitrage(methodId, args, {
+      caller: owner,
+      storage: this.wasmStorage,
+      blockNumber: Math.max(0, this.height),
+    });
+    const ok = result.code === 1;
+    this.emit("in", "verify", `wasm ${method} → ${result.code}${ok ? "" : " refused"}`);
+    return { ok, code: result.code, logs: result.logs, error: ok ? undefined : `contract returned ${result.code}` };
+  }
+
+  /**
+   * Install a BLS aggregate key. The secret stays in this process and is not
+   * written into the chain body. This is not Ethereum's sync committee unless
+   * the caller supplies that committee's key.
+   */
+  bootstrapEth(pubkeyHex?: string): { ok: boolean; error?: string; pubkey?: string } {
+    if (this.ethPubkey) return { ok: false, error: "already bootstrapped", pubkey: this.ethPubkey };
+    if (pubkeyHex) {
+      const raw = ethHex(pubkeyHex.replace(/^0x/, ""));
+      if (raw.length !== 48) return { ok: false, error: "aggregate pubkey must be 48 bytes" };
+      this.ethPubkey = hexOf(raw);
+      this.ethSecret = null;
+    } else {
+      const key = ethKeygen();
+      this.ethSecret = key.secret;
+      this.ethPubkey = hexOf(key.pubkey);
+    }
+    this.emit("in", "verify", `ETH committee bootstrapped · ${this.ethPubkey.slice(0, 16)}… · no credit`);
+    return { ok: true, pubkey: this.ethPubkey };
+  }
+
+  submitEthHeader(header: {
+    slot: number;
+    proposerIndex?: number;
+    parentRoot: string;
+    stateRoot: string;
+    bodyRoot: string;
+    participants: number;
+    signature: string;
+  }): { ok: boolean; error?: string; hash?: string } {
+    if (!this.ethPubkey) return { ok: false, error: "not bootstrapped" };
+    if (header.participants < ETH_MIN_PARTICIPANTS) return { ok: false, error: "quorum not met" };
+    const fields = {
+      slot: header.slot,
+      proposerIndex: header.proposerIndex ?? 0,
+      parentRoot: header.parentRoot,
+      stateRoot: header.stateRoot,
+      bodyRoot: header.bodyRoot,
+    };
+    const tip = this.ethHeaders[this.ethHeaders.length - 1];
+    if (tip) {
+      if (header.slot !== tip.slot + 1) return { ok: false, error: "slot does not extend the tip" };
+      if (header.parentRoot !== tip.hash) return { ok: false, error: "parent root does not match the tip" };
+    }
+    let sig: Uint8Array;
+    try {
+      sig = ethHex(header.signature.replace(/^0x/, ""));
+    } catch {
+      return { ok: false, error: "signature is not hex" };
+    }
+    if (!verifyEthHeader(ethHex(this.ethPubkey), fields, sig)) return { ok: false, error: "bad signature" };
+    const hash = hexOf(hashEthHeader(fields));
+    this.ethHeaders.push({
+      slot: header.slot,
+      hash,
+      parentRoot: header.parentRoot,
+      stateRoot: header.stateRoot,
+      bodyRoot: header.bodyRoot,
+      participants: header.participants,
+    });
+    this.emit("in", "verify", `ETH header slot ${header.slot} admitted · no credit`);
+    return { ok: true, hash };
+  }
+
+  /** Sign the next header with the in-process key. Refuses if that key was not kept. */
+  signNextEthHeader(bodyRoot: string, stateRoot: string): { ok: boolean; error?: string; header?: {
+    slot: number;
+    proposerIndex: number;
+    parentRoot: string;
+    stateRoot: string;
+    bodyRoot: string;
+    participants: number;
+    signature: string;
+  } } {
+    if (!this.ethSecret) return { ok: false, error: "no local signing key" };
+    const tip = this.ethHeaders[this.ethHeaders.length - 1];
+    const fields = {
+      slot: tip ? tip.slot + 1 : 1,
+      proposerIndex: 0,
+      parentRoot: tip ? tip.hash : "00".repeat(32),
+      stateRoot,
+      bodyRoot,
+    };
+    const participants = countParticipants(participationMask(ETH_MIN_PARTICIPANTS));
+    if (participants < ETH_MIN_PARTICIPANTS) return { ok: false, error: "mask short" };
+    const signature = hexOf(signEthHeader(this.ethSecret, fields));
+    return { ok: true, header: { ...fields, participants, signature } };
+  }
+
+  /** A peer announced a hash. Record it. Do not commit it. */
+  noteAnnouncement(hash: string) {
+    if (!/^[0-9a-f]{64}$/i.test(hash)) return;
+    if (this.announcements.includes(hash)) return;
+    this.announcements.push(hash);
+    if (this.announcements.length > 32) this.announcements.shift();
+    this.emit("in", "mesh", `announced ${hash.slice(0, 12)}… · hash is not a block`);
+  }
+
+  /**
+   * A peer delivered a candidate. The plane does not commit it.
+   * Only the organism's admit path can.
+   */
+  deliverFromPeer(peerId: string, claimed: BlockRecord): { ok: boolean; error?: string; duplicate?: boolean } {
+    this.emit("in", "mesh", `plane ${peerId.slice(0, 12)} announced ${claimed.hash.slice(0, 12)}…`);
+    return onPlaneMessage(
+      {
+        hasBlock: (hash) => this.blocks.some((b) => b.hash === hash),
+        admit: (block) => this.ingestGossip(block),
+      },
+      { event: "block", peerId, blockHash: claimed.hash },
+      claimed,
+    );
+  }
+
   experiment(kind: "ablate" | "pressure", payload: { couplings?: Couplings; inject?: number }) {
     const before = this.tip?.residual ?? 0;
     const beforeP = this.mempoolPressure;
@@ -755,6 +948,9 @@ export class OrganismNode {
       txs: [...this.txIndex.values()],
       pools: this.pools,
       btcHeaders: this.btcHeaders,
+      wasmStorage: [...this.wasmStorage.entries()],
+      ethPubkey: this.ethPubkey,
+      ethHeaders: this.ethHeaders,
       delegations: this.delegations,
       proposals: this.proposals,
       models: this.models,
@@ -990,6 +1186,13 @@ export class OrganismNode {
       this.emit("in", "verify", `external rejected · ${failed.join(", ")}`);
       return { ok: false, report, error: `VerifyStationaryEvidence failed: ${failed.join(", ")}` };
     }
+    if (claimed.relation) {
+      const again = stationarityRelation(claimed, this.params.residualThreshold);
+      if (!again.ok || again.hashLo !== claimed.relation.hashLo || again.hashHi !== claimed.relation.hashHi) {
+        this.emit("in", "verify", "external rejected · stationarity relation does not bind this header");
+        return { ok: false, report, error: "stationarity relation does not bind this header" };
+      }
+    }
     if (!this.tip || claimed.height !== this.tip.height + 1 || claimed.prevHash !== this.tip.hash) {
       this.emit("in", "verify", "external rejected · not the next candidate");
       return { ok: false, report, error: "not the next candidate" };
@@ -1067,6 +1270,13 @@ export class OrganismNode {
         tipHash: this.btcHeaders[this.btcHeaders.length - 1]?.hash ?? null,
         tipHeight: this.btcHeaders[this.btcHeaders.length - 1]?.height ?? null,
       },
+      eth: {
+        bootstrapped: this.ethPubkey.length > 0,
+        tipSlot: this.ethHeaders[this.ethHeaders.length - 1]?.slot ?? null,
+        tipHash: this.ethHeaders[this.ethHeaders.length - 1]?.hash ?? null,
+      },
+      wasmStorage: [...this.wasmStorage.entries()],
+      announced: this.announcements.slice(-8),
       couplings: this.couplings,
       wholes: this.wholes(),
       lastVerify: this.lastVerify,

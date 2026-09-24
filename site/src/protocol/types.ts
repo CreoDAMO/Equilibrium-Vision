@@ -72,6 +72,24 @@ export interface ResidualBreakdown {
   hashVal: string;
 }
 
+export interface StationarityRelation {
+  ok: boolean;
+  residualFp: number;
+  thresholdFp: number;
+  difference: number;
+  hashLo: string;
+  hashHi: string;
+}
+
+export interface EthHeaderRecord {
+  slot: number;
+  hash: string;
+  parentRoot: string;
+  stateRoot: string;
+  bodyRoot: string;
+  participants: number;
+}
+
 export interface BlockRecord {
   hash: string;
   height: number;
@@ -98,6 +116,7 @@ export interface BlockRecord {
   solverIterations: number;
   verified: boolean;
   verifyNotes: string[];
+  relation?: StationarityRelation;
 }
 
 export interface ValidatorRecord {
@@ -342,6 +361,9 @@ export interface PersistedBody {
   proposals: Proposal[];
   models: ModelClaim[];
   btcHeaders?: BtcHeaderRecord[];
+  wasmStorage?: Array<[string, string]>;
+  ethPubkey?: string;
+  ethHeaders?: EthHeaderRecord[];
   difficulty: number;
   couplings: Couplings;
   lastMineAt: number;
@@ -375,6 +397,9 @@ export interface ChainSnapshot {
   pools: DexPool[];
   swaps: SwapEvent[];
   btc: { count: number; tipHash: string | null; tipHeight: number | null };
+  eth: { bootstrapped: boolean; tipSlot: number | null; tipHash: string | null };
+  wasmStorage: Array<[string, string]>;
+  announced: string[];
   couplings: Couplings;
   wholes: Wholes;
   lastVerify: VerificationReport | null;

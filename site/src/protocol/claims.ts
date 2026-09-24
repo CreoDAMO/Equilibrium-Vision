@@ -63,8 +63,8 @@ export const CLAIMS: Claim[] = [
     id: "C-005",
     title: "Committed state ⊂ operational state",
     original: "SMT commits accounts, UTXOs, contract storage — not validators, DEX, mempool, peers.",
-    prediction: "stateRoot changes when balances, pool reserves, or the admitted BTC tip change. A peer disconnect does not.",
-    insideOut: "stateRoot merkle-izes account leaves, pool reserves, and the BTC header tip. Peers stay outside it.",
+    prediction: "stateRoot changes when balances, pool reserves, the BTC tip, the ETH tip, or WASM storage change. A peer disconnect does not.",
+    insideOut: "stateRoot merkle-izes account leaves, pool reserves, the BTC tip, the ETH tip, and WASM storage. Peers and announcement hashes stay outside it.",
     outsideIn: "Wholes panel lists committed vs operational vs observed vs whole.",
     closure: "A light node can prove an account or a pool reserve against stateRoot without the peer table.",
     counter: "If a peer disconnect changed the root, or a swap that was included did not, the commitment would be wrong.",
@@ -86,7 +86,7 @@ export const CLAIMS: Claim[] = [
     title: "ZK does not yet prove the canonical transition",
     original: "Groth16/RISC Zero bind residual/threshold/block hash — not Ω_t → Ω_{t+1}.",
     prediction: "No block on this node carries a Groth16 proof of the full transition.",
-    insideOut: "This kernel records residual evidence, not a SNARK.",
+    insideOut: "Every committed block carries a stationarity relation bound to its own header hash. That relation is not a Groth16 of the solver.",
     outsideIn: "Research page states the limitation in the same words as the source LIMITATIONS.md.",
     closure: "We do not advertise a proof we cannot verify.",
     counter: "Shipping a fake 'valid: true' badge would falsify this claim.",
@@ -142,11 +142,13 @@ export function liveEvidence(snap: ChainSnapshot): Record<string, string> {
       ? `${snap.lastVerify.checks.filter((c) => c.ok).length}/${snap.lastVerify.checks.length} checks on last compose`
       : "no report yet",
     "C-004": `canonical ${snap.lastResidual.toExponential(3)} · territory ${snap.lastTerritoryResidual.toExponential(3)}`,
-    "C-005": `state root ${tip?.stateRoot.slice(0, 12) ?? "—"} · pools ${snap.pools.length} in the root · BTC tip ${snap.btc.tipHeight ?? "none"}`,
+    "C-005": `state root ${tip?.stateRoot.slice(0, 12) ?? "—"} · pools ${snap.pools.length} · BTC ${snap.btc.tipHeight ?? "none"} · ETH ${snap.eth.tipSlot ?? "none"} · wasm ${snap.wasmStorage.length}`,
     "C-006": snap.lastBidirectional
       ? `discovery ${snap.lastBidirectional.discoveryIters} · verify ${snap.lastBidirectional.verifyEvals} · agree ${snap.lastBidirectional.agree}`
       : "no trial",
-    "C-007": "no Groth16 of the transition is attached to any block",
+    "C-007": tip?.relation
+      ? `relation on ${tip.hash.slice(0, 12)} · hashLo ${tip.relation.hashLo} · not a Groth16`
+      : "no Groth16 of the transition is attached to any block",
     "C-008": tip ? `coinbase ${tip.coinbaseReward} at R ${tip.residual.toExponential(3)}` : "—",
     "C-009": snap.lastBidirectional
       ? `claimed ${snap.lastBidirectional.claimedR.toExponential(3)} · inferred ${snap.lastBidirectional.inferredR.toExponential(3)} · agree ${snap.lastBidirectional.agree}`

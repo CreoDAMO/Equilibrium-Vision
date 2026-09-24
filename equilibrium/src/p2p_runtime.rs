@@ -656,18 +656,10 @@ async fn run_swarm(rx: mpsc::Receiver<Command>, listen_tcp: u16, listen_quic: u1
                                 eprintln!("[p2p-runtime] received block hash {hash}");
                             }
                         } else if topic == bodies_hash {
-                            // Full block body — update tip cache and store in ring
+                            // Store the body. Do not move the tip. The verifier calls set_local_tip.
                             if let Ok(json) = std::str::from_utf8(&message.data) {
-                                if let Ok(v) = serde_json::from_str::<Value>(json) {
-                                    let height     = v["height"].as_u64().unwrap_or(0);
-                                    let hash       = v["hash"].as_str().unwrap_or("").to_string();
-                                    let difficulty = v["difficulty"].as_u64().unwrap_or(0);
-                                    if !hash.is_empty() {
-                                        set_local_tip(height, &hash, difficulty);
-                                    }
-                                }
                                 push_to_block_ring(json);
-                                eprintln!("[p2p-runtime] received block body via gossip");
+                                eprintln!("[p2p-runtime] received block body via gossip · tip unchanged");
                             }
                         }
                     }
@@ -749,15 +741,7 @@ async fn run_swarm(rx: mpsc::Receiver<Command>, listen_tcp: u16, listen_quic: u1
                     )) => {
                         if let Some(reply) = ln_pending.remove(&request_id) {
                             if response.ok {
-                                if let Some(data) = &response.data {
-                                    // Seed local tip cache from the peer's reply
-                                    let h = data["height"].as_u64().unwrap_or(0);
-                                    let hash = data["hash"].as_str().unwrap_or("").to_string();
-                                    let d = data["difficulty"].as_u64().unwrap_or(0);
-                                    if !hash.is_empty() {
-                                        set_local_tip(h, &hash, d);
-                                    }
-                                }
+                                // A tip announcement is not a commit. Return it. Do not cache it as ours.
                                 let json = response.data
                                     .as_ref()
                                     .and_then(|d| serde_json::to_string(d).ok());

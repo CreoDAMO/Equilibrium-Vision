@@ -234,12 +234,13 @@ describe.skipIf(!binPresent)("p2p-sidecar mesh (binary required)", () => {
     });
     expect(gResp).toMatchObject({ ok: true });
 
-    // node2 polls for the received body and validates it (Gossipsub propagation
-    // may take a moment — retry up to 30 × 200 ms = 6 s).
+    // node2 polls for the received body. Continuity is a report.
+    // The sidecar does not commit. The organism (here, the caller) mirrors the tip.
     let adopted = false;
     for (let i = 0; i < 30; i++) {
       const poll = await rpcCall(proc2, { id: `bp${i}`, method: "poll_block_body" }, 5000);
       if ((poll as any).body) {
+        const before = await rpcCall(proc2, { id: `b0${i}`, method: "get_local_tip" });
         const vResp = await rpcCall(proc2, {
           id:       `bv${i}`,
           method:   "validate_and_adopt",
@@ -247,6 +248,15 @@ describe.skipIf(!binPresent)("p2p-sidecar mesh (binary required)", () => {
           fromPeer: true,
         });
         if ((vResp as any).ok && (vResp as any).accepted) {
+          expect((before as any).height).toBe(0);
+          expect((vResp as any).adopted).toBe(false);
+          await rpcCall(proc2, {
+            id: "mirror",
+            method: "set_local_tip",
+            height: 1,
+            hash: BLOCK1_HASH,
+            difficulty: 1,
+          });
           adopted = true;
           break;
         }
@@ -255,7 +265,7 @@ describe.skipIf(!binPresent)("p2p-sidecar mesh (binary required)", () => {
     }
     expect(adopted).toBe(true);
 
-    // node2's tip height must now be ≥ 1 — advanced without any HTTP call.
+    // The mirror, not the sidecar, advanced the tip. No HTTP call was made.
     const tipResp = await rpcCall(proc2, { id: "btip", method: "get_local_tip" });
     expect((tipResp as any).height).toBeGreaterThanOrEqual(1);
   }, 60_000);
