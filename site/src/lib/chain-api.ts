@@ -224,7 +224,7 @@ export const ingestGossip = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { getNode, persist } = await import("./node.server");
     const node = await getNode(data.network);
-    const res = node.ingestGossip(data.block as BlockRecord);
+    const res = await node.ingestGossip(data.block as BlockRecord);
     if (res.ok) await persist(data.network);
     return res;
   });

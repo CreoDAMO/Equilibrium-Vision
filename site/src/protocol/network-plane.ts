@@ -15,14 +15,14 @@ export interface PlaneEvent {
 
 export interface CanonicalPort {
   hasBlock(hash: string): boolean;
-  admit(block: BlockRecord): { ok: boolean; error?: string };
+  admit(block: BlockRecord): { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
 }
 
-export function onPlaneMessage(
+export async function onPlaneMessage(
   port: CanonicalPort,
   event: PlaneEvent,
   body?: BlockRecord,
-): { ok: boolean; error?: string; duplicate?: boolean } {
+): Promise<{ ok: boolean; error?: string; duplicate?: boolean }> {
   if (event.event !== "block") return { ok: true };
   if (!event.blockHash) return { ok: false, error: "block event without a hash" };
   if (port.hasBlock(event.blockHash)) return { ok: true, duplicate: true };

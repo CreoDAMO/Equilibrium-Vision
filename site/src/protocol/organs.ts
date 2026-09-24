@@ -65,7 +65,7 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     title: "Arbitrage",
     layer: "operational",
     live: true,
-    summary: "The compiled arbitrage.wasm runs inside this process. init, pause, and unpause write contract storage, and that storage is a leaf of the next state root. A WASM swap cannot move the pools; the signed EQU transfer does that.",
+    summary: "The compiled arbitrage.wasm runs inside this process. init, pause, and unpause are calls in the next block. Replay executes those calls. A WASM swap cannot move the pools; the signed EQU transfer does that.",
     methods: [
       { id: 0, name: "init", note: "executed wasm, stores owner" },
       { id: 2, name: "pause", note: "executed wasm, owner only" },
@@ -90,7 +90,7 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     title: "BTC SPV bridge",
     layer: "whole",
     live: true,
-    summary: "Header admission from the Rust contract: proof of work, then prev-hash continuity. An admitted header enters the next state root. No EQU is minted. A transfer proof checks merkle and 6 confirmations and still does not credit.",
+    summary: "Proof of work, then prev-hash continuity. The header bytes ride in the block that commits the new Bitcoin leaf. No EQU is minted. A transfer proof checks merkle and 6 confirmations and still does not credit.",
     methods: [
       { id: 0, name: "submit_header", note: "PoW + continuity, no credit" },
       { id: 1, name: "verify_transfer", note: "merkle + 6 confirmations, still no credit" },
@@ -102,7 +102,7 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     title: "ETH sync bridge",
     layer: "whole",
     live: true,
-    summary: "BLS verification of a beacon-style header, quorum 342/512, then parent continuity. The admitted tip is in the next state root. No EQU is minted. A key this process generates is not Ethereum's sync committee.",
+    summary: "BLS verification, quorum 342/512, then parent continuity. The bootstrap key and the signed header ride in the block. The secret does not. No EQU is minted. A key this process generates is not Ethereum's sync committee.",
     methods: [
       { id: 0, name: "bootstrap", note: "install an aggregate pubkey" },
       { id: 2, name: "submit_header", note: "BLS + quorum + continuity, no credit" },

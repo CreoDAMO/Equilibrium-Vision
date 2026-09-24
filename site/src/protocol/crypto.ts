@@ -27,6 +27,11 @@ export interface HeaderCommitment {
   miner: string;
   height: number;
   committedPressure: number;
+  /** Set together. Old blocks omit both and keep the previous preimage. */
+  chainId?: number;
+  evidenceRoot?: string;
+  /** Full Ω digest. Present on evidence blocks. */
+  omegaRoot?: string;
 }
 
 /**
@@ -35,24 +40,22 @@ export interface HeaderCommitment {
  * recompute without trusting the miner's claimed residual.
  */
 export function canonicalHeaderHash(parts: HeaderCommitment): string {
-  return hash256Bytes(
-    concatBytes(
-      utf8(
-        [
-          parts.prevHash,
-          parts.merkleRoot,
-          parts.stateRoot,
-          String(parts.timestamp),
-          String(parts.nonce),
-          String(parts.difficulty),
-          String(parts.residualFp),
-          parts.miner,
-          String(parts.height),
-          parts.committedPressure.toFixed(6),
-        ].join("|"),
-      ),
-    ),
-  );
+  const fields = [
+    parts.prevHash,
+    parts.merkleRoot,
+    parts.stateRoot,
+    String(parts.timestamp),
+    String(parts.nonce),
+    String(parts.difficulty),
+    String(parts.residualFp),
+    parts.miner,
+    String(parts.height),
+    parts.committedPressure.toFixed(6),
+  ];
+  if (parts.chainId !== undefined && parts.evidenceRoot !== undefined) {
+    fields.push(String(parts.chainId), parts.evidenceRoot, parts.omegaRoot ?? "");
+  }
+  return hash256Bytes(concatBytes(utf8(fields.join("|"))));
 }
 
 export function merkleRoot(hashes: string[]): string {

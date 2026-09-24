@@ -90,6 +90,84 @@ export interface EthHeaderRecord {
   participants: number;
 }
 
+/** Bitcoin header admitted inside one transition. The hex is the evidence. */
+export interface BtcEvidence {
+  headerHex: string;
+  height: number;
+}
+
+export type EthEvidence =
+  | { op: "bootstrap"; pubkey: string }
+  | {
+      op: "header";
+      slot: number;
+      proposerIndex: number;
+      parentRoot: string;
+      stateRoot: string;
+      bodyRoot: string;
+      participants: number;
+      signature: string;
+    };
+
+export interface WasmEvidence {
+  method: "init" | "pause" | "unpause";
+  caller: string;
+}
+
+export type StakeEvidence =
+  | { op: "delegate"; delegator: string; validator: string; amount: number }
+  | { op: "claim"; address: string }
+  | { op: "slash"; validator: string; reason: "double_sign" | "downtime" }
+  | { op: "propose"; proposer: string; title: string; deposit: number; id: number }
+  | { op: "vote"; voter: string; id: number; option: "yes" | "no" | "abstain" };
+
+/**
+ * Inputs of Ωt → Ωt+1 that are not signed transfers.
+ * Carried on the block. Absent on blocks minted before this boundary.
+ */
+export interface TransitionEvidence {
+  v: 1;
+  chainId: number;
+  wasmCode: string;
+  btc: BtcEvidence[];
+  eth: EthEvidence[];
+  wasm: WasmEvidence[];
+  stake: StakeEvidence[];
+}
+
+/** Measured answer of the transition relation. Produced by running it, not by describing it. */
+export interface ConstitutionAnswer {
+  q1: boolean;
+  relation: "successor";
+  numericModel: "ECMA-262";
+  wasmCode: string;
+  networksDiverge: boolean;
+  deterministic: boolean;
+  readsClock: boolean;
+  signatureRefused: boolean;
+  admittingNonces: number;
+  nonceWindow: number;
+  admittingShareState: boolean;
+  admittingResidualsDiffer: boolean;
+  timestampChangesOmega: boolean;
+  minerChangesOmega: boolean;
+  voteChangesOmega: boolean;
+  offBandVoteIsDifferentOmega: boolean;
+  inputs: string[];
+  fixesForState: string[];
+  fixesForBlock: string[];
+  outside: string[];
+}
+
+/** A body that was given the blocks and the constitution, not the producer's memory. */
+export interface SecondBodyReport {
+  ok: boolean;
+  height: number;
+  stateRoot: string;
+  hash: string;
+  error: string | null;
+}
+
 export interface BlockRecord {
   hash: string;
   height: number;
@@ -117,6 +195,10 @@ export interface BlockRecord {
   verified: boolean;
   verifyNotes: string[];
   relation?: StationarityRelation;
+  /** Present when this block binds chain id and the non-transfer inputs. */
+  evidence?: TransitionEvidence;
+  /** Digest of Ω after this transition. Bound in the header when evidence is present. */
+  omegaRoot?: string;
 }
 
 export interface ValidatorRecord {
@@ -412,4 +494,7 @@ export interface ChainSnapshot {
   lastPaired: PairedResult | null;
   lastWhole: WholeReport | null;
   lastBidirectional: BidirectionalTrial | null;
+  /** Null while the second body is still replaying. */
+  secondBody: SecondBodyReport | null;
+  constitution: ConstitutionAnswer;
 }

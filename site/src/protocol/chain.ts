@@ -22,6 +22,10 @@ import type {
   WholeReport,
   BtcHeaderRecord,
   EthHeaderRecord,
+  TransitionEvidence,
+  SecondBodyReport,
+  StakeEvidence,
+  ConstitutionAnswer,
 } from "./types";
 import { DEFAULT_COUPLINGS } from "./types";
 import { NETWORKS } from "./networks";
@@ -29,7 +33,7 @@ import { merkleRoot, sha256Hex, canonicalHeaderHash } from "./crypto";
 import { evaluateResidual, solveStationary } from "./solver";
 import { verifyStationaryEvidence } from "./verify";
 import { signTx, verifyTx, type Keypair } from "./wallet";
-import { minerReward, slashAmount } from "./coinomics";
+import { slashAmount } from "./coinomics";
 import { applySwap, poolAddress, quoteSwap } from "./dex";
 import { decodeHeaderHex, parseBtcHeader, verifyBtcMerkle, verifyBtcPow } from "./btc";
 import { callArbitrage } from "./wasm-host";
@@ -47,11 +51,20 @@ import {
 import { onPlaneMessage } from "./network-plane";
 import { stationarityRelation } from "./relation";
 import { hexToBytes } from "./bytes";
+import { ARBITRAGE_CODE, evidenceRoot } from "./evidence";
+import {
+  applySuccessor,
+  cloneOmega,
+  constitutionalAnswer,
+  initialOmega,
+  openOmega,
+  successor,
+  type Successor,
+} from "./constitution";
 import {
   activityKeys,
   GENESIS_ALLOCATIONS,
   GENESIS_TIME,
-  genesisValidators,
   minerKey,
   treasuryKey,
 } from "./genesis";
@@ -59,27 +72,6 @@ import {
 let eventSeq = 1;
 let proposalSeq = 1;
 let modelSeq = 1;
-
-function stateRootOf(
-  accounts: Map<string, AccountState>,
-  pools: DexPool[],
-  btcTip: string,
-  ethTip: string,
-  wasmLeaf: string,
-): string {
-  const leaves = [
-    ...[...accounts.entries()]
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([addr, acc]) => sha256Hex(`${addr}:${acc.balance}:${acc.nonce}`)),
-    ...[...pools]
-      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-      .map((p) => sha256Hex(`pool:${p.id}:${p.reserveA}:${p.reserveB}:${p.txCount}`)),
-    sha256Hex(`btc:${btcTip}`),
-    sha256Hex(`eth:${ethTip}`),
-    sha256Hex(`wasm:${wasmLeaf}`),
-  ];
-  return merkleRoot(leaves);
-}
 
 export class OrganismNode {
   readonly network: NetworkId;
@@ -115,9 +107,27 @@ export class OrganismNode {
   models: ModelClaim[] = [];
   lastPaired: PairedResult | null = null;
   lastWhole: WholeReport | null = null;
+  kinReport: SecondBodyReport | null = null;
+  private constitutionReport: ConstitutionAnswer | null = null;
+  /** Law's finalized height. Not the block flag, which later blocks rewrite. */
+  private finalizedThrough = -1;
   private clock: number | null = null;
+  private detStep = 0;
   private faucetClaims = new Map<string, number>();
   private commitListeners: Array<(block: BlockRecord) => void> = [];
+  private pending: TransitionEvidence = {
+    v: 1,
+    chainId: 0,
+    wasmCode: ARBITRAGE_CODE,
+    btc: [],
+    eth: [],
+    wasm: [],
+    stake: [],
+  };
+  private pendingWasm: Map<string, string> | null = null;
+  private kin: OrganismNode | null = null;
+  private kinStarted = false;
+  private kinQueue: Promise<void> = Promise.resolve();
 
   constructor(network: NetworkId, opts?: { skipBootstrap?: boolean }) {
     this.network = network;
@@ -126,10 +136,11 @@ export class OrganismNode {
     this.treasury = treasuryKey(network);
     this.miner = minerKey(network);
     this.actors = activityKeys(network);
+    this.pending = this.blankEvidence();
     if (!opts?.skipBootstrap) this.bootstrap();
   }
 
-  static restore(network: NetworkId, body: PersistedBody): OrganismNode {
+  static restore(network: NetworkId, body: PersistedBody, opts?: { audit?: boolean }): OrganismNode {
     const n = new OrganismNode(network, { skipBootstrap: true });
     n.blocks = body.blocks ?? [];
     n.ledger = new Map(body.accounts ?? []);
@@ -148,7 +159,9 @@ export class OrganismNode {
     n.couplings = body.couplings ?? { ...DEFAULT_COUPLINGS };
     n.lastMineAt = body.lastMineAt ?? Date.now();
     n.persisted = true;
+    n.finalizedThrough = n.finalizedHeight;
     n.seedPeers();
+    if (opts?.audit) n.startKin();
     return n;
   }
 
@@ -174,11 +187,15 @@ export class OrganismNode {
     n.wasmStorage = new Map(this.wasmStorage);
     n.couplings = { ...this.couplings };
     n.difficulty = this.difficulty;
+    n.finalizedThrough = this.finalizedThrough;
     n.lastMineAt = this.lastMineAt;
     n.clock = this.clock;
     n.delegations = this.delegations.map((d) => ({ ...d }));
     n.proposals = this.proposals.map((p) => ({ ...p }));
     n.models = this.models.map((m) => ({ ...m }));
+    n.pending = this.cloneEvidence(this.pending);
+    n.pendingWasm = this.pendingWasm ? new Map(this.pendingWasm) : null;
+    n.detStep = this.detStep;
     return n;
   }
 
@@ -187,72 +204,119 @@ export class OrganismNode {
     if (this.events.length > 80) this.events.pop();
   }
 
-  private btcLeaf(): string {
-    const tip = this.btcHeaders[this.btcHeaders.length - 1];
-    return tip ? `${tip.hash}:${tip.height}` : "none";
-  }
-
-  private ethLeaf(): string {
-    const tip = this.ethHeaders[this.ethHeaders.length - 1];
-    return tip ? `${tip.slot}:${tip.hash}` : "none";
-  }
-
-  private wasmLeaf(): string {
-    if (!this.wasmStorage.size) return "none";
-    return [...this.wasmStorage.entries()]
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([k, v]) => `${k}=${v}`)
-      .join("|");
-  }
-
-  private applyEffects(
-    ledger: Map<string, AccountState>,
-    pools: DexPool[],
-    txs: TxRecord[],
-    miner: string,
-    reward: number,
-    swaps?: SwapEvent[],
-  ) {
-    const credit = (addr: string, amount: number) => {
-      const acc = ledger.get(addr) ?? { balance: 0, nonce: 0 };
-      acc.balance += amount;
-      ledger.set(addr, acc);
+  private toOmega() {
+    return {
+      chainId: this.params.chainId,
+      height: this.height,
+      tipHash: this.tip?.hash ?? "0".repeat(64),
+      tipTimestamp: this.tip?.timestamp ?? 0,
+      difficulty: this.difficulty,
+      couplings: { ...this.couplings },
+      ledger: new Map([...this.ledger.entries()].map(([k, v]) => [k, { ...v }])),
+      pools: this.pools.map((p) => ({ ...p })),
+      btc: this.btcHeaders.map((h) => ({ ...h })),
+      ethPubkey: this.ethPubkey,
+      eth: this.ethHeaders.map((h) => ({ ...h })),
+      wasm: new Map(this.wasmStorage),
+      validators: new Map([...this.validators.entries()].map(([k, v]) => [k, { ...v }])),
+      delegations: this.delegations.map((d) => ({ ...d })),
+      proposals: this.proposals.map((p) => ({ ...p })),
+      finalizedHeight: this.finalizedThrough,
     };
-    for (const tx of txs) {
-      const sender = ledger.get(tx.from) ?? { balance: 0, nonce: 0 };
-      sender.balance -= tx.amount + tx.fee;
-      sender.nonce += 1;
-      ledger.set(tx.from, sender);
-      credit(miner, tx.fee);
-      const pool = pools.find((p) => (p.address || poolAddress(p.id)) === tx.to);
-      if (pool) {
-        const out = applySwap(pool, pool.tokenA, tx.amount);
-        if (out > 0 && swaps) {
-          swaps.unshift({
-            poolId: pool.id,
-            trader: tx.from,
-            amountIn: tx.amount,
-            amountOut: out,
-            tokenIn: pool.tokenA,
-            tokenOut: pool.tokenB,
-            timestamp: tx.timestamp,
-          });
-          if (swaps.length > 40) swaps.pop();
-        }
-      } else {
-        credit(tx.to, tx.amount);
-      }
-    }
-    credit(miner, reward);
   }
 
-  private simulateRoot(txs: TxRecord[], miner: string, reward: number): string {
-    const copy = new Map<string, AccountState>();
-    for (const [k, v] of this.ledger) copy.set(k, { ...v });
-    const pools = this.pools.map((p) => ({ ...p }));
-    this.applyEffects(copy, pools, txs, miner, reward);
-    return stateRootOf(copy, pools, this.btcLeaf(), this.ethLeaf(), this.wasmLeaf());
+  private installNext(next: ReturnType<OrganismNode["toOmega"]>, swaps: SwapEvent[]) {
+    this.ledger = next.ledger;
+    this.pools = next.pools;
+    this.btcHeaders = next.btc;
+    this.ethHeaders = next.eth;
+    this.ethPubkey = next.ethPubkey;
+    this.wasmStorage = next.wasm;
+    this.validators = next.validators;
+    this.delegations = next.delegations;
+    this.proposals = next.proposals;
+    this.couplings = { ...next.couplings };
+    this.difficulty = next.difficulty;
+    this.finalizedThrough = next.finalizedHeight;
+    for (let i = swaps.length - 1; i >= 0; i--) this.swaps.unshift(swaps[i]!);
+    if (this.swaps.length > 40) this.swaps.length = 40;
   }
+
+  private adopt(block: BlockRecord, stepped: Extract<Successor, { ok: true }>) {
+    this.installNext(stepped.next, stepped.swaps);
+    for (const tx of block.transactions) {
+      this.mempool.delete(tx.hash);
+      this.txIndex.set(tx.hash, tx);
+    }
+    this.blocks.push(block);
+    const all = [...stepped.next.validators.values()];
+    const live = all.filter((x) => !x.jailed && !x.slashed);
+    const totalPower = all.reduce((s, x) => s + x.bondedStake, 0);
+    const votingPower = live.reduce((s, x) => s + x.bondedStake, 0);
+    for (const b of this.blocks) {
+      if (b.finalized || b.height > stepped.next.finalizedHeight) continue;
+      b.finalized = true;
+      this.finality.set(b.height, {
+        height: b.height,
+        blockHash: b.hash,
+        votes: live.length,
+        votingPower,
+        totalVotingPower: totalPower,
+        finalized: true,
+      });
+      this.emit("close", "finality", `Ω${b.height} stabilized · lag ${this.params.finalityLag}`);
+    }
+    const prev = this.blocks[this.blocks.length - 2];
+    const blockTime = prev ? block.timestamp - prev.timestamp : this.params.targetBlockTimeMs / 1000;
+    this.stats.push({
+      height: block.height,
+      residual: block.residual,
+      territoryResidual: block.territoryResidual,
+      mempoolPressure: block.committedPressure,
+      difficulty: block.difficulty,
+      blockTime,
+      txCount: block.txCount,
+      timestamp: block.timestamp,
+    });
+    if (this.stats.length > 48) this.stats.shift();
+    for (const p of this.peers) {
+      p.height = block.height;
+      p.latencyMs = Math.max(8, Math.round(p.latencyMs + (Math.random() - 0.5) * 6));
+    }
+  }
+
+  private blankEvidence(): TransitionEvidence {
+    return {
+      v: 1,
+      chainId: this.params.chainId,
+      wasmCode: ARBITRAGE_CODE,
+      btc: [],
+      eth: [],
+      wasm: [],
+      stake: [],
+    };
+  }
+
+  private cloneEvidence(ev: TransitionEvidence): TransitionEvidence {
+    return {
+      v: 1,
+      chainId: ev.chainId,
+      wasmCode: ev.wasmCode,
+      btc: ev.btc.map((b) => ({ ...b })),
+      eth: ev.eth.map((e) => ({ ...e })),
+      wasm: ev.wasm.map((w) => ({ ...w })),
+      stake: ev.stake.map((s) => ({ ...s })),
+    };
+  }
+
+  private held(addr: string): number {
+    return this.pending.stake.reduce((sum, op) => {
+      if (op.op === "delegate" && op.delegator === addr) return sum + op.amount;
+      if (op.op === "propose" && op.proposer === addr) return sum + op.deposit;
+      return sum;
+    }, 0);
+  }
+
 
   private credit(addr: string, amount: number) {
     const acc = this.ledger.get(addr) ?? { balance: 0, nonce: 0 };
@@ -301,20 +365,7 @@ export class OrganismNode {
   }
 
   private bootstrap() {
-    for (const a of GENESIS_ALLOCATIONS) this.credit(a.address, a.amount);
-    this.credit(this.treasury.address, this.network === "testnet" ? 25_000_000 : 8_000_000);
-    this.credit(this.miner.address, 2_000_000);
-    for (const k of this.actors) this.credit(k.address, 1_500_000);
-    for (const v of genesisValidators()) {
-      this.credit(v.address, v.bondedStake);
-      this.validators.set(v.address, v);
-    }
-    this.pools = [
-      { id: "EQU-WBTC", tokenA: "EQU", tokenB: "WBTC", reserveA: 10_000_000, reserveB: 100, fee: 0.003, txCount: 0 },
-      { id: "EQU-USDC", tokenA: "EQU", tokenB: "USDC", reserveA: 10_000_000, reserveB: 10_000_000, fee: 0.003, txCount: 0 },
-    ].map((p) => ({ ...p, address: poolAddress(p.id) }));
-    this.seedPeers();
-    this.bondProducer();
+    this.constitute();
     const genesis = this.composeBlock({
       height: 0,
       prevHash: "0".repeat(64),
@@ -322,19 +373,35 @@ export class OrganismNode {
       txs: [],
       miner: this.miner.address,
     });
-    this.commit(genesis);
-    const committed = this.blocks[this.blocks.length - 1];
-    if (committed) committed.finalized = true;
+    this.sealing = true;
+    if (!this.commit(genesis)) throw new Error("genesis did not commit");
+    this.sealing = false;
     this.emit("out", "memory", `${this.params.name} genesis committed ${genesis.hash.slice(0, 12)}…`);
     this.lastMineAt = Date.now();
+    this.clock = GENESIS_TIME;
+    const step = Math.max(1, Math.floor(this.params.targetBlockTimeMs / 1000));
     const premine = this.network === "testnet" ? 8 : 4;
     for (let i = 0; i < premine; i++) {
-      this.maybeActivity(true);
+      this.clock += step;
+      this.maybeActivity(true, true);
       this.mine();
     }
-    this.maybeActivity(true);
-    this.maybeActivity(true);
-    this.maybeActivity(true);
+    this.clock = null;
+    this.maybeActivity(true, true);
+    this.maybeActivity(true, true);
+    this.maybeActivity(true, true);
+    this.startKin();
+  }
+
+  /** Ω before any block. The same function a second body starts from. */
+  private constitute() {
+    const omega = initialOmega(this.network);
+    this.ledger = omega.ledger;
+    this.pools = omega.pools;
+    this.validators = omega.validators;
+    this.difficulty = omega.difficulty;
+    this.couplings = { ...omega.couplings };
+    this.seedPeers();
   }
 
   /** Move producer stake out of liquid so the coinbase has a validator to pay. */
@@ -354,25 +421,6 @@ export class OrganismNode {
       commission: 0.1,
     });
     this.emit("close", "governance", "producer bonded · staking is inside the transition");
-  }
-
-  /** Passed governance messages change λ before the solve, not after. */
-  private applyGovernance() {
-    for (const p of this.proposals) {
-      if (p.status !== "passed") continue;
-      if (p.couplingKey && typeof p.couplingValue === "number" && Number.isFinite(p.couplingValue)) {
-        this.couplings = { ...this.couplings, [p.couplingKey]: Math.max(0, p.couplingValue) };
-        this.emit("close", "governance", `executed #${p.id} · λ_${p.couplingKey}=${p.couplingValue}`);
-      }
-      p.status = "executed";
-    }
-  }
-
-  private issuanceSplit(miner: string, reward: number): { liquid: number; staked: number } {
-    const minerV = this.validators.get(miner);
-    if (!minerV || minerV.jailed || minerV.slashed) return { liquid: reward, staked: 0 };
-    const liquid = Math.floor(reward * minerV.commission);
-    return { liquid, staked: reward - liquid };
   }
 
   private composeBlock(args: {
@@ -400,28 +448,45 @@ export class OrganismNode {
       recursionDepth: 2,
       target: this.params.residualThreshold,
     });
-    const reward = Math.max(
-      0,
-      Math.floor(
-        minerReward(args.height, solution.residual, this.params.residualThreshold, {
-          baseReward: this.params.baseReward,
-          halvingInterval: this.params.halvingInterval,
-        }),
-      ),
-    );
-    const split = this.issuanceSplit(args.miner, reward);
-    const root = this.simulateRoot(args.txs, args.miner, split.liquid);
+    let evidence = this.cloneEvidence(this.pending);
+    let wasmAfter = evidence.wasm.length ? this.pendingWasm : null;
+    const omega = this.toOmega();
+    const stepInputs = (ev: TransitionEvidence, wasm: Map<string, string> | null) =>
+      applySuccessor(omega, {
+        transactions: args.txs,
+        evidence: ev,
+        timestamp: args.timestamp,
+        nonce: solution.nonce,
+        miner: args.miner,
+        committedPressure: pressure,
+        couplings: this.couplings,
+        difficulty: this.difficulty,
+        wasmAfter: wasm,
+      });
+    let stepped = stepInputs(evidence, wasmAfter);
+    if (!stepped.ok) {
+      this.emit("in", "verify", stepped.error);
+      this.pending = this.blankEvidence();
+      this.pendingWasm = null;
+      evidence = this.blankEvidence();
+      wasmAfter = null;
+      stepped = stepInputs(evidence, wasmAfter);
+    }
+    if (!stepped.ok) throw new Error(stepped.error);
     const hash = canonicalHeaderHash({
       prevHash: args.prevHash,
       merkleRoot: mr,
-      stateRoot: root,
+      stateRoot: stepped.stateRoot,
       timestamp: args.timestamp,
       nonce: solution.nonce,
       difficulty: this.difficulty,
-      residualFp: solution.residualFp,
+      residualFp: stepped.residualFp,
       miner: args.miner,
       height: args.height,
       committedPressure: pressure,
+      chainId: evidence.chainId,
+      evidenceRoot: evidenceRoot(evidence),
+      omegaRoot: stepped.omegaRoot,
     });
     const txs = args.txs.map((t) => ({
       ...t,
@@ -434,26 +499,28 @@ export class OrganismNode {
       height: args.height,
       prevHash: args.prevHash,
       merkleRoot: mr,
-      stateRoot: root,
+      stateRoot: stepped.stateRoot,
       timestamp: args.timestamp,
       nonce: solution.nonce,
       difficulty: this.difficulty,
-      residual: solution.residual,
-      residualFp: solution.residualFp,
-      territoryResidual: solution.breakdown.territory,
+      residual: stepped.residual,
+      residualFp: stepped.residualFp,
+      territoryResidual: stepped.territory,
       committedPressure: pressure,
       recursionDepth: 2,
-      coinbaseReward: reward,
-      liquidIssuance: split.liquid,
+      coinbaseReward: stepped.reward,
+      liquidIssuance: stepped.liquid,
       miner: args.miner,
       txCount: txs.length,
       transactions: txs,
       finalized: false,
       couplings: { ...this.couplings },
-      breakdown: solution.breakdown,
+      breakdown: stepped.breakdown,
       solverIterations: solution.iterations,
       verified: false,
       verifyNotes: [],
+      evidence,
+      omegaRoot: stepped.omegaRoot,
     };
     block.relation = stationarityRelation(block, this.params.residualThreshold);
     const report = verifyStationaryEvidence({
@@ -472,21 +539,29 @@ export class OrganismNode {
 
   mine(at?: number): BlockRecord {
     this.bondProducer();
-    this.applyGovernance();
+    const opened = cloneOmega(this.toOmega());
+    openOmega(opened);
+    this.couplings = opened.couplings;
+    this.proposals = opened.proposals;
     const prev = this.tip!;
     const height = prev.height + 1;
     const now = Math.max(prev.timestamp + 1, at ?? this.clock ?? Math.floor(Date.now() / 1000));
     const preview = this.pools.map((p) => ({ ...p }));
     const selected: TxRecord[] = [];
+    const reserved = new Map<string, number>();
     for (const tx of [...this.mempool.values()].sort((a, b) => b.fee - a.fee)) {
       if (selected.length >= this.params.maxTxPerBlock) break;
       if (!verifyTx(tx, this.params.chainId)) {
         this.mempool.delete(tx.hash);
         continue;
       }
+      const already = reserved.get(tx.from) ?? 0;
+      const acc = this.account(tx.from);
+      if (acc.balance < this.held(tx.from) + already + tx.amount + tx.fee) continue;
       const pool = preview.find((p) => (p.address || poolAddress(p.id)) === tx.to);
       if (pool && quoteSwap(pool, pool.tokenA, tx.amount) <= 0) continue;
       if (pool) applySwap(pool, pool.tokenA, tx.amount);
+      reserved.set(tx.from, already + tx.amount + tx.fee);
       selected.push(tx);
     }
     this.emit("in", "mempool", `pressure ${this.mempoolPressure.toFixed(3)} · ${this.mempool.size} queued · ${selected.length} selected`);
@@ -498,7 +573,13 @@ export class OrganismNode {
       txs: selected,
       miner: this.miner.address,
     });
-    this.commit(block);
+    this.sealing = true;
+    const committedOk = this.commit(block);
+    this.sealing = false;
+    if (!committedOk) {
+      this.emit("in", "verify", `Ω${height} refused · state did not close`);
+      return block;
+    }
     this.announcements.push(block.hash);
     if (this.announcements.length > 32) this.announcements.shift();
     this.emit("out", "solver", `R=${block.residual.toExponential(3)} nonce=${block.nonce} iters=${block.solverIterations}`);
@@ -507,96 +588,54 @@ export class OrganismNode {
     return block;
   }
 
-  private commit(block: BlockRecord) {
-    this.applyEffects(
-      this.ledger,
-      this.pools,
-      block.transactions,
-      block.miner,
-      block.liquidIssuance ?? block.coinbaseReward,
-      this.swaps,
-    );
-    for (const tx of block.transactions) {
-      this.mempool.delete(tx.hash);
-      this.txIndex.set(tx.hash, tx);
-    }
-    const applied = stateRootOf(this.ledger, this.pools, this.btcLeaf(), this.ethLeaf(), this.wasmLeaf());
-    if (applied !== block.stateRoot) {
-      block.verified = false;
-      block.verifyNotes = [...block.verifyNotes, `stateRoot post-apply mismatch`];
-      this.emit("in", "verify", "stateRoot divergence after apply");
-    }
-    const v = this.validators.get(block.miner);
-    if (v) v.blocksProposed += 1;
-    this.distribute(block);
-    this.blocks.push(block);
-    const prev = this.blocks[this.blocks.length - 2];
-    const blockTime = prev ? block.timestamp - prev.timestamp : this.params.targetBlockTimeMs / 1000;
-    this.stats.push({
-      height: block.height,
-      residual: block.residual,
-      territoryResidual: block.territoryResidual,
-      mempoolPressure: block.committedPressure,
-      difficulty: this.difficulty,
-      blockTime,
-      txCount: block.txCount,
-      timestamp: block.timestamp,
+  private sealing = false;
+
+  private wasmOverlayMatches(ev: TransitionEvidence): boolean {
+    if (!this.pendingWasm || ev.wasm.length !== this.pending.wasm.length) return false;
+    return ev.wasm.every((call, i) => {
+      const queued = this.pending.wasm[i];
+      return queued && queued.method === call.method && queued.caller === call.caller;
     });
-    if (this.stats.length > 48) this.stats.shift();
-    this.adjustDifficulty(blockTime);
-    this.runFinality(block);
-    for (const p of this.peers) {
-      p.height = block.height;
-      p.latencyMs = Math.max(8, Math.round(p.latencyMs + (Math.random() - 0.5) * 6));
+  }
+
+  private commit(block: BlockRecord, wasmReady?: Map<string, string> | null): boolean {
+    const ev = block.evidence;
+    const wasmAfter = ev?.wasm.length ? (wasmReady ?? (this.wasmOverlayMatches(ev) ? this.pendingWasm : null)) : null;
+    const stepped = applySuccessor(this.toOmega(), {
+      transactions: block.transactions,
+      evidence: ev,
+      timestamp: block.timestamp,
+      nonce: block.nonce,
+      miner: block.miner,
+      committedPressure: block.committedPressure,
+      couplings: block.couplings,
+      difficulty: block.difficulty,
+      wasmAfter,
+    });
+    if (!stepped.ok) {
+      this.emit("in", "verify", stepped.error);
+      return false;
     }
-    if (!block.verified) return;
+    if (stepped.stateRoot !== block.stateRoot || (block.evidence && stepped.omegaRoot !== block.omegaRoot)) {
+      this.emit("in", "verify", "state did not replay");
+      return false;
+    }
+    if (stepped.reward !== block.coinbaseReward || stepped.liquid !== (block.liquidIssuance ?? block.coinbaseReward)) {
+      this.emit("in", "verify", "reward law diverged");
+      return false;
+    }
+    this.adopt(block, stepped);
+    this.pending = this.sealing ? this.blankEvidence() : this.pending;
+    this.pendingWasm = this.sealing ? null : this.pendingWasm;
+    if (this.kinStarted) this.noteKin(block);
+    if (!block.verified) return true;
     for (const listener of this.commitListeners) listener(block);
+    return true;
   }
 
   /** Fired after a block is committed and verified. Transports may speak. They may not commit. */
   onCommitted(listener: (block: BlockRecord) => void) {
     this.commitListeners.push(listener);
-  }
-
-  private distribute(block: BlockRecord) {
-    const staked = block.coinbaseReward - (block.liquidIssuance ?? block.coinbaseReward);
-    if (staked <= 0) return;
-    const live = [...this.validators.values()].filter((x) => !x.jailed && !x.slashed);
-    const total = live.reduce((s, x) => s + x.bondedStake, 0);
-    if (total <= 0) return;
-    for (const x of live) x.accumulatedRewards += Math.floor((staked * x.bondedStake) / total);
-  }
-
-  private adjustDifficulty(blockTime: number) {
-    const target = this.params.targetBlockTimeMs / 1000;
-    if (blockTime <= 0) return;
-    const factor = Math.max(0.8, Math.min(1.2, target / blockTime));
-    this.difficulty = Math.max(100_000, Math.floor(this.difficulty * factor));
-  }
-
-  private runFinality(block: BlockRecord) {
-    const all = [...this.validators.values()];
-    const live = all.filter((x) => !x.jailed && !x.slashed);
-    const total = all.reduce((s, x) => s + x.bondedStake, 0);
-    const voting = live.reduce((s, x) => s + x.bondedStake, 0);
-    const cutoff = block.height - this.params.finalityLag;
-    for (const b of this.blocks) {
-      if (b.finalized || b.height > cutoff) continue;
-      const ratio = total > 0 ? voting / total : 0;
-      const ok = ratio >= this.params.finalityQuorum;
-      this.finality.set(b.height, {
-        height: b.height,
-        blockHash: b.hash,
-        votes: live.length,
-        votingPower: voting,
-        totalVotingPower: total,
-        finalized: ok,
-      });
-      if (ok) {
-        b.finalized = true;
-        this.emit("close", "finality", `Ω${b.height} stabilized · ${(ratio * 100).toFixed(0)}% · lag ${this.params.finalityLag}`);
-      }
-    }
   }
 
   tick(): BlockRecord | null {
@@ -609,21 +648,29 @@ export class OrganismNode {
     return this.mine();
   }
 
-  private maybeActivity(force: boolean) {
+  private unit(tag: string): number {
+    const hex = sha256Hex(`eq-det|${this.params.chainId}|${this.height}|${this.detStep}|${tag}`);
+    this.detStep += 1;
+    return parseInt(hex.slice(0, 8), 16) / 0x100000000;
+  }
+
+  private maybeActivity(force: boolean, deterministic = false) {
+    const rnd = () => (deterministic ? this.unit("act") : Math.random());
     if (this.mempool.size > 24 && !force) return;
-    if (!force && Math.random() > 0.55) return;
-    const from = this.actors[Math.floor(Math.random() * this.actors.length)]!;
-    const toPool = GENESIS_ALLOCATIONS[Math.floor(Math.random() * GENESIS_ALLOCATIONS.length)]!;
+    if (!force && rnd() > 0.55) return;
+    const from = this.actors[Math.floor(rnd() * this.actors.length)]!;
+    const toPool = GENESIS_ALLOCATIONS[Math.floor(rnd() * GENESIS_ALLOCATIONS.length)]!;
     const acc = this.account(from.address);
-    const amount = 1_000 + Math.floor(Math.random() * 12_000);
-    const fee = 50 + Math.floor(Math.random() * 250);
-    if (acc.balance < amount + fee) return;
+    const amount = 1_000 + Math.floor(rnd() * 12_000);
+    const fee = 50 + Math.floor(rnd() * 250);
+    if (acc.balance - this.held(from.address) < amount + fee) return;
     const tx = signTx(from, {
       to: toPool.address,
       amount,
       fee,
       nonce: acc.nonce + [...this.mempool.values()].filter((t) => t.from === from.address).length,
       chainId: this.params.chainId,
+      timestamp: this.clock ?? undefined,
     });
     this.submitTx(tx);
   }
@@ -638,7 +685,7 @@ export class OrganismNode {
     const acc = this.account(tx.from);
     const pending = [...this.mempool.values()].filter((t) => t.from === tx.from).length;
     if (tx.nonce !== acc.nonce + pending) return { ok: false, error: `bad nonce (expected ${acc.nonce + pending})` };
-    if (acc.balance < tx.amount + tx.fee) return { ok: false, error: "insufficient funds" };
+    if (acc.balance - this.held(tx.from) < tx.amount + tx.fee) return { ok: false, error: "insufficient funds" };
     if (this.mempool.size >= this.params.mempoolCap) return { ok: false, error: "mempool full" };
     this.mempool.set(tx.hash, tx);
     this.emit("close", "mempool", `queued · pressure ${this.mempoolPressure.toFixed(3)}`);
@@ -685,8 +732,8 @@ export class OrganismNode {
   }
 
   /**
-   * Admit a Bitcoin header the way contracts/btc_spv_bridge does:
-   * proof of work, then continuity against the tip. No EQU is credited.
+   * Queue a Bitcoin header. Proof of work is checked now.
+   * The header enters state only inside the next block, which carries it.
    */
   submitBtcHeader(hex: string, height: number): { ok: boolean; error?: string; hash?: string } {
     const raw = decodeHeaderHex(hex);
@@ -694,21 +741,21 @@ export class OrganismNode {
     if (!Number.isInteger(height) || height < 0) return { ok: false, error: "height must be a non-negative integer" };
     if (!verifyBtcPow(raw)) return { ok: false, error: "bad proof of work" };
     const parsed = parseBtcHeader(raw);
-    const tip = this.btcHeaders[this.btcHeaders.length - 1];
+    const staged = this.btcHeaders.map((h) => ({ ...h }));
+    for (const item of this.pending.btc) {
+      const prev = decodeHeaderHex(item.headerHex);
+      if (!prev) return { ok: false, error: "queued header is not 80 bytes" };
+      const body = parseBtcHeader(prev);
+      staged.push({ hash: body.hash, height: item.height, prevHash: body.prevHash, merkleRoot: body.merkleRoot, bits: body.bits });
+    }
+    const tip = staged[staged.length - 1];
     if (tip) {
       if (height !== tip.height + 1) return { ok: false, error: "height does not extend the tip" };
       if (parsed.prevHash !== tip.hash) return { ok: false, error: "prev hash does not match the tip" };
     }
-    if (this.btcHeaders.some((h) => h.hash === parsed.hash)) return { ok: false, error: "header already admitted" };
-    this.btcHeaders.push({
-      hash: parsed.hash,
-      height,
-      prevHash: parsed.prevHash,
-      merkleRoot: parsed.merkleRoot,
-      bits: parsed.bits,
-    });
-    if (this.btcHeaders.length > 2016) this.btcHeaders.shift();
-    this.emit("in", "verify", `BTC header ${height} admitted · ${parsed.hash.slice(0, 16)}… · no credit`);
+    if (staged.some((h) => h.hash === parsed.hash)) return { ok: false, error: "header already admitted" };
+    this.pending.btc.push({ headerHex: hex.trim(), height });
+    this.emit("in", "verify", `BTC header ${height} queued · ${parsed.hash.slice(0, 16)}… · no credit`);
     return { ok: true, hash: parsed.hash };
   }
 
@@ -732,7 +779,7 @@ export class OrganismNode {
     return { ok: true };
   }
 
-  /** Execute the compiled arbitrage contract. Storage then enters the next state root. */
+  /** Execute the compiled arbitrage contract against a staged store. The call rides in the next block. */
   async executeContract(method: "init" | "pause" | "unpause", caller: string): Promise<{
     ok: boolean;
     code: number;
@@ -742,35 +789,69 @@ export class OrganismNode {
     const owner = caller.slice(0, 40).padEnd(40, "0");
     const methodId = method === "init" ? 0 : method === "pause" ? 2 : 3;
     const args = method === "init" ? new TextEncoder().encode(owner) : new Uint8Array();
+    const storage = new Map(this.pendingWasm ?? this.wasmStorage);
     const result = await callArbitrage(methodId, args, {
       caller: owner,
-      storage: this.wasmStorage,
+      storage,
       blockNumber: Math.max(0, this.height),
     });
     const ok = result.code === 1;
-    this.emit("in", "verify", `wasm ${method} → ${result.code}${ok ? "" : " refused"}`);
+    if (ok) {
+      this.pendingWasm = storage;
+      this.pending.wasm.push({ method, caller: owner });
+    }
+    this.emit("in", "verify", `wasm ${method} → ${result.code}${ok ? " · queued" : " refused"}`);
     return { ok, code: result.code, logs: result.logs, error: ok ? undefined : `contract returned ${result.code}` };
   }
 
+  private ethStaged(): { pubkey: string; headers: EthHeaderRecord[] } {
+    let pubkey = this.ethPubkey;
+    const headers = this.ethHeaders.map((h) => ({ ...h }));
+    for (const item of this.pending.eth) {
+      if (item.op === "bootstrap") {
+        pubkey = item.pubkey;
+        continue;
+      }
+      const fields = {
+        slot: item.slot,
+        proposerIndex: item.proposerIndex,
+        parentRoot: item.parentRoot,
+        stateRoot: item.stateRoot,
+        bodyRoot: item.bodyRoot,
+      };
+      headers.push({
+        slot: item.slot,
+        hash: hexOf(hashEthHeader(fields)),
+        parentRoot: item.parentRoot,
+        stateRoot: item.stateRoot,
+        bodyRoot: item.bodyRoot,
+        participants: item.participants,
+      });
+    }
+    return { pubkey, headers };
+  }
+
   /**
-   * Install a BLS aggregate key. The secret stays in this process and is not
-   * written into the chain body. This is not Ethereum's sync committee unless
+   * Queue a BLS aggregate key. The secret stays in this process and is not
+   * written into the block. This is not Ethereum's sync committee unless
    * the caller supplies that committee's key.
    */
   bootstrapEth(pubkeyHex?: string): { ok: boolean; error?: string; pubkey?: string } {
-    if (this.ethPubkey) return { ok: false, error: "already bootstrapped", pubkey: this.ethPubkey };
+    if (this.ethStaged().pubkey) return { ok: false, error: "already bootstrapped", pubkey: this.ethStaged().pubkey };
+    let pubkey: string;
     if (pubkeyHex) {
       const raw = ethHex(pubkeyHex.replace(/^0x/, ""));
       if (raw.length !== 48) return { ok: false, error: "aggregate pubkey must be 48 bytes" };
-      this.ethPubkey = hexOf(raw);
+      pubkey = hexOf(raw);
       this.ethSecret = null;
     } else {
       const key = ethKeygen();
       this.ethSecret = key.secret;
-      this.ethPubkey = hexOf(key.pubkey);
+      pubkey = hexOf(key.pubkey);
     }
-    this.emit("in", "verify", `ETH committee bootstrapped · ${this.ethPubkey.slice(0, 16)}… · no credit`);
-    return { ok: true, pubkey: this.ethPubkey };
+    this.pending.eth.push({ op: "bootstrap", pubkey });
+    this.emit("in", "verify", `ETH committee queued · ${pubkey.slice(0, 16)}… · no credit`);
+    return { ok: true, pubkey };
   }
 
   submitEthHeader(header: {
@@ -782,7 +863,8 @@ export class OrganismNode {
     participants: number;
     signature: string;
   }): { ok: boolean; error?: string; hash?: string } {
-    if (!this.ethPubkey) return { ok: false, error: "not bootstrapped" };
+    const staged = this.ethStaged();
+    if (!staged.pubkey) return { ok: false, error: "not bootstrapped" };
     if (header.participants < ETH_MIN_PARTICIPANTS) return { ok: false, error: "quorum not met" };
     const fields = {
       slot: header.slot,
@@ -791,7 +873,7 @@ export class OrganismNode {
       stateRoot: header.stateRoot,
       bodyRoot: header.bodyRoot,
     };
-    const tip = this.ethHeaders[this.ethHeaders.length - 1];
+    const tip = staged.headers[staged.headers.length - 1];
     if (tip) {
       if (header.slot !== tip.slot + 1) return { ok: false, error: "slot does not extend the tip" };
       if (header.parentRoot !== tip.hash) return { ok: false, error: "parent root does not match the tip" };
@@ -802,17 +884,19 @@ export class OrganismNode {
     } catch {
       return { ok: false, error: "signature is not hex" };
     }
-    if (!verifyEthHeader(ethHex(this.ethPubkey), fields, sig)) return { ok: false, error: "bad signature" };
+    if (!verifyEthHeader(ethHex(staged.pubkey), fields, sig)) return { ok: false, error: "bad signature" };
     const hash = hexOf(hashEthHeader(fields));
-    this.ethHeaders.push({
-      slot: header.slot,
-      hash,
-      parentRoot: header.parentRoot,
-      stateRoot: header.stateRoot,
-      bodyRoot: header.bodyRoot,
+    this.pending.eth.push({
+      op: "header",
+      slot: fields.slot,
+      proposerIndex: fields.proposerIndex,
+      parentRoot: fields.parentRoot,
+      stateRoot: fields.stateRoot,
+      bodyRoot: fields.bodyRoot,
       participants: header.participants,
+      signature: header.signature.replace(/^0x/, ""),
     });
-    this.emit("in", "verify", `ETH header slot ${header.slot} admitted · no credit`);
+    this.emit("in", "verify", `ETH header slot ${header.slot} queued · no credit`);
     return { ok: true, hash };
   }
 
@@ -827,7 +911,7 @@ export class OrganismNode {
     signature: string;
   } } {
     if (!this.ethSecret) return { ok: false, error: "no local signing key" };
-    const tip = this.ethHeaders[this.ethHeaders.length - 1];
+    const tip = this.ethStaged().headers.at(-1);
     const fields = {
       slot: tip ? tip.slot + 1 : 1,
       proposerIndex: 0,
@@ -854,7 +938,7 @@ export class OrganismNode {
    * A peer delivered a candidate. The plane does not commit it.
    * Only the organism's admit path can.
    */
-  deliverFromPeer(peerId: string, claimed: BlockRecord): { ok: boolean; error?: string; duplicate?: boolean } {
+  deliverFromPeer(peerId: string, claimed: BlockRecord): Promise<{ ok: boolean; error?: string; duplicate?: boolean }> {
     this.emit("in", "mesh", `plane ${peerId.slice(0, 12)} announced ${claimed.hash.slice(0, 12)}…`);
     return onPlaneMessage(
       {
@@ -1091,39 +1175,44 @@ export class OrganismNode {
 
   delegate(delegator: string, validator: string, amount: number): { ok: boolean; error?: string } {
     const v = this.validators.get(validator);
-    if (!v || v.jailed) return { ok: false, error: "unknown or jailed validator" };
+    const jailed =
+      Boolean(v?.jailed) ||
+      this.pending.stake.some((s) => s.op === "slash" && s.validator === validator && s.reason === "double_sign");
+    if (!v || jailed) return { ok: false, error: "unknown or jailed validator" };
     if (amount <= 0) return { ok: false, error: "amount" };
-    if (!this.debit(delegator, amount)) return { ok: false, error: "insufficient EQU" };
-    v.bondedStake += amount;
-    this.delegations.push({ delegator, validator, amount });
-    this.emit("in", "governance", `delegate ${amount} → ${v.moniker}`);
+    if (this.account(delegator).balance - this.held(delegator) < amount) return { ok: false, error: "insufficient EQU" };
+    this.pending.stake.push({ op: "delegate", delegator, validator, amount });
+    this.emit("in", "governance", `delegate ${amount} → ${v.moniker} · queued`);
     return { ok: true };
   }
 
   slash(validator: string, reason: "double_sign" | "downtime"): { ok: boolean; error?: string; burned?: number } {
     const v = this.validators.get(validator);
     if (!v) return { ok: false, error: "unknown validator" };
+    if (this.pending.stake.some((s) => s.op === "slash" && s.validator === validator)) {
+      return { ok: false, error: "slash already queued" };
+    }
     const burned = slashAmount(v.bondedStake, reason);
-    v.bondedStake -= burned;
-    v.slashed = true;
-    if (reason === "double_sign") v.jailed = true;
-    this.emit("in", "governance", `slash ${reason} ${burned} on ${v.moniker}`);
+    this.pending.stake.push({ op: "slash", validator, reason });
+    this.emit("in", "governance", `slash ${reason} ${burned} on ${v.moniker} · queued`);
     return { ok: true, burned };
   }
 
   claimRewards(address: string): { ok: boolean; error?: string; amount?: number } {
     const v = this.validators.get(address);
     if (!v) return { ok: false, error: "not a validator" };
+    if (this.pending.stake.some((s) => s.op === "claim" && s.address === address)) return { ok: false, error: "claim already queued" };
     const amount = v.accumulatedRewards;
     if (amount <= 0) return { ok: false, error: "nothing to claim" };
-    v.accumulatedRewards = 0;
-    this.credit(address, amount);
+    this.pending.stake.push({ op: "claim", address });
+    this.emit("in", "governance", `claim ${amount} · queued`);
     return { ok: true, amount };
   }
 
   propose(proposer: string, title: string, deposit: number): { ok: boolean; error?: string; id?: number } {
     if (!title.trim()) return { ok: false, error: "title" };
-    if (!this.debit(proposer, deposit)) return { ok: false, error: "insufficient deposit" };
+    if (deposit < 0) return { ok: false, error: "deposit" };
+    if (this.account(proposer).balance - this.held(proposer) < deposit) return { ok: false, error: "insufficient deposit" };
     const p: Proposal = {
       id: proposalSeq++,
       title: title.slice(0, 80),
@@ -1135,20 +1224,20 @@ export class OrganismNode {
       status: "open",
     };
     this.proposals.unshift(p);
-    this.emit("in", "governance", `proposal #${p.id} ${p.title}`);
+    this.pending.stake.push({ op: "propose", proposer, title: p.title, deposit, id: p.id });
+    this.emit("in", "governance", `proposal #${p.id} ${p.title} · deposit queued`);
     return { ok: true, id: p.id };
   }
 
   vote(voter: string, id: number, option: "yes" | "no" | "abstain"): { ok: boolean; error?: string } {
+    const queued = this.pending.stake.some((s) => s.op === "propose" && s.id === id);
     const p = this.proposals.find((x) => x.id === id);
-    if (!p || p.status !== "open") return { ok: false, error: "not open" };
+    if (!queued && (!p || p.status !== "open")) return { ok: false, error: "not open" };
     const v = this.validators.get(voter);
     const power = v?.bondedStake ?? this.account(voter).balance;
     if (power <= 0) return { ok: false, error: "no voting power" };
-    p[option] += power;
-    const total = p.yes + p.no + p.abstain;
-    const bonded = [...this.validators.values()].reduce((s, x) => s + x.bondedStake, 0);
-    if (total >= this.params.finalityQuorum * bonded) p.status = p.yes > p.no ? "passed" : "failed";
+    this.pending.stake.push({ op: "vote", voter, id, option });
+    this.emit("in", "governance", `vote ${option} on #${id} · queued`);
     return { ok: true };
   }
 
@@ -1166,12 +1255,12 @@ export class OrganismNode {
     return m;
   }
 
-  ingestGossip(claimed: BlockRecord): { ok: boolean; error?: string; report?: VerificationReport } {
+  ingestGossip(claimed: BlockRecord): Promise<{ ok: boolean; error?: string; report?: VerificationReport }> {
     this.emit("in", "mesh", `gossip header ${claimed.hash.slice(0, 12)}… h=${claimed.height}`);
     return this.submitExternal(claimed);
   }
 
-  submitExternal(claimed: BlockRecord): { ok: boolean; report: VerificationReport; error?: string } {
+  async submitExternal(claimed: BlockRecord): Promise<{ ok: boolean; report: VerificationReport; error?: string }> {
     this.emit("in", "network", `external candidate ${claimed.hash.slice(0, 12)}… at membrane`);
     const prev = claimed.height === 0 ? null : (this.blocks.find((b) => b.hash === claimed.prevHash) ?? null);
     const report = verifyStationaryEvidence({
@@ -1197,9 +1286,145 @@ export class OrganismNode {
       this.emit("in", "verify", "external rejected · not the next candidate");
       return { ok: false, report, error: "not the next candidate" };
     }
-    this.commit(claimed);
+    const err = await this.absorb(claimed);
+    if (err) {
+      this.emit("in", "verify", `external rejected · ${err}`);
+      return { ok: false, report, error: err };
+    }
+    if (this.kinStarted) this.noteKin(claimed);
+    if (claimed.verified) {
+      for (const listener of this.commitListeners) listener(claimed);
+    }
     this.emit("close", "memory", `external Ω${claimed.height} admitted`);
     return { ok: true, report };
+  }
+
+  /**
+   * Second body. Constitution, then the blocks. No producer memory, no secret, no overlay.
+   */
+  static async become(network: NetworkId, blocks: BlockRecord[]): Promise<SecondBodyReport> {
+    const kin = new OrganismNode(network, { skipBootstrap: true });
+    kin.constitute();
+    for (const block of blocks) {
+      const err = await kin.absorb(block);
+      if (err) {
+        return {
+          ok: false,
+          height: block.height,
+          stateRoot: kin.tip?.stateRoot ?? "",
+          hash: kin.tip?.hash ?? "",
+          error: err,
+        };
+      }
+    }
+    return {
+      ok: true,
+      height: kin.height,
+      stateRoot: kin.tip?.stateRoot ?? "",
+      hash: kin.tip?.hash ?? "",
+      error: null,
+    };
+  }
+
+  /** Replay this process's blocks on a body that was not given its memory. */
+  startKin() {
+    if (this.kinStarted) return;
+    this.kinStarted = true;
+    const blocks = this.blocks.slice();
+    this.kinQueue = this.replaySnapshot(blocks);
+  }
+
+  async kinSettled(): Promise<SecondBodyReport | null> {
+    await this.kinQueue;
+    return this.kinReport;
+  }
+
+  private replaySnapshot(blocks: BlockRecord[]): Promise<void> {
+    return (async () => {
+      try {
+        const kin = new OrganismNode(this.network, { skipBootstrap: true });
+        kin.constitute();
+        for (const block of blocks) {
+          const err = await kin.absorb(block);
+          if (err) {
+            this.kin = null;
+            this.kinReport = { ok: false, height: block.height, stateRoot: "", hash: block.hash, error: err };
+            return;
+          }
+        }
+        this.kin = kin;
+        this.kinReport = {
+          ok: true,
+          height: kin.height,
+          stateRoot: kin.tip?.stateRoot ?? "",
+          hash: kin.tip?.hash ?? "",
+          error: null,
+        };
+      } catch (err) {
+        this.kin = null;
+        this.kinReport = {
+          ok: false,
+          height: -1,
+          stateRoot: "",
+          hash: "",
+          error: err instanceof Error ? err.message : "replay failed",
+        };
+      }
+    })();
+  }
+
+  private noteKin(block: BlockRecord) {
+    this.kinQueue = this.kinQueue.then(async () => {
+      if (!this.kin) return;
+      const err = await this.kin.absorb(block);
+      if (err) {
+        this.kinReport = { ok: false, height: block.height, stateRoot: "", hash: block.hash, error: err };
+        this.kin = null;
+        return;
+      }
+      this.kinReport = {
+        ok: true,
+        height: this.kin.height,
+        stateRoot: this.kin.tip?.stateRoot ?? "",
+        hash: this.kin.tip?.hash ?? "",
+        error: null,
+      };
+    });
+  }
+
+  private async absorb(block: BlockRecord): Promise<string | null> {
+    if (block.height === 0) {
+      if (block.prevHash !== "0".repeat(64)) return "genesis predecessor is not zero";
+    } else if (!this.tip || this.tip.hash !== block.prevHash || this.tip.height + 1 !== block.height) {
+      return "not the next block";
+    }
+    const report = verifyStationaryEvidence({
+      block,
+      prev: this.tip,
+      mempoolPressure: block.committedPressure,
+      cumulativeWork: block.height,
+      params: this.params,
+      now: block.timestamp,
+    });
+    if (!report.ok) return report.checks.filter((c) => !c.ok).map((c) => c.name).join(", ");
+    const stepped = await successor(this.toOmega(), {
+      transactions: block.transactions,
+      evidence: block.evidence,
+      timestamp: block.timestamp,
+      nonce: block.nonce,
+      miner: block.miner,
+      committedPressure: block.committedPressure,
+      couplings: block.couplings,
+      difficulty: block.difficulty,
+    });
+    if (!stepped.ok) return stepped.error;
+    if (stepped.stateRoot !== block.stateRoot) return "state root does not replay";
+    if (block.evidence && stepped.omegaRoot !== block.omegaRoot) return "omega root does not replay";
+    if (stepped.reward !== block.coinbaseReward) return "coinbase is not the reward law";
+    if (stepped.liquid !== (block.liquidIssuance ?? block.coinbaseReward)) return "liquid issuance is not the stake law";
+    if (Math.abs(stepped.residual - block.residual) > 1e-12) return "residual is not the transition";
+    this.adopt(block, stepped);
+    return null;
   }
 
   snapshot(): ChainSnapshot {
@@ -1289,6 +1514,8 @@ export class OrganismNode {
       lastPaired: this.lastPaired,
       lastWhole: this.lastWhole,
       lastBidirectional,
+      secondBody: this.kinReport,
+      constitution: (this.constitutionReport ??= constitutionalAnswer()),
     };
   }
 
@@ -1311,9 +1538,25 @@ export class OrganismNode {
 
   wholes(): Wholes {
     return {
-      committed: ["account balances", "account nonces", "state root", "block headers", "tx hashes", "bonded stake"],
-      observed: ["explorer projections", "metrics", "light headers", "mempool view", "validator set", "residual", "mesh roster"],
-      operational: ["mempool", "DEX reserves", "finality votes", "peer table", "faucet claims", "solver couplings", "governance proposals", "model registry"],
+      committed: [
+        "account balances",
+        "account nonces",
+        "pool reserves",
+        "bitcoin headers",
+        "beacon headers",
+        "wasm storage",
+        "validators",
+        "delegations",
+        "proposals",
+        "couplings",
+        "difficulty",
+        "finalized height",
+        "state root",
+        "omega root",
+        "transition evidence",
+      ],
+      observed: ["explorer projections", "metrics", "light headers", "mempool view", "residual", "mesh roster"],
+      operational: ["mempool", "peer table", "faucet claims", "model registry", "solver search"],
       whole: ["theory", "Rust reference", "TypeScript node", "Android verifier", "P2P mesh", "ZK experiments", "contracts/", "lib/coinomics"],
     };
   }

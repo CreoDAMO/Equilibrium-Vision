@@ -101,7 +101,13 @@ function Home() {
                   they do not re-solve.
                 </li>
                 <li>
-                  Tip {truncateHash(data.latestHash)} · genesis {truncateHash(data.genesisHash)}
+                  New blocks bind chain id {data.params.chainId}. Genesis {truncateHash(data.genesisHash)} is
+                  this network's header, not a shared object.
+                </li>
+                <li>
+                  {data.constitution?.q1
+                    ? `The transition is successor, not this process. One next state once transactions, evidence, miner, and timestamp are fixed. ${data.constitution.admittingNonces} nonces in ${data.constitution.nonceWindow} satisfy the residual predicate${data.constitution.admittingShareState ? " and share one Ω" : ""}. A vote changes Ω only inside the block.`
+                    : "The transition relation did not close. The page is not claiming a constitution it could not run."}
                 </li>
               </ul>
               <div className="mt-5 flex flex-wrap gap-3">

@@ -2,6 +2,7 @@ import type { BlockRecord, NetworkParams, TxRecord, VerificationReport } from ".
 import { canonicalHeaderHash, merkleRoot } from "./crypto";
 import { evaluateResidual } from "./solver";
 import { verifyTx } from "./wallet";
+import { evidenceRoot } from "./evidence";
 
 const MAX_FUTURE_SECS = 7200;
 
@@ -100,14 +101,41 @@ export function verifyStationaryEvidence(args: {
     miner: block.miner,
     height: block.height,
     committedPressure: block.committedPressure,
+    ...(block.evidence
+      ? { chainId: block.evidence.chainId, evidenceRoot: evidenceRoot(block.evidence), omegaRoot: block.omegaRoot }
+      : {}),
   });
   const hashOk = expectedHash === block.hash;
   checks.push({
     name: "header-hash",
     ok: hashOk,
     detail: hashOk
-      ? "header binds merkle, state root, nonce, residual, pressure"
+      ? block.evidence
+        ? `header binds merkle, state, nonce, residual, pressure, chain ${block.evidence.chainId}, Ω`
+        : "header binds merkle, state root, nonce, residual, pressure"
       : "header hash does not recompute from committed fields",
+  });
+
+  const omegaBound = !block.evidence || (typeof block.omegaRoot === "string" && /^[0-9a-f]{64}$/.test(block.omegaRoot));
+  checks.push({
+    name: "omega-root",
+    ok: omegaBound,
+    detail: !block.evidence
+      ? "block predates the full-state digest"
+      : omegaBound
+        ? block.omegaRoot!.slice(0, 16) + "…"
+        : "evidence block does not bind Ω",
+  });
+
+  const networkOk = !block.evidence || block.evidence.chainId === params.chainId;
+  checks.push({
+    name: "network",
+    ok: networkOk,
+    detail: networkOk
+      ? block.evidence
+        ? `chain ${params.chainId}`
+        : "block predates the chain-id binding"
+      : `evidence chain ${block.evidence?.chainId} is not ${params.chainId}`,
   });
 
   let sigOk = true;

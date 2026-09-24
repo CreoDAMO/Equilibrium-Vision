@@ -51,6 +51,14 @@ function BlockDetail() {
             <KV k="Timestamp" v={formatTime(block.timestamp)} />
             <KV k="Difficulty" v={formatAmount(block.difficulty)} />
             <KV k="Coinbase" v={formatAmount(block.coinbaseReward)} />
+            <KV
+              k="Evidence"
+              v={
+                block.evidence
+                  ? `chain ${block.evidence.chainId} · btc ${block.evidence.btc.length} · eth ${block.evidence.eth.length} · wasm ${block.evidence.wasm.length} · stake ${block.evidence.stake.length}`
+                  : "none · this block is from before the replay boundary"
+              }
+            />
           </dl>
         </div>
         <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">

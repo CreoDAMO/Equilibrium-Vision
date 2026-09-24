@@ -148,10 +148,18 @@ function LoopPage() {
             <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">
               <h2 className="font-display text-xl">Still not the whole source tree</h2>
               <ul className="mt-3 space-y-3 text-sm text-muted">
-                <li>This kernel does not execute the Rust crate or the contract WASM.</li>
-                <li>zkML, BTC SPV, and ETH sync stay source-only. Wiring them would be a false badge.</li>
-                <li>In-process restore is not a Render process restart. The boot path is fixed; the restart still has to happen there.</li>
-                <li>Agreement on this fork is not a proof of the variational identity.</li>
+                <li>The Rust crate still does not mine. The sidecar may carry a block. It does not commit one.</li>
+                <li>
+                  Bitcoin headers, beacon headers, wasm calls, stake moves, and votes ride inside the block.
+                  A second body replays that block through successor. It is not given this process's memory.
+                </li>
+                <li>
+                  {snap?.constitution?.q1
+                    ? `Q1 holds: successor does not read the clock. Q2: ${snap.constitution.admittingNonces} admitting nonces ${snap.constitution.admittingShareState ? "share one Ω while their residuals differ" : "do not share one Ω"}. Timestamp moves Ω: ${snap.constitution.timestampChangesOmega ? "yes" : "no"}. Miner moves Ω: ${snap.constitution.minerChangesOmega ? "yes" : "no"}. Off-band vote is a different Ω: ${snap.constitution.offBandVoteIsDifferentOmega ? "yes" : "no"}.`
+                    : "The constitutional witness has not been run."}
+                </li>
+                <li>The stationarity relation binds the header. It is not a Groth16 of Ωt → Ωt+1.</li>
+                <li>In-process restore copies the body. That is a different test from replaying the blocks.</li>
               </ul>
             </div>
           </section>

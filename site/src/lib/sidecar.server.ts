@@ -41,7 +41,7 @@ export function attachSidecar(getNode: (network: NetworkId) => OrganismNode | un
       const wait = waiting.get(msg.id)!;
       waiting.delete(msg.id);
       const body = asBlock(msg.data);
-      if (msg.ok && body && body.hash === wait.hash) current.deliverFromPeer(wait.peerId, body);
+      if (msg.ok && body && body.hash === wait.hash) void current.deliverFromPeer(wait.peerId, body);
       return;
     }
 
@@ -61,7 +61,7 @@ export function attachSidecar(getNode: (network: NetworkId) => OrganismNode | un
 
     if (msg.event === "block_body" && msg.peerId) {
       const body = asBlock(msg.body);
-      if (body) current.deliverFromPeer(msg.peerId, body);
+      if (body) void current.deliverFromPeer(msg.peerId, body);
       return;
     }
 

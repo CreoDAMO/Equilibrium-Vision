@@ -28,7 +28,7 @@ function ContractsPage() {
       }),
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success(`Header admitted · ${r.hash?.slice(0, 16)}… · no credit`);
+        toast.success(`Header queued · ${r.hash?.slice(0, 16)}… · the next block carries it · no credit`);
         qc.invalidateQueries({ queryKey: ["snapshot", network] });
       } else toast.error(r.error ?? "refused");
     },
@@ -40,7 +40,7 @@ function ContractsPage() {
       }),
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success(`wasm init returned ${r.code} · storage enters the next state root`);
+        toast.success(`wasm init returned ${r.code} · the call rides in the next block`);
         qc.invalidateQueries({ queryKey: ["snapshot", network] });
       } else toast.error(r.error ?? "refused");
     },
@@ -49,7 +49,7 @@ function ContractsPage() {
     mutationFn: () => bootstrapEth({ data: { network } }),
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Committee key installed in this process · not Ethereum's · no credit");
+        toast.success("Committee key queued into the next block · not Ethereum's · no credit");
         qc.invalidateQueries({ queryKey: ["snapshot", network] });
       } else toast.error(r.error ?? "refused");
     },
@@ -58,7 +58,7 @@ function ContractsPage() {
     mutationFn: () => admitEthHeader({ data: { network } }),
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Beacon header admitted · no credit");
+        toast.success("Beacon header queued into the next block · no credit");
         qc.invalidateQueries({ queryKey: ["snapshot", network] });
       } else toast.error(r.error ?? "refused");
     },
@@ -79,7 +79,7 @@ function ContractsPage() {
       }),
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Recorded");
+        toast.success("Queued into the next block");
         qc.invalidateQueries({ queryKey: ["snapshot", network] });
       } else toast.error(String(r.error ?? "refused"));
     },
@@ -91,9 +91,10 @@ function ContractsPage() {
         <h1 className="font-display text-4xl tracking-tight">Contracts</h1>
         <p className="mt-2 max-w-2xl text-muted">
           Staking, governance, and the model registry run inside this kernel.
-          The compiled arbitrage contract executes here. An admitted Bitcoin header and an admitted
-          beacon header enter the next state root. Neither credits EQU. The stationarity relation
-          binds the header hash. It is not a Groth16 of the transition.
+          A Bitcoin header, a beacon header, a wasm call, or a stake move is queued here and then
+          carried inside the block that publishes the next state root. A second process can replay
+          that block without this process's memory. None of those inputs mint EQU. The stationarity
+          relation binds the header hash. It is not a Groth16 of the transition.
         </p>
       </header>
 
@@ -101,7 +102,8 @@ function ContractsPage() {
         <h2 className="font-display text-xl">Admit a Bitcoin header</h2>
         <p className="text-sm text-muted">
           The box starts with Bitcoin genesis. Proof of work is checked. After the first header,
-          the next one must extend the tip. Nothing is credited. Admitted tip:{" "}
+          the next one must extend the tip. Nothing is credited. The header is queued until the next block.
+          Committed tip:{" "}
           {snap?.btc.tipHeight ?? "none"}
           {snap?.btc.tipHash ? ` · ${snap.btc.tipHash.slice(0, 16)}…` : ""}.
         </p>
@@ -122,7 +124,7 @@ function ContractsPage() {
         <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-3">
           <h2 className="font-display text-xl">Arbitrage WASM</h2>
           <p className="text-sm text-muted">
-            init runs the compiled contract. Storage is a leaf of the next state root.
+            init runs the compiled contract. The call is inside the next block, which a second body replays.
             The host refuses dex_multi_swap, so pools do not move from here.
             Entries now: {snap?.wasmStorage.length ?? 0}.
           </p>
