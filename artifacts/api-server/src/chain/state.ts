@@ -92,6 +92,36 @@ export class Ledger {
     return null;
   }
 
+  /**
+   * Transactions that the account ledger can apply, in order.
+   * Does not mutate the ledger. A transaction the ledger would reject is omitted.
+   * Those omitted transactions must not become a UTXO.
+   */
+  selectApplicable(txs: TxRecord[]): TxRecord[] {
+    const shadow = new Map<string, AccountState>();
+    const read = (addr: string): AccountState => {
+      const cached = shadow.get(addr);
+      if (cached) return cached;
+      const live = this.getAccount(addr);
+      const copy = { balance: live.balance, nonce: live.nonce };
+      shadow.set(addr, copy);
+      return copy;
+    };
+    const kept: TxRecord[] = [];
+    for (const tx of txs) {
+      if (!Number.isSafeInteger(tx.amount) || !Number.isSafeInteger(tx.fee) || tx.amount <= 0 || tx.fee < 0) continue;
+      const sender = read(tx.from);
+      const total = tx.amount + tx.fee;
+      if (tx.nonce !== sender.nonce || sender.balance < total) continue;
+      sender.balance -= total;
+      sender.nonce += 1;
+      const recipient = read(tx.to);
+      recipient.balance += tx.amount;
+      kept.push(tx);
+    }
+    return kept;
+  }
+
   getAccount(addr: string): AccountState {
     return this.accounts.get(addr) ?? { balance: 0, nonce: 0 };
   }
@@ -435,28 +465,19 @@ export class ChainState {
         this.addressTxs.get(addr)!.add(tx.hash);
       }
 
-      // Apply account-model debit/credit so ledger balances stay consistent
+      // The account ledger is the monetary state. A transfer it rejects does
+      // not become a confirmed output, and a transfer it accepts does not
+      // also mint a recipient UTXO. Coinbase and UTXO-fee outputs stay in
+      // the UTXO set; they are that subsystem's own issuance.
       const applyErr = this.ledger.applyTx(tx);
       if (applyErr) {
-        // Log but don't abort — the tx is already in a confirmed block
-        // (can happen during chain replay if genesis credits weren't applied yet)
-        logger.warn({ txHash: tx.hash, err: applyErr }, "ledger.applyTx warning during block confirmation");
+        const failed: TxRecord = { ...confirmed, status: "failed" };
+        this.txIndex.set(tx.hash, failed);
+        logger.warn({ txHash: tx.hash, err: applyErr }, "ledger.applyTx rejected — no UTXO created");
+        continue;
       }
 
-      // Create UTXOs for confirmed transfers (recipient output + change output)
-      this.utxoSet.add({
-        txHash: tx.hash,
-        outputIndex: 0,
-        address: tx.to,
-        amount: tx.amount,
-        coinbase: false,
-        blockHeight: block.height,
-        spent: false,
-      });
       if (tx.fee > 0) {
-        // Credit transaction fee directly to the block miner.
-        // Fees are a direct payment and are not subject to the validator/delegator
-        // staking split — the full fee goes to whoever produced this block.
         this.ledger.credit(block.miner, tx.fee);
       }
     }
@@ -1631,7 +1652,7 @@ export async function mineNextBlockAsync(
   const height = state.height + 1;
   const now = Math.floor(Date.now() / 1000);
 
-  const candidates = state.mempool.all().slice(0, 50);
+  const candidates = state.ledger.selectApplicable(state.mempool.all()).slice(0, 50);
   const signed = candidates.filter((t) => t.signature && t.publicKey);
   let invalidHashes = new Set<string>();
   if (signed.length > 0) {
@@ -1762,7 +1783,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   const height = state.height + 1;
   const now = Math.floor(Date.now() / 1000);
 
-  const candidates = state.mempool.all().slice(0, 50);
+  const candidates = state.ledger.selectApplicable(state.mempool.all()).slice(0, 50);
 
   // Re-verify signatures at block-assembly time using batch verification —
   // one combined check instead of N full verifications. Any tx that fails

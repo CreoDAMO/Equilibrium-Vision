@@ -1514,6 +1514,40 @@ export class OrganismNode {
       });
     }
 
+    const guard = this.fork();
+    const payer = guard.actors[0]!;
+    const unfunded = signTx(payer, {
+      to: "ab".repeat(20),
+      amount: 10_000_000_001,
+      fee: 0,
+      nonce: guard.getAccount(payer.address).nonce,
+      chainId: guard.params.chainId,
+      timestamp: guard.tip?.timestamp ?? 0,
+    });
+    const senderBefore = guard.getAccount(payer.address).balance;
+    const admitted = guard.submitTx(unfunded);
+    const stepped = applySuccessor(guard.toOmega(), {
+      transactions: [unfunded],
+      evidence: undefined,
+      timestamp: (guard.tip?.timestamp ?? 0) + 15,
+      nonce: guard.tip?.nonce ?? 0,
+      miner: guard.miner.address,
+      committedPressure: 0,
+      couplings: guard.couplings,
+      difficulty: guard.difficulty,
+      wasmAfter: null,
+    });
+    const refused = !stepped.ok && stepped.error === "insufficient funds";
+    const recipient = stepped.ok ? (stepped.next.ledger.get(unfunded.to)?.balance ?? 0) : 0;
+    rows.push({
+      id: "unfunded",
+      status: !admitted.ok && refused && recipient === 0 ? "works" : "absent",
+      detail:
+        !admitted.ok && refused && recipient === 0
+          ? `An unfunded transfer of 10,000,000,001 was refused at the mempool and by the transition. The sender stayed at ${senderBefore.toLocaleString()}. No second output was created.`
+          : `An unfunded transfer was accepted. ${admitted.error ?? ("error" in stepped ? stepped.error : "transition applied")}`,
+    });
+
     rows.push({
       id: "withdraw",
       status: "absent",

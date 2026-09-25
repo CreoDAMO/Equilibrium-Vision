@@ -42,6 +42,7 @@ export const SPECS: SpecDoc[] = [
     summary: "Assembly of ≤ 50 signed transactions plus a header template.",
     body: [
       "Signatures are re-verified at assembly. Invalid txs are dropped, not mined.",
+      "A transfer is applied only when the sender's balance covers the amount and the fee. Otherwise there is no next state, and no second output is created.",
       "Merkle root is computed before discovery. The solver does not invent the transaction set after the fact except via the fee coupling in the territory solver.",
     ],
   },
@@ -68,7 +69,7 @@ export const SPECS: SpecDoc[] = [
     title: "Transition",
     summary: "Balances, nonces, fees, coinbase, validator rewards, difficulty.",
     body: [
-      "Account model is canonical for this kernel. UTXO and WASM remain operational in the source repo.",
+      "Account model is canonical for this kernel. A transfer the account ledger rejects is not spendable anywhere else.",
       "Fail closed: no RNG residual, no claimed residual without recompute.",
     ],
   },

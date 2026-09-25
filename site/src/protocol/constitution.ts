@@ -418,10 +418,15 @@ function applyEffects(
   miner: string,
   reward: number,
   swaps: SwapEvent[],
-) {
+): string | null {
   for (const tx of txs) {
+    if (!Number.isSafeInteger(tx.amount) || !Number.isSafeInteger(tx.fee) || tx.amount <= 0 || tx.fee < 0) {
+      return "amount refused";
+    }
     const sender = omega.ledger.get(tx.from) ?? { balance: 0, nonce: 0 };
-    omega.ledger.set(tx.from, { balance: sender.balance - tx.amount - tx.fee, nonce: sender.nonce + 1 });
+    const total = tx.amount + tx.fee;
+    if (sender.balance < total) return "insufficient funds";
+    omega.ledger.set(tx.from, { balance: sender.balance - total, nonce: sender.nonce + 1 });
     credit(omega.ledger, miner, tx.fee);
     const pool = omega.pools.find((p) => (p.address || poolAddress(p.id)) === tx.to);
     if (pool) {
@@ -442,6 +447,7 @@ function applyEffects(
     }
   }
   credit(omega.ledger, miner, reward);
+  return null;
 }
 
 /**
@@ -482,7 +488,8 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor
   const reward = rewardOf(params, height, breakdown.canonical);
   const split = issuanceSplit(next.validators, inputs.miner, reward);
   const swaps: SwapEvent[] = [];
-  applyEffects(next, inputs.transactions, inputs.miner, split.liquid, swaps);
+  const effectError = applyEffects(next, inputs.transactions, inputs.miner, split.liquid, swaps);
+  if (effectError) return { ok: false, error: effectError };
   const stateRoot = stateRootOf(next);
   const minerV = next.validators.get(inputs.miner);
   if (minerV) minerV.blocksProposed += 1;

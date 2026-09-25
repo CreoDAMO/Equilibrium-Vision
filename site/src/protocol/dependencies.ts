@@ -207,13 +207,13 @@ export function dependencyFindings(): DependencyRow[] {
   const balance = over.ok ? over.next.ledger.get(actor.address)?.balance : undefined;
   rows.push({
     id: "overdraft",
-    specifiedBy: "EQ-03 drops invalid signatures. It does not define insufficient funds.",
+    specifiedBy: "EQ-03",
     omegaChanges: over.ok && typeof balance === "number" && balance < 0,
     verdict: over.ok && typeof balance === "number" && balance < 0 ? "free-changes-omega" : "fixed",
     detail:
       over.ok && typeof balance === "number" && balance < 0
-        ? `A signed transfer larger than the balance was applied. The sender's balance is ${balance.toLocaleString()}. A body that refused the overdraft would commit a different Ω. The specification does not say which.`
-        : "The transition refused the overdraft.",
+        ? `A signed transfer larger than the balance was applied. The sender's balance is ${balance.toLocaleString()}. A body that refused the overdraft would commit a different Ω.`
+        : "The transition refused the unfunded transfer. The sender is unchanged, and nothing else is credited.",
   });
 
   const hostA = new Map<string, string>([["owner", "a"]]);
@@ -234,7 +234,7 @@ export function dependencyFindings(): DependencyRow[] {
   const wasm2 = applySuccessor(omega, { ...wasmInputs, wasmAfter: hostB });
   rows.push({
     id: "wasm-host",
-    specifiedBy: "EQ-06 says WASM stays in the source repo. The executable no longer does.",
+    specifiedBy: "EQ-06 names the account ledger as the monetary state. It does not name the wasm host.",
     omegaChanges: wasm1.ok && wasm2.ok && wasm1.omegaRoot !== wasm2.omegaRoot,
     verdict: "spec-contradicts",
     detail:

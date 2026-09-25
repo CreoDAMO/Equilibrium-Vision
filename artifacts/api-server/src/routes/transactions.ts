@@ -106,6 +106,13 @@ router.post("/tx/broadcast", async (req, res) => {
     publicKey: body.publicKey,
   };
 
+  const queued = chainState.mempool.all().filter((t) => t.from === tx.from);
+  const applicable = chainState.ledger.selectApplicable([...queued, tx]);
+  if (!applicable.includes(tx)) {
+    res.status(400).json({ error: "Transaction does not apply: insufficient funds or bad nonce" });
+    return;
+  }
+
   chainState.mempool.add(tx);
   chainState.gossipTx(txHash);
   res.json({ txHash, status: "pending" });

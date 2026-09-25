@@ -223,7 +223,7 @@ router.post("/blocks/submit", (req, res) => {
     : Math.floor(Date.now() / 1000);
 
   // Pull pending txs from the mempool (same as the internal miner)
-  const selected  = chainState.mempool.all().slice(0, 50);
+  const selected  = chainState.ledger.selectApplicable(chainState.mempool.all()).slice(0, 50);
   const txHashes  = selected.map((t) => t.hash);
   const mr        = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
   const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
