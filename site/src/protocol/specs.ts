@@ -69,7 +69,9 @@ export const SPECS: SpecDoc[] = [
     title: "Transition",
     summary: "Balances, nonces, fees, coinbase, validator rewards, difficulty.",
     body: [
-      "Account model is canonical for this kernel. A transfer the account ledger rejects is not spendable anywhere else.",
+      "Account model is canonical. Coinbase is credited on that ledger and is not also created as a second output.",
+      "successor is defined on the inputs it is given. A transfer the sender cannot cover is refused inside the transition. The refusal is not a precondition that only the producer knows.",
+      "Difficulty moves by the ratio of the target block time to the actual block time, clamped to 0.8 and 1.2, and does not fall below 100,000.",
       "Fail closed: no RNG residual, no claimed residual without recompute.",
     ],
   },
@@ -165,8 +167,8 @@ export const SPECS: SpecDoc[] = [
     title: "Economic state",
     summary: "Coinbase quality, DEX AMM, genesis allocations.",
     body: [
-      "Reward = 50,000,000 × min(1/(R + 1e-6), 1).",
-      "Genesis supply and validator set taken from the source genesis.json.",
+      "The paid reward is floor(100 × (1/2)^(height / 2,100,000) × min(1, target / (R + 1e-9))). It is not 50,000,000 × min(1/(R + 1e-6), 1).",
+      "genesis.json's initial_supply header says 100,000,000. Its seven allocation lines sum to 95,000,000, and the kernel credits the lines. The initial ledger is wider: testnet also credits a 25,000,000 treasury, a 2,000,000 producer of which 500,000 is bonded, three 1,500,000 activity keys, and 5,000,000 of validator stake as liquid. That testnet ledger is 131,000,000. Mainnet uses an 8,000,000 treasury instead, and its ledger is 114,000,000.",
     ],
   },
   {
@@ -174,7 +176,8 @@ export const SPECS: SpecDoc[] = [
     title: "Validator state",
     summary: "Bonded stake, commission, proposals, BFT votes.",
     body: [
-      "Slashing and unbonding exist in the source TypeScript chain; this kernel records stake and proposals.",
+      "When the producer is a live validator, liquid issuance is floor(reward × commission) and the remainder is staked. The producer's commission is 0.1.",
+      "A double-sign slash burns 5% of bonded stake. A downtime slash burns 1%.",
     ],
   },
   {

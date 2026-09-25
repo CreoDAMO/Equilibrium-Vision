@@ -451,9 +451,8 @@ export class ChainState {
   addBlock(block: BlockRecord): void {
     this.blocks.push(block);
 
-    // Coinbase UTXO for block reward
-    const coinbaseTxHash = hash256(`coinbase-${block.height}-${block.hash}`);
-    this.utxoSet.addCoinbase(coinbaseTxHash, block.miner, block.coinbaseReward, block.height);
+    // Coinbase is an account-ledger credit inside distributeBlockReward.
+    // It is not also a UTXO. A second output would be a second purse.
 
     for (const tx of block.transactions) {
       const confirmed: TxRecord = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" };

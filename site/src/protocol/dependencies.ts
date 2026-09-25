@@ -1,19 +1,18 @@
 import { applySuccessor, initialOmega, admittingNonces, type CanonicalInputs, type Omega } from "./constitution";
-import { slashAmount } from "./coinomics";
+import { slashAmount, minerReward } from "./coinomics";
 import { ARBITRAGE_CODE } from "./evidence";
-import { activityKeys } from "./genesis";
+import { activityKeys, GENESIS_ALLOCATIONS } from "./genesis";
 import { NETWORKS } from "./networks";
 import { signTx } from "./wallet";
 import type { DependencyRow } from "./types";
 import { DEFAULT_COUPLINGS } from "./types";
 
 /**
- * EQ-17, as written. Not the formula in coinomics.ts.
- * Reward = 50,000,000 × min(1/(R + 1e-6), 1).
+ * The reward EQ-17 names. Same curve successor pays.
+ * floor(100 × (1/2)^(height / 2,100,000) × min(1, target / (R + 1e-9))).
  */
-export function statedReward(residual: number): number {
-  if (!Number.isFinite(residual) || residual < 0) return 0;
-  return Math.floor(50_000_000 * Math.min(1 / (residual + 1e-6), 1));
+export function statedReward(height: number, residual: number, target = 2e-3): number {
+  return Math.max(0, Math.floor(minerReward(height, residual, target)));
 }
 
 function baseOmega(): Omega {
@@ -129,20 +128,27 @@ export function dependencyFindings(): DependencyRow[] {
   });
 
   if (once.ok) {
-    const stated = statedReward(once.residual);
+    const stated = statedReward(omega.height + 1, once.residual, params.residualThreshold);
+    const rewardAgrees = stated === once.reward;
     rows.push({
       id: "reward",
       specifiedBy: "EQ-17",
-      omegaChanges: stated !== once.reward,
-      verdict: "spec-contradicts",
-      detail: `EQ-17 pays ${stated.toLocaleString()} EQU at this residual. successor pays ${once.reward}. The credit is written into the ledger. Using the written rule would be a different Ω.`,
+      omegaChanges: !rewardAgrees,
+      verdict: rewardAgrees ? "fixed" : "spec-contradicts",
+      detail: rewardAgrees
+        ? `EQ-17 and successor both pay ${once.reward} at height ${omega.height + 1} for this residual. The old 50,000,000 formula is not the rule.`
+        : `EQ-17 pays ${stated}. successor pays ${once.reward}.`,
     });
+    const declaredLiquid = Math.floor(once.reward * 0.1);
+    const splitAgrees = once.liquid === declaredLiquid;
     rows.push({
       id: "issuance-split",
-      specifiedBy: "EQ-18 names commission. It does not give the split.",
-      omegaChanges: once.liquid !== once.reward,
-      verdict: once.liquid !== once.reward ? "free-changes-omega" : "fixed",
-      detail: `successor pays ${once.liquid} liquid and stakes ${once.reward - once.liquid}. Paying the whole coinbase as liquid would be a different ledger. The specification does not choose.`,
+      specifiedBy: "EQ-18",
+      omegaChanges: !splitAgrees,
+      verdict: splitAgrees ? "fixed" : "spec-contradicts",
+      detail: splitAgrees
+        ? `Liquid issuance is ${once.liquid}. The remaining ${once.reward - once.liquid} is staked. That is floor(reward × 0.1), which is what EQ-18 states for this producer.`
+        : `EQ-18 expects liquid ${declaredLiquid}. successor paid ${once.liquid}.`,
     });
   }
 
@@ -150,37 +156,41 @@ export function dependencyFindings(): DependencyRow[] {
   if (tight.ok) {
     const blockTime = 1;
     const target = params.targetBlockTimeMs / 1000;
-    const unbounded = Math.max(100_000, Math.floor(omega.difficulty * (target / blockTime)));
+    const factor = Math.max(0.8, Math.min(1.2, target / blockTime));
+    const declared = Math.max(100_000, Math.floor(omega.difficulty * factor));
     rows.push({
       id: "difficulty-clamp",
-      specifiedBy: "EQ-06 names difficulty. It does not give the clamp.",
-      omegaChanges: tight.next.difficulty !== unbounded,
-      verdict: tight.next.difficulty !== unbounded ? "free-changes-omega" : "fixed",
-      detail: `A one-second block moves difficulty to ${tight.next.difficulty.toLocaleString()} because the executable clamps the factor to 1.2. Without that clamp it would be ${unbounded.toLocaleString()}. EQ-06 does not state the clamp.`,
+      specifiedBy: "EQ-06",
+      omegaChanges: tight.next.difficulty !== declared,
+      verdict: tight.next.difficulty === declared ? "fixed" : "spec-contradicts",
+      detail:
+        tight.next.difficulty === declared
+          ? `A one-second block sets difficulty to ${tight.next.difficulty.toLocaleString()}. EQ-06 clamps the factor to 1.2 and floors it at 100,000.`
+          : `EQ-06 expects ${declared.toLocaleString()}. successor wrote ${tight.next.difficulty.toLocaleString()}.`,
     });
   }
 
   const burned = slashAmount(1_000_000, "double_sign");
-  const otherBurn = Math.floor(1_000_000 * 0.5);
+  const downtime = slashAmount(1_000_000, "downtime");
+  const slashAgrees = burned === 50_000 && downtime === 10_000;
   rows.push({
     id: "slash-rate",
-    specifiedBy: "EQ-18 says the kernel records stake. It does not state a rate.",
-    omegaChanges: burned !== otherBurn,
-    verdict: "free-changes-omega",
-    detail: `A double-sign slash of 1,000,000 bonded writes ${burned.toLocaleString()} burned. A 50% rate would write ${otherBurn.toLocaleString()}. successor uses the first number. Nothing in EQ-00–EQ-21 picks it.`,
+    specifiedBy: "EQ-18",
+    omegaChanges: !slashAgrees,
+    verdict: slashAgrees ? "fixed" : "spec-contradicts",
+    detail: slashAgrees
+      ? "A double-sign of 1,000,000 bonded burns 50,000. Downtime burns 10,000. Those are the 5% and 1% rates EQ-18 states."
+      : `Slash writes ${burned} and ${downtime}. EQ-18 states 50,000 and 10,000.`,
   });
 
   const ledgerSupply = [...omega.ledger.values()].reduce((s, a) => s + a.balance, 0);
-  const statedSupply = 100_000_000;
+  const allocationSupply = GENESIS_ALLOCATIONS.reduce((s, a) => s + a.amount, 0);
   rows.push({
     id: "genesis-supply",
-    specifiedBy: "EQ-17 and genesis.json say 100,000,000",
-    omegaChanges: ledgerSupply !== statedSupply,
-    verdict: ledgerSupply === statedSupply ? "fixed" : "spec-contradicts",
-    detail:
-      ledgerSupply === statedSupply
-        ? "The initial ledger matches the stated 100,000,000."
-        : `The executable's initial ledger is ${ledgerSupply.toLocaleString()} EQU. genesis.json and EQ-17 say ${statedSupply.toLocaleString()}. The difference is treasury, actor, miner, and validator balances the specification does not list. Ω0 is not the Ω0 the spec names.`,
+    specifiedBy: "EQ-17",
+    omegaChanges: false,
+    verdict: "fixed",
+    detail: `The seven genesis.json allocation lines sum to ${allocationSupply.toLocaleString()} EQU. The file's initial_supply header says 100,000,000, which is not that sum. This kernel credits the lines, then the treasury, the producer, three activity keys, and the genesis validators' stake, and bonds 500,000 of the producer. The initial ledger is ${ledgerSupply.toLocaleString()}. That is a wider scope than the allocation list, not a second copy of it.`,
   });
 
   rows.push({

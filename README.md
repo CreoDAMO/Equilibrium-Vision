@@ -1,8 +1,56 @@
 # Equilibrium
 
-A Rust-based Layer-1 blockchain with **Proof-of-Stationarity** consensus, adaptive difficulty, BFT finality, libp2p P2P networking, a native DEX AMM, staking & slashing, Gossipsub tx propagation, WASM smart contracts, a Stratum v1 mining pool, and a full TypeScript node stack with a real-time block explorer and self-custody browser wallet.
+Proof-of-Stationarity. One public kernel in `site/`, and the older TypeScript node in `artifacts/api-server/`. They are not the same body.
 
-> **Status (August 2, 2026):** Live testnet with **262 tests (33 Rust + 229 TypeScript across 10 test files)**. **SMT `stateRoot`** computed on every block (Postgres `state_root`) + **`getVerifiedStateRoot`** rejects proofs when rebuilt SMT ≠ tip commitment. **libp2p `p2p-sidecar`**: Gossipsub, mDNS, Identify, Kademlia, light-node RR, sync RR, **TCP + QUIC** (`OrTransport`); inbound sync/light-node callbacks wired in `initChain()` and covered by `p2p-sync.integration.test.ts`. HTTP `/lightnode/*` proofs backed by the same root guard. **ModelRegistry + Arbitrage (execute live, per-caller rate limit) + CrossChainRelay** WASM contracts deployed. **`variational-ai`** deterministic NTK/MLP/logistic solvers. **Kinetic Block Timeline** at `/matrix` (Three.js/R3F). Android: JNI miner + full in-process libp2p swarm (`p2p_runtime.rs` → `P2PNode.kt`); `MiningWorker.kt` polls gossip from peers during solve. Remote load test: 149 TPS sustained, p95 70 ms, 9,009/9,009 txs accepted. See `LIMITATIONS.md` for known design constraints and `TODO.md` for remaining work.
+## Current state (25 September 2026)
+
+Not production-ready. A person can use the public kernel. Nobody can yet rely on it as a coin that survives the process that mines it.
+
+The questions that were being mixed together are separate. The transition question is what `successor` does with the inputs it is given. The production question is whether a second party can hold EQU, and whether a verified Bitcoin or Ethereum header changes anything after it is stored. Leaving EQU onto another chain is not one of those questions. The bridges are there to admit foreign headers, not to export the coin.
+
+### Public kernel
+
+Measured on a fork of `site/`, not asserted:
+
+- A block was produced and the residual was recomputed.
+- The ledger grew by the liquid coinbase. At the measured residual that coinbase was 99 EQU, of which 9 was spendable and 90 was staked.
+- 1,000 EQU moved from one key to another inside this kernel.
+- A swap moved the EQU-USDC pool reserve by 10,000. The genesis liquidity allocation did not move by that amount. The pool is not that purse.
+- An unfunded transfer of 10,000,000,001 was refused by the mempool and by `successor`. The sender was unchanged. No recipient balance was created.
+- Nothing in the transition pays an exchange, a bank, or another chain.
+
+The browser wallet at `/wallet` creates an Ed25519 key that stays in the browser. That is a second party holding a key, against this kernel. It is not custody outside the kernel, and it is not a second producer. Testnet has a faucet. Mainnet does not.
+
+### The transition's domain
+
+`successor` is defined on the inputs it is given, and it refuses an input the sender cannot cover. That check is inside the transition. A port that copies `successor` and skips the producer's selection loop still cannot mint a recipient balance. EQ-03 and EQ-06 state this. It is no longer an upstream promise.
+
+What still has to be supplied, because the transition does not derive it: the miner, the timestamp, and the committed pressure. Two admitting nonces can share one state while the reward is clipped, and still be two different blocks. Zeroing λ_structural changed the residual and not the state, under that same clip. The wasm host result changes the state, and EQ-06 does not name the binary.
+
+### Money, as declared
+
+The paid rule is `floor(100 × (1/2)^(height / 2,100,000) × min(1, target / (R + 1e-9)))`. The old `50,000,000 × min(1/(R + 1e-6), 1)` line is not the rule. EQ-17 now says so, and the kernel pays the declared number.
+
+`genesis.json` has an `initial_supply` header of 100,000,000. Its seven allocation lines sum to 95,000,000. The kernel credits the lines, not the header. It then credits operating balances. On testnet those are a 25,000,000 treasury, a 2,000,000 producer of which 500,000 is bonded, three activity keys at 1,500,000 each, and 5,000,000 of genesis validator stake held as liquid. The initial testnet ledger is 131,000,000. Mainnet uses an 8,000,000 treasury, and its initial ledger is 114,000,000. The gap between 95,000,000 and 131,000,000 is that wider scope. It is not an unexplained mint.
+
+When the producer is bonded, liquid issuance is `floor(reward × 0.1)` and the rest is staked. A double-sign slash burns 5% of bonded stake. Downtime burns 1%. Difficulty is clamped to a factor between 0.8 and 1.2 and does not fall below 100,000.
+
+### Production tree
+
+`artifacts/api-server` was installed and `chain.unit.test.ts` was run: 47 tests passed, with `ALLOW_TS_TRAPDOOR_PROVER=true` and `NODE_ENV=test`. Without that flag the trapdoor prover throws, which is the production setting.
+
+Coinbase is credited on the account ledger only. It is not also created as a UTXO. A transfer the account ledger rejects is marked failed and creates no output. A transfer it accepts does not mint a second recipient UTXO. Broadcast rejects a transaction the ledger cannot apply before it enters the mempool. UTXO fees that were already collected still sweep to a UTXO for the miner of the next block. Those fees were never an account balance.
+
+A rollback restores that UTXO fee pool. It does not reverse the account-ledger coinbase. That reorg path is still open.
+
+### Still open
+
+- One process produces blocks. A second body can replay them. It has not been shown taking over when the producer stops.
+- Verified BTC and ETH headers are stored and change the state root. No later rule changes a balance, a reward, or the difficulty because of them.
+- The wasm host that writes contract storage is not named by the specification, and two host results are two states.
+- The Rust crate does not mine these blocks.
+
+The sections below describe the repository. They are not a claim that each of those organs is the live kernel.
 
 ---
 

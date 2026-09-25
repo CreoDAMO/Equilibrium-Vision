@@ -369,7 +369,7 @@ describe("ChainState UTXO fee sweep", () => {
   const minerA = "a".repeat(40);
   const minerB = "b".repeat(40);
 
-  it("credits accrued UTXO fees to the next block's miner as a UTXO output", () => {
+  it("credits accrued UTXO fees to the next block's miner as a UTXO output, and pays coinbase only on the account ledger", () => {
     const state = new ChainState();
     state.pendingUtxoFees = 1_500;
 
@@ -377,17 +377,18 @@ describe("ChainState UTXO fee sweep", () => {
     state.addBlock(block);
 
     expect(state.pendingUtxoFees).toBe(0);
-    expect(state.utxoSet.balance(minerA)).toBeGreaterThanOrEqual(1_500);
+    expect(state.utxoSet.balance(minerA)).toBe(1_500);
+    expect(state.ledger.balance(minerA)).toBe(block.coinbaseReward);
   });
 
-  it("does not create a fee UTXO when no fees have accrued (only the coinbase reward is paid)", () => {
+  it("does not create a coinbase UTXO when no UTXO fees have accrued", () => {
     const state = new ChainState();
 
     const block = { ...fakeBlock(0, 1_700_000_000), miner: minerA };
     state.addBlock(block);
 
-    // Balance should equal exactly the coinbase reward — no extra fee UTXO.
-    expect(state.utxoSet.balance(minerA)).toBe(block.coinbaseReward);
+    expect(state.utxoSet.balance(minerA)).toBe(0);
+    expect(state.ledger.balance(minerA)).toBe(block.coinbaseReward);
   });
 
   it("restores the fee pool on rollback so it can be re-swept on the winning fork", () => {
@@ -397,11 +398,39 @@ describe("ChainState UTXO fee sweep", () => {
     const block = { ...fakeBlock(0, 1_700_000_000), miner: minerB };
     state.addBlock(block);
     expect(state.pendingUtxoFees).toBe(0);
-    expect(state.utxoSet.balance(minerB)).toBeGreaterThanOrEqual(750);
+    expect(state.utxoSet.balance(minerB)).toBe(750);
+    expect(state.ledger.balance(minerB)).toBe(block.coinbaseReward);
 
     state.rollbackToHeight(-1);
 
     expect(state.pendingUtxoFees).toBe(750);
     expect(state.utxoSet.balance(minerB)).toBe(0);
+  });
+
+  it("does not create a spendable output for a transfer the account ledger rejects", () => {
+    const state = new ChainState();
+    const alice = "c".repeat(40);
+    const bob = "d".repeat(40);
+    state.ledger.credit(alice, 1_500);
+    const tx = {
+      hash: "ab".repeat(32),
+      from: alice,
+      to: bob,
+      amount: 10_000_000_001,
+      fee: 0,
+      nonce: 0,
+      blockHash: null,
+      blockHeight: null,
+      timestamp: 1_700_000_000,
+      status: "pending" as const,
+    };
+    const block = { ...fakeBlock(0, 1_700_000_000), miner: minerA, transactions: [tx], txCount: 1 };
+    state.addBlock(block);
+
+    expect(state.ledger.balance(alice)).toBe(1_500);
+    expect(state.ledger.balance(bob)).toBe(0);
+    expect(state.utxoSet.get(tx.hash, 0)).toBeUndefined();
+    expect(state.txIndex.get(tx.hash)?.status).toBe("failed");
+    expect(state.ledger.selectApplicable([tx])).toEqual([]);
   });
 });
