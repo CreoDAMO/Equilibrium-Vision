@@ -497,4 +497,31 @@ export interface ChainSnapshot {
   /** Null while the second body is still replaying. */
   secondBody: SecondBodyReport | null;
   constitution: ConstitutionAnswer;
+  /** Each dependency of the transition, and whether it changes Ω. */
+  dependencies: DependencyRow[];
+  /** What this kernel can and cannot do, measured where it can be measured. */
+  use: ProductionRow[];
+}
+
+export type DependencyVerdict =
+  | "fixed"
+  | "input"
+  | "free-changes-omega"
+  | "free-same-omega"
+  | "spec-contradicts";
+
+export interface DependencyRow {
+  id: string;
+  specifiedBy: string;
+  omegaChanges: boolean;
+  verdict: DependencyVerdict;
+  detail: string;
+}
+
+export type ProductionStatus = "works" | "local" | "absent" | "disagrees";
+
+export interface ProductionRow {
+  id: string;
+  status: ProductionStatus;
+  detail: string;
 }

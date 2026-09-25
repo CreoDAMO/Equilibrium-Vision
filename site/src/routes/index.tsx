@@ -56,6 +56,43 @@ function Home() {
             <Stat label="Validators" value={data.validatorCount} hint={`${formatAmount(data.totalBonded)} bonded`} />
           </div>
 
+          <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] sm:p-6">
+            <h2 className="font-display text-xl">What you can do with EQU today</h2>
+            <p className="mt-2 max-w-2xl text-sm text-muted">
+              Measured on a fork of this kernel. This is not a listing, and it is not a promise that a balance here exists anywhere else.
+            </p>
+            <ul className="mt-4 space-y-3">
+              {data.use.map((row) => (
+                <li key={row.id} className="flex items-start gap-3 text-sm">
+                  <Badge tone={row.status === "works" ? "ok" : row.status === "absent" ? "danger" : "warn"}>
+                    {row.status === "works" ? "works" : row.status === "local" ? "only here" : row.status === "disagrees" ? "disagrees" : "does not"}
+                  </Badge>
+                  <span className="text-muted">{row.detail}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] sm:p-6">
+            <h2 className="font-display text-xl">What still has to be specified</h2>
+            <p className="mt-2 max-w-2xl text-sm text-muted">
+              One state and one set of inputs should force one next state, whichever body runs the transition. successor already does that for one fully specified input. These rows are what that input has to contain, and where EQ-00 through EQ-21 are silent or say something the executable does not do.
+            </p>
+            <ul className="mt-4 space-y-3">
+              {data.dependencies
+                .filter((row) => row.verdict !== "fixed")
+                .map((row) => (
+                  <li key={row.id} className="text-sm text-muted">
+                    <span className="font-medium">{row.id}</span>
+                    {" · "}
+                    {row.specifiedBy}
+                    {" · "}
+                    {row.detail}
+                  </li>
+                ))}
+            </ul>
+          </section>
+
           <OrganismLoop
             events={data.events}
             residual={data.lastResidual}

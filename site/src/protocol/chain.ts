@@ -25,6 +25,8 @@ import type {
   TransitionEvidence,
   SecondBodyReport,
   StakeEvidence,
+  ProductionRow,
+  DependencyRow,
   ConstitutionAnswer,
 } from "./types";
 import { DEFAULT_COUPLINGS } from "./types";
@@ -61,6 +63,7 @@ import {
   successor,
   type Successor,
 } from "./constitution";
+import { dependencyFindings } from "./dependencies";
 import {
   activityKeys,
   GENESIS_ALLOCATIONS,
@@ -109,6 +112,8 @@ export class OrganismNode {
   lastWhole: WholeReport | null = null;
   kinReport: SecondBodyReport | null = null;
   private constitutionReport: ConstitutionAnswer | null = null;
+  private dependencyReport: DependencyRow[] | null = null;
+  private useReport: ProductionRow[] | null = null;
   /** Law's finalized height. Not the block flag, which later blocks rewrite. */
   private finalizedThrough = -1;
   private clock: number | null = null;
@@ -1427,6 +1432,101 @@ export class OrganismNode {
     return null;
   }
 
+  /** What a person can do with this kernel. Run on forks. The live chain is not the experiment. */
+  private measureUse(): ProductionRow[] {
+    const rows: ProductionRow[] = [];
+    const issued = this.fork();
+    const supplyBefore = [...issued.ledger.values()].reduce((s, a) => s + a.balance, 0);
+    issued.clock = (issued.tip?.timestamp ?? 0) + 1;
+    const block = issued.mine();
+    const supplyAfter = [...issued.ledger.values()].reduce((s, a) => s + a.balance, 0);
+    rows.push({
+      id: "produce-block",
+      status: block.verified ? "works" : "absent",
+      detail: block.verified
+        ? `A fork produced block ${block.height}. The residual was recomputed, not trusted.`
+        : `The fork's block was not verified. ${block.verifyNotes.join("; ") || "no note"}`,
+    });
+    rows.push({
+      id: "issue-equ",
+      status: supplyAfter > supplyBefore ? "works" : "absent",
+      detail:
+        supplyAfter > supplyBefore
+          ? `The ledger grew by ${(supplyAfter - supplyBefore).toLocaleString()} EQU. That is the liquid coinbase of ${block.coinbaseReward.toLocaleString()}. The rest, if any, is a validator claim, not a spendable balance yet.`
+          : "Mining did not increase the ledger.",
+    });
+
+    const pay = this.fork();
+    pay.clock = (pay.tip?.timestamp ?? 0) + 1;
+    const from = pay.actors[0]!;
+    const to = "cd".repeat(20);
+    const before = pay.getAccount(to).balance;
+    const tx = signTx(from, {
+      to,
+      amount: 1_000,
+      fee: 10_000,
+      nonce: pay.getAccount(from.address).nonce,
+      chainId: pay.params.chainId,
+      timestamp: pay.clock,
+    });
+    const submitted = pay.submitTx(tx);
+    const paid = pay.mine();
+    const included = paid.transactions.some((t) => t.hash === tx.hash);
+    const received = pay.getAccount(to).balance - before;
+    rows.push({
+      id: "transfer",
+      status: submitted.ok && included && received === 1_000 ? "works" : "absent",
+      detail:
+        submitted.ok && included && received === 1_000
+          ? "1,000 EQU moved from one key to another inside this kernel."
+          : `Transfer did not land. ${submitted.error ?? (included ? `recipient changed by ${received}` : "not included")}`,
+    });
+
+    const trade = this.fork();
+    trade.clock = (trade.tip?.timestamp ?? 0) + 1;
+    const pool = trade.pools.find((p) => p.id === "EQU-USDC");
+    const trader = trade.actors[0]!;
+    const liquidity = GENESIS_ALLOCATIONS.find((a) => a.category === "liquidity_pools");
+    const lockedBefore = liquidity ? trade.getAccount(liquidity.address).balance : 0;
+    if (!pool) {
+      rows.push({ id: "trade", status: "absent", detail: "No EQU-USDC pool on this kernel." });
+    } else {
+      const reserveBefore = pool.reserveA;
+      const swap = signTx(trader, {
+        to: pool.address,
+        amount: 10_000,
+        fee: 10_000,
+        nonce: trade.getAccount(trader.address).nonce,
+        chainId: trade.params.chainId,
+        timestamp: trade.clock,
+      });
+      const queued = trade.submitTx(swap);
+      const traded = trade.mine();
+      const reserveAfter = trade.pools.find((p) => p.id === "EQU-USDC")?.reserveA ?? reserveBefore;
+      const lockedAfter = liquidity ? trade.getAccount(liquidity.address).balance : lockedBefore;
+      const moved = queued.ok && traded.transactions.some((t) => t.hash === swap.hash) && reserveAfter !== reserveBefore;
+      rows.push({
+        id: "trade",
+        status: moved ? "local" : "absent",
+        detail: moved
+          ? `The pool reserve changed by ${(reserveAfter - reserveBefore).toLocaleString()} EQU. The genesis liquidity address changed by ${(lockedAfter - lockedBefore).toLocaleString()}, which is not that reserve. The pool is not that allocation, and it settles nowhere else.`
+          : "A signed swap did not move the pool.",
+      });
+    }
+
+    rows.push({
+      id: "withdraw",
+      status: "absent",
+      detail: "Nothing in the transition pays an exchange, a bank, or another chain. EQU issued here cannot be withdrawn.",
+    });
+    rows.push({
+      id: "other-miners",
+      status: "local",
+      detail: "This process produces the blocks. A second body can replay them. It does not compete for them, and the Rust crate does not mine them.",
+    });
+    return rows;
+  }
+
   snapshot(): ChainSnapshot {
     this.tick();
     const recentBlocks = this.blocks.slice(-16).reverse();
@@ -1516,6 +1616,8 @@ export class OrganismNode {
       lastBidirectional,
       secondBody: this.kinReport,
       constitution: (this.constitutionReport ??= constitutionalAnswer()),
+      dependencies: (this.dependencyReport ??= dependencyFindings()),
+      use: (this.useReport ??= this.measureUse()),
     };
   }
 
