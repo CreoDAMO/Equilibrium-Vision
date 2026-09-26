@@ -12,6 +12,7 @@ import type { ChainState } from "./state.js";
 import type { BlockRecord } from "./types.js";
 import type { GenesisDocument } from "@workspace/coinomics";
 import { addressFromSeed } from "./crypto.js";
+import { canonicalCoinbase } from "@workspace/coinomics";
 import { logger } from "../lib/logger.js";
 import { broadcast } from "../lib/ws-server.js";
 import { deployAdminMultisigIfConfigured } from "./multisig.js";
@@ -497,7 +498,7 @@ export async function initChain(): Promise<void> {
         residual,
         residualFp:     Math.floor(residual * 1e18),
         recursionDepth: 2,
-        coinbaseReward: 50_000_000,
+        coinbaseReward: canonicalCoinbase(height, residual),
         miner,
         txCount:        0,
         transactions:   [],

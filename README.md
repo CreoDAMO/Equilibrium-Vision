@@ -67,9 +67,15 @@ The ten-field header is not the header the kernel produces. A kernel block carri
 
 Rust and the kernel agree on ten residual rows, not one. Nonce 0 is `0.02519000125198503`. Nonce 6 is `0.0002011002025239986`. The other rows move difficulty, work, pressure, timestamp, a 2^53−1 nonce, and one transaction. `canonical_coinbase` at that nonce-6 residual is 99 at height 1 and 100 at height 0. `cargo test --lib canonical_` passed those checks.
 
+Contract storage on the artifacts node is not Ω.wasm. Changing a contract cell changes the operational root. It does not change an evidence header whose state root was supplied. A storage cache passed to the kernel without a wasm call in the evidence is ignored. A wasm call in the evidence, with the storage that call produced, does change the state root. That is the authorized path.
+
+`governance.params.baseReward` is still 50,000,000 and `miningThreshold` is still 1e-8. Neither number is read by the coinbase or by difficulty. A block whose coinbase is 99 still pays 9 liquid and 45 accumulated rewards to each of two equal bonds, and the next difficulty stays 1,000,000, whether those parameters are left at the defaults or moved. A passed kernel proposal does not rewrite the residual of the block that carries it. That block kept residual `0.0002011002025239986`. The proposal writes the next couplings into Ω, and the omega digest changes. The following block is where the residual moves, if it is given those couplings. With λ_structural set to 0 the residual was 0 and the reward was 99. With λ_structural left at 1 the residual was `0.14415143210725334` and the reward was 0. The artifacts parameter object is not that proposal. A gossiped block body is paid `canonicalCoinbase` of the residual it carries. It is not paid 50,000,000. That residual is still the body's number. HTTP submit recomputes.
+
+Finality is the same lag on both bodies. Live bonded stake at or above 2/3 of total bonded stake finalizes height − 2. Jailed and slashed stake stays in the denominator. Three successive kernel blocks from height −1 finish at height 2 with finalized height 0. A block produced from height 2 finalizes height 1. One jailed validator out of three equal bonds still meets 2/3. Two excluded validators do not, and finalized height stays −1. The artifacts node records an empty vote list. Registered validator keys do not sign, do not move uptime, and do not burn stake. An explicit slash call still exists outside the block transition. The tip stays unfinalized.
+
 ### Still open
 
-- This is not one transition. The measured block agrees on reward, the stake split, the next difficulty, and the evidence-bearing header. The artifacts node still has a UTXO set, contract storage, and its own genesis, and its state root is not `stateRootOf`. The kernel does not replay that body.
+- This is not one transition. The measured block agrees on reward, the stake split, the next difficulty, the evidence-bearing header, and the finality lag. The artifacts node still has a UTXO set, contract storage, a governance parameter object, and its own genesis. Contract storage is not the kernel wasm map. The parameter object is not a kernel proposal. The operational root is not `stateRootOf`. The kernel does not replay that body.
 - The phone preimage is still `SHA256(prev || nonce || timestamp || difficulty)`. `canonical_header_hash` matches the kernel, and the phone's residual check is still the territory residual. Mobile is not a second producer.
 - The grid is these ten rows on this machine. It is not a proof about every platform's `f64`.
 - Floor dust on the stake split is unminted. It is not a later payment from the same block.
@@ -452,9 +458,9 @@ newDifficulty = currentDifficulty × (targetBlockTime / avgBlockTime)
                clamped to [0.80×, 1.20×] of currentDifficulty
 ```
 
-### BFT Finality Gadget
+### Finality
 
-Each block triggers a Tendermint-style finality round. All active validators cast signed votes for the block hash. When ≥ ⅔ of total bonded stake has voted, the block is marked **finalized**. `finalizedHeight` advances with every new finalized block.
+Live bonded stake at or above 2/3 of total bonded stake finalizes height − 2. The artifacts node does not invent validator votes and does not slash from a participation schedule. An explicit slash is a separate call. The tip is not final.
 
 ### Validator Set & Slashing
 

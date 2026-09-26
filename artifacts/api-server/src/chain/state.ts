@@ -1,9 +1,8 @@
 import type {
   BlockRecord, TxRecord, AccountState, PeerRecord,
-  ValidatorRecord, SlashEvent, FinalityRound, FinalityVote,
+  ValidatorRecord, SlashEvent, FinalityRound,
   DexPool, LiquidityPosition, SwapEvent, StakeRecord, UnbondingEntry, GossipEvent,
 } from "./types.js";
-import { ed25519 } from "@noble/curves/ed25519.js";
 
 // Inline hex helpers — @noble/curves/abstract/utils.js is an internal path
 // not exported by the package; other files (utxo.ts, wasm.ts) use the same pattern.
@@ -14,9 +13,6 @@ function hexToBytes(hex: string): Uint8Array {
     arr[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
   return arr;
-}
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 import { SparseMerkleTree, smtKey, smtValue } from "./smt.js";
 import { merkleRoot, addressFromSeed, hash256, canonicalHeaderHash } from "./crypto.js";
@@ -33,6 +29,7 @@ import { canonicalResidual } from "./canonical-residual.js";
 import { withDbRetry } from "./persistence.js";
 import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import { btcHeaderHash } from "./btc-header.js";
+import { nextFinalizedHeight, stakeForFinality } from "./finality.js";
 import {
   applySlashing,
   canonicalCoinbase,
@@ -788,79 +785,28 @@ export class ChainState {
 
   // ── Finality gadget ──────────────────────────────────────────────────────────
 
+  /**
+   * EQ-10. Live stake at or above 2/3 finalizes height − 2.
+   * Keys on this object are not asked to sign. Uptime is not a schedule.
+   * Stake is not burned here.
+   */
   runFinalityRound(block: BlockRecord): void {
-    const activeValidators = [...this.validators.values()].filter(v => !v.slashed && !v.jailed);
-    if (activeValidators.length === 0) return;
-
-    const totalVotingPower = activeValidators.reduce((s, v) => s + v.bondedStake, 0);
-    const votes: FinalityVote[] = [];
-
-    // Deterministic participation: each validator misses one slot per 20-block
-    // epoch based on their index, giving ~95% network participation without
-    // any randomness. This is still realistic — real BFT rounds have ~5%
-    // non-participation due to latency and network partitions.
-    for (const v of activeValidators) {
-      const validatorIdx = activeValidators.indexOf(v);
-      const participates = (block.height % 20) !== (validatorIdx % 20);
-      if (participates) {
-        // SECURITY FIX: real Ed25519 signatures over the vote message instead of
-        // a forgeable hash. Any validator without registered keys is skipped.
-        const privKey = this.validatorPrivKeys.get(v.address);
-        const pubKey  = this.validatorKeys.get(v.address);
-        if (!privKey || !pubKey) {
-          // No key registered — validator doesn't participate in this BFT round
-        } else {
-          const voteMsg = Buffer.concat([
-            Buffer.from("equilibrium-bft-v1"),
-            Buffer.from(block.hash),
-            Buffer.from(block.height.toString()),
-          ]);
-          const sig = ed25519.sign(voteMsg, privKey);
-          // Verify our own signature immediately (paranoia)
-          if (ed25519.verify(sig, voteMsg, pubKey)) {
-            votes.push({
-              validatorAddress: v.address,
-              blockHash: block.hash,
-              height: block.height,
-              signature: bytesToHex(sig),
-              timestamp: block.timestamp,
-            });
-          }
-        }
-        v.blocksVoted += 1;
-        // Update uptime
-        v.uptime = Math.min(1.0, v.uptime + 0.001);
-      } else {
-        v.uptime = Math.max(0, v.uptime - 0.005);
-        // Slash for downtime if uptime drops too low
-        if (v.uptime < 0.5 && !v.jailed) {
-          this.slashValidator(v.address, "downtime", block.height, block.timestamp);
-        }
-      }
-    }
-
-    const votingPower = votes.reduce((s, vote) => {
-      const val = this.validators.get(vote.validatorAddress);
-      return s + (val?.bondedStake ?? 0);
-    }, 0);
-
-    const superMajority = totalVotingPower > 0 && votingPower / totalVotingPower >= 2 / 3;
-
+    const { liveStake, totalStake } = stakeForFinality(this.validators.values());
+    const next = nextFinalizedHeight(block.height, this.finalizedHeight, liveStake, totalStake);
     const round: FinalityRound = {
       height: block.height,
       blockHash: block.hash,
-      votes,
-      finalized: superMajority,
-      finalizedAt: superMajority ? block.timestamp : undefined,
-      votingPower,
-      totalVotingPower,
+      votes: [],
+      finalized: false,
+      votingPower: liveStake,
+      totalVotingPower: totalStake,
     };
-
     this.finalityRounds.set(block.height, round);
-    if (superMajority && block.height > this.finalizedHeight) {
-      this.finalizedHeight = block.height;
-      this.blocks[block.height]!.finalized = true;
+    if (next <= this.finalizedHeight) return;
+    for (const earlier of this.blocks) {
+      if (earlier.height > this.finalizedHeight && earlier.height <= next) earlier.finalized = true;
     }
+    this.finalizedHeight = next;
   }
 
   /** Register a validator's Ed25519 keypair for BFT voting (testnet only). */

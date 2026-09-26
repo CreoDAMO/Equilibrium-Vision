@@ -544,30 +544,25 @@ describe("2.7 Governance parameter hot-reload", () => {
 
 describe("2.8 Rollback / reorg — wasmVM block height stays consistent", () => {
   /**
-   * The finality gadget finalizes blocks after a super-majority vote (~95%
-   * participation). rollbackToHeight() throws if targetHeight < finalizedHeight.
-   * To avoid that, we mine 2 fresh blocks and immediately roll them back —
-   * newly-mined blocks are not yet finalized at that instant.
+   * Finality is the kernel lag: live stake at or above 2/3 finalizes height − 2.
+   * rollbackToHeight() throws if targetHeight < finalizedHeight.
+   * Mining two blocks can finalize the previous tip. Roll back only to
+   * finalizedHeight + 1.
    */
   it("rollbackToHeight keeps chainState.height correct and the VM stays coherent", async () => {
     await unpauseArbitrage(chainState.wasmVM, contractOwner);
     chainState.governance.params.arbitrageWindowBlocks = 100;
     chainState.governance.params.arbitrageMaxTradeAmount = 100_000_000_000;
 
-    // Mine 2 blocks and IMMEDIATELY roll back.
-    // The finality gadget runs in addBlock via runFinalityRound; it finalizes a block
-    // when >= 2/3 of validators vote. To roll back safely we must target a height
-    // strictly above finalizedHeight. We capture finalizedHeight BEFORE mining and
-    // roll back to max(finalizedHeight, heightBefore) to guarantee we never cross it.
+    // Mine 2 blocks. Finality lags by two, so these two stay unfinalized and
+    // the previous tip may become final. Roll back to finalizedHeight + 1.
     const heightBefore = chainState.height;
 
     chainState.addBlock(mineNextBlock(chainState, minerAddress));
     chainState.addBlock(mineNextBlock(chainState, minerAddress));
     expect(chainState.height).toBeGreaterThanOrEqual(heightBefore + 2);
 
-    // The finality gadget (runFinalityRound) may finalize the newly-added blocks
-    // immediately inside addBlock(). Roll back to exactly finalizedHeight + 1 —
-    // the lowest non-finalized block — which always exists since we just mined 2.
+    // The tip is not final. The lowest block that can still move is finalizedHeight + 1.
     const safeTarget = chainState.finalizedHeight + 1;
     chainState.rollbackToHeight(safeTarget);
     expect(chainState.height).toBe(safeTarget);

@@ -110,7 +110,7 @@ export const SPECS: SpecDoc[] = [
     summary: "BFT 2/3 bonded stake. Independent of stationarity.",
     body: [
       "A stationary block can wait. A finalized block has already been stationary.",
-      "This kernel uses a two-block lag so the tip can be verified and still unfinalized. That is the visible split.",
+      "This kernel uses a two-block lag so the tip can be verified and still unfinalized. The artifacts node uses that same quorum and that same lag. It does not invent votes, and it does not slash from a local participation schedule.",
     ],
   },
   {

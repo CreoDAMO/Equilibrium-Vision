@@ -245,8 +245,9 @@ impl ValidationEngine {
             };
         }
 
-        // 5. BFT votes — Ed25519, same domain string as state.ts runFinalityRound.
-        // Message: "equilibrium-bft-v1" || hashHex(UTF-8) || heightDecimalString(UTF-8)
+        // 5. BFT votes — Ed25519 over "equilibrium-bft-v1" || hash hex || height.
+        // The artifacts transition does not create these votes. A block that
+        // carries them is checked. Finality there is the two-block lag.
         let require = require_bft_votes();
         let votes = parse_bft_votes_from_block_json(&block.block_json);
 
@@ -544,12 +545,10 @@ fn parse_hash32(hex: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
-// ── BFT vote verification (bit-aligned with state.ts runFinalityRound) ────────
+// ── BFT vote verification ────────────────────────────────────────────────────
 //
-// Vote message (EXACT TS layout — do NOT use raw hash bytes or LE height):
-//   Buffer.from("equilibrium-bft-v1")
-//   || Buffer.from(block.hash)               // hex STRING as UTF-8
-//   || Buffer.from(block.height.toString())  // decimal STRING as UTF-8
+// Vote message, if a block carries votes. The artifacts transition does not sign these.
+//   "equilibrium-bft-v1" || hash hex as UTF-8 || height decimal as UTF-8
 //
 // Env:
 //   REQUIRE_BFT_VOTES=true|1  → reject when quorum fails or validator set missing
@@ -576,7 +575,7 @@ pub struct ValidatorInfo {
 }
 
 impl BftVote {
-    /// Construct the vote message exactly as TypeScript `runFinalityRound` does.
+    /// Vote preimage: domain || hash hex || height decimal. Not produced by the artifacts transition.
     pub fn vote_message(block_hash_hex: &str, height: u64) -> Vec<u8> {
         let mut msg = Vec::with_capacity(BFT_VOTE_DOMAIN.len() + block_hash_hex.len() + 24);
         msg.extend_from_slice(BFT_VOTE_DOMAIN);

@@ -7,9 +7,12 @@ import { generateZkProof, verifyZkProof } from "../chain/zkproof.js";
 import { ChainState, mineNextBlock } from "../chain/state.js";
 import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
 import { BTC_GENESIS_HEADER_HEX } from "../chain/btc-header.js";
+import { nextFinalizedHeight } from "../chain/finality.js";
 import { rebuildStateSmt } from "../chain/state-root.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "../chain/mining-policy.js";
-import type { BlockRecord } from "../chain/types.js";
+import type { BlockRecord, ValidatorRecord } from "../chain/types.js";
+import type { ContractRecord } from "../chain/wasm.js";
+import { ed25519 } from "@noble/curves/ed25519.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -29,6 +32,22 @@ function fakeBlock(height: number, timestamp: number): BlockRecord {
     txCount: 0,
     transactions: [],
     finalized: false,
+  };
+}
+
+function validator(address: string): ValidatorRecord {
+  return {
+    address,
+    moniker: address.slice(0, 4),
+    bondedStake: 1_000,
+    accumulatedRewards: 0,
+    slashed: false,
+    slashCount: 0,
+    jailed: false,
+    uptime: 1,
+    blocksProposed: 0,
+    blocksVoted: 0,
+    commission: 0.1,
   };
 }
 
@@ -854,6 +873,156 @@ describe("ChainState UTXO fee sweep", () => {
     born.updateDifficulty();
     expect(born.currentDifficulty).toBe(995_000);
   });
+
+  it("contract storage moves the operational root and not an evidence header", () => {
+    const stored: ContractRecord = {
+      address: "aa".repeat(20),
+      deployer: "b".repeat(40),
+      bytecode: "00",
+      bytecodeHash: "11".repeat(32),
+      storage: { cell: "changed" },
+      deployedAt: 1,
+      callCount: 0,
+      totalGasUsed: 0,
+    };
+    const evidence = {
+      miner: "b".repeat(40),
+      coinbaseReward: 0,
+      nonce: 6,
+      residual: 1e-6,
+      residualFp: 1_000_000_000_000,
+      committedPressure: 0,
+      sealIdentity: true,
+      stateRoot: "33".repeat(32),
+      chainId: 1,
+      evidenceRoot: "cd".repeat(32),
+      omegaRoot: "ef".repeat(32),
+    };
+    const plain = new ChainState();
+    const dirty = new ChainState();
+    dirty.wasmVM.replaceContracts([stored]);
+    const a = { ...fakeBlock(0, 1_700_000_000), ...evidence };
+    const b = { ...fakeBlock(0, 1_700_000_000), ...evidence };
+    plain.addBlock(a);
+    dirty.addBlock(b);
+    expect(a.hash).toBe(b.hash);
+    expect(a.stateRoot).toBe(evidence.stateRoot);
+    expect(b.stateRoot).toBe(evidence.stateRoot);
+    expect(a.operationalRoot).not.toBe(b.operationalRoot);
+    expect(b.chainId).toBe(1);
+
+    const nativeA = new ChainState();
+    const nativeB = new ChainState();
+    nativeB.wasmVM.replaceContracts([{ ...stored, storage: { cell: "other" } }]);
+    const left = {
+      ...fakeBlock(0, 1_700_000_000),
+      miner: "b".repeat(40),
+      coinbaseReward: 0,
+      sealIdentity: true,
+      chainId: 1,
+      evidenceRoot: "cd".repeat(32),
+      omegaRoot: "ef".repeat(32),
+    };
+    const right = { ...left };
+    nativeA.addBlock(left);
+    nativeB.addBlock(right);
+    expect(left.hash).not.toBe(right.hash);
+    expect(left.chainId).toBeUndefined();
+    expect(right.chainId).toBeUndefined();
+    expect(left.stateRoot).toBe(left.operationalRoot);
+    expect(right.stateRoot).toBe(right.operationalRoot);
+  });
+
+  it("governance baseReward and miningThreshold do not decide the coinbase or the difficulty", () => {
+    const miner = "b".repeat(40);
+    const other = "c".repeat(40);
+    const run = (baseReward: number, miningThreshold: number) => {
+      const state = new ChainState();
+      state.governance.params.baseReward = baseReward;
+      state.governance.params.miningThreshold = miningThreshold;
+      state.currentDifficulty = 1_000_000;
+      state.validators.set(miner, validator(miner));
+      state.validators.set(other, validator(other));
+      state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner, coinbaseReward: 99, difficulty: 1_000_000 });
+      return {
+        liquid: state.ledger.balance(miner),
+        stakeA: state.validators.get(miner)?.accumulatedRewards,
+        stakeB: state.validators.get(other)?.accumulatedRewards,
+        difficulty: state.currentDifficulty,
+        baseReward: state.governance.params.baseReward,
+        miningThreshold: state.governance.params.miningThreshold,
+        bond: state.validators.get(miner)?.bondedStake,
+      };
+    };
+    const governed = run(50_000_000, 1e-8);
+    const perturbed = run(1_000_000, 1e-4);
+    expect(governed.liquid).toBe(perturbed.liquid);
+    expect(governed.stakeA).toBe(perturbed.stakeA);
+    expect(governed.stakeB).toBe(perturbed.stakeB);
+    expect(governed.difficulty).toBe(perturbed.difficulty);
+    expect(governed.bond).toBe(perturbed.bond);
+    expect(governed.baseReward).toBe(50_000_000);
+    expect(perturbed.baseReward).toBe(1_000_000);
+    expect(governed.miningThreshold).toBe(1e-8);
+    expect(perturbed.miningThreshold).toBe(1e-4);
+    expect(governed.liquid).toBe(9);
+    expect(governed.stakeA).toBe(45);
+    expect(governed.stakeB).toBe(45);
+    expect(governed.difficulty).toBe(1_000_000);
+    expect(governed.liquid).not.toBe(5_000_000);
+  });
+
+  it("finality lags two blocks, ignores validator keys, and does not slash", () => {
+    const state = new ChainState();
+    const addrs = ["b", "c", "d"].map((ch) => ch.repeat(40));
+    for (const address of addrs) {
+      state.validators.set(address, validator(address));
+      const secret = ed25519.utils.randomSecretKey();
+      state.registerValidatorKey(address, Buffer.from(ed25519.getPublicKey(secret)).toString("hex"), Buffer.from(secret).toString("hex"));
+    }
+    const bonds = () => addrs.map((a) => state.validators.get(a)?.bondedStake);
+    const uptimes = () => addrs.map((a) => state.validators.get(a)?.uptime);
+    const voted = () => addrs.map((a) => state.validators.get(a)?.blocksVoted);
+    const beforeBonds = bonds();
+    const beforeUptime = uptimes();
+    const beforeVoted = voted();
+
+    state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner: addrs[0]! });
+    expect(state.finalizedHeight).toBe(-1);
+    expect(state.blocks[0]?.finalized).toBe(false);
+    state.addBlock({ ...fakeBlock(1, 1_700_000_015), miner: addrs[1]!, prevHash: state.blocks[0]!.hash });
+    expect(state.finalizedHeight).toBe(-1);
+    expect(nextFinalizedHeight(1, -1, 3_000, 3_000)).toBe(-1);
+
+    state.addBlock({ ...fakeBlock(2, 1_700_000_030), miner: addrs[2]!, prevHash: state.blocks[1]!.hash });
+    expect(state.finalizedHeight).toBe(0);
+    expect(state.blocks[0]?.finalized).toBe(true);
+    expect(state.blocks[1]?.finalized).toBe(false);
+    expect(state.blocks[2]?.finalized).toBe(false);
+    expect(state.finalityRounds.get(2)?.votes).toEqual([]);
+    expect(state.finalityRounds.get(2)?.finalized).toBe(false);
+    expect(state.slashEvents).toEqual([]);
+    expect(bonds()).toEqual(beforeBonds);
+    expect(uptimes()).toEqual(beforeUptime);
+    expect(voted()).toEqual(beforeVoted);
+    expect(nextFinalizedHeight(2, -1, 3_000, 3_000)).toBe(0);
+    expect(nextFinalizedHeight(3, -1, 3_000, 3_000)).toBe(1);
+    expect(nextFinalizedHeight(3, -1, 2_000, 3_000)).toBe(1);
+    expect(nextFinalizedHeight(3, -1, 1_000, 3_000)).toBe(-1);
+    expect(nextFinalizedHeight(3, -1, 0, 0)).toBe(-1);
+
+    const jailed = new ChainState();
+    for (const address of addrs) jailed.validators.set(address, validator(address));
+    jailed.validators.get(addrs[2]!)!.jailed = true;
+    for (let h = 0; h < 3; h++) {
+      jailed.addBlock({ ...fakeBlock(h, 1_700_000_000 + h * 15), miner: addrs[0]! });
+    }
+    expect(jailed.finalizedHeight).toBe(0);
+    jailed.validators.get(addrs[1]!)!.slashed = true;
+    jailed.addBlock({ ...fakeBlock(3, 1_700_000_045), miner: addrs[0]! });
+    expect(jailed.finalizedHeight).toBe(0);
+    expect(jailed.blocks[3]?.finalized).toBe(false);
+  });
 });
 
 describe("stratum admission", () => {
@@ -869,5 +1038,14 @@ describe("stratum admission", () => {
   it("the block transition does not mint a coinbase UTXO", () => {
     const src = readFileSync(fileURLToPath(new URL("../chain/state.ts", import.meta.url)), "utf8");
     expect(src.includes("addCoinbase")).toBe(false);
+    expect(src.includes("ed25519")).toBe(false);
+    expect(src.includes("this.slashValidator")).toBe(false);
+    expect(src.includes("slashValidator(")).toBe(true);
+  });
+
+  it("a gossiped body is not paid the governance base reward", () => {
+    const src = readFileSync(fileURLToPath(new URL("../chain/index.ts", import.meta.url)), "utf8");
+    expect(src.includes("coinbaseReward: 50_000_000")).toBe(false);
+    expect(src.includes("canonicalCoinbase(height, residual)")).toBe(true);
   });
 });
