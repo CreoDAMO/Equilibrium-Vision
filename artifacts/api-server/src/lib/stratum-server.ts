@@ -8,7 +8,7 @@ import { persistBlock } from "../chain/persistence.js";
 import type { TxRecord } from "../chain/types.js";
 import type { ChainState } from "../chain/state.js";
 import { RateLimiter, ReplaySet } from "./submission-guard.js";
-import { canonicalCoinbase, CANONICAL_RESIDUAL_TARGET } from "@workspace/coinomics";
+import { canonicalCoinbase } from "@workspace/coinomics";
 import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
 
 // Admission is the canonical residual of the assembled block, recomputed here.
@@ -356,7 +356,7 @@ export class StratumServer {
       { cumulativeWork: height, mempoolPressure: cs.mempool.pressure },
       cs.couplings,
     );
-    const admission = admitResidual(residual, recomputed, CANONICAL_RESIDUAL_TARGET);
+    const admission = admitResidual(residual, recomputed, cs.admissionTarget);
     if (!admission.ok) {
       logger.info({ worker: session.worker, job: jobId, residual, recomputed }, "Stratum share rejected: claimed residual is not the recomputed residual");
       this.respond(session.socket, req.id, false, [23, admission.error, null]);
@@ -365,7 +365,7 @@ export class StratumServer {
     const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
     residual = admission.residual;
 
-    const reward = canonicalCoinbase(height, residual);
+    const reward = canonicalCoinbase(height, residual, cs.admissionTarget);
 
     const txs: TxRecord[] = selected.map((t) => ({
       ...t,

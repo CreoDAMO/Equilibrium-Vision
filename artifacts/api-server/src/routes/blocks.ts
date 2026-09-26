@@ -7,7 +7,7 @@ import { broadcast } from "../lib/ws-server.js";
 import { logger } from "../lib/logger.js";
 import type { TxRecord } from "../chain/types.js";
 import { RateLimiter, ReplaySet } from "../lib/submission-guard.js";
-import { canonicalCoinbase, CANONICAL_RESIDUAL_TARGET } from "@workspace/coinomics";
+import { canonicalCoinbase } from "@workspace/coinomics";
 import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
 
 const router = Router();
@@ -159,29 +159,29 @@ router.post("/blocks/submit", (req, res) => {
     return;
   }
 
-  // ── Check residual meets the PoS threshold ──────────────────────────────────
-  if (residual >= CANONICAL_RESIDUAL_TARGET) {
-    res.status(422).json({
-      error:     "Residual does not meet threshold",
-      residual,
-      threshold: CANONICAL_RESIDUAL_TARGET,
-    });
-    return;
-  }
-
-  // ── Ensure chain is initialised ─────────────────────────────────────────────
-  const prev = chainState.latestBlock;
-  if (!prev) {
+  if (!chainState) {
     res.status(503).json({ error: "Chain not initialised" });
     return;
   }
 
+  // ── Check residual meets the PoS threshold ──────────────────────────────────
+  if (residual >= chainState.admissionTarget) {
+    res.status(422).json({
+      error:     "Residual does not meet threshold",
+      residual,
+      threshold: chainState.admissionTarget,
+    });
+    return;
+  }
+
+  const tipHash = chainState.latestBlock?.hash ?? "0".repeat(64);
+
   // ── Reject stale work (optional prevHash check) ─────────────────────────────
-  if (typeof prevHash === "string" && prevHash.length > 0 && prevHash !== prev.hash) {
+  if (typeof prevHash === "string" && prevHash.length > 0 && prevHash !== tipHash) {
     res.status(409).json({
       error:          "Stale work — chain tip has advanced",
       submittedPrev:  prevHash,
-      currentTip:     prev.hash,
+      currentTip:     tipHash,
       currentHeight:  chainState.height,
     });
     return;
@@ -208,9 +208,9 @@ router.post("/blocks/submit", (req, res) => {
   // ── Replay detection — reject duplicate (prevHash, nonce) pairs ─────────────
   // A valid PoS solution is unique to a given chain tip; the same (tip, nonce)
   // cannot produce two distinct valid blocks, so a duplicate is always spam.
-  const replayKey = `${prev.hash}:${nonce}`;
+  const replayKey = `${tipHash}:${nonce}`;
   if (!submitReplay.tryAdd(replayKey)) {
-    logger.warn({ ip, miner, nonce, prevHash: prev.hash }, "Block submission replay rejected");
+    logger.warn({ ip, miner, nonce, prevHash: tipHash }, "Block submission replay rejected");
     res.status(409).json({ error: "Duplicate submission — this (prevHash, nonce) pair has already been processed" });
     return;
   }
@@ -225,10 +225,10 @@ router.post("/blocks/submit", (req, res) => {
   const selected  = chainState.ledger.selectApplicable(chainState.mempool.all()).slice(0, 50);
   const txHashes  = selected.map((t) => t.hash);
   const mr        = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
-  const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
+  const blockHash = hash256(`block-${height}-${tipHash}-${now}`);
   const recomputed = canonicalResidual(
     {
-      prevHash: prev.hash,
+      prevHash: tipHash,
       merkleRoot: mr,
       timestamp: now,
       nonce: Math.floor(nonce),
@@ -238,18 +238,18 @@ router.post("/blocks/submit", (req, res) => {
     { cumulativeWork: height, mempoolPressure: chainState.mempool.pressure },
     chainState.couplings,
   );
-  const admission = admitResidual(residual, recomputed, CANONICAL_RESIDUAL_TARGET);
+  const admission = admitResidual(residual, recomputed, chainState.admissionTarget);
   if (!admission.ok) {
     res.status(422).json({
       error: admission.error,
       claimed: residual,
       recomputed,
-      threshold: CANONICAL_RESIDUAL_TARGET,
+      threshold: chainState.admissionTarget,
     });
     return;
   }
 
-  const reward = canonicalCoinbase(height, admission.residual);
+  const reward = canonicalCoinbase(height, admission.residual, chainState.admissionTarget);
 
   const txs: TxRecord[] = selected.map((t) => ({
     ...t,
@@ -263,7 +263,7 @@ router.post("/blocks/submit", (req, res) => {
   const block = {
     hash:          blockHash,
     height,
-    prevHash:      prev.hash,
+    prevHash:      tipHash,
     merkleRoot:    mr,
     timestamp:     now,
     nonce:         Math.floor(nonce),

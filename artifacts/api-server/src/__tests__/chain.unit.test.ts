@@ -8,8 +8,10 @@ import { ChainState, mineNextBlock, buildGenesisChainFromDoc } from "../chain/st
 import { admitResidual, canonicalResidual, residualFingerprint } from "../chain/canonical-residual.js";
 import { BTC_GENESIS_HEADER_HEX } from "../chain/btc-header.js";
 import { nextFinalizedHeight } from "../chain/finality.js";
-import { kernelParty, KERNEL_ALLOCATIONS, KERNEL_VALIDATOR_LIQUID } from "../chain/kernel-genesis.js";
+import { kernelParty, KERNEL_ALLOCATIONS, KERNEL_POOLS, KERNEL_VALIDATOR_LIQUID } from "../chain/kernel-genesis.js";
 import { wasmLeafOf } from "../chain/wasm-leaf.js";
+import { applySuccessor, initialOmega } from "../../../../site/src/protocol/constitution";
+import { canonicalCoinbase } from "@workspace/coinomics";
 import { rebuildStateSmt } from "../chain/state-root.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "../chain/mining-policy.js";
 import type { BlockRecord, ValidatorRecord } from "../chain/types.js";
@@ -1058,13 +1060,27 @@ describe("ChainState UTXO fee sweep", () => {
     expect(state.ledger.balance(party.miner)).toBe(1_500_000);
     expect(state.validators.get(party.miner)?.bondedStake).toBe(500_000);
     for (const address of party.activity) expect(state.ledger.balance(address)).toBe(1_500_000);
-    for (const v of KERNEL_VALIDATOR_LIQUID) expect(state.ledger.balance(v.address)).toBe(v.amount);
+    for (const v of KERNEL_VALIDATOR_LIQUID) {
+      expect(state.ledger.balance(v.address)).toBe(v.amount);
+      expect(state.validators.get(v.address)?.bondedStake).toBe(v.amount);
+      expect(state.validators.get(v.address)?.commission).toBe(0.1);
+    }
     let supply = 0;
     for (const acc of state.ledger.getAllAccounts().values()) supply += acc.balance;
     expect(supply).toBe(114_000_000);
+    expect(state.height).toBe(-1);
+    expect(state.blocks).toEqual([]);
+    expect(state.admissionTarget).toBe(8e-4);
+    expect(state.finalizedHeight).toBe(-1);
+    for (const pool of KERNEL_POOLS) {
+      expect(state.dexPools.get(pool.id)?.reserveA).toBe(pool.reserveA);
+      expect(state.dexPools.get(pool.id)?.reserveB).toBe(pool.reserveB);
+      expect(state.dexPools.get(pool.id)?.fee).toBe(pool.fee);
+      expect(state.dexPools.get(pool.id)?.txCount).toBe(0);
+    }
   });
 
-  it("contract storage does not write the kernel wasm map, and an evidence block does", () => {
+  it("contract storage does not write the kernel wasm map, and a supplied wasm list does not either", () => {
     const state = new ChainState();
     state.wasmVM.replaceContracts([{
       address: "aa".repeat(20),
@@ -1089,11 +1105,12 @@ describe("ChainState UTXO fee sweep", () => {
       wasmEntries: [["cell", "from-call"]] as Array<[string, string]>,
     };
     state.addBlock(block);
-    expect(wasmLeafOf(state.canonicalWasm.entries())).toBe("cell=from-call");
+    expect(wasmLeafOf(state.canonicalWasm.entries())).toBe("none");
     expect(state.wasmVM.listContracts()[0]?.storage.cell).toBe("local");
+    expect(block.stateRoot).toBe("33".repeat(32));
   });
 
-  it("a governance baseReward execution does not change couplings, and a kernel coupling does", () => {
+  it("a block field does not change couplings, and a passed kernel proposal does", () => {
     const state = new ChainState();
     state.governance.proposals.set("GOV-X", {
       id: "GOV-X",
@@ -1133,10 +1150,164 @@ describe("ChainState UTXO fee sweep", () => {
       couplingKey: "structural",
       couplingValue: 0,
     });
+    expect(state.couplings.structural).toBe(1);
+    state.kernelProposals.push({
+      id: "k1",
+      status: "passed",
+      couplingKey: "structural",
+      couplingValue: 0,
+    });
+    state.addBlock({ ...fakeBlock(1, 1_700_000_015), miner: "b".repeat(40), coinbaseReward: 0 });
+    expect(state.kernelProposals[0]?.status).toBe("executed");
     expect(state.couplings.structural).toBe(0);
     const after = canonicalResidual(header, [], { cumulativeWork: 1, mempoolPressure: 0 }, state.couplings);
     expect(after).not.toBe(before);
     expect(residualFingerprint(after)).not.toBe(residualFingerprint(before));
+    expect(after).toBe(0);
+  });
+
+  it("the same inputs produce the same reward, split, difficulty, and finality on both bodies", () => {
+    const state = buildGenesisChainFromDoc({
+      chain_id: "equilibrium-1",
+      timestamp: "2026-07-05T00:44:37.417Z",
+      initial_supply: "100000000",
+      allocations: KERNEL_ALLOCATIONS.map((line) => ({
+        address: line.address,
+        amount: String(line.amount),
+        vesting: "none",
+        category: "line",
+      })),
+      initial_validators: [],
+      dex_pools: [],
+      parameters: {
+        target_block_time_ms: 15_000,
+        residual_threshold: 8e-4,
+        initial_difficulty: 1_000_000,
+        slashing_double_sign_pct: 5,
+        slashing_downtime_pct: 1,
+        unbonding_period_blocks: 10,
+        max_validators: 100,
+        governance_quorum_pct: 67,
+        governance_voting_period_blocks: 10,
+      },
+    });
+    const omega = initialOmega("mainnet");
+    const kernelBalances = new Map([...omega.ledger.entries()].map(([addr, acc]) => [addr, acc.balance]));
+    for (const [addr, acc] of state.ledger.getAllAccounts()) {
+      expect(kernelBalances.get(addr)).toBe(acc.balance);
+      kernelBalances.delete(addr);
+    }
+    expect([...kernelBalances.keys()]).toEqual([]);
+    expect(state.validators.size).toBe(omega.validators.size);
+    for (const [addr, v] of omega.validators) {
+      expect(state.validators.get(addr)?.bondedStake).toBe(v.bondedStake);
+      expect(state.validators.get(addr)?.commission).toBe(v.commission);
+    }
+    for (const pool of omega.pools) {
+      const got = state.dexPools.get(pool.id);
+      expect(got?.reserveA).toBe(pool.reserveA);
+      expect(got?.reserveB).toBe(pool.reserveB);
+      expect(got?.txCount).toBe(pool.txCount);
+      expect(got?.fee).toBe(pool.fee);
+    }
+    state.utxoSet.add({
+      txHash: "ab".repeat(32),
+      outputIndex: 0,
+      address: "c".repeat(40),
+      amount: 50,
+      coinbase: false,
+      blockHeight: 0,
+      spent: false,
+    });
+    state.wasmVM.replaceContracts([{
+      address: "aa".repeat(20),
+      deployer: "b".repeat(40),
+      bytecode: "00",
+      bytecodeHash: "11".repeat(32),
+      storage: { cell: "local" },
+      deployedAt: 1,
+      callCount: 0,
+      totalGasUsed: 0,
+    }]);
+    const miner = kernelParty("mainnet").miner;
+    let current = omega;
+    const rewards: number[] = [];
+    const liquids: number[] = [];
+    const finals: number[] = [];
+    let operationalDiffers = false;
+    for (let step = 0; step < 3; step++) {
+      const height = current.height + 1;
+      const timestamp = 1_700_000_000 + step * 15;
+      const stepped = applySuccessor(current, {
+        transactions: [],
+        evidence: undefined,
+        timestamp,
+        nonce: 6,
+        miner,
+        committedPressure: 0,
+        couplings: { ...current.couplings },
+        difficulty: current.difficulty,
+        wasmAfter: null,
+      });
+      expect(stepped.ok).toBe(true);
+      if (!stepped.ok) return;
+      const recomputed = canonicalResidual(
+        {
+          prevHash: current.tipHash,
+          merkleRoot: "0".repeat(64),
+          timestamp,
+          nonce: 6,
+          difficulty: current.difficulty,
+        },
+        [],
+        { cumulativeWork: height, mempoolPressure: 0 },
+        current.couplings,
+      );
+      expect(recomputed).toBe(stepped.residual);
+      expect(canonicalCoinbase(height, recomputed, state.admissionTarget)).toBe(stepped.reward);
+      const before = state.ledger.balance(miner);
+      const block = {
+        ...fakeBlock(height, timestamp),
+        prevHash: current.tipHash,
+        miner,
+        nonce: 6,
+        difficulty: current.difficulty,
+        residual: stepped.residual,
+        coinbaseReward: stepped.reward,
+      };
+      state.addBlock(block);
+      expect(state.ledger.balance(miner) - before).toBe(stepped.liquid);
+      for (const [addr, v] of stepped.next.validators) {
+        expect(state.validators.get(addr)?.accumulatedRewards).toBe(v.accumulatedRewards);
+        expect(state.validators.get(addr)?.blocksProposed).toBe(v.blocksProposed);
+        expect(state.validators.get(addr)?.bondedStake).toBe(v.bondedStake);
+      }
+      expect(state.currentDifficulty).toBe(stepped.next.difficulty);
+      expect(state.finalizedHeight).toBe(stepped.next.finalizedHeight);
+      expect(state.couplings).toEqual(stepped.next.couplings);
+      expect(block.operationalRoot).not.toBe(stepped.stateRoot);
+      operationalDiffers = true;
+      rewards.push(stepped.reward);
+      liquids.push(stepped.liquid);
+      finals.push(stepped.next.finalizedHeight);
+      current = stepped.next;
+      current.tipHash = step === 0 ? "11".repeat(32) : "22".repeat(32);
+    }
+    const betweenMainnet = canonicalCoinbase(1, 1e-3, 8e-4);
+    const betweenTestnet = canonicalCoinbase(1, 1e-3, 2e-3);
+    expect(betweenMainnet).not.toBe(betweenTestnet);
+    expect(wasmLeafOf(state.canonicalWasm.entries())).toBe("none");
+    console.log(JSON.stringify({
+      ok: true,
+      rewards,
+      liquids,
+      finals,
+      difficulty: state.currentDifficulty,
+      operationalDiffers,
+      betweenMainnet,
+      betweenTestnet,
+      supply: [...state.ledger.getAllAccounts().values()].reduce((s, a) => s + a.balance, 0),
+    }));
   });
 });
 
@@ -1156,11 +1327,16 @@ describe("stratum admission", () => {
     expect(src.includes("ed25519")).toBe(false);
     expect(src.includes("this.slashValidator")).toBe(false);
     expect(src.includes("slashValidator(")).toBe(true);
+    expect(src.includes("block.wasmEntries")).toBe(false);
+    expect(src.includes("block.couplingKey")).toBe(false);
+    expect(src.includes("applyPassedCouplings")).toBe(true);
   });
 
   it("a gossiped body is not paid the governance base reward", () => {
     const src = readFileSync(fileURLToPath(new URL("../chain/index.ts", import.meta.url)), "utf8");
     expect(src.includes("coinbaseReward: 50_000_000")).toBe(false);
-    expect(src.includes("canonicalCoinbase(height, residual)")).toBe(true);
+    expect(src.includes("admitResidual")).toBe(true);
+    expect(src.includes("canonicalCoinbase(height, admission.residual")).toBe(true);
+    expect(src.includes("canonicalCoinbase(height, residual)")).toBe(false);
   });
 });

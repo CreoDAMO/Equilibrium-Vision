@@ -30,7 +30,7 @@ import { withDbRetry } from "./persistence.js";
 import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import { btcHeaderHash } from "./btc-header.js";
 import { nextFinalizedHeight, stakeForFinality } from "./finality.js";
-import { allocationsMatchKernel, kernelNetworkOf, kernelParty, KERNEL_VALIDATOR_LIQUID } from "./kernel-genesis.js";
+import { allocationsMatchKernel, applyPassedCouplings, kernelNetworkOf, kernelParty, KERNEL_POOLS, KERNEL_VALIDATOR_LIQUID, type KernelCouplingProposal } from "./kernel-genesis.js";
 import {
   applySlashing,
   canonicalCoinbase,
@@ -249,11 +249,15 @@ export class ChainState {
   // purse: the next block credits it on the account ledger and clears the pool.
   pendingUtxoFees = 0;
 
-  // WASM smart contract VM. Its storage is operational. canonicalWasm is the
-  // kernel map, and only an evidence block may replace it.
+  // WASM smart contract VM. Its storage is operational. canonicalWasm is Ω.wasm.
+  // This node does not execute the kernel wasm call, so the map stays empty.
+  // A supplied wasmEntries list is not that call.
   wasmVM = new WasmVM();
   canonicalWasm = new Map<string, string>();
   couplings = { hash: 1, structural: 1, continuity: 1, mempool: 1, fees: 1 };
+  /** Residual target that scales the coinbase. Mainnet 8e-4, testnet 2e-3. Not miningThreshold. */
+  admissionTarget = CANONICAL_RESIDUAL_TARGET;
+  kernelProposals: KernelCouplingProposal[] = [];
 
   // BFT: real Ed25519 vote keypairs for each validator (testnet: held in-process)
   private validatorKeys = new Map<string, Uint8Array>();    // address → pubkey
@@ -403,6 +407,7 @@ export class ChainState {
   private preBlockPendingFees = new Map<number, number>();
   private preBlockCouplings = new Map<number, ChainState["couplings"]>();
   private preBlockWasm = new Map<number, Array<[string, string]>>();
+  private preBlockProposals = new Map<number, KernelCouplingProposal[]>();
   private _slashWindows = new Map<string, number[]>();
   private static readonly MAX_SLASHES_PER_DAY = 5;
   private static readonly SLASH_WINDOW_S = 86_400;
@@ -473,7 +478,9 @@ export class ChainState {
     this.preBlockPendingFees.set(block.height, this.pendingUtxoFees);
     this.preBlockCouplings.set(block.height, { ...this.couplings });
     this.preBlockWasm.set(block.height, [...this.canonicalWasm.entries()]);
+    this.preBlockProposals.set(block.height, this.kernelProposals.map((p) => ({ ...p })));
     this.blocks.push(block);
+    this.couplings = applyPassedCouplings(this.couplings, this.kernelProposals);
 
     // Coinbase is an account-ledger credit inside distributeBlockReward.
     // It is not also a UTXO. A second output would be a second purse.
@@ -644,15 +651,6 @@ export class ChainState {
     } catch (err) {
       logger.warn({ err, height: block.height }, "State root computation failed — skipping");
     }
-
-    // Contract storage does not write this map. A kernel proposal's coupling
-    // does not rewrite this block's residual; it is the input of the next one.
-    if (evidenceBound(block)) {
-      if (block.wasmEntries) this.canonicalWasm = new Map(block.wasmEntries);
-      if (block.couplingKey && typeof block.couplingValue === "number" && Number.isFinite(block.couplingValue)) {
-        this.couplings = { ...this.couplings, [block.couplingKey]: Math.max(0, block.couplingValue) };
-      }
-    }
   }
 
   // ── Chain reorganization ─────────────────────────────────────────────────────
@@ -727,6 +725,8 @@ export class ChainState {
       if (couplings) this.couplings = { ...couplings };
       const wasm = this.preBlockWasm.get(oldest.height);
       if (wasm) this.canonicalWasm = new Map(wasm);
+      const proposals = this.preBlockProposals.get(oldest.height);
+      if (proposals) this.kernelProposals = proposals.map((p) => ({ ...p }));
     }
     for (const block of removed) {
       this.preBlockLedger.delete(block.height);
@@ -737,6 +737,7 @@ export class ChainState {
       this.preBlockPendingFees.delete(block.height);
       this.preBlockCouplings.delete(block.height);
       this.preBlockWasm.delete(block.height);
+      this.preBlockProposals.delete(block.height);
     }
 
     // Keep the WASM VM's block_number() host import in sync with the chain
@@ -1588,30 +1589,63 @@ export function buildGenesisChainFromDoc(doc: GenesisDocument): ChainState {
         commission: 0.1,
       });
     }
+    for (const v of KERNEL_VALIDATOR_LIQUID) {
+      state.validators.set(v.address, {
+        address: v.address,
+        moniker: v.name,
+        bondedStake: v.amount,
+        accumulatedRewards: 0,
+        slashed: false,
+        slashCount: 0,
+        jailed: false,
+        uptime: 1,
+        blocksProposed: 0,
+        blocksVoted: 0,
+        commission: 0.1,
+      });
+    }
+    for (const pool of KERNEL_POOLS) {
+      state.dexPools.set(pool.id, {
+        id: pool.id,
+        tokenA: pool.tokenA,
+        tokenB: pool.tokenB,
+        reserveA: pool.reserveA,
+        reserveB: pool.reserveB,
+        totalLiquidity: Math.floor(Math.sqrt(pool.reserveA * pool.reserveB)),
+        fee: pool.fee,
+        volumeA: 0,
+        volumeB: 0,
+        txCount: pool.txCount,
+        createdAt: 0,
+      });
+    }
+    state.admissionTarget = network === "mainnet" ? 8e-4 : 2e-3;
   }
 
-  // ── Genesis block (height 0) ───────────────────────────────────────────────
-  const genesisHash = hash256(`genesis-${doc.chain_id}-${doc.timestamp}`);
-  const genesisBlock: import("./types.js").BlockRecord = {
-    hash: genesisHash,
-    height: 0,
-    prevHash: "0".repeat(64),
-    merkleRoot: merkleRoot(["0".repeat(64)]),
-    timestamp: Math.floor(new Date(doc.timestamp).getTime() / 1000),
-    nonce: 0,
-    difficulty: doc.parameters.initial_difficulty,
-    residual: 0,
-    residualFp: 0,
-    recursionDepth: 0,
-    coinbaseReward: 0,
-    miner: "0".repeat(40),
-    txCount: 0,
-    transactions: [],
-    finalized: true,
-  };
-
-  state.blocks.push(genesisBlock);
-  state.finalizedHeight = 0;
+  // A kernel document is Ω before any block. A synthetic hash is not that block.
+  // Other documents still get the placeholder they had.
+  if (!(network && allocationsMatchKernel(doc.allocations))) {
+    const genesisHash = hash256(`genesis-${doc.chain_id}-${doc.timestamp}`);
+    const genesisBlock: import("./types.js").BlockRecord = {
+      hash: genesisHash,
+      height: 0,
+      prevHash: "0".repeat(64),
+      merkleRoot: merkleRoot(["0".repeat(64)]),
+      timestamp: Math.floor(new Date(doc.timestamp).getTime() / 1000),
+      nonce: 0,
+      difficulty: doc.parameters.initial_difficulty,
+      residual: 0,
+      residualFp: 0,
+      recursionDepth: 0,
+      coinbaseReward: 0,
+      miner: "0".repeat(40),
+      txCount: 0,
+      transactions: [],
+      finalized: true,
+    };
+    state.blocks.push(genesisBlock);
+    state.finalizedHeight = 0;
+  }
 
   // Default peers (same as dev genesis)
   state.peers = [
@@ -1776,7 +1810,7 @@ export async function mineNextBlockAsync(
   state: ChainState,
   minerAddr: string,
 ): Promise<BlockRecord> {
-  const prev = state.latestBlock!;
+  const prev = state.latestBlock ?? { hash: "0".repeat(64) };
   const height = state.height + 1;
   const now = Math.floor(Date.now() / 1000);
 
@@ -1884,10 +1918,10 @@ export async function mineNextBlockAsync(
     }
   }
 
-  if (!(residual < CANONICAL_RESIDUAL_TARGET)) {
-    throw new Error(`residual ${residual} is not under the admission target ${CANONICAL_RESIDUAL_TARGET}`);
+  if (!(residual < state.admissionTarget)) {
+    throw new Error(`residual ${residual} is not under the admission target ${state.admissionTarget}`);
   }
-  const reward = canonicalCoinbase(height, residual);
+  const reward = canonicalCoinbase(height, residual, state.admissionTarget);
   const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
 
   const txs: TxRecord[] = selected.map((t) => ({
@@ -1939,7 +1973,7 @@ export async function mineNextBlockAsync(
 export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord {
   assertRandomMiningAllowed("mineNextBlock");
 
-  const prev = state.latestBlock!;
+  const prev = state.latestBlock ?? { hash: "0".repeat(64) };
   const height = state.height + 1;
   const now = Math.floor(Date.now() / 1000);
 
@@ -1971,10 +2005,10 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   const mr = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
 
   const residual = Math.random() * 5e-9 + 1e-10;
-  if (!(residual < CANONICAL_RESIDUAL_TARGET)) {
-    throw new Error(`residual ${residual} is not under the admission target ${CANONICAL_RESIDUAL_TARGET}`);
+  if (!(residual < state.admissionTarget)) {
+    throw new Error(`residual ${residual} is not under the admission target ${state.admissionTarget}`);
   }
-  const reward = canonicalCoinbase(height, residual);
+  const reward = canonicalCoinbase(height, residual, state.admissionTarget);
 
   const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
 

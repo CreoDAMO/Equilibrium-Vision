@@ -13,6 +13,7 @@ import type { BlockRecord } from "./types.js";
 import type { GenesisDocument } from "@workspace/coinomics";
 import { addressFromSeed } from "./crypto.js";
 import { canonicalCoinbase } from "@workspace/coinomics";
+import { admitResidual, canonicalResidual } from "./canonical-residual.js";
 import { logger } from "../lib/logger.js";
 import { broadcast } from "../lib/ws-server.js";
 import { deployAdminMultisigIfConfigured } from "./multisig.js";
@@ -480,25 +481,39 @@ export async function initChain(): Promise<void> {
     const miner      = typeof body['miner']      === 'string' ? body['miner']      : '';
     const difficulty = typeof body['difficulty'] === 'number' ? body['difficulty'] : 1;
 
-    if (!hash || height < 0 || !prevHash) return;
-    // Skip if we already have this block (idempotent)
+    if (!hash || height < 0 || !prevHash || !miner) return;
     if (chainState.blocks.some((b) => b?.hash === hash)) return;
 
-    logger.info({ hash: hash.slice(0, 16), height }, 'p2p: received block body via gossip');
+    const merkle = typeof body["merkleRoot"] === "string" && /^[0-9a-f]{64}$/i.test(body["merkleRoot"])
+      ? body["merkleRoot"]
+      : "0".repeat(64);
+    const recomputed = canonicalResidual(
+      { prevHash, merkleRoot: merkle, timestamp, nonce, difficulty },
+      [],
+      { cumulativeWork: height, mempoolPressure: 0 },
+      chainState.couplings,
+    );
+    const admission = admitResidual(residual, recomputed, chainState.admissionTarget);
+    if (!admission.ok) {
+      logger.warn({ hash: hash.slice(0, 16), height, error: admission.error }, "p2p: gossip residual refused");
+      return;
+    }
+
+    logger.info({ hash: hash.slice(0, 16), height }, "p2p: received block body via gossip");
 
     try {
       const block: BlockRecord = {
         hash,
         height,
         prevHash,
-        merkleRoot:     '0'.repeat(64), // phone omits merkle root; recomputed by state
+        merkleRoot:     merkle,
         timestamp,
         nonce,
         difficulty,
-        residual,
-        residualFp:     Math.floor(residual * 1e18),
+        residual:       admission.residual,
+        residualFp:     Math.floor(admission.residual * 1e18),
         recursionDepth: 2,
-        coinbaseReward: canonicalCoinbase(height, residual),
+        coinbaseReward: canonicalCoinbase(height, admission.residual, chainState.admissionTarget),
         miner,
         txCount:        0,
         transactions:   [],

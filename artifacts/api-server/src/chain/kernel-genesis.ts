@@ -46,6 +46,20 @@ export const KERNEL_ALLOCATIONS: Array<{ address: string; amount: number }> = [
   { address: "ab92b2d4e3591203220d707a8248a144758c2888", amount: 5_000_000 },
 ];
 
+/** The two pools initialOmega creates. Reserves, not a second ledger. */
+export const KERNEL_POOLS: Array<{
+  id: string;
+  tokenA: string;
+  tokenB: string;
+  reserveA: number;
+  reserveB: number;
+  fee: number;
+  txCount: number;
+}> = [
+  { id: "EQU-WBTC", tokenA: "EQU", tokenB: "WBTC", reserveA: 10_000_000, reserveB: 100, fee: 0.003, txCount: 0 },
+  { id: "EQU-USDC", tokenA: "EQU", tokenB: "USDC", reserveA: 10_000_000, reserveB: 10_000_000, fee: 0.003, txCount: 0 },
+];
+
 export function kernelNetworkOf(chainId: string): KernelNetwork | null {
   if (chainId === "equilibrium-1" || chainId === "1") return "mainnet";
   if (chainId === "equilibrium-2" || chainId === "2") return "testnet";
@@ -56,4 +70,31 @@ export function allocationsMatchKernel(lines: Array<{ address: string; amount: s
   if (lines.length !== KERNEL_ALLOCATIONS.length) return false;
   const got = new Map(lines.map((line) => [line.address, Number(line.amount)]));
   return KERNEL_ALLOCATIONS.every((line) => got.get(line.address) === line.amount);
+}
+
+export interface KernelCouplingProposal {
+  id: string;
+  status: string;
+  couplingKey?: "hash" | "structural" | "continuity" | "mempool" | "fees";
+  couplingValue?: number;
+}
+
+/**
+ * The same rule as openOmega. A passed proposal may change λ.
+ * A block field may not. Status becomes executed, including a proposal
+ * that named no coupling.
+ */
+export function applyPassedCouplings<T extends KernelCouplingProposal>(
+  couplings: { hash: number; structural: number; continuity: number; mempool: number; fees: number },
+  proposals: T[],
+): { hash: number; structural: number; continuity: number; mempool: number; fees: number } {
+  let next = couplings;
+  for (const p of proposals) {
+    if (p.status !== "passed") continue;
+    if (p.couplingKey && typeof p.couplingValue === "number" && Number.isFinite(p.couplingValue)) {
+      next = { ...next, [p.couplingKey]: Math.max(0, p.couplingValue) };
+    }
+    p.status = "executed";
+  }
+  return next;
 }
