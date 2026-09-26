@@ -69,16 +69,15 @@ export interface BlockRecord {
   finalized?: boolean;
   zkProof?: ZkProof;
   /**
-   * Sparse Merkle Tree root committing to the full world state at this height:
-   * all account balances+nonces, all unspent UTXOs, and all contract storage hashes.
-   *
-   * This is the cryptographic foundation for mobile light nodes: a phone can
-   * verify any account balance or UTXO with a 256-sibling Merkle proof against
-   * this root, without downloading the full chain.
-   *
-   * Optional for backward compatibility with blocks mined before this field existed.
+   * Header state root. On an evidence-bearing block this is the canonical projection
+   * supplied with the block. On an artifacts-native block it is the operational SMT.
    */
   stateRoot?: string;
+  /**
+   * Artifacts sparse-merkle commitment: accounts, UTXOs, contracts, pools, validator bond.
+   * Not EQ-07 stateRootOf. An evidence header does not put this value in stateRoot.
+   */
+  operationalRoot?: string;
   /**
    * Mempool pressure that entered the residual. Bound by the header hash
    * when the block is sealed. Absent on rows written before identity sealing.

@@ -32,6 +32,7 @@ import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import { canonicalResidual } from "./canonical-residual.js";
 import { withDbRetry } from "./persistence.js";
 import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
+import { btcHeaderHash } from "./btc-header.js";
 import {
   applySlashing,
   canonicalCoinbase,
@@ -201,9 +202,17 @@ export class ChainState {
 
   // Adaptive difficulty
   currentDifficulty: number = INITIAL_DIFFICULTY;
-  /** Last byte of each verified foreign tip. Absent means the time rule alone. */
+  /** Admitted Bitcoin header hash. Set only by admitBtcHeader or a snapshot of one. */
   btcTipHash: string | null = null;
+  /** No Ethereum header is admitted on this body. A raw string must not move difficulty. */
   ethTipHash: string | null = null;
+
+  admitBtcHeader(headerHex: string): string | null {
+    const hash = btcHeaderHash(headerHex);
+    if (!hash) return null;
+    this.btcTipHash = hash;
+    return hash;
+  }
 
   // Validators & slashing
   validators = new Map<string, ValidatorRecord>();
@@ -437,7 +446,7 @@ export class ChainState {
     const prev = this.blocks[this.blocks.length - 2];
     const tip = this.blocks[this.blocks.length - 1];
     const blockTime = prev && tip ? tip.timestamp - prev.timestamp : TARGET_BLOCK_TIME;
-    const foreign = foreignTipFactor(this.btcTipHash, this.ethTipHash);
+    const foreign = foreignTipFactor(this.btcTipHash, null);
     this.currentDifficulty = adjustDifficultySeconds(this.currentDifficulty, blockTime, TARGET_BLOCK_TIME, foreign);
   }
 
@@ -590,14 +599,31 @@ export class ChainState {
         );
       }
 
-      block.stateRoot = smt.root();
+      const suppliedStateRoot = block.stateRoot;
+      const bindCanonical =
+        block.chainId !== undefined &&
+        typeof block.evidenceRoot === "string" &&
+        /^[0-9a-f]{64}$/.test(block.evidenceRoot) &&
+        typeof block.omegaRoot === "string" &&
+        /^[0-9a-f]{64}$/.test(block.omegaRoot) &&
+        typeof suppliedStateRoot === "string" &&
+        /^[0-9a-f]{64}$/.test(suppliedStateRoot);
+      const operationalRoot = smt.root();
+      block.operationalRoot = operationalRoot;
+      if (!bindCanonical) {
+        block.stateRoot = operationalRoot;
+        delete block.chainId;
+        delete block.evidenceRoot;
+        delete block.omegaRoot;
+      }
+
       this._stateSmt = smt;
       if (block.sealIdentity) {
         block.residualFp = block.residualFp ?? Math.floor(block.residual * 1e18);
         block.hash = canonicalHeaderHash({
           prevHash: block.prevHash,
           merkleRoot: block.merkleRoot,
-          stateRoot: block.stateRoot,
+          stateRoot: block.stateRoot ?? operationalRoot,
           timestamp: block.timestamp,
           nonce: block.nonce,
           difficulty: block.difficulty,
@@ -605,7 +631,7 @@ export class ChainState {
           miner: block.miner,
           height: block.height,
           committedPressure: block.committedPressure ?? 0,
-          ...(block.chainId !== undefined && block.evidenceRoot !== undefined
+          ...(bindCanonical
             ? { chainId: block.chainId, evidenceRoot: block.evidenceRoot, omegaRoot: block.omegaRoot }
             : {}),
         });

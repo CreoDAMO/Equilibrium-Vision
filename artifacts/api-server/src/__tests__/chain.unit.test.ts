@@ -6,6 +6,7 @@ import { fpEncode, blockHashToFields } from "../chain/zk-encoding.js";
 import { generateZkProof, verifyZkProof } from "../chain/zkproof.js";
 import { ChainState, mineNextBlock } from "../chain/state.js";
 import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
+import { BTC_GENESIS_HEADER_HEX } from "../chain/btc-header.js";
 import { rebuildStateSmt } from "../chain/state-root.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "../chain/mining-policy.js";
 import type { BlockRecord } from "../chain/types.js";
@@ -738,7 +739,43 @@ describe("ChainState UTXO fee sweep", () => {
     expect(state.utxoSet.balance(miner)).toBe(0);
   });
 
-  it("an evidence-bearing seal binds chain id, evidence root, and omega root", () => {
+  it("an evidence header keeps the supplied state root and does not bind the operational tree", () => {
+    const canonical = "33".repeat(32);
+    const state = new ChainState();
+    const block = {
+      ...fakeBlock(0, 1_700_000_000),
+      miner: "b".repeat(40),
+      coinbaseReward: 0,
+      nonce: 6,
+      residual: 1e-6,
+      residualFp: 1_000_000_000_000,
+      committedPressure: 0,
+      sealIdentity: true,
+      stateRoot: canonical,
+      chainId: 1,
+      evidenceRoot: "cd".repeat(32),
+      omegaRoot: "ef".repeat(32),
+    };
+    state.addBlock(block);
+    expect(block.stateRoot).toBe(canonical);
+    expect(block.operationalRoot).not.toBe(canonical);
+    const common = {
+      prevHash: block.prevHash,
+      merkleRoot: block.merkleRoot,
+      stateRoot: canonical,
+      timestamp: block.timestamp,
+      nonce: block.nonce,
+      difficulty: block.difficulty,
+      residualFp: block.residualFp!,
+      miner: block.miner,
+      height: block.height,
+      committedPressure: 0,
+    };
+    expect(block.hash).toBe(canonicalHeaderHash({ ...common, chainId: 1, evidenceRoot: "cd".repeat(32), omegaRoot: "ef".repeat(32) }));
+    expect(block.hash).not.toBe(canonicalHeaderHash({ ...common, stateRoot: block.operationalRoot! }));
+  });
+
+  it("evidence fields without a canonical state root are not sealed as an evidence header", () => {
     const state = new ChainState();
     const block = {
       ...fakeBlock(0, 1_700_000_000),
@@ -754,10 +791,12 @@ describe("ChainState UTXO fee sweep", () => {
       omegaRoot: "ef".repeat(32),
     };
     state.addBlock(block);
-    const common = {
+    expect(block.chainId).toBeUndefined();
+    expect(block.stateRoot).toBe(block.operationalRoot);
+    expect(block.hash).toBe(canonicalHeaderHash({
       prevHash: block.prevHash,
       merkleRoot: block.merkleRoot,
-      stateRoot: block.stateRoot!,
+      stateRoot: block.operationalRoot!,
       timestamp: block.timestamp,
       nonce: block.nonce,
       difficulty: block.difficulty,
@@ -765,9 +804,7 @@ describe("ChainState UTXO fee sweep", () => {
       miner: block.miner,
       height: block.height,
       committedPressure: 0,
-    };
-    expect(block.hash).toBe(canonicalHeaderHash({ ...common, chainId: 1, evidenceRoot: "cd".repeat(32), omegaRoot: "ef".repeat(32) }));
-    expect(block.hash).not.toBe(canonicalHeaderHash(common));
+    }));
   });
 
   it("the kernel's evidence-bearing header is the same hash in this process", () => {
@@ -788,10 +825,14 @@ describe("ChainState UTXO fee sweep", () => {
     })).toBe("795d67b1ed75cd450c86f6dd4569c0b7b33f194ce6d38e3441f1c6ad5b4fc5b2");
   });
 
-  it("a foreign tip moves the next difficulty by the kernel ratio, and the tip survives a snapshot", () => {
+  it("a verified bitcoin header moves difficulty, a bare hash does not, and an eth string does not", () => {
     const state = new ChainState();
     state.currentDifficulty = 1_000_000;
-    state.btcTipHash = "0".repeat(64);
+    expect(state.admitBtcHeader("00".repeat(80))).toBeNull();
+    expect(state.btcTipHash).toBeNull();
+    const admitted = state.admitBtcHeader(BTC_GENESIS_HEADER_HEX);
+    expect(admitted).toBe("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000");
+    state.ethTipHash = "ff".repeat(32);
     state.blocks.push(fakeBlock(0, 1_700_000_000));
     state.blocks.push(fakeBlock(1, 1_700_000_015));
     state.updateDifficulty();
@@ -807,8 +848,9 @@ describe("ChainState UTXO fee sweep", () => {
     const snap = state.exportRestartSnapshot();
     const born = new ChainState();
     born.importRestartSnapshot(snap);
-    expect(born.btcTipHash).toBe("0".repeat(64));
+    expect(born.btcTipHash).toBe(admitted);
     born.currentDifficulty = 1_000_000;
+    born.ethTipHash = "ff".repeat(32);
     born.updateDifficulty();
     expect(born.currentDifficulty).toBe(995_000);
   });
@@ -822,5 +864,10 @@ describe("stratum admission", () => {
     expect(src.includes("VAI_CLI_PATH")).toBe(false);
     expect(src.includes("canonicalResidual")).toBe(true);
     expect(src.includes("admitResidual")).toBe(true);
+  });
+
+  it("the block transition does not mint a coinbase UTXO", () => {
+    const src = readFileSync(fileURLToPath(new URL("../chain/state.ts", import.meta.url)), "utf8");
+    expect(src.includes("addCoinbase")).toBe(false);
   });
 });
