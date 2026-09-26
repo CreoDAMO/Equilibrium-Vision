@@ -4,7 +4,7 @@ Proof-of-Stationarity. One public kernel in `site/`, and the older TypeScript no
 
 ## Current state (26 September 2026)
 
-Not production-ready. A person can use the public kernel. Nobody can yet rely on it as a coin that survives the process that mines it, or as a second producer that takes over when this one stops.
+Not production-ready. A second body, given only the blocks, produced the next block and a third body accepted it. A Postgres process was killed and a new one loaded the same state and the same next block. That is two measurements. It is not a network, and it is not a coin anyone should rely on.
 
 The questions that were being mixed together are separate. The transition question is what `successor` does with the inputs it is given. The production question is whether a second party can hold EQU, and whether a verified Bitcoin or Ethereum header changes anything after it is stored. Leaving EQU onto another chain is not one of those questions. The bridges are there to admit foreign headers, not to export the coin.
 
@@ -27,7 +27,7 @@ The browser wallet at `/wallet` creates an Ed25519 key that stays in the browser
 
 What still has to be supplied, because the transition does not derive it: the miner, the timestamp, and the committed pressure. Two admitting nonces can share one state while the reward is clipped, and still be two different blocks. Zeroing λ_structural changed the residual and not the state, under that same clip.
 
-The wasm host is named. It is `callArbitrage` over the arbitrage module whose sha256 is the evidence code. Any other code is refused. Two storage maps are still two states, because that map is the host's output and it is part of Ω. The external variational-ai CLI used by the older stratum path is not that host, and it is not pinned by this hash.
+The wasm host is named. It is `callArbitrage` over the arbitrage module whose sha256 is the evidence code. Any other code is refused. Two storage maps are still two states, because that map is the host's output and it is part of Ω. Stratum does not call the variational-ai CLI. Admission is the canonical residual recomputed in this process.
 
 A verified Bitcoin tip changes the next difficulty. Each foreign tip's last byte maps into a factor in [0.995, 1.005]. That factor multiplies the time rule, and the product is still clamped to 0.8 and 1.2. No tip leaves the time rule unchanged. The header is not only a leaf in the state root. EQ-20 states this. It does not move a balance by itself, and it does not pay another chain.
 
@@ -49,19 +49,22 @@ A rollback restores the account coinbase and the transfers from the snapshot tak
 
 A swap that cannot pay does not debit. A multi-hop swap that fails on a later hop puts the pools, the trader, and the swap history back.
 
-The state root commits pool reserves and validator bond, jail, and slash, as well as accounts, UTXOs, and contract storage. A restart snapshot now carries those partitions inside the existing ledger document, under `__partitions`, so a restore can rebuild that root. That was checked in memory. It was not checked by killing a Postgres process and booting it again.
+The state root commits pool reserves and validator bond, jail, and slash, as well as accounts, UTXOs, and contract storage. A restart snapshot carries those partitions inside the existing ledger document, under `__partitions`. On 26 September 2026 that snapshot was written by one process, Postgres was stopped with `immediate`, and a different process on a new postmaster loaded it through `initChain`. The restored state root was `58f7201f55a814857a5fc1c152cce1b9cf436497cf1890e8453b47443b709f78`. Difficulty was 1,200,000, not the 1,000,000 the block had been mined under. The canonical residual of the same next header was `0.016924195219037475` on both sides. Applying the same unpersisted next block produced state root `519816753b910f652575f9b50c1a08d7e6978bb2b14e4a7384e324db8bd0e188` and difficulty 1,440,000 on both sides. Alice stayed at 4,000, the pool reserve at 50,000, and the validator bond at 2,000.
 
-The paid coinbase on this node is the same `canonicalCoinbase` the public kernel pays. The Rust testnet node calls the same curve. `compute_coinbase_reward` is still in the crate. It is not the block path. `optimize_full` still returns a best-effort candidate when the target is missed. The consensus API, the FFI, the JNI bridge, and the testnet node now treat that candidate as not admitted. Callers that only looked at `ok: true` have to read `admitted`.
+The paid coinbase on this node is the same `canonicalCoinbase` the public kernel pays. The Rust testnet node calls the same curve. `compute_coinbase_reward` is still in the crate. It is not the block path. `optimize_full` still returns a best-effort territory candidate when its target is missed. It is not the search that mines. `search_canonical` walks the residual the kernel admits. For the public vector, nonce 0 is `0.02519000125198503` and nonce 6 is `0.0002011002025239986`. Rust and TypeScript both compute those numbers, and the search returns nonce 6. A block is kept only when this process recomputes the same residual and it is under the target. Callers that only looked at `ok: true` still have to read `admitted`.
 
-External submit and stratum no longer store a claimed residual that this process did not recompute. The stored residual is the canonical residual of the block being committed, and the claim has to match it. A small invented number is refused. The internal RNG miner is still a test hatch. It is not the production path.
+External submit and stratum store the recomputed residual, not a claim this process did not check. Stratum does not spawn a CLI to decide the share. The internal RNG miner is still a test hatch. It is not the production path.
+
+A public-kernel producer was stopped after it had admitted the Bitcoin genesis header. Its difficulty moved from 1,000,000 to 995,000, because that header's hash ends in byte 0 and the foreign factor is 0.995. A second body was given only the blocks. It produced height 10. The residual was `0.0014545903682062166`. The previous hash was `9b33cb1f8e65e414a9414288dc2dd9c0ce3ca6ae7ec5c895e5c2c3280b02c9fd`. A third body, also without the first process, accepted the block, kept the same Bitcoin tip `6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000`, and the same next difficulty, 990,025. Replaying the blocks and stopping there is still a different operation. It ends at height 9.
 
 ### Still open
 
-- One process produces blocks. A second body can replay them. It has not been shown taking over when the producer stops.
-- The Rust territory solver is not the public residual. A candidate it returns is refused unless the canonical residual of that nonce is under the target. It does not yet search that residual, so it does not mine these blocks.
-- Stratum still asks the variational-ai CLI before the canonical recompute. That CLI is not the named wasm host, and its identity is not pinned here.
-- Restart equivalence was proven for the in-memory snapshot, not by a process restart against Postgres.
 - Mobile remains a verifier of this kernel, not a second producer.
+- The artifacts block hash is still `hash256(block-height-prev-time)`. It does not bind the nonce. Admission is a separate recompute of the canonical residual.
+- On the artifacts node, when the miner is a validator, `distributeBlockReward` can credit other validators from a participation pool that was not debited. That path was not changed.
+- The public kernel's `stateRootOf` does not include validators. They are in the omega digest. Persisted blocks replay by equality. That was left as it is.
+- Rust and TypeScript agree on the published residual vector. That is not an exhaustive grid, and it is not a proof that every platform's `f64` matches.
+- The public kernel and `artifacts/api-server` are still two bodies. Closing a door in one does not make the other the same organism.
 
 The sections below describe the repository. They are not a claim that each of those organs is the live kernel.
 

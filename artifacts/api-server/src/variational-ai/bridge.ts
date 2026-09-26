@@ -267,6 +267,8 @@ export interface SolveBlockRequest {
   maxIter?: number;
   mempoolPressure?: number;
   cumulativeWork?: number;
+  /** Transactions the canonical residual hashes. Omit when the block has none. */
+  txs?: Array<{ hash: string; fee: number }>;
 }
 
 export interface SolveBlockResponse {

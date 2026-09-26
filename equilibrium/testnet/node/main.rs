@@ -1,6 +1,6 @@
 use equilibrium_core::{
-    stationary_solver::StationarySolver,
-    chain_state::{BlockHeader, ChainState, admits_canonical, canonical_coinbase, residual_to_float},
+    stationary_solver::search_canonical,
+    chain_state::{BlockHeader, ChainState, canonical_coinbase},
     wallet::{Wallet, Ledger, address_to_hex},
 };
 
@@ -18,8 +18,7 @@ async fn main() {
     println!("Bob   : {}", address_to_hex(&bob.address));
     println!();
 
-    // ── Mine a block ───────────────────────────────────────────────────────────
-    let solver = StationarySolver::new(1_000_000, 1e-8, 0.01, 2);
+    // ── Mine a block on the canonical residual, not the territory residual ──
     let header = BlockHeader {
         prev_hash:       [0u8; 32],
         merkle_root:     [1u8; 32],
@@ -30,21 +29,23 @@ async fn main() {
         residual:        0,
         state_root:     [0u8; 32],
     };
-    let state = ChainState::default();
+    let state = ChainState {
+        cumulative_work: 1,
+        mempool_pressure: 0.0,
+        ..ChainState::default()
+    };
 
     println!("Mining block...");
-    if let Some((solution, _txs)) = solver.optimize_full(header, vec![], &state) {
-        let residual = residual_to_float(solution.residual);
-        if !admits_canonical(solution.residual, 2e-3) {
-            println!(
-                "Refused: residual {residual} is not under the admission target 0.002. optimize_full returned a candidate. That is not a block."
-            );
-            return;
-        }
-        println!("Block found  : nonce={}, residual={}", solution.nonce, solution.residual);
+    let (nonce, residual) = search_canonical(&header, &[], &state, 10_000, 2e-3);
+    if !(residual.is_finite() && residual >= 0.0 && residual < 2e-3) {
+        println!(
+            "Refused: residual {residual} is not under the admission target 0.002. The search returned a candidate. That is not a block."
+        );
+        return;
+    }
+    println!("Block found  : nonce={nonce}, residual={residual}");
 
-        // ── Coinbase reward to miner ───────────────────────────────────────────
-        let reward = canonical_coinbase(1, residual, 2e-3);
+    let reward = canonical_coinbase(1, residual, 2e-3);
         let mut ledger = Ledger::new();
         ledger.credit(&miner.address, reward);
         println!("Coinbase     : {reward} EQU → miner\n");
@@ -91,7 +92,4 @@ async fn main() {
             Ok(())  => println!("alice→bob tx: signature valid ✓"),
             Err(e)  => println!("alice→bob tx: INVALID — {e}"),
         }
-    } else {
-        println!("No block found.");
-    }
 }

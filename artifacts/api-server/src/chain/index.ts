@@ -215,12 +215,11 @@ export async function initChain(): Promise<void> {
           }
         }
 
-        // ── Difficulty continuity ─────────────────────────────────────────
-        // Set currentDifficulty from the highest snapshot-era block BEFORE
-        // replaying post-snapshot blocks.  addBlock() calls updateDifficulty()
-        // on each step — starting from the correct base prevents it from
-        // adjusting against INITIAL_DIFFICULTY (1,000,000).
-        if (highestSnapEraBlock) {
+        // Difficulty after the snapshot block is what the next block reads.
+        // That number is in the snapshot partitions. The block row stores the
+        // difficulty the block was mined under, which is one adjustment behind.
+        // Writing it back here would drop the adjustment the snapshot already made.
+        if (!snapshot.partitions && highestSnapEraBlock) {
           seedState.currentDifficulty = highestSnapEraBlock.difficulty;
         }
 
@@ -308,6 +307,9 @@ export async function initChain(): Promise<void> {
     logger.info({ count: savedContracts.length }, "Contracts loaded from DB");
   }
 
+  // A restored snapshot is already the organism, including its contracts.
+  // Deploying again would mint a contract the previous process did not have.
+  if (!usedSnapshotPath) {
   // Admin multisig — replaces the single ADMIN_KEY secret for privileged
   // actions (validator slashing) with an on-chain, threshold-signed gate.
   // No-op unless ADMIN_MULTISIG_OWNERS (fresh deploy) or ADMIN_MULTISIG_ADDRESS
@@ -332,6 +334,7 @@ export async function initChain(): Promise<void> {
     await deployCrossChainRelayIfNeeded(chainState.wasmVM, minerAddress);
   } catch (err) {
     logger.warn({ err }, "CrossChainRelay deployment check failed — continuing without it");
+  }
   }
 
   // ── P2P inbound callbacks ──────────────────────────────────────────────────

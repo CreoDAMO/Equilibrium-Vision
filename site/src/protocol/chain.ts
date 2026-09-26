@@ -24,6 +24,7 @@ import type {
   EthHeaderRecord,
   TransitionEvidence,
   SecondBodyReport,
+  TakeoverReport,
   StakeEvidence,
   ProductionRow,
   DependencyRow,
@@ -1302,6 +1303,65 @@ export class OrganismNode {
     }
     this.emit("close", "memory", `external Ω${claimed.height} admitted`);
     return { ok: true, report };
+  }
+
+  /**
+   * The process that produced `blocks` has stopped.
+   * This body is given only those blocks. It produces the next one.
+   * A third body, also without the producer's memory, has to accept it.
+   */
+  static async takeover(network: NetworkId, blocks: BlockRecord[]): Promise<TakeoverReport> {
+    const fail = (error: string): TakeoverReport => ({
+      ok: false,
+      height: -1,
+      hash: "",
+      prevHash: "",
+      stateRoot: "",
+      difficulty: 0,
+      residual: 0,
+      btcTip: null,
+      error,
+    });
+    const kin = new OrganismNode(network, { skipBootstrap: true });
+    kin.constitute();
+    for (const block of blocks) {
+      const err = await kin.absorb(block);
+      if (err) return fail(`replay: ${err}`);
+    }
+    const tip = kin.tip;
+    if (!tip) return fail("replay produced no tip");
+    const step = Math.max(1, Math.floor(kin.params.targetBlockTimeMs / 1000));
+    const block = kin.mine(tip.timestamp + step);
+    if (!block.verified || block.height !== tip.height + 1 || block.prevHash !== tip.hash) {
+      return fail(block.verifyNotes.join("; ") || "the next block did not verify");
+    }
+    if (!(block.residual < kin.params.residualThreshold)) return fail("residual is not under the target");
+    const witness = new OrganismNode(network, { skipBootstrap: true });
+    witness.constitute();
+    for (const prev of blocks) {
+      const err = await witness.absorb(prev);
+      if (err) return fail(`witness replay: ${err}`);
+    }
+    const rejected = await witness.absorb(block);
+    if (rejected) return fail(`witness refused the next block: ${rejected}`);
+    if (witness.tip?.hash !== block.hash || witness.tip.stateRoot !== block.stateRoot) {
+      return fail("witness tip is not the block the second body produced");
+    }
+    if (witness.difficulty !== kin.difficulty) return fail("witness difficulty diverged");
+    const kinTip = kin.btcHeaders[kin.btcHeaders.length - 1]?.hash ?? null;
+    const witnessTip = witness.btcHeaders[witness.btcHeaders.length - 1]?.hash ?? null;
+    if (kinTip !== witnessTip) return fail("foreign tip did not survive the handoff");
+    return {
+      ok: true,
+      height: block.height,
+      hash: block.hash,
+      prevHash: block.prevHash,
+      stateRoot: block.stateRoot,
+      difficulty: witness.difficulty,
+      residual: block.residual,
+      btcTip: witnessTip,
+      error: null,
+    };
   }
 
   /**

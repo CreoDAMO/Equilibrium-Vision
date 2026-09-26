@@ -323,6 +323,15 @@ export async function persistBlocks(blocks: BlockRecord[]): Promise<void> {
   }
 }
 
+/** Drop the process-wide pool so this process can exit and a later one can connect. */
+export async function closePersistence(): Promise<void> {
+  const pool = _pool;
+  _pool = null;
+  _db = null;
+  _initDone = false;
+  if (pool) await pool.end();
+}
+
 /** True when a Postgres connection is available. */
 export function isDbAvailable(): boolean {
   return getDb() !== null;

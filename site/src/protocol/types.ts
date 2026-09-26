@@ -168,6 +168,19 @@ export interface SecondBodyReport {
   error: string | null;
 }
 
+/** The first producer has stopped. A second body produced the next block, and a third body accepted it. */
+export interface TakeoverReport {
+  ok: boolean;
+  height: number;
+  hash: string;
+  prevHash: string;
+  stateRoot: string;
+  difficulty: number;
+  residual: number;
+  btcTip: string | null;
+  error: string | null;
+}
+
 export interface BlockRecord {
   hash: string;
   height: number;

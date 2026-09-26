@@ -12,6 +12,8 @@
 //   solve   { prevHash, merkleRoot, timestamp, difficulty, maxIter,
 //              mempoolPressure, cumulativeWork }
 //            → { ok, nonce, residual, admitted }
+//              residual is the canonical residual, not the territory residual.
+//              admitted is false when the best nonce is still above the target.
 //   warmup  {}
 //            → { ok, warmup: true }
 //
@@ -22,8 +24,8 @@ use std::io::{self, BufRead, Write};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use equilibrium_core::chain_state::{BlockHeader, ChainState, admits_canonical, residual_to_fixed, residual_to_float};
-use equilibrium_core::stationary_solver::StationarySolver;
+use equilibrium_core::chain_state::{BlockHeader, ChainState, TxCandidate, residual_to_fixed};
+use equilibrium_core::stationary_solver::search_canonical;
 use equilibrium_core::zk_proof::{StationarityProof, verify_raw_proof};
 
 // ── Request / response shapes ─────────────────────────────────────────────────
@@ -47,6 +49,13 @@ struct VerifyRequest {
 }
 
 #[derive(Deserialize)]
+struct SolveTx {
+    hash: String,
+    #[serde(default)]
+    fee: u64,
+}
+
+#[derive(Deserialize)]
 struct SolveRequest {
     #[serde(rename = "prevHash")]
     prev_hash:         String,
@@ -60,6 +69,9 @@ struct SolveRequest {
     mempool_pressure:  f64,
     #[serde(rename = "cumulativeWork", default)]
     cumulative_work:   u64,
+    /// The same transactions the canonical residual hashes. Empty when the block has none.
+    #[serde(default)]
+    txs:               Vec<SolveTx>,
 }
 
 fn default_max_iter() -> u64 { 10_000 }
@@ -227,19 +239,16 @@ fn handle(line: &str) -> Response {
                 mempool_pressure: r.mempool_pressure,
                 ..ChainState::default()
             };
-            let solver = StationarySolver::new(r.max_iter, 1e-8, 0.01, 3);
-
-            match solver.optimize_full(header, vec![], &state) {
-                Some((solution, _)) => Response::Solve {
-                    ok: true,
-                    nonce: solution.nonce,
-                    residual: residual_to_float(solution.residual),
-                    admitted: admits_canonical(solution.residual, 2e-3),
-                },
-                None => Response::Error {
-                    ok: false,
-                    error: "solver did not converge".into(),
-                },
+            let txs: Vec<TxCandidate> = r.txs.iter().map(|tx| TxCandidate {
+                hash: hex_to_bytes32(&tx.hash),
+                fee: tx.fee,
+            }).collect();
+            let (nonce, residual) = search_canonical(&header, &txs, &state, r.max_iter, 2e-3);
+            Response::Solve {
+                ok: true,
+                nonce,
+                residual,
+                admitted: residual.is_finite() && residual >= 0.0 && residual < 2e-3,
             }
         }
 

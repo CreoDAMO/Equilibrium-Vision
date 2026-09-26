@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { hash256, sha256, merkleRoot, addressFromSeed } from "../chain/crypto.js";
 import { fpEncode, blockHashToFields } from "../chain/zk-encoding.js";
 import { generateZkProof, verifyZkProof } from "../chain/zkproof.js";
@@ -580,5 +582,33 @@ describe("ChainState UTXO fee sweep", () => {
     expect(admitResidual(1e-9, 1e-6).ok).toBe(false);
     expect(admitResidual(1e-6, 1e-6)).toEqual({ ok: true, residual: 1e-6 });
     expect(admitResidual(1e-6, 1).ok).toBe(false);
+  });
+
+  it("nonce 6 is the canonical residual the rust search admits", () => {
+    const header = {
+      prevHash: "00".repeat(32),
+      merkleRoot: "00".repeat(32),
+      timestamp: 1_700_000_000,
+      nonce: 6,
+      difficulty: 1_000_000,
+    };
+    const admitted = canonicalResidual(header, [], { cumulativeWork: 1, mempoolPressure: 0 });
+    const zero = canonicalResidual({ ...header, nonce: 0 }, [], { cumulativeWork: 1, mempoolPressure: 0 });
+    expect(Math.abs(zero - 0.02519000125198503)).toBeLessThan(1e-12);
+    expect(Math.abs(admitted - 0.0002011002025239986)).toBeLessThan(1e-12);
+    expect(admitted).toBeLessThan(2e-3);
+    expect(admitResidual(admitted, admitted).ok).toBe(true);
+    expect(admitResidual(zero, admitted).ok).toBe(false);
+  });
+});
+
+describe("stratum admission", () => {
+  it("does not ask the variational-ai CLI to decide a share", () => {
+    const src = readFileSync(fileURLToPath(new URL("../lib/stratum-server.ts", import.meta.url)), "utf8");
+    expect(src.includes("variational-ai-cli")).toBe(false);
+    expect(src.includes("execFileSync")).toBe(false);
+    expect(src.includes("VAI_CLI_PATH")).toBe(false);
+    expect(src.includes("canonicalResidual")).toBe(true);
+    expect(src.includes("admitResidual")).toBe(true);
   });
 });

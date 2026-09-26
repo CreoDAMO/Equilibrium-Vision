@@ -1,6 +1,6 @@
 use std::slice;
-use crate::chain_state::{BlockHeader, ChainState, admits_canonical};
-use crate::stationary_solver::StationarySolver;
+use crate::chain_state::{BlockHeader, ChainState, residual_to_fixed};
+use crate::stationary_solver::search_canonical;
 use crate::p2p_runtime;
 
 /// Start the embedded dual TCP/QUIC libp2p node. This is intentionally
@@ -77,14 +77,8 @@ pub unsafe extern "C" fn solve_block(
         height: 0,
     };
 
-    let solver = StationarySolver::new(max_attempts, 1e-8, 0.01, recursion_depth);
-    // Use empty transaction set for simple FFI; production would pass txs too
-    if let Some((solution, _)) = solver.optimize_full(header, vec![], &state) {
-        *out_nonce = solution.nonce;
-        *out_residual = solution.residual;
-        // The boolean is admission, not "the solver returned something".
-        admits_canonical(solution.residual, 2e-3)
-    } else {
-        false
-    }
+    let (nonce, residual) = search_canonical(&header, &[], &state, max_attempts.max(1), 2e-3);
+    *out_nonce = nonce;
+    *out_residual = residual_to_fixed(residual);
+    residual.is_finite() && residual >= 0.0 && residual < 2e-3
 }

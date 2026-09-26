@@ -21,8 +21,8 @@ use jni::{
 use crate::p2p_runtime;
 
 use crate::{
-    chain_state::{BlockHeader, ChainState, admits_canonical},
-    stationary_solver::StationarySolver,
+    chain_state::{BlockHeader, ChainState, residual_to_fixed},
+    stationary_solver::search_canonical,
 };
 
 /// JNI entry point for `com.equilibrium.MiningWorker.solveBlock`.
@@ -107,31 +107,15 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
         height:           0,
     };
 
-    // ── 3. Run the Lagrangian stationarity solver ─────────────────────────────
-    let solver = StationarySolver::new(
-        max_attempts as u64,
-        1e-8,
-        0.01,
-        recursion_depth as u32,
-    );
-
-    match solver.optimize_full(header, vec![], &state) {
-        Some((solution, _)) => {
-            // Write nonce back into JVM LongArray[0]
-            if env.set_long_array_region(&out_nonce, 0, &[solution.nonce as i64]).is_err() {
-                return JNI_FALSE;
-            }
-            // Write residual back into JVM LongArray[0] — fixed-point (scaled by 10^18),
-            // never a float, so ARM (mobile) and x86 (cloud) agree bit-for-bit.
-            if env.set_long_array_region(&out_residual, 0, &[solution.residual]).is_err() {
-                return JNI_FALSE;
-            }
-            // Returning true means the candidate is under the canonical target.
-            // A best-effort residual is written back and is not a block.
-            if admits_canonical(solution.residual, 2e-3) { JNI_TRUE } else { JNI_FALSE }
-        }
-        None => JNI_FALSE,
+    // Canonical residual search. The boolean is admission, not "a candidate exists".
+    let (nonce, residual) = search_canonical(&header, &[], &state, (max_attempts as u64).max(1), 2e-3);
+    if env.set_long_array_region(&out_nonce, 0, &[nonce as i64]).is_err() {
+        return JNI_FALSE;
     }
+    if env.set_long_array_region(&out_residual, 0, &[residual_to_fixed(residual)]).is_err() {
+        return JNI_FALSE;
+    }
+    if residual.is_finite() && residual >= 0.0 && residual < 2e-3 { JNI_TRUE } else { JNI_FALSE }
 }
 
 /// Start the in-process mobile swarm. The Android UI supplies the TCP and QUIC

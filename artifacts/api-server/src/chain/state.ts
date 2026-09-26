@@ -1803,8 +1803,7 @@ export async function mineNextBlockAsync(
 
   // ── Real PoS solver (fail-closed in production) ──────────────────────────────
   //
-  // Calls the Rust consensus-api binary which runs the actual Lagrangian
-  // stationarity solver (Newton-CG / L-BFGS) to find an optimal nonce.
+  // consensus-api searches the canonical residual. This process recomputes it.
   //
   // If the binary is unavailable and allowRandomMiningFallback() is false
   // (the default in production), we throw rather than emit a block whose
@@ -1817,6 +1816,7 @@ export async function mineNextBlockAsync(
   let residual = 0;
   let usedSolver = false;
   let solverAdmitted: boolean | undefined;
+  let solverResidual = 0;
   try {
     const solution = await solveBlock({
       prevHash:        prev.hash,
@@ -1825,11 +1825,12 @@ export async function mineNextBlockAsync(
       difficulty:      state.currentDifficulty,
       maxIter:         500,
       mempoolPressure: state.mempool.pressure,
-      cumulativeWork:  state.blocks.length,
+      cumulativeWork:  height,
+      txs:             selected.map((t) => ({ hash: t.hash, fee: t.fee })),
     }, 20_000);
     if (solution?.ok) {
       nonce      = solution.nonce;
-      residual   = solution.residual; // f64 from Rust solver
+      solverResidual = solution.residual;
       usedSolver = true;
       solverAdmitted = solution.admitted;
       // Report thermal margin to the contribution tracker so the network
@@ -1873,6 +1874,11 @@ export async function mineNextBlockAsync(
     );
     if (solverAdmitted === false) {
       throw new Error(`solver candidate nonce ${nonce} was not admitted`);
+    }
+    if (!(Math.abs(solverResidual - residual) <= 1e-12)) {
+      throw new Error(
+        `solver residual ${solverResidual} does not match the recomputed canonical residual ${residual}`,
+      );
     }
   }
 

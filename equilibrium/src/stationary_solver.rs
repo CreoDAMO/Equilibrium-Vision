@@ -169,6 +169,78 @@ impl StationarySolver {
     }
 }
 
+/// Dimensionless residual the public kernel admits.
+/// Same function as `canonicalResidual` in the TypeScript node and
+/// `evaluateResidual` in `site/src/protocol/solver.ts`.
+/// The territory residual in `joint_residual_and_gradient` is not this number.
+pub fn canonical_residual(
+    prev_hash: &[u8; 32],
+    merkle_root: &[u8; 32],
+    timestamp: u64,
+    nonce: u64,
+    difficulty: u64,
+    txs: &[TxCandidate],
+    cumulative_work: u64,
+    mempool_pressure: f64,
+) -> f64 {
+    let mut hasher = Sha256::new();
+    hasher.update(prev_hash);
+    hasher.update(merkle_root);
+    hasher.update(timestamp.to_le_bytes());
+    hasher.update(nonce.to_le_bytes());
+    for tx in txs {
+        hasher.update(tx.hash);
+    }
+    let hash = hasher.finalize();
+    let hash_val = u64::from_le_bytes(hash[0..8].try_into().unwrap());
+    let h_frac = (hash_val as f64) / 2f64.powi(64);
+    let phi = (1.0 + 5.0f64.sqrt()) / 2.0;
+    let tau = (1_000_000.0 / (difficulty as f64 + 1_000_000.0) + 0.35).clamp(0.05, 0.95);
+    let v_hash = (h_frac - tau).max(0.0);
+    let v_struct = (h_frac - 1.0 / phi).abs();
+    let v_chain: f64 = if cumulative_work > 0 { 0.0 } else { 1.0 };
+    let v_mem = mempool_pressure.clamp(0.0, 1.0);
+    let total_fees: u64 = txs.iter().map(|tx| tx.fee).sum();
+    let v_fee = (v_mem - (total_fees as f64 / 1_000_000.0).min(1.0)).max(0.0);
+    v_hash.powi(2) + v_struct.powi(2) + v_chain.powi(2) + v_mem.powi(2) + v_fee.powi(2)
+}
+
+/// Search nonces for the canonical residual. Returns the best candidate.
+/// A candidate under `target` is the first one found. A candidate above
+/// `target` is best-effort and must not be admitted by the caller.
+pub fn search_canonical(
+    header: &BlockHeader,
+    txs: &[TxCandidate],
+    state: &ChainState,
+    max_iter: u64,
+    target: f64,
+) -> (u64, f64) {
+    let mut best_nonce = header.nonce;
+    let mut best = f64::INFINITY;
+    let steps = max_iter.max(1);
+    for i in 0..steps {
+        let nonce = header.nonce.wrapping_add(i);
+        let residual = canonical_residual(
+            &header.prev_hash,
+            &header.merkle_root,
+            header.timestamp,
+            nonce,
+            header.difficulty,
+            txs,
+            state.cumulative_work,
+            state.mempool_pressure,
+        );
+        if residual < best {
+            best = residual;
+            best_nonce = nonce;
+        }
+        if residual < target {
+            return (nonce, residual);
+        }
+    }
+    (best_nonce, best)
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -247,6 +319,40 @@ mod tests {
         let lambda = [1.0; 5];
         let (recomputed, _) = StationarySolver::joint_residual_and_gradient(&solved, &txs, &state, &lambda);
         assert_eq!(solved.residual, recomputed, "header.residual must equal the residual actually achieved by its own nonce/tx combination");
+    }
+
+    #[test]
+    fn canonical_residual_matches_the_public_kernel_vector() {
+        let prev = [0u8; 32];
+        let merkle = [0u8; 32];
+        let zero = canonical_residual(&prev, &merkle, 1_700_000_000, 0, 1_000_000, &[], 1, 0.0);
+        let admitted = canonical_residual(&prev, &merkle, 1_700_000_000, 6, 1_000_000, &[], 1, 0.0);
+        assert!((zero - 0.02519000125198503).abs() < 1e-12, "nonce 0 residual {zero}");
+        assert!((admitted - 0.0002011002025239986).abs() < 1e-12, "nonce 6 residual {admitted}");
+        assert!(admitted < 2e-3);
+    }
+
+    #[test]
+    fn search_canonical_finds_the_nonce_the_public_kernel_admits() {
+        let header = BlockHeader {
+            prev_hash: [0u8; 32],
+            merkle_root: [0u8; 32],
+            timestamp: 1_700_000_000,
+            nonce: 0,
+            difficulty: 1_000_000,
+            recursion_depth: 1,
+            residual: 0,
+            state_root: [0u8; 32],
+        };
+        let state = ChainState {
+            cumulative_work: 1,
+            mempool_pressure: 0.0,
+            ..ChainState::default()
+        };
+        let (nonce, residual) = search_canonical(&header, &[], &state, 64, 2e-3);
+        assert_eq!(nonce, 6, "the scan must admit nonce 6, got {nonce} residual {residual}");
+        let again = canonical_residual(&header.prev_hash, &header.merkle_root, header.timestamp, nonce, header.difficulty, &[], 1, 0.0);
+        assert_eq!(again.to_bits(), residual.to_bits());
     }
 
     #[test]
