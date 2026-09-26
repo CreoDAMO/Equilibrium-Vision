@@ -392,19 +392,22 @@ export class StratumServer {
       transactions:  txs,
       finalized:     false,
       zkProof,
+      committedPressure: cs.mempool.pressure,
+      sealIdentity: true,
     };
 
     // ── Apply to chain ──────────────────────────────────────────────────────
     cs.addBlock(block);
-    cs.gossipBlock(blockHash);
+    block.zkProof = generateZkProof(block.residual, block.hash, block.height);
+    cs.gossipBlock(block.hash);
 
     logger.info(
-      { height, hash: blockHash.slice(0, 16), miner: minerAddr, residual, txCount: txs.length, worker: session.worker },
+      { height, hash: block.hash.slice(0, 16), miner: minerAddr, residual, txCount: txs.length, worker: session.worker },
       "Stratum share accepted — block added",
     );
 
     // Notify WebSocket clients
-    broadcast({ type: "new_block",     data: { height, hash: blockHash, txCount: txs.length, residual, miner: minerAddr, timestamp: now } });
+    broadcast({ type: "new_block",     data: { height, hash: block.hash, txCount: txs.length, residual, miner: minerAddr, timestamp: now } });
     broadcast({ type: "mempool_update", data: { size: cs.mempool.size, pressure: cs.mempool.pressure } });
 
     // Persist fire-and-forget

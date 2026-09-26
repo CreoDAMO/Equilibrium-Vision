@@ -185,7 +185,7 @@ router.get("/validators/:addr/fees", (req, res) => {
     const accountFeeTxs = block.transactions.filter(tx => tx.fee > 0);
     const accountFeesTotal = accountFeeTxs.reduce((sum, tx) => sum + tx.fee, 0);
 
-    const utxoFeeTxHash = hash256(`utxo-fees-${block.height}-${block.hash}`);
+    const utxoFeeTxHash = hash256(`utxo-fees-${block.height}`);
     const utxoFeeUtxo = chainState.utxoSet.get(utxoFeeTxHash, 0);
     const utxoFeesTotal = utxoFeeUtxo?.amount ?? 0;
 
@@ -246,7 +246,7 @@ router.get("/validators/:addr/earnings", (req, res) => {
     totalAccountFees += block.transactions
       .filter(tx => tx.fee > 0)
       .reduce((sum, tx) => sum + tx.fee, 0);
-    const utxoFeeTxHash = hash256(`utxo-fees-${block.height}-${block.hash}`);
+    const utxoFeeTxHash = hash256(`utxo-fees-${block.height}`);
     totalUtxoFees += chainState.utxoSet.get(utxoFeeTxHash, 0)?.amount ?? 0;
   }
 

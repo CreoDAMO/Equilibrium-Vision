@@ -81,8 +81,9 @@ export const SPECS: SpecDoc[] = [
     title: "Commitment",
     summary: "Header hash binds prev, merkle, state root, nonce, residual, miner, height.",
     body: [
-      "This rebuild replaces the territory formula hash256(`block-${height}-${prev}-${now}`).",
-      "stateRoot merkle-izes account leaves, pool reserves, and the admitted BTC header tip. Peers and the mempool are outside it.",
+      "The header hash is canonicalHeaderHash. It binds the previous hash, the merkle root, the state root, the timestamp, the nonce, the difficulty, the residual fingerprint, the miner, the height, and the committed pressure. It is not hash256(`block-${height}-${prev}-${now}`).",
+      "The state root merkle-izes account leaves, pool reserves, the admitted Bitcoin tip, the admitted Ethereum tip, and wasm storage. A validator-only change does not move it.",
+      "Validator bond, jail, slash, delegations, difficulty, and proposals are in the omega digest. An evidence header binds that digest as well as the state root. Peers and the mempool are outside both.",
     ],
   },
   {
@@ -177,7 +178,8 @@ export const SPECS: SpecDoc[] = [
     title: "Validator state",
     summary: "Bonded stake, commission, proposals, BFT votes.",
     body: [
-      "When the producer is a live validator, liquid issuance is floor(reward × commission) and the remainder is staked. The producer's commission is 0.1.",
+      "When the producer is a live validator, liquid issuance is floor(reward × commission) and the remainder is staked. The producer's commission is 0.1. The staked remainder is split by bonded stake into accumulated rewards. Floor dust is not minted. There is no second participation credit.",
+      "A producer who is missing, jailed, or slashed is paid the whole reward as liquid, and nothing is staked.",
       "A double-sign slash burns 5% of bonded stake. A downtime slash burns 1%.",
     ],
   },

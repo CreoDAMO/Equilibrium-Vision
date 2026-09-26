@@ -333,6 +333,30 @@ mod tests {
     }
 
     #[test]
+    fn canonical_residual_grid_matches_the_public_kernel() {
+        let prev = [0u8; 32];
+        let merkle = [0u8; 32];
+        let tx_hash = [0xabu8; 32];
+        let tx = [TxCandidate { hash: tx_hash, fee: 1000 }];
+        let rows: &[(&str, u64, u64, u64, u64, f64, &[TxCandidate], f64)] = &[
+            ("nonce0", 1_700_000_000, 0, 1_000_000, 1, 0.0, &[], 0.025190001251985030),
+            ("nonce1", 1_700_000_000, 1, 1_000_000, 1, 0.0, &[], 0.090769559826382740),
+            ("nonce1-100k", 1_700_000_000, 1, 100_000, 1, 0.0, &[], 0.086836478057786756),
+            ("nonce6", 1_700_000_000, 6, 1_000_000, 1, 0.0, &[], 0.00020110020252399861),
+            ("nonce7", 1_700_000_000, 7, 1_000_000, 1, 0.0, &[], 0.043329506709598564),
+            ("work0", 1_700_000_000, 6, 1_000_000, 0, 0.0, &[], 1.0002011002025240),
+            ("pressure", 1_700_000_000, 6, 1_000_000, 1, 1.0, &[], 2.0002011002025242),
+            ("ts0", 0, 6, 1_000_000, 1, 0.0, &[], 0.16225219837223626),
+            ("nonceHi", 1_700_000_000, 9_007_199_254_740_991, 1_000_000, 1, 0.0, &[], 0.098695867101580084),
+            ("tx", 1_700_000_000, 6, 1_000_000, 1, 0.5, &tx, 0.51911162420167312),
+        ];
+        for (name, ts, nonce, difficulty, work, pressure, txs, expected) in rows {
+            let got = canonical_residual(&prev, &merkle, *ts, *nonce, *difficulty, txs, *work, *pressure);
+            assert!((got - expected).abs() < 1e-12, "{name}: rust {got} expected {expected}");
+        }
+    }
+
+    #[test]
     fn search_canonical_finds_the_nonce_the_public_kernel_admits() {
         let header = BlockHeader {
             prev_hash: [0u8; 32],

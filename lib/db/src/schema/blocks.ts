@@ -36,6 +36,8 @@ export const blocksTable = pgTable(
     zkProof:       jsonb("zk_proof"),
     /** Sparse Merkle state commitment for light-node verification. */
     stateRoot:     text("state_root"),
+    /** Pressure bound by the sealed header. Null on rows sealed before this column. */
+    committedPressure: real("committed_pressure"),
   },
   (t) => [
     index("blocks_height_idx").on(t.height),

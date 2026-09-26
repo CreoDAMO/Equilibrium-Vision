@@ -26,3 +26,44 @@ export function merkleRoot(hashes: string[]): string {
 export function addressFromSeed(seed: string): string {
   return sha256(seed).slice(0, 40);
 }
+
+export interface HeaderCommitment {
+  prevHash: string;
+  merkleRoot: string;
+  stateRoot: string;
+  timestamp: number;
+  nonce: number;
+  difficulty: number;
+  residualFp: number;
+  miner: string;
+  height: number;
+  committedPressure: number;
+  chainId?: number;
+  evidenceRoot?: string;
+  omegaRoot?: string;
+}
+
+/**
+ * Same preimage as `canonicalHeaderHash` in the public kernel.
+ * Double SHA-256 over the raw digest, not over the hex text.
+ * Nonce, state root, and residual fingerprint are inside it.
+ */
+export function canonicalHeaderHash(parts: HeaderCommitment): string {
+  const fields = [
+    parts.prevHash,
+    parts.merkleRoot,
+    parts.stateRoot,
+    String(parts.timestamp),
+    String(parts.nonce),
+    String(parts.difficulty),
+    String(parts.residualFp),
+    parts.miner,
+    String(parts.height),
+    parts.committedPressure.toFixed(6),
+  ];
+  if (parts.chainId !== undefined && parts.evidenceRoot !== undefined) {
+    fields.push(String(parts.chainId), parts.evidenceRoot, parts.omegaRoot ?? "");
+  }
+  const first = createHash("sha256").update(Buffer.from(fields.join("|"), "utf8")).digest();
+  return createHash("sha256").update(first).digest("hex");
+}

@@ -19,7 +19,7 @@ function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 import { SparseMerkleTree, smtKey, smtValue } from "./smt.js";
-import { merkleRoot, addressFromSeed, hash256 } from "./crypto.js";
+import { merkleRoot, addressFromSeed, hash256, canonicalHeaderHash } from "./crypto.js";
 import { solveBlock } from "../variational-ai/bridge.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "./mining-policy.js";
 import { logger } from "../lib/logger.js";
@@ -32,7 +32,6 @@ import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import { canonicalResidual } from "./canonical-residual.js";
 import { withDbRetry } from "./persistence.js";
 import {
-  splitValidatorReward,
   applySlashing,
   canonicalCoinbase,
   CANONICAL_RESIDUAL_TARGET,
@@ -485,7 +484,7 @@ export class ChainState {
     // pendingUtxoFees) into a UTXO output paid to this block's miner —
     // the UTXO-model equivalent of the account-model fee credit above.
     if (this.pendingUtxoFees > 0) {
-      const feeTxHash = hash256(`utxo-fees-${block.height}-${block.hash}`);
+      const feeTxHash = hash256(`utxo-fees-${block.height}`);
       this.utxoSet.add({
         txHash: feeTxHash,
         outputIndex: 0,
@@ -544,8 +543,10 @@ export class ChainState {
     // 256-sibling Merkle proof against this root — without downloading the
     // full chain. This is the foundational primitive for the mobile node design.
     //
-    // Scope: account balances+nonces, unspent UTXOs, WASM contract storage hashes.
-    // Validators/DEX pools are omitted for now (added in state-root-v2).
+    // Scope: accounts, unspent outputs, contract storage, pool reserves,
+    // and validator bond, commission, jail, and slash. This root is not
+    // stateRootOf. The public kernel binds accounts, pools, foreign tips,
+    // and wasm there, and binds validators in the omega digest.
     try {
       const smt = new SparseMerkleTree();
 
@@ -588,6 +589,26 @@ export class ChainState {
 
       block.stateRoot = smt.root();
       this._stateSmt = smt;
+      if (block.sealIdentity) {
+        block.residualFp = block.residualFp ?? Math.floor(block.residual * 1e18);
+        block.hash = canonicalHeaderHash({
+          prevHash: block.prevHash,
+          merkleRoot: block.merkleRoot,
+          stateRoot: block.stateRoot,
+          timestamp: block.timestamp,
+          nonce: block.nonce,
+          difficulty: block.difficulty,
+          residualFp: block.residualFp,
+          miner: block.miner,
+          height: block.height,
+          committedPressure: block.committedPressure ?? 0,
+        });
+        for (const tx of block.transactions) {
+          tx.blockHash = block.hash;
+          const indexed = this.txIndex.get(tx.hash);
+          if (indexed) indexed.blockHash = block.hash;
+        }
+      }
 
       // Patch-05: persist SMT root to Postgres (fire-and-forget)
       this._persistSmtRoot({ height: block.height, hash: block.hash }).catch((e) =>
@@ -625,7 +646,7 @@ export class ChainState {
       // Undo any swept UTXO fees paid to this block's miner, restoring the
       // amount to the pending pool so it is re-swept into whichever block
       // ends up settling at this height on the winning fork.
-      const feeTxHash = hash256(`utxo-fees-${block.height}-${block.hash}`);
+      const feeTxHash = hash256(`utxo-fees-${block.height}`);
       const feeUtxo = this.utxoSet.get(feeTxHash, 0);
       if (feeUtxo) {
         this.pendingUtxoFees += feeUtxo.amount;
@@ -911,41 +932,6 @@ export class ChainState {
   // ── Block reward distribution ─────────────────────────────────────────────────
 
   /**
-   * Splits `reward` between a validator and its delegators using the
-   * validator's commission rate (via @workspace/coinomics), crediting each
-   * party's ledger balance and the validator's accumulatedRewards stat.
-   */
-  private payValidatorReward(addr: string, reward: number): void {
-    if (reward <= 0) return;
-    const v = this.validators.get(addr);
-    if (!v) return;
-
-    const stakeView = this.buildValidatorStakeView(addr);
-    if (!stakeView) {
-      // No bonded stake on record (shouldn't normally happen for an active
-      // validator) — fall back to crediting the validator directly.
-      this.ledger.credit(addr, reward);
-      v.accumulatedRewards += reward;
-      return;
-    }
-
-    const payout = splitValidatorReward(reward, stakeView);
-
-    const validatorAmount = Math.floor(payout.validatorAmount);
-    this.ledger.credit(addr, validatorAmount);
-    v.accumulatedRewards += validatorAmount;
-
-    for (const d of payout.delegatorPayouts) {
-      const amount = Math.floor(d.amount);
-      if (amount > 0) {
-        this.ledger.credit(d.address, amount);
-        const stake = this.stakes.get(`${d.address}-${addr}`);
-        if (stake) stake.rewardsEarned += amount;
-      }
-    }
-  }
-
-  /**
    * Live delegator view for a validator: each active delegation's stake,
    * share of the validator's delegated pool, cumulative rewards earned
    * (auto-credited to the delegator's balance every block), and how much
@@ -983,28 +969,23 @@ export class ChainState {
   }
 
   distributeBlockReward(block: BlockRecord): void {
+    const reward = block.coinbaseReward;
     const minerVal = this.validators.get(block.miner);
-
-    if (!minerVal) {
-      // Miner isn't a registered validator — credit the full reward
-      // directly; no commission/delegator split applies.
-      this.ledger.credit(block.miner, block.coinbaseReward);
+    if (!minerVal || minerVal.jailed || minerVal.slashed) {
+      if (reward > 0) this.ledger.credit(block.miner, reward);
+      if (minerVal) minerVal.blocksProposed += 1;
       return;
     }
-
     minerVal.blocksProposed += 1;
-    this.payValidatorReward(block.miner, block.coinbaseReward);
-
-    // Distribute a portion to other bonded validators (and their
-    // delegators) as participation rewards, proportional to bonded stake.
-    const totalBonded = this.totalBondedStake;
-    if (totalBonded === 0) return;
-    const participationPool = Math.floor(block.coinbaseReward * 0.1);
-    for (const v of this.validators.values()) {
-      if (!v.slashed && !v.jailed && v.address !== block.miner) {
-        const share = Math.floor(participationPool * (v.bondedStake / totalBonded));
-        this.payValidatorReward(v.address, share);
-      }
+    if (!(reward > 0)) return;
+    const liquid = Math.floor(reward * minerVal.commission);
+    const staked = reward - liquid;
+    if (liquid > 0) this.ledger.credit(block.miner, liquid);
+    const live = [...this.validators.values()].filter((v) => !v.jailed && !v.slashed);
+    const total = live.reduce((s, v) => s + v.bondedStake, 0);
+    if (total <= 0 || staked <= 0) return;
+    for (const v of live) {
+      v.accumulatedRewards += Math.floor((staked * v.bondedStake) / total);
     }
   }
 
@@ -1914,10 +1895,13 @@ export async function mineNextBlockAsync(
     transactions:   txs,
     finalized:      false,
     zkProof,
+    committedPressure: state.mempool.pressure,
+    sealIdentity:   true,
   };
 
   state.addBlock(block);
-  state.gossipBlock(blockHash);
+  block.zkProof = generateZkProof(block.residual, block.hash, block.height);
+  state.gossipBlock(block.hash);
   return block;
 }
 
@@ -2000,12 +1984,12 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
     transactions: txs,
     finalized: false,
     zkProof,
+    committedPressure: state.mempool.pressure,
+    sealIdentity: true,
   };
 
-  // Reward crediting happens inside addBlock() -> distributeBlockReward(),
-  // which splits the coinbase reward between the miner (if a registered
-  // validator) and its delegators per the validator's commission rate.
   state.addBlock(block);
-  state.gossipBlock(blockHash);
+  block.zkProof = generateZkProof(block.residual, block.hash, block.height);
+  state.gossipBlock(block.hash);
   return block;
 }

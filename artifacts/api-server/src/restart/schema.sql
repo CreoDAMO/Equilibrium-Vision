@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS blocks (
   coinbase_reward bigint NOT NULL DEFAULT 0,
   finalized boolean NOT NULL DEFAULT false,
   zk_proof jsonb,
-  state_root text
+  state_root text,
+  committed_pressure double precision
 );
 CREATE INDEX IF NOT EXISTS blocks_height_idx ON blocks (height);
 CREATE INDEX IF NOT EXISTS blocks_miner_idx ON blocks (miner);

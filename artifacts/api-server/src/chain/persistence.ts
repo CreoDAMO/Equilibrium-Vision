@@ -126,6 +126,24 @@ function getDb(): Db | null {
   return _db;
 }
 
+let _pressureColumn: Promise<void> | null = null;
+
+/** Old databases predate the pressure column. The sealed hash binds it. */
+async function ensureCommittedPressure(): Promise<void> {
+  const pool = _pool;
+  if (!pool) return;
+  if (!_pressureColumn) {
+    _pressureColumn = pool
+      .query("ALTER TABLE blocks ADD COLUMN IF NOT EXISTS committed_pressure double precision")
+      .then(() => undefined)
+      .catch((err) => {
+        _pressureColumn = null;
+        throw err;
+      });
+  }
+  await _pressureColumn;
+}
+
 // ── Row → domain type helpers ─────────────────────────────────────────────────
 
 function toTxRecord(row: typeof transactionsTable.$inferSelect): TxRecord {
@@ -155,6 +173,7 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
   if (!db) return null;
 
   try {
+    await ensureCommittedPressure();
     const [dbBlocks, dbTxs] = await Promise.all([
       db.select().from(blocksTable).orderBy(asc(blocksTable.height)),
       db.select().from(transactionsTable).where(eq(transactionsTable.status, "confirmed")),
@@ -243,6 +262,7 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       transactions:  txsByBlock.get(b.hash) ?? [],
       finalized:     b.finalized,
       zkProof:       (b.zkProof as BlockRecord["zkProof"]) ?? undefined,
+      committedPressure: b.committedPressure ?? undefined,
     }));
   } catch (err) {
     logger.warn({ err }, "Failed to load chain from Postgres — falling back to genesis");
@@ -261,6 +281,7 @@ export async function persistBlock(block: BlockRecord): Promise<void> {
   if (!db) return;
 
   try {
+    await ensureCommittedPressure();
     await withDbRetry("persistBlock", () =>
       db.transaction(async (tx) => {
         await tx
@@ -281,6 +302,7 @@ export async function persistBlock(block: BlockRecord): Promise<void> {
             finalized:      block.finalized ?? false,
             zkProof:        (block.zkProof ?? null) as unknown as null,
             stateRoot:      block.stateRoot ?? null,
+            committedPressure: block.committedPressure ?? null,
           })
           .onConflictDoNothing();
 

@@ -207,6 +207,8 @@ mod tests {
         assert_eq!(canonical_coinbase(1, 0.0, 2e-3), 99);
         assert_eq!(canonical_coinbase(1, 1.0, 2e-3), 0);
         assert_eq!(canonical_coinbase(1, 0.00024711927978383826, 2e-3), 99);
+        assert_eq!(canonical_coinbase(1, 0.0002011002025239986, 2e-3), 99);
+        assert_eq!(canonical_coinbase(0, 0.0002011002025239986, 2e-3), 100);
     }
 
     #[test]

@@ -79,6 +79,13 @@ export interface BlockRecord {
    * Optional for backward compatibility with blocks mined before this field existed.
    */
   stateRoot?: string;
+  /**
+   * Mempool pressure that entered the residual. Bound by the header hash
+   * when the block is sealed. Absent on rows written before identity sealing.
+   */
+  committedPressure?: number;
+  /** When set, addBlock replaces `hash` with canonicalHeaderHash after the state root exists. Replay leaves this unset. */
+  sealIdentity?: boolean;
 }
 
 /**

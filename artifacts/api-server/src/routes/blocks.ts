@@ -79,7 +79,7 @@ router.get("/blocks/:hashOrHeight/fees", (req, res) => {
   const accountFeeTxs = block.transactions.filter(tx => tx.fee > 0);
   const accountFeesTotal = accountFeeTxs.reduce((sum, tx) => sum + tx.fee, 0);
 
-  const utxoFeeTxHash = hash256(`utxo-fees-${block.height}-${block.hash}`);
+  const utxoFeeTxHash = hash256(`utxo-fees-${block.height}`);
   const utxoFeeUtxo = chainState.utxoSet.get(utxoFeeTxHash, 0);
   const utxoFeesTotal = utxoFeeUtxo?.amount ?? 0;
 
@@ -275,25 +275,26 @@ router.post("/blocks/submit", (req, res) => {
     transactions:  txs,
     finalized:     false,
     zkProof,
+    committedPressure: chainState.mempool.pressure,
+    sealIdentity: true,
   };
 
   // ── Apply to chain state ────────────────────────────────────────────────────
   // Note: do NOT call chainState.ledger.credit() here — addBlock() calls
-  // distributeBlockReward() which already credits the miner (and splits among
-  // delegators if they are a registered validator).  A pre-credit here would
-  // double the miner's balance on every externally-submitted block.
+  // distributeBlockReward(). A pre-credit here would double the miner's balance.
   chainState.addBlock(block);
-  chainState.gossipBlock(blockHash);
+  block.zkProof = generateZkProof(block.residual, block.hash, block.height);
+  chainState.gossipBlock(block.hash);
 
   logger.info(
-    { height, hash: blockHash.slice(0, 16), miner, residual: admission.residual, txCount: txs.length },
+    { height, hash: block.hash.slice(0, 16), miner, residual: admission.residual, txCount: txs.length },
     "Block submitted by external miner",
   );
 
   // ── Notify WebSocket clients ────────────────────────────────────────────────
   broadcast({
     type: "new_block",
-    data: { height, hash: blockHash, txCount: txs.length, residual: admission.residual, miner, timestamp: now },
+    data: { height, hash: block.hash, txCount: txs.length, residual: admission.residual, miner, timestamp: now },
   });
   broadcast({
     type: "mempool_update",
@@ -305,7 +306,7 @@ router.post("/blocks/submit", (req, res) => {
     logger.warn({ err, height }, "Failed to persist externally submitted block"),
   );
 
-  res.status(201).json({ hash: blockHash, height, reward, txCount: txs.length });
+  res.status(201).json({ hash: block.hash, height, reward, txCount: txs.length });
 });
 
 export default router;

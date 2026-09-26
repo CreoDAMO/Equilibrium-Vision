@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { hash256, sha256, merkleRoot, addressFromSeed } from "../chain/crypto.js";
+import { hash256, sha256, merkleRoot, addressFromSeed, canonicalHeaderHash } from "../chain/crypto.js";
 import { fpEncode, blockHashToFields } from "../chain/zk-encoding.js";
 import { generateZkProof, verifyZkProof } from "../chain/zkproof.js";
 import { ChainState, mineNextBlock } from "../chain/state.js";
@@ -599,6 +599,143 @@ describe("ChainState UTXO fee sweep", () => {
     expect(admitted).toBeLessThan(2e-3);
     expect(admitResidual(admitted, admitted).ok).toBe(true);
     expect(admitResidual(zero, admitted).ok).toBe(false);
+  });
+
+  it("the residual grid matches the rust canonical search", () => {
+    const h = (over: Record<string, number>) => ({
+      prevHash: "00".repeat(32),
+      merkleRoot: "00".repeat(32),
+      timestamp: 1_700_000_000,
+      nonce: 0,
+      difficulty: 1_000_000,
+      ...over,
+    });
+    const rows: Array<[string, ReturnType<typeof h>, { hash: string; fee: number }[], { cumulativeWork: number; mempoolPressure: number }, number]> = [
+      ["nonce0", h({ nonce: 0 }), [], { cumulativeWork: 1, mempoolPressure: 0 }, 0.02519000125198503],
+      ["nonce1", h({ nonce: 1 }), [], { cumulativeWork: 1, mempoolPressure: 0 }, 0.09076955982638274],
+      ["nonce1-100k", h({ nonce: 1, difficulty: 100_000 }), [], { cumulativeWork: 1, mempoolPressure: 0 }, 0.086836478057786756],
+      ["nonce7", h({ nonce: 7 }), [], { cumulativeWork: 1, mempoolPressure: 0 }, 0.043329506709598564],
+      ["work0", h({ nonce: 6 }), [], { cumulativeWork: 0, mempoolPressure: 0 }, 1.000201100202524],
+      ["pressure", h({ nonce: 6 }), [], { cumulativeWork: 1, mempoolPressure: 1 }, 2.0002011002025242],
+      ["ts0", h({ nonce: 6, timestamp: 0 }), [], { cumulativeWork: 1, mempoolPressure: 0 }, 0.16225219837223626],
+      ["nonceHi", h({ nonce: 9007199254740991 }), [], { cumulativeWork: 1, mempoolPressure: 0 }, 0.098695867101580084],
+      ["tx", h({ nonce: 6 }), [{ hash: "ab".repeat(32), fee: 1000 }], { cumulativeWork: 1, mempoolPressure: 0.5 }, 0.5191116242016731],
+    ];
+    for (const [name, header, txs, state, expected] of rows) {
+      const got = canonicalResidual(header, txs, state);
+      expect(Math.abs(got - expected), name).toBeLessThan(1e-12);
+    }
+  });
+
+  it("a validator miner does not mint beside the coinbase", () => {
+    const state = new ChainState();
+    const miner = "b".repeat(40);
+    const other = "c".repeat(40);
+    const delegator = "d".repeat(40);
+    const mk = (address: string) => ({
+      address,
+      moniker: address.slice(0, 4),
+      bondedStake: 1_000,
+      accumulatedRewards: 0,
+      slashed: false,
+      slashCount: 0,
+      jailed: false,
+      uptime: 1,
+      blocksProposed: 0,
+      blocksVoted: 0,
+      commission: 0.1,
+    });
+    state.validators.set(miner, mk(miner));
+    state.validators.set(other, mk(other));
+    state.stakes.set(`${delegator}-${miner}`, {
+      delegator,
+      validator: miner,
+      amount: 200,
+      startHeight: 0,
+      startTimestamp: 1,
+      unbonding: false,
+      rewardsEarned: 0,
+    });
+    state.ledger.credit(delegator, 50);
+    const supply = () => state.ledger.balance(miner) + state.ledger.balance(other) + state.ledger.balance(delegator);
+    const before = supply();
+    state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner, coinbaseReward: 100 });
+    expect(supply() - before).toBe(10);
+    expect(state.ledger.balance(miner)).toBe(10);
+    expect(state.ledger.balance(other)).toBe(0);
+    expect(state.ledger.balance(delegator)).toBe(50);
+    expect(state.validators.get(miner)?.accumulatedRewards).toBe(45);
+    expect(state.validators.get(other)?.accumulatedRewards).toBe(45);
+    expect((supply() - before) + 45 + 45).toBe(100);
+  });
+
+  it("the sealed block hash binds the nonce and matches the public kernel", () => {
+    const seal = (nonce: number, credit = 0) => {
+      const state = new ChainState();
+      if (credit > 0) state.ledger.credit("e".repeat(40), credit);
+      const block = {
+        ...fakeBlock(0, 1_700_000_000),
+        miner: "b".repeat(40),
+        coinbaseReward: 0,
+        nonce,
+        residual: 1e-6,
+        residualFp: 1_000_000_000_000,
+        committedPressure: 0,
+        sealIdentity: true,
+      };
+      state.addBlock(block);
+      return block.hash;
+    };
+    const nonce1 = seal(1);
+    expect(nonce1).not.toBe(seal(2));
+    expect(seal(1)).toBe(nonce1);
+    expect(seal(1, 5)).not.toBe(nonce1);
+    expect(nonce1).not.toBe(hash256(`block-0-${"0".repeat(64)}-1700000000`));
+    expect(canonicalHeaderHash({
+      prevHash: "11".repeat(32),
+      merkleRoot: "22".repeat(32),
+      stateRoot: "33".repeat(32),
+      timestamp: 1_700_000_000,
+      nonce: 7,
+      difficulty: 1_000_000,
+      residualFp: 201_100_202_523_998,
+      miner: "ab".repeat(20),
+      height: 3,
+      committedPressure: 0,
+    })).toBe("836ce07ec08403bf07acc120a50163b48c5910b4bfa7c1de1c08200f1f09f306");
+    const pressured = new ChainState();
+    const hot = {
+      ...fakeBlock(0, 1_700_000_000),
+      miner: "b".repeat(40),
+      coinbaseReward: 0,
+      nonce: 1,
+      residual: 1e-6,
+      residualFp: 1_000_000_000_000,
+      committedPressure: 1,
+      sealIdentity: true,
+    };
+    pressured.addBlock(hot);
+    expect(hot.hash).not.toBe(nonce1);
+  });
+
+  it("a sealed block still rolls the fee UTXO back", () => {
+    const state = new ChainState();
+    const miner = "b".repeat(40);
+    state.pendingUtxoFees = 750;
+    const block = {
+      ...fakeBlock(0, 1_700_000_000),
+      miner,
+      coinbaseReward: 0,
+      committedPressure: 0.25,
+      sealIdentity: true,
+    };
+    state.addBlock(block);
+    expect(block.hash).not.toBe(hash256(`block-0-${"0".repeat(64)}-1700000000`));
+    expect(state.utxoSet.balance(miner)).toBe(750);
+    expect(state.pendingUtxoFees).toBe(0);
+    state.rollbackToHeight(-1);
+    expect(state.pendingUtxoFees).toBe(750);
+    expect(state.utxoSet.balance(miner)).toBe(0);
   });
 });
 

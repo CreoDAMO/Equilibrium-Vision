@@ -317,6 +317,7 @@ impl ValidationEngine {
 // ── Block identity hash (matches MiningWorker.computeBlockHash) ───────────────
 
 /// SHA256(prev_hash || nonce_le || timestamp_le || difficulty_le).
+/// This is the phone preimage. It is not EQ-07. `canonical_header_hash` is.
 pub fn block_hash(header: &BlockHeader) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(header.prev_hash);
@@ -324,6 +325,27 @@ pub fn block_hash(header: &BlockHeader) -> [u8; 32] {
     hasher.update(header.timestamp.to_le_bytes());
     hasher.update(header.difficulty.to_le_bytes());
     hasher.finalize().into()
+}
+
+/// EQ-07 header hash. Same preimage as the TypeScript `canonicalHeaderHash`.
+/// Double SHA-256 of the UTF-8 field string. Not the phone preimage above.
+pub fn canonical_header_hash(
+    prev_hash: &str,
+    merkle_root: &str,
+    state_root: &str,
+    timestamp: u64,
+    nonce: u64,
+    difficulty: u64,
+    residual_fp: i64,
+    miner: &str,
+    height: u64,
+    committed_pressure: f64,
+) -> String {
+    let preimage = format!(
+        "{prev_hash}|{merkle_root}|{state_root}|{timestamp}|{nonce}|{difficulty}|{residual_fp}|{miner}|{height}|{committed_pressure:.6}"
+    );
+    let first = Sha256::digest(preimage.as_bytes());
+    hex::encode(Sha256::digest(first))
 }
 
 // ── Merkle root (Bitcoin-style odd-length duplication, single SHA256) ─────────
@@ -790,6 +812,36 @@ mod tests {
         let b = block_hash(&h1);
         assert_eq!(a, b);
         assert_eq!(a.len(), 32);
+    }
+
+    #[test]
+    fn canonical_header_hash_matches_the_public_kernel_vector() {
+        let hash = canonical_header_hash(
+            &"11".repeat(32),
+            &"22".repeat(32),
+            &"33".repeat(32),
+            1_700_000_000,
+            7,
+            1_000_000,
+            201_100_202_523_998,
+            &"ab".repeat(20),
+            3,
+            0.0,
+        );
+        assert_eq!(hash, "836ce07ec08403bf07acc120a50163b48c5910b4bfa7c1de1c08200f1f09f306");
+        let other = canonical_header_hash(
+            &"11".repeat(32),
+            &"22".repeat(32),
+            &"33".repeat(32),
+            1_700_000_000,
+            8,
+            1_000_000,
+            201_100_202_523_998,
+            &"ab".repeat(20),
+            3,
+            0.0,
+        );
+        assert_ne!(hash, other);
     }
 
     #[test]

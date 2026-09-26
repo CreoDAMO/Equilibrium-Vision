@@ -57,14 +57,21 @@ External submit and stratum store the recomputed residual, not a claim this proc
 
 A public-kernel producer was stopped after it had admitted the Bitcoin genesis header. Its difficulty moved from 1,000,000 to 995,000, because that header's hash ends in byte 0 and the foreign factor is 0.995. A second body was given only the blocks. It produced height 10. The residual was `0.0014545903682062166`. The previous hash was `9b33cb1f8e65e414a9414288dc2dd9c0ce3ca6ae7ec5c895e5c2c3280b02c9fd`. A third body, also without the first process, accepted the block, kept the same Bitcoin tip `6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000`, and the same next difficulty, 990,025. Replaying the blocks and stopping there is still a different operation. It ends at height 9.
 
+New blocks on the artifacts node seal with `canonicalHeaderHash` after the state root exists. The provisional `hash256(block-height-prev-time)` string is not the identity that is stored. The frozen header — previous `11`×32, merkle `22`×32, state `33`×32, time 1,700,000,000, nonce 7, difficulty 1,000,000, residual fingerprint 201,100,202,523,998, miner `ab`×20, height 3, pressure 0 — hashes to `836ce07ec08403bf07acc120a50163b48c5910b4bfa7c1de1c08200f1f09f306` in the kernel, in the artifacts node, and in Rust `canonical_header_hash`. Nonce 8 is a different hash. A credit changes the state root and therefore the hash. Pressure is a column. A block sealed at pressure 0.25 was written and read back; the recomputed hash was `d716fab2dd70066731203deb600b5e6c075425fc2af4c5b168123b8191075c61`, and the same header at pressure 0 was not. Rows written before the seal are not resealed. The swept fee output is keyed by height, so the seal does not hide it from rollback.
+
+A validator miner is not paid twice. On the artifacts node, reward 100 with commission 0.1 and two equal bonds credited 10 on the ledger and 45 accumulated rewards to each validator. The delegator's balance stayed 50. Created value was 100. On the kernel, the same nonce-6 header paid reward 99: 9 liquid, 88 accumulated, 2 unminted by the floor. Nothing above the reward was created. EQ-18 says so. There is no participation pool.
+
+`stateRootOf` does not move when only a validator's bond changes. The omega digest does. A balance change moves both. EQ-07 says that. The artifacts state root is a different commitment: it also binds UTXOs, contract storage, and validator bond. Those two roots were not forced together.
+
+Rust and the kernel agree on ten residual rows, not one. Nonce 0 is `0.02519000125198503`. Nonce 6 is `0.0002011002025239986`. The other rows move difficulty, work, pressure, timestamp, a 2^53−1 nonce, and one transaction. `canonical_coinbase` at that nonce-6 residual is 99 at height 1 and 100 at height 0. `cargo test --lib canonical_` passed those checks.
+
 ### Still open
 
-- Mobile remains a verifier of this kernel, not a second producer.
-- The artifacts block hash is still `hash256(block-height-prev-time)`. It does not bind the nonce. Admission is a separate recompute of the canonical residual.
-- On the artifacts node, when the miner is a validator, `distributeBlockReward` can credit other validators from a participation pool that was not debited. That path was not changed.
-- The public kernel's `stateRootOf` does not include validators. They are in the omega digest. Persisted blocks replay by equality. That was left as it is.
-- Rust and TypeScript agree on the published residual vector. That is not an exhaustive grid, and it is not a proof that every platform's `f64` matches.
-- The public kernel and `artifacts/api-server` are still two bodies. Closing a door in one does not make the other the same organism.
+- This is not one transition. The artifacts node still has a UTXO set, contract storage, and its own genesis. The kernel does not replay that body, and that body does not run `successor`.
+- The phone preimage is still `SHA256(prev || nonce || timestamp || difficulty)`. `canonical_header_hash` matches the kernel, and the phone's residual check is still the territory residual. Mobile is not a second producer.
+- The grid is these ten rows on this machine. It is not a proof about every platform's `f64`.
+- Floor dust on the stake split is unminted. It is not a later payment from the same block.
+- `optimize_full` is still not admission. `compute_coinbase_reward` is still not the block path.
 
 The sections below describe the repository. They are not a claim that each of those organs is the live kernel.
 
