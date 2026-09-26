@@ -93,6 +93,20 @@ export interface BlockRecord {
   chainId?: number;
   evidenceRoot?: string;
   omegaRoot?: string;
+  /**
+   * Kernel wasm map carried by an evidence block. Contract storage is not this map.
+   * Applied only when the block also binds a canonical state root.
+   */
+  wasmEntries?: Array<[string, string]>;
+  /** Next-block coupling written by a kernel proposal. Not governance.params. */
+  couplingKey?: "hash" | "structural" | "continuity" | "mempool" | "fees";
+  couplingValue?: number;
+  /**
+   * UTXO-model fees credited on the account ledger for this block.
+   * Not a second output. Absent after a restart, which reloads the balance
+   * and does not rebuild this line.
+   */
+  utxoFeeCredit?: number;
 }
 
 /**

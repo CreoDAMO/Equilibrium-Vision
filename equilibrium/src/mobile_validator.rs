@@ -2,7 +2,7 @@
 //!
 //! Spawns a thread with a 2MB stack. Enqueues blocks via MPSC channel.
 //! Validation pipeline:
-//!   1. Chain continuity (prev_hash matches real block hash of tip)
+//!   1. Chain continuity (prev_hash matches the canonical header of the tip)
 //!   2. Timestamp sanity (±2 hours)
 //!   3. Residual re-verification via joint_residual_and_gradient (no search)
 //!   4. Merkle root recomputation from tx hashes
@@ -77,10 +77,9 @@ impl MobileValidator {
                                     if decision == ValidationDecision::Accept {
                                         engine.accept(&block);
                                     }
-                                    let hash = serde_json::from_str::<serde_json::Value>(&json)
-                                        .ok()
-                                        .and_then(|v| v.get("hash").and_then(|h| h.as_str()).map(|s| s.to_string()))
-                                        .unwrap_or_else(|| hex::encode(&block.header.prev_hash[..8]));
+                                    // The result hash is the EQ-07 identity. A JSON `hash`
+                                    // that is not that identity is already a reject.
+                                    let hash = hex::encode(canonical_identity(&block));
                                     let height = block.header.recursion_depth as u64;
                                     let vr = match &decision {
                                         ValidationDecision::Accept => ValidationResult::Accept { hash, height },
@@ -182,7 +181,10 @@ impl ValidationEngine {
     }
 
     fn validate(&self, block: &GossipedBlock, _from_peer: bool) -> ValidationDecision {
-        // 1. Chain continuity on real block hash
+        if let Err(reason) = ensure_claimed_hash(block) {
+            return ValidationDecision::Reject { reason };
+        }
+        // 1. Chain continuity on the canonical header, not the four-field digest.
         if let Some(tip_hash) = self.tip_hashes.last() {
             if block.header.prev_hash != *tip_hash {
                 return ValidationDecision::Reject {
@@ -261,6 +263,9 @@ impl ValidationEngine {
                 // Soft path: cannot verify without set; do not block testnet traffic
             } else {
                 let hash_hex = hex::encode(block_hash(&block.header));
+                // Vote messages, when a block carries them, are still over the
+                // four-field digest. The artifacts transition does not create them.
+                // The tip stored by accept() is canonical_identity, not this digest.
                 let height = block.header.recursion_depth as u64;
                 if let Err(e) = check_bft_quorum(&self.validators, &votes, &hash_hex, height) {
                     return ValidationDecision::Reject { reason: e };
@@ -272,7 +277,7 @@ impl ValidationEngine {
     }
 
     fn accept(&mut self, block: &GossipedBlock) {
-        let h = block_hash(&block.header);
+        let h = canonical_identity(block);
         self.chain.push(block.header.clone());
         self.tip_hashes.push(h);
         if self.chain.len() > MAX_VALIDATED_BLOCKS {
@@ -318,7 +323,8 @@ impl ValidationEngine {
 // ── Block identity hash (matches MiningWorker.computeBlockHash) ───────────────
 
 /// SHA256(prev_hash || nonce_le || timestamp_le || difficulty_le).
-/// This is the phone preimage. It is not EQ-07. `canonical_header_hash` is.
+/// This is not the tip. `canonical_identity` is. A BFT vote, if one is
+/// present, is still verified over this digest.
 pub fn block_hash(header: &BlockHeader) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(header.prev_hash);
@@ -380,6 +386,56 @@ pub fn canonical_header_hash_evidence(
     }
     let first = Sha256::digest(preimage.as_bytes());
     hex::encode(Sha256::digest(first))
+}
+
+/// EQ-07 identity of a gossiped block. Missing merkle, state, and miner are
+/// zeros. Pressure is 0.000000. A zero state root is not the artifacts seal.
+pub fn canonical_identity(block: &GossipedBlock) -> [u8; 32] {
+    let miner = miner_from_block_json(&block.block_json);
+    let hex_hash = canonical_header_hash(
+        &hex::encode(block.header.prev_hash),
+        &hex::encode(block.header.merkle_root),
+        &hex::encode(block.header.state_root),
+        block.header.timestamp,
+        block.header.nonce,
+        block.header.difficulty,
+        block.header.residual,
+        &miner,
+        block.header.recursion_depth as u64,
+        0.0,
+    );
+    parse_hash32(&hex_hash).unwrap_or([0u8; 32])
+}
+
+fn miner_from_block_json(json: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(json)
+        .ok()
+        .and_then(|v| v.get("miner").and_then(|m| m.as_str()).map(|s| s.to_string()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "0".repeat(40))
+}
+
+fn claimed_hash(json: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let raw = value.get("hash")?.as_str()?;
+    let clean = raw
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X")
+        .to_ascii_lowercase();
+    if clean.is_empty() { None } else { Some(clean) }
+}
+
+/// A published hash that is not the EQ-07 identity is not this block.
+fn ensure_claimed_hash(block: &GossipedBlock) -> Result<(), String> {
+    let Some(claimed) = claimed_hash(&block.block_json) else {
+        return Ok(());
+    };
+    let identity = hex::encode(canonical_identity(block));
+    if claimed != identity {
+        return Err("hash is not the canonical header".into());
+    }
+    Ok(())
 }
 
 // ── Merkle root (Bitcoin-style odd-length duplication, single SHA256) ─────────
@@ -877,6 +933,95 @@ mod tests {
     }
 
     #[test]
+    fn canonical_identity_matches_the_frozen_header() {
+        let miner = "ab".repeat(20);
+        let header = BlockHeader {
+            prev_hash: [0x11u8; 32],
+            merkle_root: [0x22u8; 32],
+            state_root: [0x33u8; 32],
+            timestamp: 1_700_000_000,
+            nonce: 7,
+            difficulty: 1_000_000,
+            recursion_depth: 3,
+            residual: 201_100_202_523_998,
+        };
+        let block = GossipedBlock {
+            header,
+            tx_hashes: vec![],
+            bft_votes: vec![],
+            block_json: format!(r#"{{"miner":"{miner}"}}"#),
+        };
+        assert_eq!(
+            hex::encode(canonical_identity(&block)),
+            "836ce07ec08403bf07acc120a50163b48c5910b4bfa7c1de1c08200f1f09f306",
+        );
+        assert_ne!(canonical_identity(&block), block_hash(&block.header));
+    }
+
+    #[test]
+    fn a_hash_that_is_not_the_canonical_header_is_rejected() {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let header = BlockHeader {
+            prev_hash: [0u8; 32],
+            merkle_root: [0u8; 32],
+            timestamp: now,
+            nonce: 0,
+            difficulty: 1,
+            recursion_depth: 0,
+            residual: 0,
+            state_root: [0u8; 32],
+        };
+        let block = GossipedBlock {
+            header,
+            tx_hashes: vec![],
+            bft_votes: vec![],
+            block_json: r#"{"hash":"11","miner":"aa"}"#.into(),
+        };
+        match ValidationEngine::new().validate(&block, false) {
+            ValidationDecision::Reject { reason } => {
+                assert!(reason.contains("hash is not the canonical header"), "{reason}");
+            }
+            other => panic!("expected identity reject, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tip_stores_the_canonical_header() {
+        let header = BlockHeader {
+            prev_hash: [0u8; 32],
+            merkle_root: [0u8; 32],
+            timestamp: 1_700_000_000,
+            nonce: 7,
+            difficulty: 1_000_000,
+            recursion_depth: 0,
+            residual: 201_100_202_523_998,
+            state_root: [0u8; 32],
+        };
+        let block = GossipedBlock {
+            header,
+            tx_hashes: vec![],
+            bft_votes: vec![],
+            block_json: "{}".into(),
+        };
+        let mut engine = ValidationEngine::new();
+        engine.accept(&block);
+        assert_eq!(engine.tip_hashes[0], canonical_identity(&block));
+        assert_ne!(engine.tip_hashes[0], block_hash(&block.header));
+        let id = hex::encode(canonical_identity(&block));
+        let matching = GossipedBlock {
+            header: block.header.clone(),
+            tx_hashes: vec![],
+            bft_votes: vec![],
+            block_json: format!(r#"{{"hash":"{id}"}}"#),
+        };
+        let decision = engine.validate(&matching, false);
+        assert!(
+            !matches!(&decision, ValidationDecision::Reject { reason } if reason.contains("hash is not the canonical header")),
+            "matching identity must not be rejected as a foreign hash, got {decision:?}",
+        );
+    }
+
+    #[test]
     fn canonical_header_hash_evidence_matches_the_kernel_block() {
         let prev = "0".repeat(64);
         let hash = canonical_header_hash_evidence(
@@ -1018,8 +1163,8 @@ mod tests {
         );
         engine.accept(&genesis);
 
-        // Build the "tip hash" the good block-2 would need to reference.
-        let genesis_hash = block_hash(&genesis_header);
+        // The next block must name the canonical header, not the four-field digest.
+        let genesis_hash = canonical_identity(&genesis);
 
         // A block at height 1 with the *wrong* prev_hash should be rejected.
         let bad_base = BlockHeader {
@@ -1144,9 +1289,11 @@ mod tests {
         );
         engine_b.accept(&genesis_gossip);
         assert_eq!(engine_b.chain.len(), 1, "tip must advance to height 0");
+        assert_eq!(engine_b.tip_hashes[0], canonical_identity(&genesis_gossip));
+        assert_ne!(engine_b.tip_hashes[0], block_hash(&genesis_header));
 
         // ── Node A: mine block 1 (height 1) ───────────────────────────────
-        let genesis_hash = block_hash(&genesis_header);
+        let genesis_hash = canonical_identity(&genesis_gossip);
         let block1_base = BlockHeader {
             prev_hash: genesis_hash,
             merkle_root: [0u8; 32],

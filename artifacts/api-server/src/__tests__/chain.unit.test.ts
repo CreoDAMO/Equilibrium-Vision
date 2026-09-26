@@ -4,10 +4,12 @@ import { fileURLToPath } from "node:url";
 import { hash256, sha256, merkleRoot, addressFromSeed, canonicalHeaderHash } from "../chain/crypto.js";
 import { fpEncode, blockHashToFields } from "../chain/zk-encoding.js";
 import { generateZkProof, verifyZkProof } from "../chain/zkproof.js";
-import { ChainState, mineNextBlock } from "../chain/state.js";
-import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
+import { ChainState, mineNextBlock, buildGenesisChainFromDoc } from "../chain/state.js";
+import { admitResidual, canonicalResidual, residualFingerprint } from "../chain/canonical-residual.js";
 import { BTC_GENESIS_HEADER_HEX } from "../chain/btc-header.js";
 import { nextFinalizedHeight } from "../chain/finality.js";
+import { kernelParty, KERNEL_ALLOCATIONS, KERNEL_VALIDATOR_LIQUID } from "../chain/kernel-genesis.js";
+import { wasmLeafOf } from "../chain/wasm-leaf.js";
 import { rebuildStateSmt } from "../chain/state-root.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "../chain/mining-policy.js";
 import type { BlockRecord, ValidatorRecord } from "../chain/types.js";
@@ -386,14 +388,13 @@ describe("mining-policy assertRandomMiningAllowed", () => {
 // ── ChainState — UTXO fee collection ─────────────────────────────────────────
 //
 // UTXO transactions settle instantly (outside block assembly), so their fees
-// accrue in `pendingUtxoFees` and must be swept to the miner of the next
-// mined block instead of silently disappearing (burned).
+// A UTXO-model fee is credited on the account ledger. It is not a second output.
 
 describe("ChainState UTXO fee sweep", () => {
   const minerA = "a".repeat(40);
   const minerB = "b".repeat(40);
 
-  it("credits accrued UTXO fees to the next block's miner as a UTXO output, and pays coinbase only on the account ledger", () => {
+  it("credits accrued UTXO fees on the account ledger, and does not mint a fee output", () => {
     const state = new ChainState();
     state.pendingUtxoFees = 1_500;
 
@@ -401,8 +402,9 @@ describe("ChainState UTXO fee sweep", () => {
     state.addBlock(block);
 
     expect(state.pendingUtxoFees).toBe(0);
-    expect(state.utxoSet.balance(minerA)).toBe(1_500);
-    expect(state.ledger.balance(minerA)).toBe(block.coinbaseReward);
+    expect(state.utxoSet.balance(minerA)).toBe(0);
+    expect(block.utxoFeeCredit).toBe(1_500);
+    expect(state.ledger.balance(minerA)).toBe(block.coinbaseReward + 1_500);
   });
 
   it("does not create a coinbase UTXO when no UTXO fees have accrued", () => {
@@ -422,8 +424,8 @@ describe("ChainState UTXO fee sweep", () => {
     const block = { ...fakeBlock(0, 1_700_000_000), miner: minerB };
     state.addBlock(block);
     expect(state.pendingUtxoFees).toBe(0);
-    expect(state.utxoSet.balance(minerB)).toBe(750);
-    expect(state.ledger.balance(minerB)).toBe(block.coinbaseReward);
+    expect(state.utxoSet.balance(minerB)).toBe(0);
+    expect(state.ledger.balance(minerB)).toBe(block.coinbaseReward + 750);
 
     state.rollbackToHeight(-1);
 
@@ -751,10 +753,12 @@ describe("ChainState UTXO fee sweep", () => {
     };
     state.addBlock(block);
     expect(block.hash).not.toBe(hash256(`block-0-${"0".repeat(64)}-1700000000`));
-    expect(state.utxoSet.balance(miner)).toBe(750);
+    expect(state.ledger.balance(miner)).toBe(750);
+    expect(state.utxoSet.balance(miner)).toBe(0);
     expect(state.pendingUtxoFees).toBe(0);
     state.rollbackToHeight(-1);
     expect(state.pendingUtxoFees).toBe(750);
+    expect(state.ledger.balance(miner)).toBe(0);
     expect(state.utxoSet.balance(miner)).toBe(0);
   });
 
@@ -1022,6 +1026,117 @@ describe("ChainState UTXO fee sweep", () => {
     jailed.addBlock({ ...fakeBlock(3, 1_700_000_045), miner: addrs[0]! });
     expect(jailed.finalizedHeight).toBe(0);
     expect(jailed.blocks[3]?.finalized).toBe(false);
+  });
+
+  it("a genesis document with the seven kernel lines credits the kernel operating balances", () => {
+    const state = buildGenesisChainFromDoc({
+      chain_id: "equilibrium-1",
+      timestamp: "2026-07-05T00:44:37.417Z",
+      initial_supply: "100000000",
+      allocations: KERNEL_ALLOCATIONS.map((line) => ({
+        address: line.address,
+        amount: String(line.amount),
+        vesting: "none",
+        category: "line",
+      })),
+      initial_validators: [],
+      dex_pools: [],
+      parameters: {
+        target_block_time_ms: 15_000,
+        residual_threshold: 8e-4,
+        initial_difficulty: 1_000_000,
+        slashing_double_sign_pct: 5,
+        slashing_downtime_pct: 1,
+        unbonding_period_blocks: 10,
+        max_validators: 100,
+        governance_quorum_pct: 67,
+        governance_voting_period_blocks: 10,
+      },
+    });
+    const party = kernelParty("mainnet");
+    expect(state.ledger.balance(party.treasury)).toBe(8_000_000);
+    expect(state.ledger.balance(party.miner)).toBe(1_500_000);
+    expect(state.validators.get(party.miner)?.bondedStake).toBe(500_000);
+    for (const address of party.activity) expect(state.ledger.balance(address)).toBe(1_500_000);
+    for (const v of KERNEL_VALIDATOR_LIQUID) expect(state.ledger.balance(v.address)).toBe(v.amount);
+    let supply = 0;
+    for (const acc of state.ledger.getAllAccounts().values()) supply += acc.balance;
+    expect(supply).toBe(114_000_000);
+  });
+
+  it("contract storage does not write the kernel wasm map, and an evidence block does", () => {
+    const state = new ChainState();
+    state.wasmVM.replaceContracts([{
+      address: "aa".repeat(20),
+      deployer: "b".repeat(40),
+      bytecode: "00",
+      bytecodeHash: "11".repeat(32),
+      storage: { cell: "local" },
+      deployedAt: 1,
+      callCount: 0,
+      totalGasUsed: 0,
+    }]);
+    expect(wasmLeafOf(state.canonicalWasm.entries())).toBe("none");
+    const block = {
+      ...fakeBlock(0, 1_700_000_000),
+      miner: "b".repeat(40),
+      coinbaseReward: 0,
+      sealIdentity: true,
+      stateRoot: "33".repeat(32),
+      chainId: 1,
+      evidenceRoot: "cd".repeat(32),
+      omegaRoot: "ef".repeat(32),
+      wasmEntries: [["cell", "from-call"]] as Array<[string, string]>,
+    };
+    state.addBlock(block);
+    expect(wasmLeafOf(state.canonicalWasm.entries())).toBe("cell=from-call");
+    expect(state.wasmVM.listContracts()[0]?.storage.cell).toBe("local");
+  });
+
+  it("a governance baseReward execution does not change couplings, and a kernel coupling does", () => {
+    const state = new ChainState();
+    state.governance.proposals.set("GOV-X", {
+      id: "GOV-X",
+      type: "parameter_change",
+      title: "reward",
+      description: "",
+      proposer: "a".repeat(40),
+      parameterChange: { key: "baseReward", value: 1_000_000 },
+      submittedAt: 0,
+      votingEndsAt: 0,
+      readyToExecuteAt: 0,
+      votesYes: 1,
+      votesNo: 0,
+      votesAbstain: 0,
+      votes: new Map(),
+      status: "passed",
+    });
+    state.governance.processBlock(1, 1_000);
+    expect(state.governance.params.baseReward).toBe(50_000_000);
+    expect(state.couplings.structural).toBe(1);
+    const header = {
+      prevHash: "0".repeat(64),
+      merkleRoot: "0".repeat(64),
+      timestamp: 1_700_000_000,
+      nonce: 6,
+      difficulty: 1_000_000,
+    };
+    const before = canonicalResidual(header, [], { cumulativeWork: 1, mempoolPressure: 0 }, state.couplings);
+    state.addBlock({
+      ...fakeBlock(0, 1_700_000_000),
+      miner: "b".repeat(40),
+      coinbaseReward: 0,
+      stateRoot: "33".repeat(32),
+      chainId: 1,
+      evidenceRoot: "cd".repeat(32),
+      omegaRoot: "ef".repeat(32),
+      couplingKey: "structural",
+      couplingValue: 0,
+    });
+    expect(state.couplings.structural).toBe(0);
+    const after = canonicalResidual(header, [], { cumulativeWork: 1, mempoolPressure: 0 }, state.couplings);
+    expect(after).not.toBe(before);
+    expect(residualFingerprint(after)).not.toBe(residualFingerprint(before));
   });
 });
 

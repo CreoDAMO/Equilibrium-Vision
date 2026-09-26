@@ -5,9 +5,12 @@
 import assert from "node:assert/strict";
 import { btcHeaderHash, BTC_GENESIS_HEADER_HEX as artifactsGenesis } from "../../../artifacts/api-server/src/chain/btc-header";
 import { nextFinalizedHeight, stakeForFinality } from "../../../artifacts/api-server/src/chain/finality";
+import { kernelParty } from "../../../artifacts/api-server/src/chain/kernel-genesis";
+import { wasmLeafOf as artifactsWasmLeaf } from "../../../artifacts/api-server/src/chain/wasm-leaf";
 import { BTC_GENESIS_HEADER_HEX, decodeHeaderHex, parseBtcHeader, verifyBtcPow } from "./btc";
-import { applySuccessor, cloneOmega, stateRootOf } from "./constitution";
+import { applySuccessor, cloneOmega, stateRootOf, wasmLeafOf } from "./constitution";
 import { ARBITRAGE_CODE } from "./evidence";
+import { activityKeys, minerKey, treasuryKey } from "./genesis";
 import { NETWORKS } from "./networks";
 import type { Omega, TransitionEvidence, ValidatorRecord } from "./types";
 
@@ -19,6 +22,17 @@ assert.equal(artifactsGenesis, BTC_GENESIS_HEADER_HEX);
 assert.equal(btcHeaderHash(BTC_GENESIS_HEADER_HEX), kernelHash);
 assert.equal(btcHeaderHash("00".repeat(80)), null);
 assert.equal(kernelHash, "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000");
+
+for (const network of ["mainnet", "testnet"] as const) {
+  const party = kernelParty(network);
+  assert.equal(party.treasury, treasuryKey(network).address);
+  assert.equal(party.miner, minerKey(network).address);
+  assert.deepEqual(party.activity, activityKeys(network).map((key) => key.address));
+}
+const wasmSample = new Map([["b", "2"], ["a", "1"]]);
+assert.equal(artifactsWasmLeaf(wasmSample.entries()), wasmLeafOf(wasmSample));
+assert.equal(artifactsWasmLeaf([]), "none");
+assert.equal(wasmLeafOf(wasmSample), "a=1|b=2");
 
 function validator(address: string): ValidatorRecord {
   return {
@@ -229,6 +243,9 @@ console.log(JSON.stringify({
   ok: true,
   btcTip: kernelHash,
   bareHeaderRefused: true,
+  partyTreasury: kernelParty("mainnet").treasury,
+  partyMiner: kernelParty("mainnet").miner,
+  wasmLeaf: wasmLeafOf(wasmSample),
   wasmCacheIgnored: true,
   wasmCallChangesState: true,
   couplingResidual: followedMoved.residual,

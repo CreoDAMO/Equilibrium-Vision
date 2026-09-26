@@ -354,6 +354,7 @@ export class StratumServer {
       },
       selected.map((t) => ({ hash: t.hash, fee: t.fee })),
       { cumulativeWork: height, mempoolPressure: cs.mempool.pressure },
+      cs.couplings,
     );
     const admission = admitResidual(residual, recomputed, CANONICAL_RESIDUAL_TARGET);
     if (!admission.ok) {

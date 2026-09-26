@@ -60,9 +60,8 @@ router.get("/blocks/:hashOrHeight", (req, res) => {
 //
 // Breaks down everything paid to this block's miner: the coinbase reward,
 // account-model tx fees (credited directly in ChainState.addBlock), and
-// swept UTXO-model tx fees (accrued in pendingUtxoFees, paid out as a UTXO
-// output — see ChainState.addBlock / rollbackToHeight). Lets miners and
-// validators audit exactly where their per-block earnings came from.
+// swept UTXO-model tx fees. New blocks credit pendingUtxoFees on the
+// account ledger. A leftover `utxo-fees-${height}` output is the old purse.
 router.get("/blocks/:hashOrHeight/fees", (req, res) => {
   const { hashOrHeight } = req.params;
   const block =
@@ -81,7 +80,8 @@ router.get("/blocks/:hashOrHeight/fees", (req, res) => {
 
   const utxoFeeTxHash = hash256(`utxo-fees-${block.height}`);
   const utxoFeeUtxo = chainState.utxoSet.get(utxoFeeTxHash, 0);
-  const utxoFeesTotal = utxoFeeUtxo?.amount ?? 0;
+  const legacyUtxoFees = utxoFeeUtxo?.amount ?? 0;
+  const utxoFeesTotal = legacyUtxoFees + (block.utxoFeeCredit ?? 0);
 
   res.json({
     height: block.height,
@@ -236,6 +236,7 @@ router.post("/blocks/submit", (req, res) => {
     },
     selected.map((t) => ({ hash: t.hash, fee: t.fee })),
     { cumulativeWork: height, mempoolPressure: chainState.mempool.pressure },
+    chainState.couplings,
   );
   const admission = admitResidual(residual, recomputed, CANONICAL_RESIDUAL_TARGET);
   if (!admission.ok) {

@@ -30,6 +30,7 @@ import { withDbRetry } from "./persistence.js";
 import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import { btcHeaderHash } from "./btc-header.js";
 import { nextFinalizedHeight, stakeForFinality } from "./finality.js";
+import { allocationsMatchKernel, kernelNetworkOf, kernelParty, KERNEL_VALIDATOR_LIQUID } from "./kernel-genesis.js";
 import {
   applySlashing,
   canonicalCoinbase,
@@ -45,6 +46,16 @@ const TARGET_BLOCK_TIME = 15;
 const INITIAL_DIFFICULTY = 1_000_000;
 const UNBONDING_PERIOD = 10;
 const DEX_FEE = 0.003;
+
+function evidenceBound(block: BlockRecord): boolean {
+  return block.chainId !== undefined
+    && typeof block.evidenceRoot === "string"
+    && /^[0-9a-f]{64}$/.test(block.evidenceRoot)
+    && typeof block.omegaRoot === "string"
+    && /^[0-9a-f]{64}$/.test(block.omegaRoot)
+    && typeof block.stateRoot === "string"
+    && /^[0-9a-f]{64}$/.test(block.stateRoot);
+}
 
 // ── Ledger ────────────────────────────────────────────────────────────────────
 
@@ -234,16 +245,15 @@ export class ChainState {
   // UTXO set (parallel-validation coin model)
   utxoSet = new UTXOSet();
 
-  // UTXO transactions settle instantly on /utxo/spend (outside block assembly),
-  // so their fees can't be credited to a miner at spend-time — there is no
-  // "current block" yet. Instead we accrue fees here and sweep the pool into
-  // the next mined block's miner, matching standard L1 economics where fees
-  // from pending transactions are collected by whoever produces the block
-  // that settles them.
+  // UTXO transactions settle instantly on /utxo/spend. Their fee is not a second
+  // purse: the next block credits it on the account ledger and clears the pool.
   pendingUtxoFees = 0;
 
-  // WASM smart contract VM
+  // WASM smart contract VM. Its storage is operational. canonicalWasm is the
+  // kernel map, and only an evidence block may replace it.
   wasmVM = new WasmVM();
+  canonicalWasm = new Map<string, string>();
+  couplings = { hash: 1, structural: 1, continuity: 1, mempool: 1, fees: 1 };
 
   // BFT: real Ed25519 vote keypairs for each validator (testnet: held in-process)
   private validatorKeys = new Map<string, Uint8Array>();    // address → pubkey
@@ -390,6 +400,9 @@ export class ChainState {
   private preBlockStakes = new Map<number, StakeRecord[]>();
   private preBlockDifficulty = new Map<number, number>();
   private preBlockUnbonding = new Map<number, UnbondingEntry[]>();
+  private preBlockPendingFees = new Map<number, number>();
+  private preBlockCouplings = new Map<number, ChainState["couplings"]>();
+  private preBlockWasm = new Map<number, Array<[string, string]>>();
   private _slashWindows = new Map<string, number[]>();
   private static readonly MAX_SLASHES_PER_DAY = 5;
   private static readonly SLASH_WINDOW_S = 86_400;
@@ -457,6 +470,9 @@ export class ChainState {
     this.preBlockStakes.set(block.height, [...this.stakes.values()].map((s) => ({ ...s })));
     this.preBlockDifficulty.set(block.height, this.currentDifficulty);
     this.preBlockUnbonding.set(block.height, this.unbondingQueue.map((u) => ({ ...u })));
+    this.preBlockPendingFees.set(block.height, this.pendingUtxoFees);
+    this.preBlockCouplings.set(block.height, { ...this.couplings });
+    this.preBlockWasm.set(block.height, [...this.canonicalWasm.entries()]);
     this.blocks.push(block);
 
     // Coinbase is an account-ledger credit inside distributeBlockReward.
@@ -474,8 +490,7 @@ export class ChainState {
 
       // The account ledger is the monetary state. A transfer it rejects does
       // not become a confirmed output, and a transfer it accepts does not
-      // also mint a recipient UTXO. Coinbase and UTXO-fee outputs stay in
-      // the UTXO set; they are that subsystem's own issuance.
+      // also mint a recipient UTXO.
       const applyErr = this.ledger.applyTx(tx);
       if (applyErr) {
         const failed: TxRecord = { ...confirmed, status: "failed" };
@@ -489,20 +504,11 @@ export class ChainState {
       }
     }
 
-    // Sweep any UTXO-model fees accrued since the last block (see
-    // pendingUtxoFees) into a UTXO output paid to this block's miner —
-    // the UTXO-model equivalent of the account-model fee credit above.
+    // A UTXO-model fee is not a second output. It is credited on the account
+    // ledger of this block's miner. Rollback puts the pool back.
     if (this.pendingUtxoFees > 0) {
-      const feeTxHash = hash256(`utxo-fees-${block.height}`);
-      this.utxoSet.add({
-        txHash: feeTxHash,
-        outputIndex: 0,
-        address: block.miner,
-        amount: this.pendingUtxoFees,
-        coinbase: false,
-        blockHeight: block.height,
-        spent: false,
-      });
+      block.utxoFeeCredit = this.pendingUtxoFees;
+      this.ledger.credit(block.miner, this.pendingUtxoFees);
       this.pendingUtxoFees = 0;
     }
 
@@ -596,15 +602,7 @@ export class ChainState {
         );
       }
 
-      const suppliedStateRoot = block.stateRoot;
-      const bindCanonical =
-        block.chainId !== undefined &&
-        typeof block.evidenceRoot === "string" &&
-        /^[0-9a-f]{64}$/.test(block.evidenceRoot) &&
-        typeof block.omegaRoot === "string" &&
-        /^[0-9a-f]{64}$/.test(block.omegaRoot) &&
-        typeof suppliedStateRoot === "string" &&
-        /^[0-9a-f]{64}$/.test(suppliedStateRoot);
+      const bindCanonical = evidenceBound(block);
       const operationalRoot = smt.root();
       block.operationalRoot = operationalRoot;
       if (!bindCanonical) {
@@ -646,6 +644,15 @@ export class ChainState {
     } catch (err) {
       logger.warn({ err, height: block.height }, "State root computation failed — skipping");
     }
+
+    // Contract storage does not write this map. A kernel proposal's coupling
+    // does not rewrite this block's residual; it is the input of the next one.
+    if (evidenceBound(block)) {
+      if (block.wasmEntries) this.canonicalWasm = new Map(block.wasmEntries);
+      if (block.couplingKey && typeof block.couplingValue === "number" && Number.isFinite(block.couplingValue)) {
+        this.couplings = { ...this.couplings, [block.couplingKey]: Math.max(0, block.couplingValue) };
+      }
+    }
   }
 
   // ── Chain reorganization ─────────────────────────────────────────────────────
@@ -672,15 +679,10 @@ export class ChainState {
       const coinbaseTxHash = hash256(`coinbase-${block.height}-${block.hash}`);
       this.utxoSet.removeCoinbase(coinbaseTxHash);
 
-      // Undo any swept UTXO fees paid to this block's miner, restoring the
-      // amount to the pending pool so it is re-swept into whichever block
-      // ends up settling at this height on the winning fork.
+      // Undo any fee UTXO left by an older build. New blocks credit the ledger.
       const feeTxHash = hash256(`utxo-fees-${block.height}`);
       const feeUtxo = this.utxoSet.get(feeTxHash, 0);
-      if (feeUtxo) {
-        this.pendingUtxoFees += feeUtxo.amount;
-        this.utxoSet.remove(feeTxHash, 0);
-      }
+      if (feeUtxo) this.utxoSet.remove(feeTxHash, 0);
 
       for (const tx of block.transactions) {
         // Undo the recipient-output UTXO created for this transfer.
@@ -719,6 +721,12 @@ export class ChainState {
       if (difficulty !== undefined) this.currentDifficulty = difficulty;
       const unbonding = this.preBlockUnbonding.get(oldest.height);
       if (unbonding) this.unbondingQueue = unbonding.map((u) => ({ ...u }));
+      const fees = this.preBlockPendingFees.get(oldest.height);
+      if (fees !== undefined) this.pendingUtxoFees = fees;
+      const couplings = this.preBlockCouplings.get(oldest.height);
+      if (couplings) this.couplings = { ...couplings };
+      const wasm = this.preBlockWasm.get(oldest.height);
+      if (wasm) this.canonicalWasm = new Map(wasm);
     }
     for (const block of removed) {
       this.preBlockLedger.delete(block.height);
@@ -726,6 +734,9 @@ export class ChainState {
       this.preBlockStakes.delete(block.height);
       this.preBlockDifficulty.delete(block.height);
       this.preBlockUnbonding.delete(block.height);
+      this.preBlockPendingFees.delete(block.height);
+      this.preBlockCouplings.delete(block.height);
+      this.preBlockWasm.delete(block.height);
     }
 
     // Keep the WASM VM's block_number() host import in sync with the chain
@@ -1555,6 +1566,29 @@ export function buildGenesisChainFromDoc(doc: GenesisDocument): ChainState {
   for (const alloc of doc.allocations) {
     state.ledger.credit(alloc.address, Number(alloc.amount));
   }
+  const network = kernelNetworkOf(doc.chain_id);
+  if (network && allocationsMatchKernel(doc.allocations)) {
+    const party = kernelParty(network);
+    state.ledger.credit(party.treasury, party.treasuryAmount);
+    state.ledger.credit(party.miner, 2_000_000);
+    for (const address of party.activity) state.ledger.credit(address, 1_500_000);
+    for (const v of KERNEL_VALIDATOR_LIQUID) state.ledger.credit(v.address, v.amount);
+    if (state.ledger.debit(party.miner, 500_000)) {
+      state.validators.set(party.miner, {
+        address: party.miner,
+        moniker: "Foundation miner",
+        bondedStake: 500_000,
+        accumulatedRewards: 0,
+        slashed: false,
+        slashCount: 0,
+        jailed: false,
+        uptime: 1,
+        blocksProposed: 0,
+        blocksVoted: 0,
+        commission: 0.1,
+      });
+    }
+  }
 
   // ── Genesis block (height 0) ───────────────────────────────────────────────
   const genesisHash = hash256(`genesis-${doc.chain_id}-${doc.timestamp}`);
@@ -1838,6 +1872,7 @@ export async function mineNextBlockAsync(
       },
       selected.map((t) => ({ hash: t.hash, fee: t.fee })),
       { cumulativeWork: height, mempoolPressure: state.mempool.pressure },
+      state.couplings,
     );
     if (solverAdmitted === false) {
       throw new Error(`solver candidate nonce ${nonce} was not admitted`);

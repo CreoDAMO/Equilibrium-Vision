@@ -115,18 +115,25 @@ export function canonicalResidual(
 
 /**
  * A claimed residual enters a block only when this process recomputes the
- * same number and that number is under the target. The claim is not the rule.
+ * same fingerprint, floor(R × 1e18), and that number is under the target.
+ * A float window is not the comparison. The claim is not the rule.
  */
+export function residualFingerprint(residual: number): bigint {
+  if (!Number.isFinite(residual) || residual < 0) return -1n;
+  return BigInt(Math.floor(residual * 1e18));
+}
+
 export function admitResidual(
   claimed: number,
   recomputed: number,
   target = CANONICAL_RESIDUAL_TARGET,
 ): { ok: true; residual: number } | { ok: false; error: string } {
-  if (!Number.isFinite(recomputed) || recomputed < 0 || !(recomputed < target)) {
+  const recomputedFp = residualFingerprint(recomputed);
+  if (recomputedFp < 0n || !(recomputed < target)) {
     return { ok: false, error: "recomputed residual is not under the admission target" };
   }
-  if (!Number.isFinite(claimed) || Math.abs(claimed - recomputed) > 1e-12) {
-    return { ok: false, error: "claimed residual does not match the recomputed residual" };
+  if (residualFingerprint(claimed) !== recomputedFp) {
+    return { ok: false, error: "claimed residual fingerprint does not match the recomputed residual" };
   }
   return { ok: true, residual: recomputed };
 }

@@ -394,9 +394,13 @@ export class GovernanceModule {
   private executeProposal(p: Proposal, now: number): void {
     if (p.type === "parameter_change" && p.parameterChange) {
       const { key, value } = p.parameterChange;
-      const k = key as keyof ChainParameters;
-      (this.params[k] as number) = value;
-      this.onParamChange?.(this.params);
+      // baseReward and miningThreshold are not the coinbase and not admission.
+      // Writing them would look like consensus and change nothing canonical.
+      if (key !== "baseReward" && key !== "miningThreshold") {
+        const k = key as keyof ChainParameters;
+        (this.params[k] as number) = value;
+        this.onParamChange?.(this.params);
+      }
     }
     p.status = "executed";
     p.executedAt = now;

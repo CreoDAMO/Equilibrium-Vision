@@ -8,6 +8,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
@@ -202,6 +203,7 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         // The node API still speaks floating-point residuals over JSON — convert once,
         // here, at the network boundary. The consensus-critical comparison already
         // happened inside the Rust solver using pure fixed-point i64 arithmetic.
+        // The header fingerprint is this solver long, not floor(canonical R × 1e18).
         val residual   = residualFp.toDouble() / RESIDUAL_SCALE
         Log.i(TAG, "Solution found: nonce=$nonce residual=$residual (fixed-point=$residualFp)")
 
@@ -214,16 +216,33 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         // ── 3. P2P-first block propagation ───────────────────────────────────
         // If we have peers, gossip the block then validate before advancing tip.
         // Tip advance ONLY on Accept — never on Reject or Deferred.
-        val blockHash = computeBlockHash(latestHash, nonce, timestamp, difficulty)
+        // EQ-07 of the fields this phone has. Merkle and state are 64 zeros:
+        // the post-state root is not known here, so this hash is not the artifacts seal.
+        val unknownRoot = "0".repeat(64)
+        val blockHash = canonicalHeaderHash(
+            prevHash = latestHash,
+            merkleRoot = unknownRoot,
+            stateRoot = unknownRoot,
+            timestamp = timestamp,
+            nonce = nonce,
+            difficulty = difficulty,
+            residualFp = residualFp,
+            miner = minerAddress,
+            height = height + 1,
+            pressure = 0.0,
+        )
         val blockBodyJson = buildBlockBodyJson(
             hash       = blockHash,
             height     = height + 1,
-            prevHash   = latestHash,
+            prevHash   = hex64(latestHash),
             nonce      = nonce,
             residual   = residual,
+            residualFp = residualFp,
             timestamp  = timestamp,
             miner      = minerAddress,
             difficulty = difficulty,
+            merkleRoot = unknownRoot,
+            stateRoot  = unknownRoot,
         )
 
         val hasPeers = P2PNode.isRunning() && P2PNode.getConnectedPeerCount() > 0
@@ -232,8 +251,10 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             val hashSent = P2PNode.gossipBlock(blockHash)
             if (bodySent && hashSent) {
                 Log.i(TAG, "Block gossiped — validating before tip advance")
-                if (validateAndAwaitAccept(blockBodyJson, fromPeer = false)) {
-                    P2PNode.setLocalTip((height + 1).toLong(), blockHash, difficulty)
+                val accepted = validateAndAwaitAccept(blockBodyJson, fromPeer = false)
+                if (accepted != null) {
+                    val tipHash = accepted.ifEmpty { blockHash }
+                    P2PNode.setLocalTip((height + 1).toLong(), tipHash, difficulty)
                     P2PNode.pushBlockBody(blockBodyJson)
                     Log.i(TAG, "Local tip advanced after Accept")
                     return Result.success()
@@ -289,43 +310,43 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
      * returns Accept, Reject, or Deferred.
      *
      * @param fromPeer true for blocks received from peers (triggers peer-ban on reject).
-     * @return true ONLY on "status":"accept"; false on reject, deferred, or timeout.
+     * @return the canonical header hash on Accept; null on reject, deferred, or timeout.
      */
-    private fun validateAndAwaitAccept(blockBodyJson: String, fromPeer: Boolean): Boolean {
+    private fun validateAndAwaitAccept(blockBodyJson: String, fromPeer: Boolean): String? {
         ensureValidator()
         if (!P2PNode.shouldValidateNow()) {
             Log.i(TAG, "Validation deferred (battery/thermal)")
-            return false
+            return null
         }
         if (!P2PNode.submitBlockForValidation(blockBodyJson, fromPeer)) {
             Log.w(TAG, "submitBlockForValidation failed (validator not started?)")
-            return false
+            return null
         }
         val deadline = System.currentTimeMillis() + VALIDATION_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
             val raw = P2PNode.getValidationResult()
             if (raw.isNotEmpty()) {
-                val json = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return false
+                val json = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return null
                 return when (json.optString("status")) {
                     "accept" -> {
                         Log.i(TAG, "Block validated: ${json.optString("hash").take(16)}…")
-                        true
+                        json.optString("hash")
                     }
                     "reject" -> {
                         Log.w(TAG, "Block rejected: ${json.optString("reason")}")
-                        false
+                        null
                     }
                     "deferred" -> {
                         Log.i(TAG, "Validation deferred: ${json.optString("reason")}")
-                        false
+                        null
                     }
-                    else -> false
+                    else -> null
                 }
             }
-            try { Thread.sleep(VALIDATION_POLL_MS) } catch (_: InterruptedException) { return false }
+            try { Thread.sleep(VALIDATION_POLL_MS) } catch (_: InterruptedException) { return null }
         }
         Log.w(TAG, "Validation timed out after ${VALIDATION_TIMEOUT_MS}ms")
-        return false
+        return null
     }
 
     /**
@@ -347,14 +368,17 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
             return true // skip mine; don't tip without validation
         }
 
-        if (!validateAndAwaitAccept(body, fromPeer = true)) {
+        val acceptedHash = validateAndAwaitAccept(body, fromPeer = true)
+        if (acceptedHash == null) {
             Log.w(TAG, "Peer block failed validation — tip unchanged")
             return true // still skip mine for this cycle
         }
 
         val obj = runCatching { org.json.JSONObject(body) }.getOrNull()
         val h    = obj?.optLong("height", -1L) ?: -1L
-        val hash = obj?.optString("hash")?.ifEmpty { competingHash } ?: competingHash
+        val hash = acceptedHash.ifEmpty {
+            obj?.optString("hash")?.ifEmpty { competingHash } ?: competingHash
+        }
         val diff = obj?.optLong("difficulty", 0L) ?: 0L
         if (h >= 0 && hash.isNotEmpty()) {
             P2PNode.setLocalTip(h, hash, diff)
@@ -365,16 +389,33 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
     }
 
     /**
-     * Compute the block hash locally so we can gossip it before HTTP confirmation.
-     * Matches the server's hash: sha256(prevHash || nonce || timestamp || difficulty).
+     * EQ-07 header hash: double SHA-256 of the UTF-8 field string.
+     * A missing merkle or state root is 64 zero bytes. That hash is the phone
+     * tip. It is not the artifacts seal, which binds the post-state root.
+     * residualFp is the solver's territory residual, not the canonical residual.
      */
-    private fun computeBlockHash(prevHash: String, nonce: Long, timestamp: Long, difficulty: Long): String {
+    private fun canonicalHeaderHash(
+        prevHash: String,
+        merkleRoot: String,
+        stateRoot: String,
+        timestamp: Long,
+        nonce: Long,
+        difficulty: Long,
+        residualFp: Long,
+        miner: String,
+        height: Int,
+        pressure: Double,
+    ): String {
+        val pressureText = String.format(Locale.US, "%.6f", pressure)
+        val preimage = "${hex64(prevHash)}|${hex64(merkleRoot)}|${hex64(stateRoot)}|$timestamp|$nonce|$difficulty|$residualFp|$miner|$height|$pressureText"
         val md = java.security.MessageDigest.getInstance("SHA-256")
-        md.update(hexToByteArray(prevHash))
-        md.update(java.nio.ByteBuffer.allocate(8).putLong(nonce).array())
-        md.update(java.nio.ByteBuffer.allocate(8).putLong(timestamp).array())
-        md.update(java.nio.ByteBuffer.allocate(8).putLong(difficulty).array())
-        return md.digest().joinToString("") { "%02x".format(it) }
+        val first = md.digest(preimage.toByteArray(Charsets.UTF_8))
+        return md.digest(first).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun hex64(hex: String): String {
+        val clean = if (hex.startsWith("0x", ignoreCase = true)) hex.substring(2) else hex
+        return clean.padStart(64, '0').takeLast(64).lowercase()
     }
 
     // ── Network helpers ───────────────────────────────────────────────────────
@@ -505,12 +546,9 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
     // ── Utilities ─────────────────────────────────────────────────────────────
 
     /**
-     * Build the compact block body JSON used for P2P body gossip (Phase C).
-     * Contains all fields peers need to validate the residual threshold and
-     * serve the block via the sync RR protocol to other phones.
-     *
-     * Does NOT include the Merkle root or transaction list — phones only need
-     * the mining-relevant fields, and the desktop node can recompute the rest.
+     * P2P body. The hash is the EQ-07 preimage of these fields.
+     * merkleRoot and stateRoot are 64 zeros when the phone does not know them.
+     * HTTP submit still adopts the node's sealed hash, which binds the real state root.
      */
     private fun buildBlockBodyJson(
         hash:       String,
@@ -518,18 +556,24 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         prevHash:   String,
         nonce:      Long,
         residual:   Double,
+        residualFp: Long,
         timestamp:  Long,
         miner:      String,
         difficulty: Long,
+        merkleRoot: String,
+        stateRoot:  String,
     ): String = JSONObject().apply {
         put("hash",       hash)
         put("height",     height)
         put("prevHash",   prevHash)
         put("nonce",      nonce)
         put("residual",   residual)
+        put("residualFp", residualFp)
         put("timestamp",  timestamp)
         put("miner",      miner)
         put("difficulty", difficulty)
+        put("merkleRoot", merkleRoot)
+        put("stateRoot",  stateRoot)
     }.toString()
 
     /**
