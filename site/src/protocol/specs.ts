@@ -82,6 +82,7 @@ export const SPECS: SpecDoc[] = [
     summary: "Header hash binds prev, merkle, state root, nonce, residual, miner, height.",
     body: [
       "The header hash is canonicalHeaderHash. It binds the previous hash, the merkle root, the state root, the timestamp, the nonce, the difficulty, the residual fingerprint, the miner, the height, and the committed pressure. It is not hash256(`block-${height}-${prev}-${now}`).",
+      "When the block carries a chain id and an evidence root, the preimage also binds those and the omega digest. That longer preimage is a different hash. The artifacts seal uses it when the block carries those fields.",
       "The state root merkle-izes account leaves, pool reserves, the admitted Bitcoin tip, the admitted Ethereum tip, and wasm storage. A validator-only change does not move it.",
       "Validator bond, jail, slash, delegations, difficulty, and proposals are in the omega digest. An evidence header binds that digest as well as the state root. Peers and the mempool are outside both.",
     ],

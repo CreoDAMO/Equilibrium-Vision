@@ -303,7 +303,7 @@ export function foreignDifficultyFactor(omega: Pick<Omega, "btc" | "eth">): { nu
   return { num, den };
 }
 
-function adjustDifficulty(
+export function adjustDifficulty(
   difficulty: number,
   blockTime: number,
   params: NetworkParams,

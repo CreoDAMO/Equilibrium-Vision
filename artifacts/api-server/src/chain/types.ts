@@ -86,6 +86,14 @@ export interface BlockRecord {
   committedPressure?: number;
   /** When set, addBlock replaces `hash` with canonicalHeaderHash after the state root exists. Replay leaves this unset. */
   sealIdentity?: boolean;
+  /**
+   * Set together with evidenceRoot. The seal then binds chain id, the evidence
+   * root, and the omega digest. Absent on artifacts-native blocks that are not
+   * carrying a kernel evidence header.
+   */
+  chainId?: number;
+  evidenceRoot?: string;
+  omegaRoot?: string;
 }
 
 /**

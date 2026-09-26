@@ -737,6 +737,81 @@ describe("ChainState UTXO fee sweep", () => {
     expect(state.pendingUtxoFees).toBe(750);
     expect(state.utxoSet.balance(miner)).toBe(0);
   });
+
+  it("an evidence-bearing seal binds chain id, evidence root, and omega root", () => {
+    const state = new ChainState();
+    const block = {
+      ...fakeBlock(0, 1_700_000_000),
+      miner: "b".repeat(40),
+      coinbaseReward: 0,
+      nonce: 6,
+      residual: 1e-6,
+      residualFp: 1_000_000_000_000,
+      committedPressure: 0,
+      sealIdentity: true,
+      chainId: 1,
+      evidenceRoot: "cd".repeat(32),
+      omegaRoot: "ef".repeat(32),
+    };
+    state.addBlock(block);
+    const common = {
+      prevHash: block.prevHash,
+      merkleRoot: block.merkleRoot,
+      stateRoot: block.stateRoot!,
+      timestamp: block.timestamp,
+      nonce: block.nonce,
+      difficulty: block.difficulty,
+      residualFp: block.residualFp!,
+      miner: block.miner,
+      height: block.height,
+      committedPressure: 0,
+    };
+    expect(block.hash).toBe(canonicalHeaderHash({ ...common, chainId: 1, evidenceRoot: "cd".repeat(32), omegaRoot: "ef".repeat(32) }));
+    expect(block.hash).not.toBe(canonicalHeaderHash(common));
+  });
+
+  it("the kernel's evidence-bearing header is the same hash in this process", () => {
+    expect(canonicalHeaderHash({
+      prevHash: "0".repeat(64),
+      merkleRoot: "0".repeat(64),
+      stateRoot: "89c80f5eddc60e39b03437f5a46e9e81fb03d24fe10d1b35892e8beebe977884",
+      timestamp: 1_700_000_000,
+      nonce: 6,
+      difficulty: 1_000_000,
+      residualFp: 201_100_202_523_998,
+      miner: "a".repeat(40),
+      height: 1,
+      committedPressure: 0,
+      chainId: 1,
+      evidenceRoot: "b425e880a379ede65d894a3470544f23a1a5076e690e78968e3072d2f2ca7994",
+      omegaRoot: "2777b2548cd75d2d9712b3d0983bc38420c0306b132d458083bcb5c844a59fbd",
+    })).toBe("795d67b1ed75cd450c86f6dd4569c0b7b33f194ce6d38e3441f1c6ad5b4fc5b2");
+  });
+
+  it("a foreign tip moves the next difficulty by the kernel ratio, and the tip survives a snapshot", () => {
+    const state = new ChainState();
+    state.currentDifficulty = 1_000_000;
+    state.btcTipHash = "0".repeat(64);
+    state.blocks.push(fakeBlock(0, 1_700_000_000));
+    state.blocks.push(fakeBlock(1, 1_700_000_015));
+    state.updateDifficulty();
+    expect(state.currentDifficulty).toBe(995_000);
+
+    const fast = new ChainState();
+    fast.currentDifficulty = 1_000_000;
+    fast.blocks.push(fakeBlock(0, 1_700_000_000));
+    fast.blocks.push(fakeBlock(1, 1_700_000_014));
+    fast.updateDifficulty();
+    expect(fast.currentDifficulty).toBe(1_071_428);
+
+    const snap = state.exportRestartSnapshot();
+    const born = new ChainState();
+    born.importRestartSnapshot(snap);
+    expect(born.btcTipHash).toBe("0".repeat(64));
+    born.currentDifficulty = 1_000_000;
+    born.updateDifficulty();
+    expect(born.currentDifficulty).toBe(995_000);
+  });
 });
 
 describe("stratum admission", () => {

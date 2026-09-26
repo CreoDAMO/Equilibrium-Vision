@@ -63,11 +63,13 @@ A validator miner is not paid twice. On the artifacts node, reward 100 with comm
 
 `stateRootOf` does not move when only a validator's bond changes. The omega digest does. A balance change moves both. EQ-07 says that. The artifacts state root is a different commitment: it also binds UTXOs, contract storage, and validator bond. Those two roots were not forced together.
 
+The ten-field header is not the header the kernel produces. A kernel block carries evidence, so the preimage also binds chain id, the evidence root, and the omega digest. One mainnet transition was run: two validators, bonds of 1,000, commission 0.1, nonce 6, pressure 0, block time 15 seconds, blank evidence. The reward was 99, the liquid credit was 9, and each validator's accumulated rewards were 45. Created value was 99. With no foreign tip the next difficulty stayed 1,000,000. A Bitcoin tip whose hash ends in byte 0 moved it to 995,000. The artifacts difficulty law, given that same interval and that same tip, returns those same integers, including the off-rail step at 14 seconds, 1,071,428. The evidence-bearing header was `795d67b1ed75cd450c86f6dd4569c0b7b33f194ce6d38e3441f1c6ad5b4fc5b2` in the kernel, in the artifacts hash function, and the ten-field preimage of the same block was a different hash. The artifacts seal appends the three evidence fields when the block carries them. A native artifacts block that does not carry them is still the ten-field header over the artifacts state root. Replaying the kernel transition produced the same omega digest. The tip is stored on the restart snapshot.
+
 Rust and the kernel agree on ten residual rows, not one. Nonce 0 is `0.02519000125198503`. Nonce 6 is `0.0002011002025239986`. The other rows move difficulty, work, pressure, timestamp, a 2^53−1 nonce, and one transaction. `canonical_coinbase` at that nonce-6 residual is 99 at height 1 and 100 at height 0. `cargo test --lib canonical_` passed those checks.
 
 ### Still open
 
-- This is not one transition. The artifacts node still has a UTXO set, contract storage, and its own genesis. The kernel does not replay that body, and that body does not run `successor`.
+- This is not one transition. The measured block agrees on reward, the stake split, the next difficulty, and the evidence-bearing header. The artifacts node still has a UTXO set, contract storage, and its own genesis, and its state root is not `stateRootOf`. The kernel does not replay that body.
 - The phone preimage is still `SHA256(prev || nonce || timestamp || difficulty)`. `canonical_header_hash` matches the kernel, and the phone's residual check is still the territory residual. Mobile is not a second producer.
 - The grid is these ten rows on this machine. It is not a proof about every platform's `f64`.
 - Floor dust on the stake split is unminted. It is not a later payment from the same block.

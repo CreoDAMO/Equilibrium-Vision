@@ -341,9 +341,42 @@ pub fn canonical_header_hash(
     height: u64,
     committed_pressure: f64,
 ) -> String {
-    let preimage = format!(
+    canonical_header_hash_evidence(
+        prev_hash,
+        merkle_root,
+        state_root,
+        timestamp,
+        nonce,
+        difficulty,
+        residual_fp,
+        miner,
+        height,
+        committed_pressure,
+        None,
+    )
+}
+
+/// The evidence-bearing preimage. Appends chain id, evidence root, and omega root.
+/// Same branch as TypeScript `canonicalHeaderHash` when those fields are set.
+pub fn canonical_header_hash_evidence(
+    prev_hash: &str,
+    merkle_root: &str,
+    state_root: &str,
+    timestamp: u64,
+    nonce: u64,
+    difficulty: u64,
+    residual_fp: i64,
+    miner: &str,
+    height: u64,
+    committed_pressure: f64,
+    evidence: Option<(u64, &str, &str)>,
+) -> String {
+    let mut preimage = format!(
         "{prev_hash}|{merkle_root}|{state_root}|{timestamp}|{nonce}|{difficulty}|{residual_fp}|{miner}|{height}|{committed_pressure:.6}"
     );
+    if let Some((chain_id, evidence_root, omega_root)) = evidence {
+        preimage.push_str(&format!("|{chain_id}|{evidence_root}|{omega_root}"));
+    }
     let first = Sha256::digest(preimage.as_bytes());
     hex::encode(Sha256::digest(first))
 }
@@ -842,6 +875,42 @@ mod tests {
             0.0,
         );
         assert_ne!(hash, other);
+    }
+
+    #[test]
+    fn canonical_header_hash_evidence_matches_the_kernel_block() {
+        let prev = "0".repeat(64);
+        let hash = canonical_header_hash_evidence(
+            &prev,
+            &prev,
+            "89c80f5eddc60e39b03437f5a46e9e81fb03d24fe10d1b35892e8beebe977884",
+            1_700_000_000,
+            6,
+            1_000_000,
+            201_100_202_523_998,
+            &"a".repeat(40),
+            1,
+            0.0,
+            Some((
+                1,
+                "b425e880a379ede65d894a3470544f23a1a5076e690e78968e3072d2f2ca7994",
+                "2777b2548cd75d2d9712b3d0983bc38420c0306b132d458083bcb5c844a59fbd",
+            )),
+        );
+        assert_eq!(hash, "795d67b1ed75cd450c86f6dd4569c0b7b33f194ce6d38e3441f1c6ad5b4fc5b2");
+        let ten = canonical_header_hash(
+            &prev,
+            &prev,
+            "89c80f5eddc60e39b03437f5a46e9e81fb03d24fe10d1b35892e8beebe977884",
+            1_700_000_000,
+            6,
+            1_000_000,
+            201_100_202_523_998,
+            &"a".repeat(40),
+            1,
+            0.0,
+        );
+        assert_ne!(hash, ten);
     }
 
     #[test]

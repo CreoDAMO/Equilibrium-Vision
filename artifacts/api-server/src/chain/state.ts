@@ -31,6 +31,7 @@ import { generateZkProof } from "./zkproof.js";
 import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import { canonicalResidual } from "./canonical-residual.js";
 import { withDbRetry } from "./persistence.js";
+import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import {
   applySlashing,
   canonicalCoinbase,
@@ -200,6 +201,9 @@ export class ChainState {
 
   // Adaptive difficulty
   currentDifficulty: number = INITIAL_DIFFICULTY;
+  /** Last byte of each verified foreign tip. Absent means the time rule alone. */
+  btcTipHash: string | null = null;
+  ethTipHash: string | null = null;
 
   // Validators & slashing
   validators = new Map<string, ValidatorRecord>();
@@ -430,12 +434,11 @@ export class ChainState {
   // ── Adaptive Difficulty ──────────────────────────────────────────────────────
 
   updateDifficulty(): void {
-    const avg = this.avgBlockTime;
-    if (avg === 0) return;
-    const ratio = TARGET_BLOCK_TIME / avg;
-    // Clamp adjustment to ±20% per block
-    const factor = Math.max(0.80, Math.min(1.20, ratio));
-    this.currentDifficulty = Math.max(100_000, Math.floor(this.currentDifficulty * factor));
+    const prev = this.blocks[this.blocks.length - 2];
+    const tip = this.blocks[this.blocks.length - 1];
+    const blockTime = prev && tip ? tip.timestamp - prev.timestamp : TARGET_BLOCK_TIME;
+    const foreign = foreignTipFactor(this.btcTipHash, this.ethTipHash);
+    this.currentDifficulty = adjustDifficultySeconds(this.currentDifficulty, blockTime, TARGET_BLOCK_TIME, foreign);
   }
 
   // ── Block management ─────────────────────────────────────────────────────────
@@ -602,6 +605,9 @@ export class ChainState {
           miner: block.miner,
           height: block.height,
           committedPressure: block.committedPressure ?? 0,
+          ...(block.chainId !== undefined && block.evidenceRoot !== undefined
+            ? { chainId: block.chainId, evidenceRoot: block.evidenceRoot, omegaRoot: block.omegaRoot }
+            : {}),
         });
         for (const tx of block.transactions) {
           tx.blockHash = block.hash;
@@ -1058,6 +1064,8 @@ export class ChainState {
     difficulty: number;
     unbonding: UnbondingEntry[];
     contracts: ReturnType<WasmVM["listContracts"]>;
+    btcTipHash: string | null;
+    ethTipHash: string | null;
   } {
     return {
       ledger: Object.fromEntries(
@@ -1070,6 +1078,8 @@ export class ChainState {
       difficulty: this.currentDifficulty,
       unbonding: this.unbondingQueue.map((u) => ({ ...u })),
       contracts: this.wasmVM.listContracts().map((c) => ({ ...c, storage: { ...c.storage } })),
+      btcTipHash: this.btcTipHash,
+      ethTipHash: this.ethTipHash,
     };
   }
 
@@ -1089,6 +1099,8 @@ export class ChainState {
     difficulty: number;
     unbonding: UnbondingEntry[];
     contracts: ReturnType<WasmVM["listContracts"]>;
+    btcTipHash?: string | null;
+    ethTipHash?: string | null;
   }): void {
     this.ledger.restoreAccounts(snap.ledger);
     this.utxoSet.restoreFromSnapshot(snap.utxos);
@@ -1099,6 +1111,8 @@ export class ChainState {
     this.stakes.clear();
     for (const s of snap.stakes) this.stakes.set(`${s.delegator}-${s.validator}`, { ...s });
     this.currentDifficulty = snap.difficulty;
+    this.btcTipHash = snap.btcTipHash ?? null;
+    this.ethTipHash = snap.ethTipHash ?? null;
     this.unbondingQueue = snap.unbonding.map((u) => ({ ...u }));
     this.wasmVM.replaceContracts(snap.contracts);
   }
