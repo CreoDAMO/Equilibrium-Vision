@@ -276,11 +276,48 @@ function issuanceSplit(
   return { liquid, staked: reward - liquid };
 }
 
-function adjustDifficulty(difficulty: number, blockTime: number, params: NetworkParams): number {
+/** Last byte of a 64-hex tip, or null when there is no tip. */
+function tipByte(hash: string | undefined): number | null {
+  if (!hash || hash.length < 2) return null;
+  const byte = Number.parseInt(hash.slice(-2), 16);
+  return Number.isFinite(byte) ? byte : null;
+}
+
+/**
+ * Verified foreign tips move the next difficulty.
+ * No tip returns 1/1, so the time rule is unchanged.
+ * Each tip's last byte maps onto the integer ratio [9950, 10050] / 10000,
+ * which is the closed interval [0.995, 1.005].
+ */
+export function foreignDifficultyFactor(omega: Pick<Omega, "btc" | "eth">): { num: number; den: number } {
+  let num = 1;
+  let den = 1;
+  const apply = (byte: number | null) => {
+    if (byte === null) return;
+    const bump = Math.round((byte / 255) * 100);
+    num *= 9950 + bump;
+    den *= 10_000;
+  };
+  apply(tipByte(omega.btc[omega.btc.length - 1]?.hash));
+  apply(tipByte(omega.eth[omega.eth.length - 1]?.hash));
+  return { num, den };
+}
+
+function adjustDifficulty(
+  difficulty: number,
+  blockTime: number,
+  params: NetworkParams,
+  foreign: { num: number; den: number } = { num: 1, den: 1 },
+): number {
   const target = params.targetBlockTimeMs / 1000;
   if (blockTime <= 0) return difficulty;
-  const factor = Math.max(0.8, Math.min(1.2, target / blockTime));
-  return Math.max(100_000, Math.floor(difficulty * factor));
+  const unclamped = (target / blockTime) * (foreign.num / foreign.den);
+  const factor = Math.max(0.8, Math.min(1.2, unclamped));
+  if (factor === 0.8 || factor === 1.2) {
+    return Math.max(100_000, Math.floor(difficulty * factor));
+  }
+  const scaled = Math.floor((difficulty * target * foreign.num) / (blockTime * foreign.den));
+  return Math.max(100_000, scaled);
 }
 
 function applyStake(omega: Omega, op: StakeEvidence, params: NetworkParams): string | null {
@@ -498,7 +535,7 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor
   next.tipTimestamp = inputs.timestamp;
   const blockTime =
     omega.height < 0 ? params.targetBlockTimeMs / 1000 : inputs.timestamp - omega.tipTimestamp;
-  next.difficulty = adjustDifficulty(omega.difficulty, blockTime, params);
+  next.difficulty = adjustDifficulty(omega.difficulty, blockTime, params, foreignDifficultyFactor(next));
   const all = [...next.validators.values()];
   const live = all.filter((x) => !x.jailed && !x.slashed);
   const total = all.reduce((s, x) => s + x.bondedStake, 0);

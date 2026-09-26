@@ -29,10 +29,13 @@ import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
 import { generateZkProof } from "./zkproof.js";
 import { verifyEd25519BatchDetailed } from "./batchVerify.js";
+import { canonicalResidual } from "./canonical-residual.js";
 import { withDbRetry } from "./persistence.js";
 import {
   splitValidatorReward,
   applySlashing,
+  canonicalCoinbase,
+  CANONICAL_RESIDUAL_TARGET,
   SLASHING_DOUBLE_SIGN_PCT,
   SLASHING_DOWNTIME_PCT,
   type ValidatorStake as CoinomicsValidatorStake,
@@ -40,7 +43,6 @@ import {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const BASE_REWARD = 50_000_000;
 const TARGET_BLOCK_TIME = 15;
 const INITIAL_DIFFICULTY = 1_000_000;
 const UNBONDING_PERIOD = 10;
@@ -368,26 +370,17 @@ export class ChainState {
         return Object.prototype.hasOwnProperty.call(params, name) ? params[name] : undefined;
       },
       dexMultiSwap: (poolIds, tokenIn, amountIn, trader) => {
-        if (!this.ledger.debit(trader, amountIn)) return null;
-        let currentToken = tokenIn;
-        let currentAmount = amountIn;
-        // Credit back to the trader up front so each hop's internal
-        // `swap()` debit (which pulls from `trader`) has funds to draw from.
-        this.ledger.credit(trader, amountIn);
-        for (const poolId of poolIds) {
-          const result = this.swap(poolId, trader, currentToken, currentAmount);
-          if (typeof result === "string") return null;
-          const pool = this.dexPools.get(poolId);
-          if (!pool) return null;
-          currentToken = currentToken === pool.tokenA ? pool.tokenB : pool.tokenA;
-          currentAmount = result.amountOut;
-        }
-        return currentAmount;
+        return this.applyMultiSwap(poolIds, tokenIn, amountIn, trader);
       },
     });
   }
 
-  // Slash rate-limiting: tracks timestamps of slashes per validator in the last 24 h
+  // Account state before each committed block, so a rollback can put the money back.
+  private preBlockLedger = new Map<number, Record<string, { balance: number; nonce: number }>>();
+  private preBlockValidators = new Map<number, ValidatorRecord[]>();
+  private preBlockStakes = new Map<number, StakeRecord[]>();
+  private preBlockDifficulty = new Map<number, number>();
+  private preBlockUnbonding = new Map<number, UnbondingEntry[]>();
   private _slashWindows = new Map<string, number[]>();
   private static readonly MAX_SLASHES_PER_DAY = 5;
   private static readonly SLASH_WINDOW_S = 86_400;
@@ -449,6 +442,13 @@ export class ChainState {
   // ── Block management ─────────────────────────────────────────────────────────
 
   addBlock(block: BlockRecord): void {
+    this.preBlockLedger.set(block.height, Object.fromEntries(
+      [...this.ledger.getAllAccounts().entries()].map(([addr, acc]) => [addr, { balance: acc.balance, nonce: acc.nonce }]),
+    ));
+    this.preBlockValidators.set(block.height, [...this.validators.values()].map((v) => ({ ...v })));
+    this.preBlockStakes.set(block.height, [...this.stakes.values()].map((s) => ({ ...s })));
+    this.preBlockDifficulty.set(block.height, this.currentDifficulty);
+    this.preBlockUnbonding.set(block.height, this.unbondingQueue.map((u) => ({ ...u })));
     this.blocks.push(block);
 
     // Coinbase is an account-ledger credit inside distributeBlockReward.
@@ -573,6 +573,19 @@ export class ChainState {
         );
       }
 
+      for (const [id, pool] of this.dexPools) {
+        smt.set(
+          smtKey("pool", id),
+          smtValue(`${pool.reserveA}:${pool.reserveB}:${pool.fee}`),
+        );
+      }
+      for (const [addr, v] of this.validators) {
+        smt.set(
+          smtKey("val", addr),
+          smtValue(`${v.bondedStake}:${v.commission}:${v.jailed ? 1 : 0}:${v.slashed ? 1 : 0}`),
+        );
+      }
+
       block.stateRoot = smt.root();
       this._stateSmt = smt;
 
@@ -636,6 +649,33 @@ export class ChainState {
       // Drop stats/finality bookkeeping tied to the removed block.
       this.blockStats = this.blockStats.filter((s) => s.height !== block.height);
       this.finalityRounds.delete(block.height);
+    }
+
+    const oldest = removed[removed.length - 1];
+    if (oldest) {
+      const ledger = this.preBlockLedger.get(oldest.height);
+      if (ledger) this.ledger.restoreAccounts(ledger);
+      const validators = this.preBlockValidators.get(oldest.height);
+      if (validators) {
+        this.validators.clear();
+        for (const v of validators) this.validators.set(v.address, { ...v });
+      }
+      const stakes = this.preBlockStakes.get(oldest.height);
+      if (stakes) {
+        this.stakes.clear();
+        for (const s of stakes) this.stakes.set(`${s.delegator}-${s.validator}`, { ...s });
+      }
+      const difficulty = this.preBlockDifficulty.get(oldest.height);
+      if (difficulty !== undefined) this.currentDifficulty = difficulty;
+      const unbonding = this.preBlockUnbonding.get(oldest.height);
+      if (unbonding) this.unbondingQueue = unbonding.map((u) => ({ ...u }));
+    }
+    for (const block of removed) {
+      this.preBlockLedger.delete(block.height);
+      this.preBlockValidators.delete(block.height);
+      this.preBlockStakes.delete(block.height);
+      this.preBlockDifficulty.delete(block.height);
+      this.preBlockUnbonding.delete(block.height);
     }
 
     // Keep the WASM VM's block_number() host import in sync with the chain
@@ -1021,6 +1061,67 @@ export class ChainState {
     return null;
   }
 
+  /**
+   * Everything the state root binds, plus the stake and difficulty the next
+   * block reads. A restart that applies this snapshot rebuilds the same root.
+   * Contract rows are included because they are leaves. They are also stored
+   * in the contracts table; this copy is what makes the root match if that
+   * table is applied together with the ledger.
+   */
+  exportRestartSnapshot(): {
+    ledger: Record<string, { balance: number; nonce: number }>;
+    utxos: ReturnType<UTXOSet["getAllUnspent"]>;
+    pools: DexPool[];
+    validators: ValidatorRecord[];
+    stakes: StakeRecord[];
+    difficulty: number;
+    unbonding: UnbondingEntry[];
+    contracts: ReturnType<WasmVM["listContracts"]>;
+  } {
+    return {
+      ledger: Object.fromEntries(
+        [...this.ledger.getAllAccounts().entries()].map(([addr, acc]) => [addr, { balance: acc.balance, nonce: acc.nonce }]),
+      ),
+      utxos: this.utxoSet.getAllUnspent().map((u) => ({ ...u })),
+      pools: [...this.dexPools.values()].map((p) => ({ ...p })),
+      validators: [...this.validators.values()].map((v) => ({ ...v })),
+      stakes: [...this.stakes.values()].map((s) => ({ ...s })),
+      difficulty: this.currentDifficulty,
+      unbonding: this.unbondingQueue.map((u) => ({ ...u })),
+      contracts: this.wasmVM.listContracts().map((c) => ({ ...c, storage: { ...c.storage } })),
+    };
+  }
+
+  importRestartSnapshot(snap: {
+    ledger: Record<string, { balance: number; nonce: number }>;
+    utxos: Array<{
+      txHash: string;
+      outputIndex: number;
+      address: string;
+      amount: number;
+      coinbase: boolean;
+      blockHeight: number;
+    }>;
+    pools: DexPool[];
+    validators: ValidatorRecord[];
+    stakes: StakeRecord[];
+    difficulty: number;
+    unbonding: UnbondingEntry[];
+    contracts: ReturnType<WasmVM["listContracts"]>;
+  }): void {
+    this.ledger.restoreAccounts(snap.ledger);
+    this.utxoSet.restoreFromSnapshot(snap.utxos);
+    this.dexPools.clear();
+    for (const pool of snap.pools) this.dexPools.set(pool.id, { ...pool });
+    this.validators.clear();
+    for (const v of snap.validators) this.validators.set(v.address, { ...v });
+    this.stakes.clear();
+    for (const s of snap.stakes) this.stakes.set(`${s.delegator}-${s.validator}`, { ...s });
+    this.currentDifficulty = snap.difficulty;
+    this.unbondingQueue = snap.unbonding.map((u) => ({ ...u }));
+    this.wasmVM.replaceContracts(snap.contracts);
+  }
+
   processUnbonding(height: number): void {
     const completed = this.unbondingQueue.filter(u => u.completionHeight <= height);
     this.unbondingQueue = this.unbondingQueue.filter(u => u.completionHeight > height);
@@ -1031,6 +1132,37 @@ export class ChainState {
 
   // ── DEX AMM ──────────────────────────────────────────────────────────────────
 
+  /** Several hops, or none of them. A failed hop puts the pools and the trader back. */
+  applyMultiSwap(poolIds: string[], tokenIn: string, amountIn: number, trader: string): number | null {
+    const pools = new Map([...this.dexPools.entries()].map(([id, pool]) => [id, { ...pool }]));
+    const balance = this.ledger.balance(trader);
+    const history = this.swapHistory.length;
+    let currentToken = tokenIn;
+    let currentAmount = amountIn;
+    for (const poolId of poolIds) {
+      const result = this.swap(poolId, trader, currentToken, currentAmount);
+      if (typeof result === "string" || !this.dexPools.get(poolId)) {
+        this.dexPools.clear();
+        for (const [id, pool] of pools) this.dexPools.set(id, pool);
+        const now = this.ledger.balance(trader);
+        if (now > balance) this.ledger.debit(trader, now - balance);
+        else if (now < balance) this.ledger.credit(trader, balance - now);
+        const added = this.swapHistory.length - history;
+        if (added > 0) this.swapHistory.splice(0, added);
+        for (const pool of this.dexPools.values()) {
+          this._persistPool(pool).catch((e) =>
+            logger.warn({ err: e, poolId: pool.id }, "[ChainState] persistPool(revert) failed"),
+          );
+        }
+        return null;
+      }
+      const pool = this.dexPools.get(poolId)!;
+      currentToken = currentToken === pool.tokenA ? pool.tokenB : pool.tokenA;
+      currentAmount = result.amountOut;
+    }
+    return currentAmount;
+  }
+
   swap(
     poolId: string,
     trader: string,
@@ -1039,18 +1171,15 @@ export class ChainState {
   ): { amountOut: number; fee: number } | string {
     const pool = this.dexPools.get(poolId);
     if (!pool) return "pool not found";
-    if (!this.ledger.debit(trader, amountIn)) return "insufficient funds";
 
     const isAtoB = tokenIn === pool.tokenA;
     const reserveIn = isAtoB ? pool.reserveA : pool.reserveB;
     const reserveOut = isAtoB ? pool.reserveB : pool.reserveA;
-
-    // x*y = k constant product with fee
     const amountInWithFee = amountIn * (1 - pool.fee);
     const amountOut = Math.floor((reserveOut * amountInWithFee) / (reserveIn + amountInWithFee));
     const fee = Math.floor(amountIn * pool.fee);
-
     if (amountOut <= 0) return "insufficient liquidity";
+    if (!this.ledger.debit(trader, amountIn)) return "insufficient funds";
 
     // Update reserves
     if (isAtoB) {
@@ -1521,8 +1650,7 @@ export function buildGenesisChain(): ChainState {
   for (let h = 0; h <= 24; h++) {
     const miner = miners[h % 2]!;
     const residual = 1e-9 * (1 + (h % 97) / 100);
-    const quality = 1.0 / (residual + 1e-6);
-    const reward = Math.floor(BASE_REWARD * Math.min(quality, 1.0));
+    const reward = canonicalCoinbase(h, residual);
     state.ledger.credit(miner, reward);
 
     const txs: TxRecord[] = [];
@@ -1688,6 +1816,7 @@ export async function mineNextBlockAsync(
   let nonce    = 0;
   let residual = 0;
   let usedSolver = false;
+  let solverAdmitted: boolean | undefined;
   try {
     const solution = await solveBlock({
       prevHash:        prev.hash,
@@ -1702,6 +1831,7 @@ export async function mineNextBlockAsync(
       nonce      = solution.nonce;
       residual   = solution.residual; // f64 from Rust solver
       usedSolver = true;
+      solverAdmitted = solution.admitted;
       // Report thermal margin to the contribution tracker so the network
       // can observe per-device health. Value ∈ [0,1]; 1 = cool, 0 = hot.
       const margin = solution.thermal_margin ?? 1.0;
@@ -1726,10 +1856,30 @@ export async function mineNextBlockAsync(
     nonce    = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     residual = Math.random() * 5e-9 + 1e-10;
     logger.warn({ height }, "ALLOW_RANDOM_MINING: using RNG residual (not production-safe)");
+  } else {
+    // The Rust solver may return a territory residual, including a best-effort
+    // candidate that missed its own target. Admission uses the canonical
+    // residual of this nonce, recomputed here. The returned number is not enough.
+    residual = canonicalResidual(
+      {
+        prevHash: prev.hash,
+        merkleRoot: mr,
+        timestamp: now,
+        nonce,
+        difficulty: state.currentDifficulty,
+      },
+      selected.map((t) => ({ hash: t.hash, fee: t.fee })),
+      { cumulativeWork: height, mempoolPressure: state.mempool.pressure },
+    );
+    if (solverAdmitted === false) {
+      throw new Error(`solver candidate nonce ${nonce} was not admitted`);
+    }
   }
 
-  const quality  = 1.0 / (residual + 1e-6);
-  const reward   = Math.floor(BASE_REWARD * Math.min(quality, 1.0));
+  if (!(residual < CANONICAL_RESIDUAL_TARGET)) {
+    throw new Error(`residual ${residual} is not under the admission target ${CANONICAL_RESIDUAL_TARGET}`);
+  }
+  const reward = canonicalCoinbase(height, residual);
   const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
 
   const txs: TxRecord[] = selected.map((t) => ({
@@ -1810,8 +1960,10 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   const mr = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
 
   const residual = Math.random() * 5e-9 + 1e-10;
-  const quality = 1.0 / (residual + 1e-6);
-  const reward = Math.floor(BASE_REWARD * Math.min(quality, 1.0));
+  if (!(residual < CANONICAL_RESIDUAL_TARGET)) {
+    throw new Error(`residual ${residual} is not under the admission target ${CANONICAL_RESIDUAL_TARGET}`);
+  }
+  const reward = canonicalCoinbase(height, residual);
 
   const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
 

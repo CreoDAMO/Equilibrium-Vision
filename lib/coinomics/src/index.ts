@@ -4,6 +4,8 @@ export {
   blockReward,
   qualityMultiplier,
   minerReward,
+  canonicalCoinbase,
+  CANONICAL_RESIDUAL_TARGET,
   cumulativeEmission,
 } from "./reward.js";
 

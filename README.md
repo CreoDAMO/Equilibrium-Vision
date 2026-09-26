@@ -2,9 +2,9 @@
 
 Proof-of-Stationarity. One public kernel in `site/`, and the older TypeScript node in `artifacts/api-server/`. They are not the same body.
 
-## Current state (25 September 2026)
+## Current state (26 September 2026)
 
-Not production-ready. A person can use the public kernel. Nobody can yet rely on it as a coin that survives the process that mines it.
+Not production-ready. A person can use the public kernel. Nobody can yet rely on it as a coin that survives the process that mines it, or as a second producer that takes over when this one stops.
 
 The questions that were being mixed together are separate. The transition question is what `successor` does with the inputs it is given. The production question is whether a second party can hold EQU, and whether a verified Bitcoin or Ethereum header changes anything after it is stored. Leaving EQU onto another chain is not one of those questions. The bridges are there to admit foreign headers, not to export the coin.
 
@@ -25,7 +25,11 @@ The browser wallet at `/wallet` creates an Ed25519 key that stays in the browser
 
 `successor` is defined on the inputs it is given, and it refuses an input the sender cannot cover. That check is inside the transition. A port that copies `successor` and skips the producer's selection loop still cannot mint a recipient balance. EQ-03 and EQ-06 state this. It is no longer an upstream promise.
 
-What still has to be supplied, because the transition does not derive it: the miner, the timestamp, and the committed pressure. Two admitting nonces can share one state while the reward is clipped, and still be two different blocks. Zeroing λ_structural changed the residual and not the state, under that same clip. The wasm host result changes the state, and EQ-06 does not name the binary.
+What still has to be supplied, because the transition does not derive it: the miner, the timestamp, and the committed pressure. Two admitting nonces can share one state while the reward is clipped, and still be two different blocks. Zeroing λ_structural changed the residual and not the state, under that same clip.
+
+The wasm host is named. It is `callArbitrage` over the arbitrage module whose sha256 is the evidence code. Any other code is refused. Two storage maps are still two states, because that map is the host's output and it is part of Ω. The external variational-ai CLI used by the older stratum path is not that host, and it is not pinned by this hash.
+
+A verified Bitcoin tip changes the next difficulty. Each foreign tip's last byte maps into a factor in [0.995, 1.005]. That factor multiplies the time rule, and the product is still clamped to 0.8 and 1.2. No tip leaves the time rule unchanged. The header is not only a leaf in the state root. EQ-20 states this. It does not move a balance by itself, and it does not pay another chain.
 
 ### Money, as declared
 
@@ -37,18 +41,27 @@ When the producer is bonded, liquid issuance is `floor(reward × 0.1)` and the r
 
 ### Production tree
 
-`artifacts/api-server` was installed and `chain.unit.test.ts` was run: 47 tests passed, with `ALLOW_TS_TRAPDOOR_PROVER=true` and `NODE_ENV=test`. Without that flag the trapdoor prover throws, which is the production setting.
+`artifacts/api-server` is the older node. It is not the public kernel. The chain unit file is the check that was run against it.
 
-Coinbase is credited on the account ledger only. It is not also created as a UTXO. A transfer the account ledger rejects is marked failed and creates no output. A transfer it accepts does not mint a second recipient UTXO. Broadcast rejects a transaction the ledger cannot apply before it enters the mempool. UTXO fees that were already collected still sweep to a UTXO for the miner of the next block. Those fees were never an account balance.
+Coinbase is credited on the account ledger only. It is not also created as a UTXO. A transfer the account ledger rejects is marked failed and creates no output. A transfer it accepts does not mint a second recipient UTXO. Broadcast rejects a transaction the ledger cannot apply before it enters the mempool. The stratum miner now uses that same selection. UTXO fees that were already collected still sweep to a UTXO for the miner of the next block. Those fees were never an account balance.
 
-A rollback restores that UTXO fee pool. It does not reverse the account-ledger coinbase. That reorg path is still open.
+A rollback restores the account coinbase and the transfers from the snapshot taken at the start of the block, and it restores the UTXO fee pool. Blocks that were added before that snapshot existed still have nothing to restore.
+
+A swap that cannot pay does not debit. A multi-hop swap that fails on a later hop puts the pools, the trader, and the swap history back.
+
+The state root commits pool reserves and validator bond, jail, and slash, as well as accounts, UTXOs, and contract storage. A restart snapshot now carries those partitions inside the existing ledger document, under `__partitions`, so a restore can rebuild that root. That was checked in memory. It was not checked by killing a Postgres process and booting it again.
+
+The paid coinbase on this node is the same `canonicalCoinbase` the public kernel pays. The Rust testnet node calls the same curve. `compute_coinbase_reward` is still in the crate. It is not the block path. `optimize_full` still returns a best-effort candidate when the target is missed. The consensus API, the FFI, the JNI bridge, and the testnet node now treat that candidate as not admitted. Callers that only looked at `ok: true` have to read `admitted`.
+
+External submit and stratum no longer store a claimed residual that this process did not recompute. The stored residual is the canonical residual of the block being committed, and the claim has to match it. A small invented number is refused. The internal RNG miner is still a test hatch. It is not the production path.
 
 ### Still open
 
 - One process produces blocks. A second body can replay them. It has not been shown taking over when the producer stops.
-- Verified BTC and ETH headers are stored and change the state root. No later rule changes a balance, a reward, or the difficulty because of them.
-- The wasm host that writes contract storage is not named by the specification, and two host results are two states.
-- The Rust crate does not mine these blocks.
+- The Rust territory solver is not the public residual. A candidate it returns is refused unless the canonical residual of that nonce is under the target. It does not yet search that residual, so it does not mine these blocks.
+- Stratum still asks the variational-ai CLI before the canonical recompute. That CLI is not the named wasm host, and its identity is not pinned here.
+- Restart equivalence was proven for the in-memory snapshot, not by a process restart against Postgres.
+- Mobile remains a verifier of this kernel, not a second producer.
 
 The sections below describe the repository. They are not a claim that each of those organs is the live kernel.
 

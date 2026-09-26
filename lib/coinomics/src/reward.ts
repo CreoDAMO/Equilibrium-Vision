@@ -19,7 +19,19 @@ export interface RewardCurveParams {
   halvingInterval: number;
 }
 
-/** Mainnet defaults from the Coinomics spec: 100 EQU base reward, halving every 2.1M blocks (~1 year at 15s blocks). */
+export const CANONICAL_RESIDUAL_TARGET = 2e-3;
+
+/** The block reward the public kernel pays. Integer EQU, after the halving curve and the quality cap. */
+export function canonicalCoinbase(
+  height: number,
+  residual: number,
+  target = CANONICAL_RESIDUAL_TARGET,
+): number {
+  if (!Number.isFinite(height) || height < 0) return 0;
+  if (!Number.isFinite(residual) || residual < 0) return 0;
+  return Math.max(0, Math.floor(minerReward(height, residual, target)));
+}
+
 export const MAINNET_REWARD_PARAMS: RewardCurveParams = {
   baseReward: 100,
   halvingInterval: 2_100_000,

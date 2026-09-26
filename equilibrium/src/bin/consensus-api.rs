@@ -11,7 +11,7 @@
 //            → { ok, valid }
 //   solve   { prevHash, merkleRoot, timestamp, difficulty, maxIter,
 //              mempoolPressure, cumulativeWork }
-//            → { ok, nonce, residual }
+//            → { ok, nonce, residual, admitted }
 //   warmup  {}
 //            → { ok, warmup: true }
 //
@@ -22,7 +22,7 @@ use std::io::{self, BufRead, Write};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use equilibrium_core::chain_state::{BlockHeader, ChainState, residual_to_fixed, residual_to_float};
+use equilibrium_core::chain_state::{BlockHeader, ChainState, admits_canonical, residual_to_fixed, residual_to_float};
 use equilibrium_core::stationary_solver::StationarySolver;
 use equilibrium_core::zk_proof::{StationarityProof, verify_raw_proof};
 
@@ -85,6 +85,8 @@ enum Response {
         ok: bool,
         nonce: u64,
         residual: f64,
+        /// False when the candidate is only the solver's best effort.
+        admitted: bool,
     },
     Warmup {
         ok: bool,
@@ -232,6 +234,7 @@ fn handle(line: &str) -> Response {
                     ok: true,
                     nonce: solution.nonce,
                     residual: residual_to_float(solution.residual),
+                    admitted: admits_canonical(solution.residual, 2e-3),
                 },
                 None => Response::Error {
                     ok: false,

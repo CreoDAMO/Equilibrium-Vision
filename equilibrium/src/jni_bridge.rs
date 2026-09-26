@@ -21,7 +21,7 @@ use jni::{
 use crate::p2p_runtime;
 
 use crate::{
-    chain_state::{BlockHeader, ChainState},
+    chain_state::{BlockHeader, ChainState, admits_canonical},
     stationary_solver::StationarySolver,
 };
 
@@ -126,7 +126,9 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
             if env.set_long_array_region(&out_residual, 0, &[solution.residual]).is_err() {
                 return JNI_FALSE;
             }
-            JNI_TRUE
+            // Returning true means the candidate is under the canonical target.
+            // A best-effort residual is written back and is not a block.
+            if admits_canonical(solution.residual, 2e-3) { JNI_TRUE } else { JNI_FALSE }
         }
         None => JNI_FALSE,
     }

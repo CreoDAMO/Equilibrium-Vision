@@ -1,6 +1,6 @@
 use equilibrium_core::{
     stationary_solver::StationarySolver,
-    chain_state::{BlockHeader, ChainState, compute_coinbase_reward},
+    chain_state::{BlockHeader, ChainState, admits_canonical, canonical_coinbase, residual_to_float},
     wallet::{Wallet, Ledger, address_to_hex},
 };
 
@@ -34,10 +34,17 @@ async fn main() {
 
     println!("Mining block...");
     if let Some((solution, _txs)) = solver.optimize_full(header, vec![], &state) {
+        let residual = residual_to_float(solution.residual);
+        if !admits_canonical(solution.residual, 2e-3) {
+            println!(
+                "Refused: residual {residual} is not under the admission target 0.002. optimize_full returned a candidate. That is not a block."
+            );
+            return;
+        }
         println!("Block found  : nonce={}, residual={}", solution.nonce, solution.residual);
 
         // ── Coinbase reward to miner ───────────────────────────────────────────
-        let reward = compute_coinbase_reward(50_000_000, solution.residual);
+        let reward = canonical_coinbase(1, residual, 2e-3);
         let mut ledger = Ledger::new();
         ledger.credit(&miner.address, reward);
         println!("Coinbase     : {reward} EQU → miner\n");

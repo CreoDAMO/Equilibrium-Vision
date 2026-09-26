@@ -2,11 +2,20 @@ import { describe, expect, it } from "vitest";
 import {
   MAINNET_REWARD_PARAMS,
   blockReward,
+  canonicalCoinbase,
   cumulativeEmission,
   minerReward,
   qualityMultiplier,
 } from "./reward.js";
 
+describe("canonicalCoinbase", () => {
+  it("matches the vectors the Rust node asserts", () => {
+    expect(canonicalCoinbase(0, 0)).toBe(100);
+    expect(canonicalCoinbase(1, 0)).toBe(99);
+    expect(canonicalCoinbase(1, 1)).toBe(0);
+    expect(canonicalCoinbase(1, 0.00024711927978383826)).toBe(99);
+  });
+});
 describe("blockReward", () => {
   it("returns the base reward at height 0", () => {
     expect(blockReward(0)).toBe(MAINNET_REWARD_PARAMS.baseReward);

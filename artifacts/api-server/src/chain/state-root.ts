@@ -37,6 +37,15 @@ export function rebuildStateSmt(chainState: ChainState): SparseMerkleTree {
       smtValue(JSON.stringify(contract.storage)),
     );
   }
+  for (const [id, pool] of chainState.dexPools) {
+    smt.set(smtKey("pool", id), smtValue(`${pool.reserveA}:${pool.reserveB}:${pool.fee}`));
+  }
+  for (const [addr, v] of chainState.validators) {
+    smt.set(
+      smtKey("val", addr),
+      smtValue(`${v.bondedStake}:${v.commission}:${v.jailed ? 1 : 0}:${v.slashed ? 1 : 0}`),
+    );
+  }
 
   return smt;
 }

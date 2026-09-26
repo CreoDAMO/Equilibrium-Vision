@@ -71,7 +71,8 @@ export const SPECS: SpecDoc[] = [
     body: [
       "Account model is canonical. Coinbase is credited on that ledger and is not also created as a second output.",
       "successor is defined on the inputs it is given. A transfer the sender cannot cover is refused inside the transition. The refusal is not a precondition that only the producer knows.",
-      "Difficulty moves by the ratio of the target block time to the actual block time, clamped to 0.8 and 1.2, and does not fall below 100,000.",
+      "Difficulty moves by the ratio of the target block time to the actual block time, multiplied by the foreign-tip factor in EQ-20, clamped to 0.8 and 1.2, and does not fall below 100,000.",
+      "The wasm host is callArbitrage. It runs the arbitrage module whose sha256 is the evidence code. Any other code is refused. The storage it writes is part of Ω.",
       "Fail closed: no RNG residual, no claimed residual without recompute.",
     ],
   },
@@ -193,7 +194,8 @@ export const SPECS: SpecDoc[] = [
     title: "Cross-chain",
     summary: "A membrane. Foreign commitments are attestations until proven.",
     body: [
-      "Source CrossChainRelay.publishOutbound() still accepts a caller-supplied commitment. Not wired as consensus here.",
+      "A verified Bitcoin or Ethereum header is not only stored. The next difficulty is the time rule multiplied by a factor from each foreign tip's last byte. That factor is the integer ratio (9950 + round(byte / 255 × 100)) / 10000, so it stays inside [0.995, 1.005]. The product is then clamped to 0.8 and 1.2 and floored at 100,000.",
+      "No foreign tip leaves the time rule unchanged. This rule does not export EQU.",
     ],
   },
   {

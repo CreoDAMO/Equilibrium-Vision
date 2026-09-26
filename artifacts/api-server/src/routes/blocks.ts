@@ -7,6 +7,8 @@ import { broadcast } from "../lib/ws-server.js";
 import { logger } from "../lib/logger.js";
 import type { TxRecord } from "../chain/types.js";
 import { RateLimiter, ReplaySet } from "../lib/submission-guard.js";
+import { canonicalCoinbase, CANONICAL_RESIDUAL_TARGET } from "@workspace/coinomics";
+import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
 
 const router = Router();
 
@@ -121,9 +123,6 @@ router.get("/blocks/:hashOrHeight/fees", (req, res) => {
 // Response 409: stale work (chain tip advanced while solving)
 // Response 422: residual above threshold
 
-const RESIDUAL_THRESHOLD = 1e-7;
-const BASE_REWARD        = 50_000_000;
-
 router.post("/blocks/submit", (req, res) => {
   // ── Rate limiting — per source IP ───────────────────────────────────────────
   // Always use the TCP socket address.  We deliberately ignore X-Forwarded-For
@@ -161,11 +160,11 @@ router.post("/blocks/submit", (req, res) => {
   }
 
   // ── Check residual meets the PoS threshold ──────────────────────────────────
-  if (residual >= RESIDUAL_THRESHOLD) {
+  if (residual >= CANONICAL_RESIDUAL_TARGET) {
     res.status(422).json({
       error:     "Residual does not meet threshold",
       residual,
-      threshold: RESIDUAL_THRESHOLD,
+      threshold: CANONICAL_RESIDUAL_TARGET,
     });
     return;
   }
@@ -227,9 +226,29 @@ router.post("/blocks/submit", (req, res) => {
   const txHashes  = selected.map((t) => t.hash);
   const mr        = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
   const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
+  const recomputed = canonicalResidual(
+    {
+      prevHash: prev.hash,
+      merkleRoot: mr,
+      timestamp: now,
+      nonce: Math.floor(nonce),
+      difficulty: chainState.currentDifficulty,
+    },
+    selected.map((t) => ({ hash: t.hash, fee: t.fee })),
+    { cumulativeWork: height, mempoolPressure: chainState.mempool.pressure },
+  );
+  const admission = admitResidual(residual, recomputed, CANONICAL_RESIDUAL_TARGET);
+  if (!admission.ok) {
+    res.status(422).json({
+      error: admission.error,
+      claimed: residual,
+      recomputed,
+      threshold: CANONICAL_RESIDUAL_TARGET,
+    });
+    return;
+  }
 
-  const quality   = 1.0 / (residual + 1e-6);
-  const reward    = Math.floor(BASE_REWARD * Math.min(quality, 1.0));
+  const reward = canonicalCoinbase(height, admission.residual);
 
   const txs: TxRecord[] = selected.map((t) => ({
     ...t,
@@ -238,7 +257,7 @@ router.post("/blocks/submit", (req, res) => {
     status:      "confirmed" as const,
   }));
 
-  const zkProof = generateZkProof(residual, blockHash, height);
+  const zkProof = generateZkProof(admission.residual, blockHash, height);
 
   const block = {
     hash:          blockHash,
@@ -248,7 +267,7 @@ router.post("/blocks/submit", (req, res) => {
     timestamp:     now,
     nonce:         Math.floor(nonce),
     difficulty:    chainState.currentDifficulty,
-    residual,
+    residual:      admission.residual,
     recursionDepth: 2,
     coinbaseReward: reward,
     miner,
@@ -267,14 +286,14 @@ router.post("/blocks/submit", (req, res) => {
   chainState.gossipBlock(blockHash);
 
   logger.info(
-    { height, hash: blockHash.slice(0, 16), miner, residual, txCount: txs.length },
+    { height, hash: blockHash.slice(0, 16), miner, residual: admission.residual, txCount: txs.length },
     "Block submitted by external miner",
   );
 
   // ── Notify WebSocket clients ────────────────────────────────────────────────
   broadcast({
     type: "new_block",
-    data: { height, hash: blockHash, txCount: txs.length, residual, miner, timestamp: now },
+    data: { height, hash: blockHash, txCount: txs.length, residual: admission.residual, miner, timestamp: now },
   });
   broadcast({
     type: "mempool_update",

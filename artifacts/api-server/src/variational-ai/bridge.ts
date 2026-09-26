@@ -275,6 +275,12 @@ export interface SolveBlockResponse {
   nonce: number;
   /** Stationarity residual as float64 (NOT fixed-point) */
   residual: number;
+  /**
+   * False when the solver returned a best-effort candidate that is not under
+   * the canonical admission target. Missing on older binaries; the caller
+   * still recomputes the canonical residual before admitting a block.
+   */
+  admitted?: boolean;
   error?: string;
   /**
    * Thermal margin proxy from the Rust solver: fraction of the 5 s time budget

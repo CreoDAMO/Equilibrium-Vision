@@ -2,7 +2,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { and, asc, desc, eq, gte, lt } from "drizzle-orm";
 import { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zkmlProofsTable } from "@workspace/db/schema";
-import type { BlockRecord, TxRecord } from "./types.js";
+import type { BlockRecord, TxRecord, DexPool, ValidatorRecord, StakeRecord, UnbondingEntry } from "./types.js";
 import type { ContractRecord } from "./wasm.js";
 import { logger } from "../lib/logger.js";
 
@@ -417,6 +417,18 @@ export async function loadContractsFromDb(): Promise<ContractRecord[]> {
 // table's JSONB `storage` column and is loaded separately.
 
 /** Serialised form passed between chain/index.ts and persistence.ts. */
+export interface SnapshotPartitions {
+  pools: DexPool[];
+  validators: ValidatorRecord[];
+  stakes: StakeRecord[];
+  difficulty: number;
+  unbonding: UnbondingEntry[];
+  contracts: ContractRecord[];
+}
+
+/** Stored inside the ledger JSONB so a restart does not need a new column. */
+export const SNAPSHOT_PARTITIONS_KEY = "__partitions";
+
 export interface StateSnapshotData {
   height:    number;
   blockHash: string;
@@ -430,6 +442,8 @@ export interface StateSnapshotData {
     coinbase:    boolean;
     blockHeight: number;
   }>;
+  /** Pools, validators, stake, and contracts. Absent on snapshots written before this field. */
+  partitions?: SnapshotPartitions;
 }
 
 /**
@@ -446,7 +460,10 @@ export async function saveStateSnapshot(data: StateSnapshotData): Promise<void> 
         height:    data.height,
         blockHash: data.blockHash,
         stateRoot: data.stateRoot,
-        ledger:    data.ledger,
+        ledger:    {
+          ...data.ledger,
+          ...(data.partitions ? { [SNAPSHOT_PARTITIONS_KEY]: data.partitions } : {}),
+        } as StateSnapshotData["ledger"],
         utxos:     data.utxos,
         createdAt: Date.now(),
       })
@@ -455,7 +472,10 @@ export async function saveStateSnapshot(data: StateSnapshotData): Promise<void> 
         set: {
           blockHash: data.blockHash,
           stateRoot: data.stateRoot,
-          ledger:    data.ledger,
+          ledger:    {
+            ...data.ledger,
+            ...(data.partitions ? { [SNAPSHOT_PARTITIONS_KEY]: data.partitions } : {}),
+          } as StateSnapshotData["ledger"],
           utxos:     data.utxos,
           createdAt: Date.now(),
         },
@@ -478,12 +498,22 @@ export async function loadLatestSnapshot(): Promise<StateSnapshotData | null> {
       .limit(1);
     const row = rows[0];
     if (!row) return null;
+    const raw = row.ledger as Record<string, unknown>;
+    const partitions = (raw[SNAPSHOT_PARTITIONS_KEY] ?? undefined) as SnapshotPartitions | undefined;
+    const ledger: StateSnapshotData["ledger"] = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (key === SNAPSHOT_PARTITIONS_KEY) continue;
+      const acc = value as { balance?: number; nonce?: number };
+      if (!acc || typeof acc.balance !== "number" || typeof acc.nonce !== "number") continue;
+      ledger[key] = { balance: acc.balance, nonce: acc.nonce };
+    }
     return {
       height:    row.height,
       blockHash: row.blockHash,
       stateRoot: row.stateRoot,
-      ledger:    row.ledger as StateSnapshotData["ledger"],
+      ledger,
       utxos:     row.utxos  as StateSnapshotData["utxos"],
+      partitions,
     };
   } catch (err) {
     logger.warn({ err }, "Failed to load state snapshot");

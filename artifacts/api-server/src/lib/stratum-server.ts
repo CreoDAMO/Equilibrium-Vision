@@ -9,11 +9,9 @@ import { persistBlock } from "../chain/persistence.js";
 import type { TxRecord } from "../chain/types.js";
 import type { ChainState } from "../chain/state.js";
 import { RateLimiter, ReplaySet } from "./submission-guard.js";
+import { canonicalCoinbase, CANONICAL_RESIDUAL_TARGET } from "@workspace/coinomics";
+import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
 
-// Residual must be below this threshold for a submitted share to count as a
-// valid block — same constant used by the /blocks/submit HTTP route.
-const RESIDUAL_THRESHOLD = 1e-7;
-const BASE_REWARD        = 50_000_000;
 const VAI_CLI_PATH = process.env["VAI_CLI_PATH"] || "./variational-ai-cli";
 
 // ── Stratum v1 mining pool protocol ──────────────────────────────────────────
@@ -329,9 +327,9 @@ export class StratumServer {
       return;
     }
 
-    if (residual >= RESIDUAL_THRESHOLD) {
-      logger.info({ worker: session.worker, job: jobId, residual, threshold: RESIDUAL_THRESHOLD }, "Stratum share rejected: residual above threshold");
-      this.respond(session.socket, req.id, false, [23, `Residual ${residual} does not meet threshold ${RESIDUAL_THRESHOLD}`, null]);
+    if (residual >= CANONICAL_RESIDUAL_TARGET) {
+      logger.info({ worker: session.worker, job: jobId, residual, threshold: CANONICAL_RESIDUAL_TARGET }, "Stratum share rejected: residual above threshold");
+      this.respond(session.socket, req.id, false, [23, `Residual ${residual} does not meet threshold ${CANONICAL_RESIDUAL_TARGET}`, null]);
       return;
     }
 
@@ -378,13 +376,30 @@ export class StratumServer {
     const now     = Number.isFinite(parsedNtime) ? parsedNtime : Math.floor(Date.now() / 1000);
     const nonce   = Number.isFinite(parsedNonce) ? parsedNonce : 0;
 
-    const selected  = cs.mempool.all().slice(0, 50);
+    const selected  = cs.ledger.selectApplicable(cs.mempool.all()).slice(0, 50);
     const txHashes  = selected.map((t) => t.hash);
     const mr        = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
+    const recomputed = canonicalResidual(
+      {
+        prevHash: prev.hash,
+        merkleRoot: mr,
+        timestamp: now,
+        nonce,
+        difficulty: cs.currentDifficulty,
+      },
+      selected.map((t) => ({ hash: t.hash, fee: t.fee })),
+      { cumulativeWork: height, mempoolPressure: cs.mempool.pressure },
+    );
+    const admission = admitResidual(residual, recomputed, CANONICAL_RESIDUAL_TARGET);
+    if (!admission.ok) {
+      logger.info({ worker: session.worker, job: jobId, residual, recomputed }, "Stratum share rejected: claimed residual is not the recomputed residual");
+      this.respond(session.socket, req.id, false, [23, admission.error, null]);
+      return;
+    }
     const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
+    residual = admission.residual;
 
-    const quality  = 1.0 / (residual + 1e-6);
-    const reward   = Math.floor(BASE_REWARD * Math.min(quality, 1.0));
+    const reward = canonicalCoinbase(height, residual);
 
     const txs: TxRecord[] = selected.map((t) => ({
       ...t,

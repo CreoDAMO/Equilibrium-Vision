@@ -1,5 +1,5 @@
 use std::slice;
-use crate::chain_state::{BlockHeader, ChainState};
+use crate::chain_state::{BlockHeader, ChainState, admits_canonical};
 use crate::stationary_solver::StationarySolver;
 use crate::p2p_runtime;
 
@@ -82,7 +82,8 @@ pub unsafe extern "C" fn solve_block(
     if let Some((solution, _)) = solver.optimize_full(header, vec![], &state) {
         *out_nonce = solution.nonce;
         *out_residual = solution.residual;
-        true
+        // The boolean is admission, not "the solver returned something".
+        admits_canonical(solution.residual, 2e-3)
     } else {
         false
     }

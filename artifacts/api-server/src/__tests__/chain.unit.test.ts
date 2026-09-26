@@ -3,6 +3,8 @@ import { hash256, sha256, merkleRoot, addressFromSeed } from "../chain/crypto.js
 import { fpEncode, blockHashToFields } from "../chain/zk-encoding.js";
 import { generateZkProof, verifyZkProof } from "../chain/zkproof.js";
 import { ChainState, mineNextBlock } from "../chain/state.js";
+import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
+import { rebuildStateSmt } from "../chain/state-root.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "../chain/mining-policy.js";
 import type { BlockRecord } from "../chain/types.js";
 
@@ -407,6 +409,96 @@ describe("ChainState UTXO fee sweep", () => {
     expect(state.utxoSet.balance(minerB)).toBe(0);
   });
 
+  it("rollback puts the account coinbase and the transfer back", () => {
+    const state = new ChainState();
+    const alice = "c".repeat(40);
+    const bob = "d".repeat(40);
+    state.ledger.credit(alice, 5_000);
+    const tx = {
+      hash: "cd".repeat(32),
+      from: alice,
+      to: bob,
+      amount: 1_000,
+      fee: 10,
+      nonce: 0,
+      blockHash: null,
+      blockHeight: null,
+      timestamp: 1_700_000_000,
+      status: "pending" as const,
+    };
+    const block = { ...fakeBlock(0, 1_700_000_000), miner: minerA, transactions: [tx], txCount: 1, coinbaseReward: 100 };
+    state.addBlock(block);
+    expect(state.ledger.balance(minerA)).toBe(110);
+    expect(state.ledger.balance(alice)).toBe(3_990);
+    expect(state.ledger.balance(bob)).toBe(1_000);
+
+    state.rollbackToHeight(-1);
+    expect(state.height).toBe(-1);
+    expect(state.ledger.balance(minerA)).toBe(0);
+    expect(state.ledger.balance(alice)).toBe(5_000);
+    expect(state.ledger.balance(bob)).toBe(0);
+
+    const again = { ...fakeBlock(0, 1_700_000_000), hash: "1".repeat(64), miner: minerA, coinbaseReward: 100 };
+    state.addBlock(again);
+    expect(state.ledger.balance(minerA)).toBe(100);
+  });
+
+  it("a swap that cannot pay does not debit, and a failed second hop keeps neither hop", () => {
+    const state = new ChainState();
+    const alice = "e".repeat(40);
+    state.ledger.credit(alice, 1_000);
+    state.dexPools.set("thin", {
+      id: "thin",
+      tokenA: "EQU",
+      tokenB: "USDC",
+      reserveA: 10,
+      reserveB: 0,
+      totalLiquidity: 0,
+      fee: 0.003,
+      volumeA: 0,
+      volumeB: 0,
+      txCount: 0,
+      createdAt: 0,
+    });
+    expect(state.swap("thin", alice, "EQU", 100)).toBe("insufficient liquidity");
+    expect(state.ledger.balance(alice)).toBe(1_000);
+
+    state.dexPools.set("first", {
+      id: "first",
+      tokenA: "EQU",
+      tokenB: "USDC",
+      reserveA: 1_000_000,
+      reserveB: 1_000_000,
+      totalLiquidity: 0,
+      fee: 0.003,
+      volumeA: 0,
+      volumeB: 0,
+      txCount: 0,
+      createdAt: 0,
+    });
+    state.dexPools.set("dead", {
+      id: "dead",
+      tokenA: "EQU",
+      tokenB: "USDC",
+      reserveA: 0,
+      reserveB: 1_000_000,
+      totalLiquidity: 0,
+      fee: 0.003,
+      volumeA: 0,
+      volumeB: 0,
+      txCount: 0,
+      createdAt: 0,
+    });
+    const beforeA = state.dexPools.get("first")!.reserveA;
+    const history = state.swapHistory.length;
+    const out = state.applyMultiSwap(["first", "dead"], "EQU", 100, alice);
+    expect(out).toBeNull();
+    expect(state.ledger.balance(alice)).toBe(1_000);
+    expect(state.dexPools.get("first")!.reserveA).toBe(beforeA);
+    expect(state.dexPools.get("first")!.txCount).toBe(0);
+    expect(state.swapHistory.length).toBe(history);
+  });
+
   it("does not create a spendable output for a transfer the account ledger rejects", () => {
     const state = new ChainState();
     const alice = "c".repeat(40);
@@ -432,5 +524,61 @@ describe("ChainState UTXO fee sweep", () => {
     expect(state.utxoSet.get(tx.hash, 0)).toBeUndefined();
     expect(state.txIndex.get(tx.hash)?.status).toBe("failed");
     expect(state.ledger.selectApplicable([tx])).toEqual([]);
+  });
+
+  it("a restart snapshot rebuilds the same state root, including pools and validators", () => {
+    const state = new ChainState();
+    const alice = "a".repeat(40);
+    state.ledger.credit(alice, 4_000);
+    state.dexPools.set("EQU-USDC", {
+      id: "EQU-USDC",
+      tokenA: "EQU",
+      tokenB: "USDC",
+      reserveA: 50_000,
+      reserveB: 40_000,
+      totalLiquidity: 1,
+      fee: 0.003,
+      volumeA: 0,
+      volumeB: 0,
+      txCount: 3,
+      createdAt: 1,
+    });
+    state.validators.set(alice, {
+      address: alice,
+      moniker: "alice",
+      bondedStake: 2_000,
+      accumulatedRewards: 0,
+      slashed: false,
+      slashCount: 0,
+      jailed: false,
+      uptime: 1,
+      blocksProposed: 0,
+      blocksVoted: 0,
+      commission: 0.1,
+    });
+    state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner: minerA, coinbaseReward: 100 });
+    const snap = state.exportRestartSnapshot();
+    const born = new ChainState();
+    born.importRestartSnapshot(snap);
+    expect(born.ledger.balance(minerA)).toBe(state.ledger.balance(minerA));
+    expect(born.ledger.balance(alice)).toBe(state.ledger.balance(alice));
+    expect(born.dexPools.get("EQU-USDC")?.reserveA).toBe(50_000);
+    expect(born.validators.get(alice)?.bondedStake).toBe(2_000);
+    expect(rebuildStateSmt(born).root()).toBe(rebuildStateSmt(state).root());
+  });
+
+  it("a claimed residual is refused unless it is the recomputed residual", () => {
+    const header = {
+      prevHash: "ab".repeat(32),
+      merkleRoot: "0".repeat(64),
+      timestamp: 1_700_000_000,
+      nonce: 36,
+      difficulty: 1_000_000,
+    };
+    const recomputed = canonicalResidual(header, [], { cumulativeWork: 1, mempoolPressure: 0 });
+    expect(Number.isFinite(recomputed)).toBe(true);
+    expect(admitResidual(1e-9, 1e-6).ok).toBe(false);
+    expect(admitResidual(1e-6, 1e-6)).toEqual({ ok: true, residual: 1e-6 });
+    expect(admitResidual(1e-6, 1).ok).toBe(false);
   });
 });

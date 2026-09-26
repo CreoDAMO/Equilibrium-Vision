@@ -138,6 +138,12 @@ export class WasmVM {
     for (const r of records) this.contracts.set(r.address, r);
   }
 
+  /** Replace the contract set. Used when a restart snapshot is the state. */
+  replaceContracts(records: ContractRecord[]): void {
+    this.contracts.clear();
+    this.loadContracts(records);
+  }
+
   private firePersist(contract: ContractRecord): void {
     if (this.persistFn) {
       this.persistFn(contract).catch((err) =>

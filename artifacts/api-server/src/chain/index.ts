@@ -7,7 +7,6 @@ import {
   loadLatestSnapshot, saveStateSnapshot, loadAllBlocksRaw,
   pruneOldBlocks, DEFAULT_PRUNE_KEEP,
   getRawPool,
-  type StateSnapshotData,
 } from "./persistence.js";
 import type { ChainState } from "./state.js";
 import type { BlockRecord } from "./types.js";
@@ -181,10 +180,17 @@ export async function initChain(): Promise<void> {
           }
         }
 
-        // restoreAccounts / restoreFromSnapshot both clear-and-replace, so any
-        // credits applied by buildDocChainFromBlocks above are discarded.
-        seedState.ledger.restoreAccounts(snapshot.ledger);
-        seedState.utxoSet.restoreFromSnapshot(snapshot.utxos);
+        if (snapshot.partitions) {
+          seedState.importRestartSnapshot({
+            ledger: snapshot.ledger,
+            utxos: snapshot.utxos,
+            ...snapshot.partitions,
+          });
+        } else {
+          // Snapshots written before pools and validators were part of the root.
+          seedState.ledger.restoreAccounts(snapshot.ledger);
+          seedState.utxoSet.restoreFromSnapshot(snapshot.utxos);
+        }
 
         // ── Snapshot-era blocks ─────────────────────────────────────────────
         // Assign blocks by height index (sparse array) so that:
@@ -525,24 +531,21 @@ const SNAPSHOT_INTERVAL = 100;
 async function takeSnapshot(): Promise<void> {
   const tip = chainState?.latestBlock;
   if (!tip) return;
-  const ledgerData: StateSnapshotData["ledger"] = {};
-  for (const [addr, acc] of chainState.ledger.getAllAccounts()) {
-    ledgerData[addr] = { balance: acc.balance, nonce: acc.nonce };
-  }
-  const utxoData = chainState.utxoSet.getAllUnspent().map((u) => ({
-    txHash:      u.txHash,
-    outputIndex: u.outputIndex,
-    address:     u.address,
-    amount:      u.amount,
-    coinbase:    u.coinbase,
-    blockHeight: u.blockHeight,
-  }));
+  const snap = chainState.exportRestartSnapshot();
   await saveStateSnapshot({
     height:    tip.height,
     blockHash: tip.hash,
     stateRoot: tip.stateRoot ?? "",
-    ledger:    ledgerData,
-    utxos:     utxoData,
+    ledger:    snap.ledger,
+    utxos:     snap.utxos,
+    partitions: {
+      pools: snap.pools,
+      validators: snap.validators,
+      stakes: snap.stakes,
+      difficulty: snap.difficulty,
+      unbonding: snap.unbonding,
+      contracts: snap.contracts,
+    },
   });
 }
 

@@ -1,8 +1,9 @@
-import { applySuccessor, initialOmega, admittingNonces, type CanonicalInputs, type Omega } from "./constitution";
+import { applySuccessor, foreignDifficultyFactor, initialOmega, admittingNonces, type CanonicalInputs, type Omega } from "./constitution";
 import { slashAmount, minerReward } from "./coinomics";
 import { ARBITRAGE_CODE } from "./evidence";
 import { activityKeys, GENESIS_ALLOCATIONS } from "./genesis";
 import { NETWORKS } from "./networks";
+import { SPECS } from "./specs";
 import { signTx } from "./wallet";
 import type { DependencyRow } from "./types";
 import { DEFAULT_COUPLINGS } from "./types";
@@ -226,6 +227,44 @@ export function dependencyFindings(): DependencyRow[] {
         : "The transition refused the unfunded transfer. The sender is unchanged, and nothing else is credited.",
   });
 
+  const plain = baseOmega();
+  const foreignOmega = baseOmega();
+  foreignOmega.btc.push({
+    hash: `${"ab".repeat(31)}ff`,
+    height: 800_000,
+    prevHash: "0".repeat(64),
+    merkleRoot: "11".repeat(32),
+    bits: 0x170d5d26,
+  });
+  const atTarget = {
+    ...inputsFor(plain, nonce),
+    timestamp: plain.tipTimestamp + params.targetBlockTimeMs / 1000,
+  };
+  const withoutForeign = applySuccessor(plain, atTarget);
+  const withForeign = applySuccessor(foreignOmega, atTarget);
+  if (
+    withoutForeign.ok &&
+    withForeign.ok &&
+    withoutForeign.next.difficulty !== withForeign.next.difficulty &&
+    foreignDifficultyFactor(foreignOmega).num !== foreignDifficultyFactor(foreignOmega).den
+  ) {
+    rows.push({
+      id: "foreign-consequence",
+      specifiedBy: "EQ-20",
+      omegaChanges: true,
+      verdict: "fixed",
+      detail: `A verified Bitcoin tip changes the next difficulty, from ${withoutForeign.next.difficulty.toLocaleString()} to ${withForeign.next.difficulty.toLocaleString()}. The header is not only stored. No tip leaves the time rule unchanged.`,
+    });
+  } else {
+    rows.push({
+      id: "foreign-consequence",
+      specifiedBy: "EQ-20",
+      omegaChanges: false,
+      verdict: "spec-contradicts",
+      detail: "A Bitcoin tip did not change the next difficulty. EQ-20 says it must.",
+    });
+  }
+
   const hostA = new Map<string, string>([["owner", "a"]]);
   const hostB = new Map<string, string>([["owner", "b"]]);
   const wasmInputs = {
@@ -242,15 +281,21 @@ export function dependencyFindings(): DependencyRow[] {
   };
   const wasm1 = applySuccessor(omega, { ...wasmInputs, wasmAfter: hostA });
   const wasm2 = applySuccessor(omega, { ...wasmInputs, wasmAfter: hostB });
+  const wrongCode = applySuccessor(omega, {
+    ...wasmInputs,
+    evidence: { ...wasmInputs.evidence, wasmCode: "0".repeat(64) },
+    wasmAfter: hostA,
+  });
+  const namesHost = SPECS.find((spec) => spec.id === "EQ-06")?.body.some((line) => line.includes("callArbitrage")) === true;
+  const hostNamed = !wrongCode.ok && namesHost;
   rows.push({
     id: "wasm-host",
-    specifiedBy: "EQ-06 names the account ledger as the monetary state. It does not name the wasm host.",
+    specifiedBy: "EQ-06",
     omegaChanges: wasm1.ok && wasm2.ok && wasm1.omegaRoot !== wasm2.omegaRoot,
-    verdict: "spec-contradicts",
-    detail:
-      wasm1.ok && wasm2.ok && wasm1.omegaRoot !== wasm2.omegaRoot
-        ? "Two host results, two Ω. successor binds the call to one wasm hash, but EQ-06 does not name that hash or the host. The host is a choice that changes Ω until the specification names it."
-        : "The wasm host comparison did not separate Ω.",
+    verdict: hostNamed ? "fixed" : "spec-contradicts",
+    detail: hostNamed
+      ? `The host is callArbitrage over ${ARBITRAGE_CODE}. A different code is refused (${wrongCode.ok ? "accepted" : wrongCode.error}). Two storage maps are two Ω because that map is the output of this host.`
+      : "The wasm host is still unnamed, or a different code was accepted.",
   });
 
   const lag = params.finalityLag;

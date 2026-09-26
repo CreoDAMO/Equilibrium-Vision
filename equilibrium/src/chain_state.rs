@@ -122,6 +122,29 @@ pub fn compute_coinbase_reward(base: u64, residual_fp: i64) -> u64 {
     ((base as u128) * quality_fp / SCALE) as u64
 }
 
+/// The reward the public kernel pays.
+/// `floor(100 × (1/2)^(height / 2_100_000) × min(1, target / (R + 1e-9)))`.
+/// `residual` and `target` are real residuals, not fixed-point.
+pub fn canonical_coinbase(height: u64, residual: f64, target: f64) -> u64 {
+    if !residual.is_finite() || residual < 0.0 || !target.is_finite() || target < 0.0 {
+        return 0;
+    }
+    let curve = 100.0 * 0.5f64.powf(height as f64 / 2_100_000.0);
+    let quality = (target / (residual + 1e-9)).clamp(0.0, 1.0);
+    let payout = (curve * quality).floor();
+    if payout.is_finite() && payout > 0.0 { payout as u64 } else { 0 }
+}
+
+/// Testnet admission target. Same number the public kernel uses.
+pub const CANONICAL_RESIDUAL_TARGET: f64 = 2e-3;
+
+/// `optimize_full` may return a candidate that missed its target.
+/// That candidate is not a block. Admission is this comparison.
+pub fn admits_canonical(residual_fp: i64, target: f64) -> bool {
+    let residual = residual_to_float(residual_fp);
+    residual.is_finite() && residual >= 0.0 && residual < target
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +199,20 @@ mod tests {
         let reward_neg = compute_coinbase_reward(base, -1_000_000_000i64);
         let reward_zero = compute_coinbase_reward(base, 0);
         assert_eq!(reward_neg, reward_zero, "negative residual treated same as zero");
+    }
+
+    #[test]
+    fn canonical_coinbase_matches_the_public_kernel_vectors() {
+        assert_eq!(canonical_coinbase(0, 0.0, 2e-3), 100);
+        assert_eq!(canonical_coinbase(1, 0.0, 2e-3), 99);
+        assert_eq!(canonical_coinbase(1, 1.0, 2e-3), 0);
+        assert_eq!(canonical_coinbase(1, 0.00024711927978383826, 2e-3), 99);
+    }
+
+    #[test]
+    fn admits_canonical_rejects_an_above_target_candidate() {
+        assert!(admits_canonical(residual_to_fixed(1e-9), CANONICAL_RESIDUAL_TARGET));
+        assert!(!admits_canonical(residual_to_fixed(1.0), CANONICAL_RESIDUAL_TARGET));
+        assert!(!admits_canonical(i64::MAX, CANONICAL_RESIDUAL_TARGET));
     }
 }
