@@ -123,7 +123,7 @@ router.get("/blocks/:hashOrHeight/fees", (req, res) => {
 // Response 409: stale work (chain tip advanced while solving)
 // Response 422: residual above threshold
 
-router.post("/blocks/submit", (req, res) => {
+router.post("/blocks/submit", async (req, res) => {
   // ── Rate limiting — per source IP ───────────────────────────────────────────
   // Always use the TCP socket address.  We deliberately ignore X-Forwarded-For
   // because (a) the server is not behind a vetted trusted proxy and (b) XFF
@@ -154,13 +154,65 @@ router.post("/blocks/submit", (req, res) => {
     res.status(400).json({ error: "Missing required field: nonce (number)" });
     return;
   }
-  if (typeof residual !== "number" || !Number.isFinite(residual)) {
-    res.status(400).json({ error: "Missing required field: residual (number)" });
+  if (!chainState) {
+    res.status(503).json({ error: "Chain not initialised" });
     return;
   }
 
-  if (!chainState) {
-    res.status(503).json({ error: "Chain not initialised" });
+  const evidence = (req.body as { evidence?: unknown }).evidence;
+  if (evidence && typeof evidence === "object") {
+    const now = (typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0)
+      ? Math.floor(timestamp)
+      : Math.floor(Date.now() / 1000);
+    const committed = await chainState.canonicalBody.commit({
+      transactions: [],
+      evidence: evidence as import("../../../../site/src/protocol/types").TransitionEvidence,
+      timestamp: now,
+      nonce: Math.floor(nonce),
+      miner: miner.toLowerCase(),
+      committedPressure: 0,
+      couplings: { ...chainState.canonicalBody.omega.couplings },
+      difficulty: chainState.canonicalBody.omega.difficulty,
+    });
+    if (!committed.ok) {
+      res.status(422).json({ error: committed.error });
+      return;
+    }
+    persistBlock({
+      hash: committed.hash,
+      height: committed.height,
+      prevHash: committed.prevHash,
+      merkleRoot: committed.merkleRoot,
+      stateRoot: committed.stateRoot,
+      timestamp: now,
+      nonce: Math.floor(nonce),
+      difficulty: committed.difficulty,
+      residual: committed.residual,
+      residualFp: committed.residualFp,
+      recursionDepth: 2,
+      coinbaseReward: committed.reward,
+      miner: miner.toLowerCase(),
+      txCount: 0,
+      transactions: [],
+      finalized: false,
+      chainId: committed.evidence.chainId,
+      evidenceRoot: committed.evidenceRoot,
+      omegaRoot: committed.omegaRoot,
+      evidence: committed.evidence,
+      committedPressure: 0,
+    }).catch((err) => logger.warn({ err, height: committed.height }, "Failed to persist canonical evidence block"));
+    res.status(201).json({
+      hash: committed.hash,
+      height: committed.height,
+      omegaRoot: committed.omegaRoot,
+      tipHash: committed.tipHash,
+      reward: committed.reward,
+    });
+    return;
+  }
+
+  if (typeof residual !== "number" || !Number.isFinite(residual)) {
+    res.status(400).json({ error: "Missing required field: residual (number)" });
     return;
   }
 

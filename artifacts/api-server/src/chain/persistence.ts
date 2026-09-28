@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { and, asc, desc, eq, gte, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lt } from "drizzle-orm";
 import { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zkmlProofsTable } from "@workspace/db/schema";
 import type { BlockRecord, TxRecord, DexPool, ValidatorRecord, StakeRecord, UnbondingEntry } from "./types.js";
 import type { ContractRecord } from "./wasm.js";
@@ -134,7 +134,12 @@ async function ensureCommittedPressure(): Promise<void> {
   if (!pool) return;
   if (!_pressureColumn) {
     _pressureColumn = pool
-      .query("ALTER TABLE blocks ADD COLUMN IF NOT EXISTS committed_pressure double precision")
+      .query(`ALTER TABLE blocks
+        ADD COLUMN IF NOT EXISTS committed_pressure double precision,
+        ADD COLUMN IF NOT EXISTS chain_id integer,
+        ADD COLUMN IF NOT EXISTS evidence_root text,
+        ADD COLUMN IF NOT EXISTS omega_root text,
+        ADD COLUMN IF NOT EXISTS evidence jsonb`)
       .then(() => undefined)
       .catch((err) => {
         _pressureColumn = null;
@@ -181,6 +186,9 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
 
     if (dbBlocks.length === 0) return null; // empty DB → generate genesis
 
+    const canonicalRows = dbBlocks.filter((b) => b.evidence != null);
+    const chainRows = dbBlocks.filter((b) => b.evidence == null);
+
     // ── Chain integrity check ────────────────────────────────────────────────
     // Validate contiguous heights and prevHash linkage before accepting DB data.
     // A partial write (crash mid-genesis persist, or schema not yet applied on
@@ -190,13 +198,15 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
     //
     // Exception: if the very first block isn't height 0 we have no base to
     // build on, so fall back to genesis.
-    if (dbBlocks[0]!.height !== 0) {
-      logger.warn({ got: dbBlocks[0]!.height }, "Chain integrity check failed: missing genesis block — falling back to genesis");
-      return null;
+    let operable = chainRows;
+    if (operable.length > 0 && operable[0]!.height !== 0) {
+      logger.warn({ got: operable[0]!.height }, "Chain integrity check failed: missing genesis block — falling back to genesis");
+      if (canonicalRows.length === 0) return null;
+      operable = [];
     }
-    let contiguousEnd = dbBlocks.length; // exclusive index of first broken block
-    for (let i = 1; i < dbBlocks.length; i++) {
-      const b = dbBlocks[i]!;
+    let contiguousEnd = operable.length; // exclusive index of first broken block
+    for (let i = 1; i < operable.length; i++) {
+      const b = operable[i]!;
       if (b.height !== i) {
         logger.warn(
           { expected: i, got: b.height, truncatingAt: i },
@@ -205,7 +215,7 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
         contiguousEnd = i;
         break;
       }
-      if (b.prevHash !== dbBlocks[i - 1]!.hash) {
+      if (b.prevHash !== operable[i - 1]!.hash) {
         logger.warn(
           { height: i, truncatingAt: i },
           "Chain integrity: prevHash mismatch — truncating to last contiguous block",
@@ -216,15 +226,15 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
     }
     // Drop any blocks beyond the first integrity violation — both in memory
     // and in the DB so subsequent restarts don't re-hit the same truncation.
-    const validBlocks = dbBlocks.slice(0, contiguousEnd);
-    if (contiguousEnd < dbBlocks.length) {
+    const validBlocks = [...operable.slice(0, contiguousEnd), ...canonicalRows];
+    if (contiguousEnd < operable.length) {
       const cutHeight = contiguousEnd; // first invalid height
       try {
         const db2 = getDb()!;
         await db2.transaction(async (tx) => {
           // Delete orphaned transactions first (FK-safe order).
           await tx.delete(transactionsTable).where(gte(transactionsTable.blockHeight, cutHeight));
-          await tx.delete(blocksTable).where(gte(blocksTable.height, cutHeight));
+          await tx.delete(blocksTable).where(and(gte(blocksTable.height, cutHeight), isNull(blocksTable.evidence)));
         });
         logger.info({ deletedFrom: cutHeight }, "Pruned invalid chain suffix from DB");
       } catch (pruneErr) {
@@ -263,6 +273,10 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       finalized:     b.finalized,
       zkProof:       (b.zkProof as BlockRecord["zkProof"]) ?? undefined,
       committedPressure: b.committedPressure ?? undefined,
+      chainId:       b.chainId ?? undefined,
+      evidenceRoot:  b.evidenceRoot ?? undefined,
+      omegaRoot:     b.omegaRoot ?? undefined,
+      evidence:      (b.evidence as BlockRecord["evidence"]) ?? undefined,
     }));
   } catch (err) {
     logger.warn({ err }, "Failed to load chain from Postgres — falling back to genesis");
@@ -303,6 +317,10 @@ export async function persistBlock(block: BlockRecord): Promise<void> {
             zkProof:        (block.zkProof ?? null) as unknown as null,
             stateRoot:      block.stateRoot ?? null,
             committedPressure: block.committedPressure ?? null,
+            chainId:        block.chainId ?? null,
+            evidenceRoot:   block.evidenceRoot ?? null,
+            omegaRoot:      block.omegaRoot ?? null,
+            evidence:       (block.evidence ?? null) as unknown as null,
           })
           .onConflictDoNothing();
 
@@ -562,6 +580,7 @@ export async function loadAllBlocksRaw(): Promise<BlockRecord[] | null> {
   const db = getDb();
   if (!db) return null;
   try {
+    await ensureCommittedPressure();
     const blockRows = await db
       .select()
       .from(blocksTable)
@@ -599,6 +618,10 @@ export async function loadAllBlocksRaw(): Promise<BlockRecord[] | null> {
       finalized:     b.finalized,
       zkProof:       b.zkProof as BlockRecord["zkProof"],
       stateRoot:     b.stateRoot ?? undefined,
+      chainId:       b.chainId ?? undefined,
+      evidenceRoot:  b.evidenceRoot ?? undefined,
+      omegaRoot:     b.omegaRoot ?? undefined,
+      evidence:      (b.evidence as BlockRecord["evidence"]) ?? undefined,
       transactions:  txByBlock.get(b.hash) ?? [],
     }));
   } catch (err) {

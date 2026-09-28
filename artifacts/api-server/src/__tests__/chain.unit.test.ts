@@ -1457,6 +1457,27 @@ describe("ChainState UTXO fee sweep", () => {
     expect(state.validators.get(addr)!.slashed).toBe(false);
     expect(state.slashEvents).toEqual([]);
   });
+
+  it("addBlock refuses slash evidence instead of ignoring it", () => {
+    const state = new ChainState();
+    const addr = "b".repeat(40);
+    state.validators.set(addr, validator(addr));
+    expect(() => state.addBlock({
+      ...fakeBlock(0, 1_700_000_000),
+      evidence: {
+        v: 1,
+        chainId: 1,
+        wasmCode: "ab",
+        btc: [],
+        eth: [],
+        wasm: [],
+        stake: [{ op: "slash", validator: addr, reason: "double_sign" }],
+      },
+    })).toThrow(/successor/);
+    expect(state.blocks).toHaveLength(0);
+    expect(state.validators.get(addr)!.slashed).toBe(false);
+    expect(state.validators.get(addr)!.bondedStake).toBe(validator(addr).bondedStake);
+  });
 });
 
 describe("stratum admission", () => {

@@ -98,6 +98,8 @@ export interface BlockRecord {
    * Applied only when the block also binds a canonical state root.
    */
   wasmEntries?: Array<[string, string]>;
+  /** Stake, foreign, and wasm inputs. addBlock refuses these. The canonical body replays them. */
+  evidence?: import("../../../../site/src/protocol/types").TransitionEvidence;
   /** Next-block coupling written by a kernel proposal. Not governance.params. */
   couplingKey?: "hash" | "structural" | "continuity" | "mempool" | "fees";
   couplingValue?: number;

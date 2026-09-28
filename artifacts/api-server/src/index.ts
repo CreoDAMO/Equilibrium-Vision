@@ -77,6 +77,30 @@ if (Number.isNaN(port) || port <= 0) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const remote = res.data as any;
 
+            if (remote.evidence) {
+              const err = await chainState.canonicalBody.replay({
+                hash: typeof remote.hash === "string" ? remote.hash : blockHash,
+                evidence: remote.evidence,
+                transactions: [],
+                timestamp: Number(remote.timestamp),
+                nonce: Number(remote.nonce),
+                miner: String(remote.miner ?? ""),
+                difficulty: Number(remote.difficulty),
+                committedPressure: typeof remote.committedPressure === "number" ? remote.committedPressure : 0,
+                stateRoot: typeof remote.stateRoot === "string" ? remote.stateRoot : undefined,
+                omegaRoot: typeof remote.omegaRoot === "string" ? remote.omegaRoot : undefined,
+              });
+              if (err) {
+                logger.warn({ err, blockHash, peerId }, "P2P sync: canonical evidence refused");
+                return;
+              }
+              const { persistBlock } = await import("./chain/persistence.js");
+              persistBlock({ ...remote, hash: typeof remote.hash === "string" ? remote.hash : blockHash }).catch((persistErr: unknown) =>
+                logger.warn({ err: persistErr, blockHash }, "P2P sync: canonical evidence persistence failed"),
+              );
+              return;
+            }
+
             // ── Validate the received block before insertion ───────────────────
             // Re-check: another path may have added this block while we were fetching
             if (chainState.getBlockByHash(blockHash)) return;

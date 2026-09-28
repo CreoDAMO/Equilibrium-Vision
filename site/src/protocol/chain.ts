@@ -32,7 +32,7 @@ import type {
 } from "./types";
 import { DEFAULT_COUPLINGS } from "./types";
 import { NETWORKS } from "./networks";
-import { merkleRoot, sha256Hex, canonicalHeaderHash } from "./crypto";
+import { merkleRoot, sha256Hex } from "./crypto";
 import { evaluateResidual, solveStationary } from "./solver";
 import { verifyStationaryEvidence } from "./verify";
 import { signTx, verifyTx, type Keypair } from "./wallet";
@@ -54,7 +54,8 @@ import {
 import { onPlaneMessage } from "./network-plane";
 import { stationarityRelation } from "./relation";
 import { hexToBytes } from "./bytes";
-import { ARBITRAGE_CODE, evidenceRoot } from "./evidence";
+import { ARBITRAGE_CODE } from "./evidence";
+import { sealFromSuccessor } from "./seal";
 import {
   applySuccessor,
   cloneOmega,
@@ -479,21 +480,18 @@ export class OrganismNode {
       stepped = stepInputs(evidence, wasmAfter);
     }
     if (!stepped.ok) throw new Error(stepped.error);
-    const hash = canonicalHeaderHash({
-      prevHash: args.prevHash,
-      merkleRoot: mr,
-      stateRoot: stepped.stateRoot,
+    const sealed = sealFromSuccessor(omega, {
+      transactions: args.txs,
+      evidence,
       timestamp: args.timestamp,
       nonce: solution.nonce,
-      difficulty: this.difficulty,
-      residualFp: stepped.residualFp,
       miner: args.miner,
-      height: args.height,
       committedPressure: pressure,
-      chainId: evidence.chainId,
-      evidenceRoot: evidenceRoot(evidence),
-      omegaRoot: stepped.omegaRoot,
-    });
+      couplings: this.couplings,
+      difficulty: this.difficulty,
+      wasmAfter,
+    }, stepped);
+    const hash = sealed.hash;
     const txs = args.txs.map((t) => ({
       ...t,
       status: "confirmed" as const,

@@ -134,6 +134,7 @@ export async function initChain(): Promise<void> {
   //   • Partial writes or other DB inconsistencies
   const snapshot = await loadLatestSnapshot();
   let usedSnapshotPath = false;
+  let evidenceReplay: import("./types.js").BlockRecord[] = [];
 
   if (snapshot) {
     logger.info(
@@ -202,6 +203,7 @@ export async function initChain(): Promise<void> {
         // indexes (txIndex, addressTxs) for historical TX queries.
         let highestSnapEraBlock: typeof allRaw[0] | undefined;
         for (const block of allRaw) {
+          if (block.evidence) continue;
           if (block.height > snapshot.height) continue;
           seedState.blocks[block.height] = block;
           if (!highestSnapEraBlock || block.height > highestSnapEraBlock.height) {
@@ -227,6 +229,7 @@ export async function initChain(): Promise<void> {
 
         // ── Post-snapshot replay ──────────────────────────────────────────
         for (const block of allRaw) {
+          if (block.evidence) continue;
           if (block.height <= snapshot.height) continue;
           seedState.addBlock(block);
           for (const peer of seedState.peers) {
@@ -236,6 +239,7 @@ export async function initChain(): Promise<void> {
 
         seedState.wasmVM.setBlockHeight(seedState.height);
         chainState = seedState;
+        evidenceReplay = allRaw.filter((b) => b.evidence);
         logger.info(
           { height: chainState.height, snapshotHeight: snapshot.height },
           "Chain restored from validated snapshot + post-snapshot replay",
@@ -263,6 +267,7 @@ export async function initChain(): Promise<void> {
         chainState = buildChainFromBlocks(dbBlocks);
       }
       logger.info({ height: chainState.height }, "Chain restored");
+      evidenceReplay = dbBlocks.filter((b) => b.evidence);
     } else {
       const genesisDoc = loadGenesisDoc();
       if (genesisDoc) {
@@ -285,6 +290,22 @@ export async function initChain(): Promise<void> {
         logger.warn({ err }, "Genesis persistence failed — continuing in-memory");
       }
     }
+  }
+
+  for (const block of evidenceReplay.sort((a, b) => a.height - b.height)) {
+    const err = await chainState.canonicalBody.replay({
+      hash: block.hash,
+      evidence: block.evidence,
+      transactions: [],
+      timestamp: block.timestamp,
+      nonce: block.nonce,
+      miner: block.miner,
+      difficulty: block.difficulty,
+      committedPressure: block.committedPressure,
+      stateRoot: block.stateRoot,
+      omegaRoot: block.omegaRoot,
+    });
+    if (err) logger.warn({ err, height: block.height, hash: block.hash }, "canonical evidence did not replay");
   }
 
   // ── Patch-05: DEX pool + SMT root persistence ─────────────────────────────

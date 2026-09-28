@@ -208,7 +208,7 @@ function num(n: number): string {
   return Object.is(n, -0) ? "0" : String(n);
 }
 
-/** Digest of the whole next state, not the account projection. */
+/** Digest of the successor projection. tipHash is not in it: the next header binds that hash as prev. */
 export function omegaDigest(omega: Omega): string {
   const ledger = [...omega.ledger.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))

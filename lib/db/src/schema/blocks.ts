@@ -38,6 +38,11 @@ export const blocksTable = pgTable(
     stateRoot:     text("state_root"),
     /** Pressure bound by the sealed header. Null on rows sealed before this column. */
     committedPressure: real("committed_pressure"),
+    /** Evidence-bearing successor. Null on operational blocks. */
+    chainId:       integer("chain_id"),
+    evidenceRoot:  text("evidence_root"),
+    omegaRoot:     text("omega_root"),
+    evidence:      jsonb("evidence"),
   },
   (t) => [
     index("blocks_height_idx").on(t.height),

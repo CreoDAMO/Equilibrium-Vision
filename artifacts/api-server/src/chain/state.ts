@@ -31,6 +31,7 @@ import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import { btcHeaderHash } from "./btc-header.js";
 import { nextFinalizedHeight, stakeForFinality } from "./finality.js";
 import { allocationsMatchKernel, applyPassedCouplings, kernelNetworkOf, kernelParty, KERNEL_POOLS, KERNEL_VALIDATOR_LIQUID, type KernelCouplingProposal } from "./kernel-genesis.js";
+import { CanonicalBody } from "./canonical-body.js";
 import { callArbitrage } from "../../../../site/src/protocol/wasm-host";
 import {
   ETH_MIN_PARTICIPANTS,
@@ -313,6 +314,8 @@ export class ChainState {
   /** Residual target that scales the coinbase. Mainnet 8e-4, testnet 2e-3. Not miningThreshold. */
   admissionTarget = CANONICAL_RESIDUAL_TARGET;
   kernelProposals: KernelCouplingProposal[] = [];
+  /** Evidence-bearing Ω. addBlock does not write this. */
+  canonicalBody = new CanonicalBody("mainnet");
 
   // BFT: real Ed25519 vote keypairs for each validator (testnet: held in-process)
   private validatorKeys = new Map<string, Uint8Array>();    // address → pubkey
@@ -520,6 +523,9 @@ export class ChainState {
   // ── Block management ─────────────────────────────────────────────────────────
 
   addBlock(block: BlockRecord): void {
+    if (block.evidence) {
+      throw new Error("canonical evidence is adopted by the successor, not addBlock");
+    }
     this.preBlockLedger.set(block.height, Object.fromEntries(
       [...this.ledger.getAllAccounts().entries()].map(([addr, acc]) => [addr, { balance: acc.balance, nonce: acc.nonce }]),
     ));
@@ -1493,6 +1499,7 @@ export function buildDocChainFromBlocks(doc: GenesisDocument, blocks: BlockRecor
   ];
 
   for (const block of blocks) {
+    if (block.evidence) continue;
     state.addBlock(block);
     for (const peer of state.peers) {
       if (peer.connected) peer.height = block.height;
@@ -1519,6 +1526,7 @@ export function buildChainFromBlocks(blocks: BlockRecord[]): ChainState {
   ];
 
   for (const block of blocks) {
+    if (block.evidence) continue;
     state.addBlock(block);
     for (const peer of state.peers) {
       if (peer.connected) peer.height = block.height;
