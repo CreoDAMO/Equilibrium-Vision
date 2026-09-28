@@ -489,7 +489,7 @@ describe("ChainState UTXO fee sweep", () => {
       txCount: 0,
       createdAt: 0,
     });
-    expect(state.swap("thin", alice, "EQU", 100)).toBe("insufficient liquidity");
+    expect(state.swap("thin", alice, "EQU", 100)).toBe("a pool moves only inside the successor");
     expect(state.ledger.balance(alice)).toBe(1_000);
 
     state.dexPools.set("first", {
@@ -864,7 +864,7 @@ describe("ChainState UTXO fee sweep", () => {
     state.blocks.push(fakeBlock(0, 1_700_000_000));
     state.blocks.push(fakeBlock(1, 1_700_000_015));
     state.updateDifficulty();
-    expect(state.currentDifficulty).toBe(995_000);
+    expect(state.currentDifficulty).toBe(1_000_000);
 
     const fast = new ChainState();
     fast.currentDifficulty = 1_000_000;
@@ -880,7 +880,7 @@ describe("ChainState UTXO fee sweep", () => {
     born.currentDifficulty = 1_000_000;
     born.ethTipHash = "ff".repeat(32);
     born.updateDifficulty();
-    expect(born.currentDifficulty).toBe(995_000);
+    expect(born.currentDifficulty).toBe(1_000_000);
   });
 
   it("contract storage moves the operational root and not an evidence header", () => {
@@ -1352,7 +1352,29 @@ describe("ChainState UTXO fee sweep", () => {
     const state = new ChainState();
     const staged = await state.executeKernelWasm("init", caller);
     expect(staged.ok).toBe(true);
-    expect(wasmLeafOf(state.canonicalWasm.entries())).toBe(wasmLeafOf(stepped.next.wasm.entries()));
+    expect(wasmLeafOf(staged.storage.entries())).toBe(wasmLeafOf(stepped.next.wasm.entries()));
+    expect(wasmLeafOf(state.canonicalWasm.entries())).toBe("none");
+    const committed = await state.canonicalBody.commit({
+      transactions: [],
+      evidence: {
+        v: 1,
+        chainId: born.chainId,
+        wasmCode: ARBITRAGE_CODE,
+        btc: [],
+        eth: [],
+        wasm: [{ method: "init", caller }],
+        stake: [],
+      },
+      timestamp: 1_700_000_000,
+      nonce: 6,
+      miner: kernelParty("mainnet").miner,
+      committedPressure: 0,
+      couplings: { ...born.couplings },
+      difficulty: born.difficulty,
+    });
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    expect(wasmLeafOf(committed.record.wasm)).toBe(wasmLeafOf(stepped.next.wasm.entries()));
 
     state.addBlock({
       ...fakeBlock(0, 1_700_000_000),
@@ -1360,8 +1382,9 @@ describe("ChainState UTXO fee sweep", () => {
       coinbaseReward: 0,
       wasmEntries: [["cell", "from-call"]],
     });
-    expect(wasmLeafOf(state.canonicalWasm.entries())).not.toBe("none");
+    expect(wasmLeafOf(state.canonicalWasm.entries())).toBe("none");
     expect(state.canonicalWasm.get("cell")).toBeUndefined();
+    expect(wasmLeafOf(state.canonicalBody.omega.wasm.entries())).toBe(wasmLeafOf(stepped.next.wasm.entries()));
   });
 
   it("an ethereum header is admitted only by the bls predicate", () => {
@@ -1405,6 +1428,7 @@ describe("ChainState UTXO fee sweep", () => {
     expect(hash).toBe(hexOf(hashEthHeader(fields)));
     state.currentDifficulty = 1_000_000;
     state.updateDifficulty();
+    expect(state.currentDifficulty).toBe(1_000_000);
     const factor = foreignDifficultyFactor({
       btc: [],
       eth: [{
@@ -1443,7 +1467,8 @@ describe("ChainState UTXO fee sweep", () => {
     expect(stepped.ok).toBe(true);
     if (!stepped.ok) return;
     expect(stepped.next.eth.at(-1)?.hash).toBe(hash);
-    expect(stepped.next.difficulty).toBe(state.currentDifficulty);
+    expect(stepped.next.difficulty).toBe(adjustDifficulty(born.difficulty, 15, NETWORKS.mainnet, factor));
+    expect(state.currentDifficulty).not.toBe(stepped.next.difficulty);
   });
 
   it("an explicit slash does not move a validator", () => {
@@ -1477,6 +1502,20 @@ describe("ChainState UTXO fee sweep", () => {
     expect(state.blocks).toHaveLength(0);
     expect(state.validators.get(addr)!.slashed).toBe(false);
     expect(state.validators.get(addr)!.bondedStake).toBe(validator(addr).bondedStake);
+  });
+
+  it("a local stake or unstake does not move a bond", () => {
+    const state = new ChainState();
+    const delegator = "a".repeat(40);
+    const addr = "b".repeat(40);
+    state.ledger.credit(delegator, 10_000);
+    state.validators.set(addr, validator(addr));
+    const before = state.validators.get(addr)!.bondedStake;
+    expect(state.stake(delegator, addr, 100, 1)).toMatch(/successor/);
+    expect(state.unstake(delegator, addr, 100, 1)).toMatch(/successor/);
+    expect(state.ledger.balance(delegator)).toBe(10_000);
+    expect(state.validators.get(addr)!.bondedStake).toBe(before);
+    expect(state.stakes.size).toBe(0);
   });
 });
 

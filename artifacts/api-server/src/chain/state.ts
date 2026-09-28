@@ -516,7 +516,11 @@ export class ChainState {
     const prev = this.blocks[this.blocks.length - 2];
     const tip = this.blocks[this.blocks.length - 1];
     const blockTime = prev && tip ? tip.timestamp - prev.timestamp : TARGET_BLOCK_TIME;
-    const foreign = foreignTipFactor(this.btcTipHash, this.admittedEthTip);
+    // Local btcTipHash / admittedEthTip are not inputs. Only a tip the
+    // successor already admitted can move this difficulty.
+    const btc = this.canonicalBody.omega.btc.at(-1)?.hash ?? null;
+    const eth = this.canonicalBody.omega.eth.at(-1)?.hash ?? null;
+    const foreign = foreignTipFactor(btc, eth);
     this.currentDifficulty = adjustDifficultySeconds(this.currentDifficulty, blockTime, TARGET_BLOCK_TIME, foreign);
   }
 
@@ -606,11 +610,8 @@ export class ChainState {
     // unset, so this is safe to run unconditionally.
     const pendingParams = drainPendingParamUpdates(this.wasmVM);
     for (const [name, value] of Object.entries(pendingParams)) {
-      const params = this.governance.params as unknown as Record<string, number>;
-      if (Object.prototype.hasOwnProperty.call(params, name) && Number.isFinite(value)) {
-        params[name] = value;
-        logger.info({ param: name, value }, "ADMIN_ACTION: on-chain governance applied param update");
-      }
+      // A contract key is not a coupling and not a difficulty. It does not write.
+      logger.info({ param: name, value }, "governance param ignored; it is not the successor");
     }
 
     // Keep the WASM VM's block_number() host import in sync with the chain tip.
@@ -907,8 +908,9 @@ export class ChainState {
   }
 
   /**
-   * Run the kernel arbitrage call and store the map it returned.
-   * That map is Ω.wasm. A supplied entry list is not.
+   * Execute the kernel arbitrage call and return the map it produced.
+   * This does not store that map. Ω.wasm changes only when the successor
+   * commits the call as evidence.
    */
   async executeKernelWasm(method: "init" | "pause" | "unpause", caller: string): Promise<{
     ok: boolean;
@@ -918,14 +920,13 @@ export class ChainState {
     const owner = caller.slice(0, 40).padEnd(40, "0");
     const methodId = method === "init" ? 0 : method === "pause" ? 2 : 3;
     const args = method === "init" ? new TextEncoder().encode(owner) : new Uint8Array();
-    const storage = new Map(this.canonicalWasm);
+    const storage = new Map(this.canonicalBody.omega.wasm);
     const result = await callArbitrage(methodId, args, {
       caller: owner,
       storage,
-      blockNumber: Math.max(0, this.height),
+      blockNumber: Math.max(0, this.canonicalBody.omega.height),
     });
-    if (result.code !== 1) return { ok: false, code: result.code, storage: new Map(this.canonicalWasm) };
-    this.canonicalWasm = storage;
+    if (result.code !== 1) return { ok: false, code: result.code, storage: new Map(this.canonicalBody.omega.wasm) };
     return { ok: true, code: result.code, storage };
   }
 
@@ -991,55 +992,12 @@ export class ChainState {
 
   // ── Staking ──────────────────────────────────────────────────────────────────
 
-  stake(delegator: string, validatorAddr: string, amount: number, height: number): string | null {
-    if (!this.ledger.debit(delegator, amount)) {
-      return "insufficient funds";
-    }
-    const v = this.validators.get(validatorAddr);
-    if (!v) return "validator not found";
-    if (v.jailed) return "validator is jailed";
-
-    const key = `${delegator}-${validatorAddr}`;
-    const existing = this.stakes.get(key);
-    if (existing && !existing.unbonding) {
-      existing.amount += amount;
-    } else {
-      this.stakes.set(key, {
-        delegator,
-        validator: validatorAddr,
-        amount,
-        startHeight: height,
-        startTimestamp: Math.floor(Date.now() / 1000),
-        unbonding: false,
-        rewardsEarned: 0,
-      });
-    }
-
-    v.bondedStake += amount;
-    return null;
+  stake(_delegator: string, _validatorAddr: string, _amount: number, _height: number): string | null {
+    return "stake is evidence inside the successor, not a local write";
   }
 
-  unstake(delegator: string, validatorAddr: string, amount: number, height: number): string | null {
-    const key = `${delegator}-${validatorAddr}`;
-    const stake = this.stakes.get(key);
-    if (!stake || stake.unbonding) return "no active stake found";
-    if (stake.amount < amount) return "insufficient staked amount";
-
-    const v = this.validators.get(validatorAddr);
-    if (v) v.bondedStake = Math.max(0, v.bondedStake - amount);
-
-    stake.amount -= amount;
-    if (stake.amount === 0) this.stakes.delete(key);
-
-    this.unbondingQueue.push({
-      delegator,
-      validator: validatorAddr,
-      amount,
-      unbondingHeight: height,
-      completionHeight: height + UNBONDING_PERIOD,
-    });
-
-    return null;
+  unstake(_delegator: string, _validatorAddr: string, _amount: number, _height: number): string | null {
+    return "unstake is evidence inside the successor, not a local write";
   }
 
   /**
@@ -1165,102 +1123,21 @@ export class ChainState {
   }
 
   swap(
-    poolId: string,
-    trader: string,
-    tokenIn: string,
-    amountIn: number,
+    _poolId: string,
+    _trader: string,
+    _tokenIn: string,
+    _amountIn: number,
   ): { amountOut: number; fee: number } | string {
-    const pool = this.dexPools.get(poolId);
-    if (!pool) return "pool not found";
-
-    const isAtoB = tokenIn === pool.tokenA;
-    const reserveIn = isAtoB ? pool.reserveA : pool.reserveB;
-    const reserveOut = isAtoB ? pool.reserveB : pool.reserveA;
-    const amountInWithFee = amountIn * (1 - pool.fee);
-    const amountOut = Math.floor((reserveOut * amountInWithFee) / (reserveIn + amountInWithFee));
-    const fee = Math.floor(amountIn * pool.fee);
-    if (amountOut <= 0) return "insufficient liquidity";
-    if (!this.ledger.debit(trader, amountIn)) return "insufficient funds";
-
-    // Update reserves
-    if (isAtoB) {
-      pool.reserveA += amountIn;
-      pool.reserveB -= amountOut;
-      pool.volumeA += amountIn;
-      pool.volumeB += amountOut;
-    } else {
-      pool.reserveB += amountIn;
-      pool.reserveA -= amountOut;
-      pool.volumeB += amountIn;
-      pool.volumeA += amountOut;
-    }
-    pool.txCount += 1;
-
-    // Credit trader with output tokens (simplified: EQU-denominated)
-    this.ledger.credit(trader, amountOut);
-
-    // Patch-05: persist updated pool reserves
-    this._persistPool(pool).catch((e) =>
-      logger.warn({ err: e, poolId }, "[ChainState] persistPool(swap) failed"),
-    );
-
-    const event: SwapEvent = {
-      poolId,
-      trader,
-      amountIn,
-      amountOut,
-      tokenIn,
-      tokenOut: isAtoB ? pool.tokenB : pool.tokenA,
-      fee,
-      timestamp: Math.floor(Date.now() / 1000),
-      txHash: hash256(`swap-${poolId}-${trader}-${Date.now()}`),
-    };
-    this.swapHistory.unshift(event);
-    if (this.swapHistory.length > 200) this.swapHistory.pop();
-
-    return { amountOut, fee };
+    return "a pool moves only inside the successor";
   }
 
   addLiquidity(
-    poolId: string,
-    provider: string,
-    amountA: number,
-    amountB: number,
+    _poolId: string,
+    _provider: string,
+    _amountA: number,
+    _amountB: number,
   ): { liquidity: number } | string {
-    const pool = this.dexPools.get(poolId);
-    if (!pool) return "pool not found";
-    if (!this.ledger.debit(provider, amountA + amountB)) return "insufficient funds";
-
-    const liquidity = pool.totalLiquidity === 0
-      ? Math.floor(Math.sqrt(amountA * amountB))
-      : Math.floor(Math.min(
-          (amountA * pool.totalLiquidity) / pool.reserveA,
-          (amountB * pool.totalLiquidity) / pool.reserveB,
-        ));
-
-    pool.reserveA += amountA;
-    pool.reserveB += amountB;
-    pool.totalLiquidity += liquidity;
-
-    // Patch-05: persist updated pool state
-    this._persistPool(pool).catch((e) =>
-      logger.warn({ err: e, poolId }, "[ChainState] persistPool(addLiquidity) failed"),
-    );
-
-    const existing = this.liquidityPositions.find(p => p.poolId === poolId && p.provider === provider);
-    if (existing) {
-      existing.liquidity += liquidity;
-      existing.sharePercent = (existing.liquidity / pool.totalLiquidity) * 100;
-    } else {
-      this.liquidityPositions.push({
-        poolId,
-        provider,
-        liquidity,
-        sharePercent: (liquidity / pool.totalLiquidity) * 100,
-      });
-    }
-
-    return { liquidity };
+    return "a pool moves only inside the successor";
   }
 
   /**

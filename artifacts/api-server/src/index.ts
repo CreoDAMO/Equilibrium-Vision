@@ -10,6 +10,7 @@ import { epidemicBroadcaster } from "./chain/epidemic.js";
 import { contributionTracker } from "./chain/contribution.js";
 import { smtKey } from "./chain/smt.js";
 import { getVerifiedStateRoot } from "./chain/state-root.js";
+import { admitResidual, canonicalResidual } from "./chain/canonical-residual.js";
 
 const rawPort = process.env["PORT"];
 
@@ -57,8 +58,6 @@ if (Number.isNaN(port) || port <= 0) {
     };
 
     // Maximum residual a PoS block may have — must match routes/blocks.ts
-    const RESIDUAL_THRESHOLD = 1e-7;
-
     p2pBridge.onBlock = (blockHash, peerId) => {
       contributionTracker.onBlockRelayed(peerId);
       // Update the local gossip log so the Explorer network view reflects P2P activity
@@ -127,14 +126,32 @@ if (Number.isNaN(port) || port <= 0) {
               return;
             }
 
-            // Verify residual meets the PoS threshold (same rule as the HTTP submit route)
-            if (remoteResidual >= RESIDUAL_THRESHOLD) {
+            // The claimed residual is not the rule. Recompute it.
+            const remoteTxs = Array.isArray(remote.transactions) ? remote.transactions as Array<{ hash?: string; fee?: number }> : [];
+            const recomputed = canonicalResidual(
+              {
+                prevHash: String(remote.prevHash ?? ""),
+                merkleRoot: String(remote.merkleRoot ?? "0".repeat(64)),
+                timestamp: Number(remote.timestamp),
+                nonce: Number(remote.nonce),
+                difficulty: Number(remote.difficulty),
+              },
+              remoteTxs.map((t) => ({ hash: String(t.hash ?? ""), fee: Number(t.fee ?? 0) })),
+              {
+                cumulativeWork: remoteHeight,
+                mempoolPressure: Number(remote.committedPressure ?? chainState.mempool.pressure),
+              },
+              chainState.couplings,
+            );
+            const admission = admitResidual(remoteResidual, recomputed, chainState.admissionTarget);
+            if (!admission.ok) {
               logger.warn(
-                { blockHash, residual: remoteResidual, threshold: RESIDUAL_THRESHOLD },
-                'P2P sync: block residual above threshold — rejected',
+                { blockHash, error: admission.error, claimed: remoteResidual, recomputed },
+                "P2P sync: residual refused",
               );
               return;
             }
+            remote.residual = admission.residual;
 
             // Timestamp drift guard: ±300 s
             const now = Math.floor(Date.now() / 1000);
