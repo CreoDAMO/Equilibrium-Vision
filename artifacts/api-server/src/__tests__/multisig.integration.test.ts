@@ -286,11 +286,14 @@ describe("Admin multisig — TS wrapper + slash route gating", () => {
     expect(check.body.approved).toBe(true);
 
     const validatorAddr = [...chainState.validators.keys()][0]!;
+    const before = chainState.validators.get(validatorAddr)?.bondedStake;
     const slash = await api
       .post(`/api/validators/${validatorAddr}/slash`)
       .send({ reason: "downtime", proposalId });
-    expect(slash.status).toBe(200);
-    expect(slash.body.success).toBe(true);
+    expect(slash.status).toBe(409);
+    expect(slash.body.success).toBe(false);
+    expect(chainState.validators.get(validatorAddr)?.bondedStake).toBe(before);
+    expect(chainState.validators.get(validatorAddr)?.slashed).toBe(false);
   });
 
   it("rejects an approve() call with a forged signature via the API", async () => {

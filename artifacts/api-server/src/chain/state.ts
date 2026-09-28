@@ -31,13 +31,19 @@ import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import { btcHeaderHash } from "./btc-header.js";
 import { nextFinalizedHeight, stakeForFinality } from "./finality.js";
 import { allocationsMatchKernel, applyPassedCouplings, kernelNetworkOf, kernelParty, KERNEL_POOLS, KERNEL_VALIDATOR_LIQUID, type KernelCouplingProposal } from "./kernel-genesis.js";
+import { callArbitrage } from "../../../../site/src/protocol/wasm-host";
 import {
-  applySlashing,
+  ETH_MIN_PARTICIPANTS,
+  hashEthHeader,
+  hexOf,
+  hexToBytes as ethHex,
+  verifyEthHeader,
+} from "../../../../site/src/protocol/eth-light";
+import {
   canonicalCoinbase,
   CANONICAL_RESIDUAL_TARGET,
   SLASHING_DOUBLE_SIGN_PCT,
   SLASHING_DOWNTIME_PCT,
-  type ValidatorStake as CoinomicsValidatorStake,
 } from "@workspace/coinomics";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -212,13 +218,63 @@ export class ChainState {
   currentDifficulty: number = INITIAL_DIFFICULTY;
   /** Admitted Bitcoin header hash. Set only by admitBtcHeader or a snapshot of one. */
   btcTipHash: string | null = null;
-  /** No Ethereum header is admitted on this body. A raw string must not move difficulty. */
+  /** A raw string. Not an admitted tip, and not an input to difficulty. */
   ethTipHash: string | null = null;
+  /** Admitted Ethereum tip. Set only by admitEthHeader or a snapshot of one. */
+  admittedEthTip: string | null = null;
+  ethPubkey = "";
+  private admittedEthSlot: number | null = null;
 
   admitBtcHeader(headerHex: string): string | null {
     const hash = btcHeaderHash(headerHex);
     if (!hash) return null;
     this.btcTipHash = hash;
+    return hash;
+  }
+
+  /**
+   * Admit an Ethereum header the way the kernel does.
+   * Committee key, 342 participants, slot continuity, and a BLS signature.
+   * A raw ethTipHash is not this, and it does not move difficulty.
+   */
+  admitEthHeader(input: {
+    pubkeyHex: string;
+    slot: number;
+    proposerIndex: number;
+    parentRoot: string;
+    stateRoot: string;
+    bodyRoot: string;
+    participants: number;
+    signatureHex: string;
+  }): string | null {
+    let rawPub: Uint8Array;
+    let sig: Uint8Array;
+    try {
+      rawPub = ethHex(input.pubkeyHex.replace(/^0x/, ""));
+      sig = ethHex(input.signatureHex.replace(/^0x/, ""));
+    } catch {
+      return null;
+    }
+    if (rawPub.length !== 48) return null;
+    const pubkey = hexOf(rawPub);
+    if (this.ethPubkey && pubkey !== this.ethPubkey) return null;
+    if (input.participants < ETH_MIN_PARTICIPANTS) return null;
+    const fields = {
+      slot: input.slot,
+      proposerIndex: input.proposerIndex,
+      parentRoot: input.parentRoot,
+      stateRoot: input.stateRoot,
+      bodyRoot: input.bodyRoot,
+    };
+    if (this.admittedEthSlot !== null) {
+      if (input.slot !== this.admittedEthSlot + 1) return null;
+      if (input.parentRoot !== this.admittedEthTip) return null;
+    }
+    if (!verifyEthHeader(ethHex(pubkey), fields, sig)) return null;
+    const hash = hexOf(hashEthHeader(fields));
+    this.ethPubkey = pubkey;
+    this.admittedEthSlot = input.slot;
+    this.admittedEthTip = hash;
     return hash;
   }
 
@@ -249,8 +305,7 @@ export class ChainState {
   // purse: the next block credits it on the account ledger and clears the pool.
   pendingUtxoFees = 0;
 
-  // WASM smart contract VM. Its storage is operational. canonicalWasm is Ω.wasm.
-  // This node does not execute the kernel wasm call, so the map stays empty.
+  // Ω.wasm is the map the kernel wasm call returned.
   // A supplied wasmEntries list is not that call.
   wasmVM = new WasmVM();
   canonicalWasm = new Map<string, string>();
@@ -408,9 +463,6 @@ export class ChainState {
   private preBlockCouplings = new Map<number, ChainState["couplings"]>();
   private preBlockWasm = new Map<number, Array<[string, string]>>();
   private preBlockProposals = new Map<number, KernelCouplingProposal[]>();
-  private _slashWindows = new Map<string, number[]>();
-  private static readonly MAX_SLASHES_PER_DAY = 5;
-  private static readonly SLASH_WINDOW_S = 86_400;
 
   constructor() {
     this.wireWasmHostContext();
@@ -461,7 +513,7 @@ export class ChainState {
     const prev = this.blocks[this.blocks.length - 2];
     const tip = this.blocks[this.blocks.length - 1];
     const blockTime = prev && tip ? tip.timestamp - prev.timestamp : TARGET_BLOCK_TIME;
-    const foreign = foreignTipFactor(this.btcTipHash, null);
+    const foreign = foreignTipFactor(this.btcTipHash, this.admittedEthTip);
     this.currentDifficulty = adjustDifficultySeconds(this.currentDifficulty, blockTime, TARGET_BLOCK_TIME, foreign);
   }
 
@@ -835,88 +887,40 @@ export class ChainState {
 
   // ── Validator management ─────────────────────────────────────────────────────
 
-  // Builds the pure `ValidatorStake` shape consumed by @workspace/coinomics'
-  // staking/slashing calculators from this validator's live bonded stake and
-  // its active (non-unbonding) delegations. Whatever portion of bondedStake
-  // isn't accounted for by active delegations is treated as the validator's
-  // own self-bond (e.g. its genesis allocation).
-  private buildValidatorStakeView(addr: string): CoinomicsValidatorStake | null {
-    const v = this.validators.get(addr);
-    if (!v || v.bondedStake <= 0) return null;
-
-    const delegations = [...this.stakes.values()].filter(
-      (s) => s.validator === addr && !s.unbonding && s.amount > 0,
-    );
-    const delegatedTotal = delegations.reduce((sum, s) => sum + s.amount, 0);
-    const selfStake = Math.max(v.bondedStake - delegatedTotal, 1e-6);
-
-    return {
-      address: addr,
-      selfStake,
-      commissionPct: v.commission * 100,
-      delegators: delegations.map((s) => ({ address: s.delegator, stake: s.amount })),
-    };
+  /**
+   * Refuse. A slash of canonical validator state is stake evidence inside
+   * the successor. This method does not burn bond, jail, or write slashEvents.
+   */
+  slashValidator(
+    _addr: string,
+    _reason: SlashEvent["reason"],
+    _height: number,
+    _timestamp: number,
+  ): { ok: false; error: string } {
+    return { ok: false, error: "slash is stake evidence inside the successor, not a local write" };
   }
 
-  slashValidator(addr: string, reason: SlashEvent["reason"], height: number, timestamp: number): void {
-    const v = this.validators.get(addr);
-    if (!v || v.slashed) return;
-
-    // Slash rate-limit: prevent more than MAX_SLASHES_PER_DAY per validator per 24 h.
-    // Mirrors Resolv/Drift mitigation: even with a compromised ADMIN_KEY, an attacker
-    // cannot drain all bonded stake in a single burst.
-    const window = this._slashWindows.get(addr) ?? [];
-    const cutoff = timestamp - ChainState.SLASH_WINDOW_S;
-    const recent = window.filter(t => t > cutoff);
-    if (recent.length >= ChainState.MAX_SLASHES_PER_DAY) {
-      logger.warn(
-        { validator: addr, recentSlashes: recent.length, reason },
-        "ADMIN_ACTION: slash rate-limit exceeded — slash rejected",
-      );
-      return;
-    }
-    recent.push(timestamp);
-    this._slashWindows.set(addr, recent);
-
-    const stakeView = this.buildValidatorStakeView(addr);
-    if (!stakeView) return;
-
-    const { result } = applySlashing(stakeView, {
-      reason,
-      ...(reason === "double_sign" ? {} : { incidentCountInWindow: v.slashCount + 1 }),
+  /**
+   * Run the kernel arbitrage call and store the map it returned.
+   * That map is Ω.wasm. A supplied entry list is not.
+   */
+  async executeKernelWasm(method: "init" | "pause" | "unpause", caller: string): Promise<{
+    ok: boolean;
+    code: number;
+    storage: Map<string, string>;
+  }> {
+    const owner = caller.slice(0, 40).padEnd(40, "0");
+    const methodId = method === "init" ? 0 : method === "pause" ? 2 : 3;
+    const args = method === "init" ? new TextEncoder().encode(owner) : new Uint8Array();
+    const storage = new Map(this.canonicalWasm);
+    const result = await callArbitrage(methodId, args, {
+      caller: owner,
+      storage,
+      blockNumber: Math.max(0, this.height),
     });
-
-    // Burn the validator's own portion, then each delegator's portion
-    // pro-rata — reducing both the validator's aggregate bondedStake and the
-    // underlying per-delegator StakeRecord so future reward splits and
-    // unstaking reflect the slash.
-    v.bondedStake = Math.max(0, v.bondedStake - result.validatorAmountBurned);
-    for (const slash of result.delegatorSlashes) {
-      const key = `${slash.address}-${addr}`;
-      const stake = this.stakes.get(key);
-      if (stake) {
-        stake.amount = Math.max(0, stake.amount - slash.amountBurned);
-        if (stake.amount === 0) this.stakes.delete(key);
-      }
-      v.bondedStake = Math.max(0, v.bondedStake - slash.amountBurned);
-    }
-
-    v.slashCount += 1;
-    if (reason === "double_sign") v.slashed = true;
-    if (result.jailed) v.jailed = true;
-
-    this.slashEvents.push({
-      validatorAddress: addr,
-      reason,
-      slashAmount: Math.floor(result.totalBurned),
-      height,
-      timestamp,
-    });
-
-    logger.warn(
-      { validator: addr, reason, slashAmount: Math.floor(result.totalBurned), height },
-      "ADMIN_ACTION: validator slashed",
-    );
+    if (result.code !== 1) return { ok: false, code: result.code, storage: new Map(this.canonicalWasm) };
+    this.canonicalWasm = storage;
+    return { ok: true, code: result.code, storage };
   }
 
   // ── Block reward distribution ─────────────────────────────────────────────────
@@ -1050,6 +1054,9 @@ export class ChainState {
     contracts: ReturnType<WasmVM["listContracts"]>;
     btcTipHash: string | null;
     ethTipHash: string | null;
+    admittedEthTip: string | null;
+    ethPubkey: string;
+    admittedEthSlot: number | null;
   } {
     return {
       ledger: Object.fromEntries(
@@ -1064,6 +1071,9 @@ export class ChainState {
       contracts: this.wasmVM.listContracts().map((c) => ({ ...c, storage: { ...c.storage } })),
       btcTipHash: this.btcTipHash,
       ethTipHash: this.ethTipHash,
+      admittedEthTip: this.admittedEthTip,
+      ethPubkey: this.ethPubkey,
+      admittedEthSlot: this.admittedEthSlot,
     };
   }
 
@@ -1085,6 +1095,9 @@ export class ChainState {
     contracts: ReturnType<WasmVM["listContracts"]>;
     btcTipHash?: string | null;
     ethTipHash?: string | null;
+    admittedEthTip?: string | null;
+    ethPubkey?: string;
+    admittedEthSlot?: number | null;
   }): void {
     this.ledger.restoreAccounts(snap.ledger);
     this.utxoSet.restoreFromSnapshot(snap.utxos);
@@ -1097,6 +1110,9 @@ export class ChainState {
     this.currentDifficulty = snap.difficulty;
     this.btcTipHash = snap.btcTipHash ?? null;
     this.ethTipHash = snap.ethTipHash ?? null;
+    this.admittedEthTip = snap.admittedEthTip ?? null;
+    this.ethPubkey = snap.ethPubkey ?? "";
+    this.admittedEthSlot = snap.admittedEthSlot ?? null;
     this.unbondingQueue = snap.unbonding.map((u) => ({ ...u }));
     this.wasmVM.replaceContracts(snap.contracts);
   }

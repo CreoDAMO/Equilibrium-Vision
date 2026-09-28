@@ -29,7 +29,6 @@ import {
   completeUndelegateOnContract,
   claimRewardsOnContract,
   distributeEpochOnContract,
-  slashValidatorOnContract,
   unjailValidatorOnContract,
   updateCommissionOnContract,
   getValidatorInfoFromContract,
@@ -184,25 +183,13 @@ router.post("/staking/contract/distribute-epoch", async (req, res) => {
 });
 
 // POST /api/staking/contract/slash
-// Body: { caller, validatorId, slashType: "double_sign"|"downtime"|"light_client", evidenceHash }
-router.post("/staking/contract/slash", async (req, res) => {
-  const caller = requireCaller(req, res);
-  if (!caller) return;
-
-  const { validatorId, slashType, evidenceHash } = req.body ?? {};
-  if (
-    typeof validatorId !== "number" ||
-    !["double_sign", "downtime", "light_client"].includes(slashType) ||
-    typeof evidenceHash !== "string"
-  ) {
-    return res.status(400).json({ error: "validatorId, slashType (double_sign|downtime|light_client), evidenceHash are required" });
-  }
-
-  chainState.wasmVM.setBlockHeight(chainState.height);
-  const result = await slashValidatorOnContract(chainState.wasmVM, caller, validatorId, slashType, evidenceHash);
-  if (!result.success) return res.status(400).json(result);
-  logger.info({ validatorId, slashType, slashedAmount: result.slashedAmount }, "staking-contract: validator slashed");
-  return res.json(result);
+// Contract storage is not the canonical validator set. A slash of Ω is stake
+// evidence inside the successor, so this route does not call the contract.
+router.post("/staking/contract/slash", (_req, res) => {
+  return res.status(409).json({
+    success: false,
+    error: "staking-contract slash does not enter the canonical successor",
+  });
 });
 
 // POST /api/staking/contract/unjail

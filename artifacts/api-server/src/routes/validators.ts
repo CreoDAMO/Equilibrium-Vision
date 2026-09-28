@@ -91,8 +91,8 @@ router.post("/validators/:addr/slash", async (req, res) => {
     res.status(404).json({ error: "Validator not found" });
     return;
   }
-  chainState.slashValidator(addr, reason, chainState.height, Math.floor(Date.now() / 1000));
-  res.json({ success: true, validator: chainState.validators.get(addr) });
+  const refused = chainState.slashValidator(addr, reason, chainState.height, Math.floor(Date.now() / 1000));
+  res.status(409).json({ success: false, error: refused.error });
 });
 
 // ── Admin multisig ──────────────────────────────────────────────────────────

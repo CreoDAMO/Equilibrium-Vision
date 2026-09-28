@@ -4,7 +4,9 @@
 //! Validation pipeline:
 //!   1. Chain continuity (prev_hash matches the canonical header of the tip)
 //!   2. Timestamp sanity (±2 hours)
-//!   3. Residual re-verification via joint_residual_and_gradient (no search)
+//!   3. Residual re-verification via canonical_residual (no search).
+//!      Pressure is the committed value the header binds, which is 0.
+//!      The territory residual is not admission.
 //!   4. Merkle root recomputation from tx hashes
 //!   5. BFT vote quorum — real Ed25519 verify + stake quorum when
 //!      `REQUIRE_BFT_VOTES=true`; quorum is not required when unset
@@ -14,18 +16,16 @@
 //! reads from sysfs are best-effort and may no-op on devices without the
 //! standard power-supply paths (see LIMITATIONS §10).
 
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-use crate::chain_state::{
-    BlockHeader, TxCandidate, ChainState, residual_to_fixed,
-};
-use crate::stationary_solver::StationarySolver;
+use crate::chain_state::{residual_to_fixed, BlockHeader, TxCandidate};
+use crate::stationary_solver::canonical_residual;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -48,9 +48,19 @@ pub enum ValidationDecision {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ValidationResult {
-    Accept { hash: String, height: u64 },
-    Reject { hash: String, reason: String, ban_peer: bool },
-    Deferred { hash: String, reason: String },
+    Accept {
+        hash: String,
+        height: u64,
+    },
+    Reject {
+        hash: String,
+        reason: String,
+        ban_peer: bool,
+    },
+    Deferred {
+        hash: String,
+        reason: String,
+    },
 }
 
 impl MobileValidator {
@@ -66,7 +76,11 @@ impl MobileValidator {
                 let mut engine = ValidationEngine::new();
                 while let Ok(job) = rx.recv() {
                     match job {
-                        ValidationJob::ValidateJson { json, from_peer, last_result: lr } => {
+                        ValidationJob::ValidateJson {
+                            json,
+                            from_peer,
+                            last_result: lr,
+                        } => {
                             match parse_block_json(&json) {
                                 Ok(block) => {
                                     let decision = if should_validate_now() {
@@ -82,16 +96,22 @@ impl MobileValidator {
                                     let hash = hex::encode(canonical_identity(&block));
                                     let height = block.header.recursion_depth as u64;
                                     let vr = match &decision {
-                                        ValidationDecision::Accept => ValidationResult::Accept { hash, height },
-                                        ValidationDecision::Reject { reason } => ValidationResult::Reject {
-                                            hash,
-                                            reason: reason.clone(),
-                                            ban_peer: from_peer,
-                                        },
-                                        ValidationDecision::Deferred => ValidationResult::Deferred {
-                                            hash,
-                                            reason: "battery/thermal defer".to_string(),
-                                        },
+                                        ValidationDecision::Accept => {
+                                            ValidationResult::Accept { hash, height }
+                                        }
+                                        ValidationDecision::Reject { reason } => {
+                                            ValidationResult::Reject {
+                                                hash,
+                                                reason: reason.clone(),
+                                                ban_peer: from_peer,
+                                            }
+                                        }
+                                        ValidationDecision::Deferred => {
+                                            ValidationResult::Deferred {
+                                                hash,
+                                                reason: "battery/thermal defer".to_string(),
+                                            }
+                                        }
                                     };
                                     if let Ok(mut guard) = lr.lock() {
                                         *guard = Some(vr.clone());
@@ -195,7 +215,11 @@ impl ValidationEngine {
                     ),
                 };
             }
-            let expected_height = self.chain.last().map(|h| h.recursion_depth + 1).unwrap_or(0);
+            let expected_height = self
+                .chain
+                .last()
+                .map(|h| h.recursion_depth + 1)
+                .unwrap_or(0);
             if block.header.recursion_depth != expected_height {
                 return ValidationDecision::Reject {
                     reason: format!(
@@ -286,28 +310,17 @@ impl ValidationEngine {
         }
     }
 
-    /// Re-evaluate Lagrangian at the claimed header (nonce fixed). No search.
+    /// Recompute the canonical residual at the claimed nonce. No search.
+    /// Pressure is 0, the value `canonical_identity` binds. The territory
+    /// residual in `joint_residual_and_gradient` is not this check.
     fn verify_residual(&self, block: &GossipedBlock) -> Result<(), String> {
-        let lambda = [1.0_f64; 5];
-
         let txs: Vec<TxCandidate> = block
             .tx_hashes
             .iter()
             .map(|h| TxCandidate { hash: *h, fee: 0 })
             .collect();
 
-        let state = ChainState {
-            cumulative_work: if block.header.recursion_depth == 0 { 0 } else { 1 },
-            mempool_pressure: 0.5,
-            validator_count: 1,
-            last_quality: 1.0,
-            height: block.header.recursion_depth as u64,
-        };
-
-        // residual is ALREADY fixed-point i64 — no search, just evaluate at nonce
-        let (recomputed_fp, _grad) =
-            StationarySolver::joint_residual_and_gradient(&block.header, &txs, &state, &lambda);
-
+        let recomputed_fp = admitted_residual_fp(&block.header, &txs);
         let claimed_fp = block.header.residual;
         let delta = (recomputed_fp - claimed_fp).abs();
 
@@ -318,6 +331,21 @@ impl ValidationEngine {
         }
         Ok(())
     }
+}
+
+/// Fixed-point canonical residual. Same relation as `canonical_residual` and
+/// the TypeScript kernel. Cumulative work is the block height. Pressure is 0.
+fn admitted_residual_fp(header: &BlockHeader, txs: &[TxCandidate]) -> i64 {
+    residual_to_fixed(canonical_residual(
+        &header.prev_hash,
+        &header.merkle_root,
+        header.timestamp,
+        header.nonce,
+        header.difficulty,
+        txs,
+        header.recursion_depth as u64,
+        0.0,
+    ))
 }
 
 // ── Block identity hash (matches MiningWorker.computeBlockHash) ───────────────
@@ -410,7 +438,11 @@ pub fn canonical_identity(block: &GossipedBlock) -> [u8; 32] {
 fn miner_from_block_json(json: &str) -> String {
     serde_json::from_str::<serde_json::Value>(json)
         .ok()
-        .and_then(|v| v.get("miner").and_then(|m| m.as_str()).map(|s| s.to_string()))
+        .and_then(|v| {
+            v.get("miner")
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string())
+        })
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "0".repeat(40))
 }
@@ -423,7 +455,11 @@ fn claimed_hash(json: &str) -> Option<String> {
         .trim_start_matches("0x")
         .trim_start_matches("0X")
         .to_ascii_lowercase();
-    if clean.is_empty() { None } else { Some(clean) }
+    if clean.is_empty() {
+        None
+    } else {
+        Some(clean)
+    }
 }
 
 /// A published hash that is not the EQ-07 identity is not this block.
@@ -453,7 +489,11 @@ pub fn merkle_root_from_hashes(hashes: &[[u8; 32]]) -> [u8; 32] {
         let mut i = 0;
         while i < level.len() {
             let left = level[i];
-            let right = if i + 1 < level.len() { level[i + 1] } else { left };
+            let right = if i + 1 < level.len() {
+                level[i + 1]
+            } else {
+                left
+            };
             let mut hasher = Sha256::new();
             hasher.update(left);
             hasher.update(right);
@@ -522,7 +562,9 @@ fn flat_to_gossiped(flat: FlatMiningBody, original_json: &str) -> Result<Gossipe
         .prev_hash
         .ok_or_else(|| "flat body missing prevHash".to_string())?;
 
-    let nonce = flat.nonce.ok_or_else(|| "flat body missing nonce".to_string())?;
+    let nonce = flat
+        .nonce
+        .ok_or_else(|| "flat body missing nonce".to_string())?;
     let timestamp = flat
         .timestamp
         .ok_or_else(|| "flat body missing timestamp".to_string())?;
@@ -642,8 +684,7 @@ impl BftVote {
 
     /// Verify the Ed25519 signature against the validator's public key.
     pub fn verify(&self, pubkey: &[u8; 32]) -> Result<(), String> {
-        let vk = VerifyingKey::from_bytes(pubkey)
-            .map_err(|e| format!("invalid pubkey: {e}"))?;
+        let vk = VerifyingKey::from_bytes(pubkey).map_err(|e| format!("invalid pubkey: {e}"))?;
         let msg = Self::vote_message(&self.block_hash_hex, self.height);
         let sig = Signature::from_bytes(&self.signature);
         vk.verify(&msg, &sig)
@@ -673,7 +714,12 @@ pub fn check_bft_quorum(
         return Err("total bonded stake is zero".into());
     }
 
-    let normalize = |h: &str| h.trim().trim_start_matches("0x").trim_start_matches("0X").to_lowercase();
+    let normalize = |h: &str| {
+        h.trim()
+            .trim_start_matches("0x")
+            .trim_start_matches("0X")
+            .to_lowercase()
+    };
     let eh = normalize(expected_hash_hex);
 
     let mut voted_stake: u64 = 0;
@@ -729,11 +775,17 @@ pub fn parse_bft_votes_from_block_json(json: &str) -> Vec<BftVote> {
         Ok(e) => e,
         Err(_) => return vec![],
     };
-    let Some(list) = env.bft_votes else { return vec![] };
+    let Some(list) = env.bft_votes else {
+        return vec![];
+    };
 
     let mut out = Vec::with_capacity(list.len());
     for v in list {
-        let clean = v.signature.trim().trim_start_matches("0x").trim_start_matches("0X");
+        let clean = v
+            .signature
+            .trim()
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
         if clean.len() != 128 || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
             continue;
         }
@@ -742,13 +794,23 @@ pub fn parse_bft_votes_from_block_json(json: &str) -> Vec<BftVote> {
         for i in 0..64 {
             match u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16) {
                 Ok(b) => sig[i] = b,
-                Err(_) => { ok = false; break; }
+                Err(_) => {
+                    ok = false;
+                    break;
+                }
             }
         }
-        if !ok { continue; }
+        if !ok {
+            continue;
+        }
         out.push(BftVote {
             validator_addr: v.validator,
-            block_hash_hex: v.block_hash.trim().trim_start_matches("0x").trim_start_matches("0X").to_lowercase(),
+            block_hash_hex: v
+                .block_hash
+                .trim()
+                .trim_start_matches("0x")
+                .trim_start_matches("0X")
+                .to_lowercase(),
             height: v.height,
             signature: sig,
         });
@@ -777,16 +839,16 @@ pub fn parse_bft_votes_from_block_json(json: &str) -> Vec<BftVote> {
 // `STATIONARITY_GUEST_ID` when the guest switches to v3.
 #[allow(clippy::too_many_arguments)]
 pub fn residual_fp_from_header(
-    prev_hash:       &[u8; 32],
-    merkle_root:     &[u8; 32],
-    timestamp:       u64,
-    nonce:           u64,
-    difficulty:      u64,
+    prev_hash: &[u8; 32],
+    merkle_root: &[u8; 32],
+    timestamp: u64,
+    nonce: u64,
+    difficulty: u64,
     recursion_depth: u32,
     cumulative_work: u64,
-    height:          u64,
+    height: u64,
 ) -> u64 {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(prev_hash);
     h.update(merkle_root);
@@ -847,20 +909,24 @@ mod tests {
     fn residual_fp_from_header_differs_on_prev_hash() {
         let ph1 = [0xabu8; 32];
         let ph2 = [0xcdu8; 32];
-        let mr  = [0x12u8; 32];
+        let mr = [0x12u8; 32];
         let r1 = residual_fp_from_header(&ph1, &mr, 1_700_000_000, 42, 1000, 2, 999, 7);
         let r2 = residual_fp_from_header(&ph2, &mr, 1_700_000_000, 42, 1000, 2, 999, 7);
-        assert_ne!(r1, r2, "different prev_hashes must produce different residuals");
+        assert_ne!(
+            r1, r2,
+            "different prev_hashes must produce different residuals"
+        );
     }
 
     #[test]
     fn residual_fp_from_header_nonzero_for_nonzero_input() {
         // A concrete sanity check: the hash-fold should produce a nonzero value
         // for a reasonable input (probability 2^{-64} ≈ 0 that it's zero).
-        let r = residual_fp_from_header(
-            &[1u8; 32], &[2u8; 32], 1_700_000_000, 1, 500, 0, 0, 1,
+        let r = residual_fp_from_header(&[1u8; 32], &[2u8; 32], 1_700_000_000, 1, 500, 0, 0, 1);
+        assert_ne!(
+            r, 0,
+            "hash-fold residual should be nonzero for non-trivial input"
         );
-        assert_ne!(r, 0, "hash-fold residual should be nonzero for non-trivial input");
     }
 
     #[test]
@@ -916,7 +982,10 @@ mod tests {
             3,
             0.0,
         );
-        assert_eq!(hash, "836ce07ec08403bf07acc120a50163b48c5910b4bfa7c1de1c08200f1f09f306");
+        assert_eq!(
+            hash,
+            "836ce07ec08403bf07acc120a50163b48c5910b4bfa7c1de1c08200f1f09f306"
+        );
         let other = canonical_header_hash(
             &"11".repeat(32),
             &"22".repeat(32),
@@ -960,7 +1029,10 @@ mod tests {
 
     #[test]
     fn a_hash_that_is_not_the_canonical_header_is_rejected() {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let header = BlockHeader {
             prev_hash: [0u8; 32],
             merkle_root: [0u8; 32],
@@ -979,7 +1051,10 @@ mod tests {
         };
         match ValidationEngine::new().validate(&block, false) {
             ValidationDecision::Reject { reason } => {
-                assert!(reason.contains("hash is not the canonical header"), "{reason}");
+                assert!(
+                    reason.contains("hash is not the canonical header"),
+                    "{reason}"
+                );
             }
             other => panic!("expected identity reject, got {other:?}"),
         }
@@ -1041,7 +1116,10 @@ mod tests {
                 "2777b2548cd75d2d9712b3d0983bc38420c0306b132d458083bcb5c844a59fbd",
             )),
         );
-        assert_eq!(hash, "795d67b1ed75cd450c86f6dd4569c0b7b33f194ce6d38e3441f1c6ad5b4fc5b2");
+        assert_eq!(
+            hash,
+            "795d67b1ed75cd450c86f6dd4569c0b7b33f194ce6d38e3441f1c6ad5b4fc5b2"
+        );
         let ten = canonical_header_hash(
             &prev,
             &prev,
@@ -1118,16 +1196,12 @@ mod tests {
 
     #[test]
     fn continuity_rejects_bad_prev_hash() {
-        use crate::chain_state::ChainState;
-        use crate::stationary_solver::StationarySolver;
-
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let lambda = [1.0_f64; 5];
 
-        // Build a genesis header with a current timestamp and compute its correct residual.
+        // Build a genesis header with a current timestamp and compute its canonical residual.
         let genesis_base = BlockHeader {
             prev_hash: [0u8; 32],
             merkle_root: [0u8; 32],
@@ -1138,17 +1212,11 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let genesis_state = ChainState {
-            cumulative_work: 0,
-            mempool_pressure: 0.5,
-            validator_count: 1,
-            last_quality: 1.0,
-            height: 0,
+        let genesis_residual = admitted_residual_fp(&genesis_base, &[]);
+        let genesis_header = BlockHeader {
+            residual: genesis_residual,
+            ..genesis_base
         };
-        let (genesis_residual, _) = StationarySolver::joint_residual_and_gradient(
-            &genesis_base, &[], &genesis_state, &lambda,
-        );
-        let genesis_header = BlockHeader { residual: genesis_residual, ..genesis_base };
 
         let mut engine = ValidationEngine::new();
         let genesis = GossipedBlock {
@@ -1203,18 +1271,12 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let good_state = ChainState {
-            cumulative_work: 1,
-            mempool_pressure: 0.5,
-            validator_count: 1,
-            last_quality: 1.0,
-            height: 1,
-        };
-        let (good_residual, _) = StationarySolver::joint_residual_and_gradient(
-            &good_base, &[], &good_state, &lambda,
-        );
+        let good_residual = admitted_residual_fp(&good_base, &[]);
         let good_block = GossipedBlock {
-            header: BlockHeader { residual: good_residual, ..good_base },
+            header: BlockHeader {
+                residual: good_residual,
+                ..good_base
+            },
             tx_hashes: vec![],
             bft_votes: vec![],
             block_json: "{}".into(),
@@ -1243,14 +1305,10 @@ mod tests {
     // This is the Rust-side evidence for the "fully mobile P2P mesh" claim.
     #[test]
     fn p2p_gossip_advances_tip_without_http() {
-        use crate::chain_state::ChainState;
-        use crate::stationary_solver::StationarySolver;
-
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let lambda = [1.0_f64; 5];
 
         // ── Node A: mine genesis (height 0) ───────────────────────────────
         let genesis_base = BlockHeader {
@@ -1263,17 +1321,11 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let genesis_state = ChainState {
-            cumulative_work: 0,
-            mempool_pressure: 0.5,
-            validator_count: 1,
-            last_quality: 1.0,
-            height: 0,
+        let res0 = admitted_residual_fp(&genesis_base, &[]);
+        let genesis_header = BlockHeader {
+            residual: res0,
+            ..genesis_base
         };
-        let (res0, _) = StationarySolver::joint_residual_and_gradient(
-            &genesis_base, &[], &genesis_state, &lambda,
-        );
-        let genesis_header = BlockHeader { residual: res0, ..genesis_base };
 
         // ── Node B: receives genesis via gossip (HTTP never called) ───────
         let mut engine_b = ValidationEngine::new();
@@ -1284,7 +1336,10 @@ mod tests {
             block_json: "{}".into(),
         };
         assert!(
-            matches!(engine_b.validate(&genesis_gossip, /* from_peer */ true), ValidationDecision::Accept),
+            matches!(
+                engine_b.validate(&genesis_gossip, /* from_peer */ true),
+                ValidationDecision::Accept
+            ),
             "genesis must be accepted from peer"
         );
         engine_b.accept(&genesis_gossip);
@@ -1304,17 +1359,11 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let block1_state = ChainState {
-            cumulative_work: 1,
-            mempool_pressure: 0.5,
-            validator_count: 1,
-            last_quality: 1.0,
-            height: 1,
+        let res1 = admitted_residual_fp(&block1_base, &[]);
+        let block1_header = BlockHeader {
+            residual: res1,
+            ..block1_base
         };
-        let (res1, _) = StationarySolver::joint_residual_and_gradient(
-            &block1_base, &[], &block1_state, &lambda,
-        );
-        let block1_header = BlockHeader { residual: res1, ..block1_base };
 
         // ── Node B: receives block 1 via gossip (HTTP never called) ───────
         let block1_gossip = GossipedBlock {
@@ -1324,7 +1373,10 @@ mod tests {
             block_json: "{}".into(),
         };
         assert!(
-            matches!(engine_b.validate(&block1_gossip, /* from_peer */ true), ValidationDecision::Accept),
+            matches!(
+                engine_b.validate(&block1_gossip, /* from_peer */ true),
+                ValidationDecision::Accept
+            ),
             "block 1 must be accepted from peer"
         );
         engine_b.accept(&block1_gossip);
@@ -1363,7 +1415,10 @@ mod tests {
         let mut validators = HashMap::new();
         validators.insert(
             "v1".into(),
-            ValidatorInfo { pubkey: pk.to_bytes(), bonded_stake: 100 },
+            ValidatorInfo {
+                pubkey: pk.to_bytes(),
+                bonded_stake: 100,
+            },
         );
         assert!(check_bft_quorum(&validators, &[vote], &hash_hex, height).is_ok());
     }
@@ -1386,11 +1441,17 @@ mod tests {
         let mut validators = HashMap::new();
         validators.insert(
             "small".into(),
-            ValidatorInfo { pubkey: pk.to_bytes(), bonded_stake: 10 },
+            ValidatorInfo {
+                pubkey: pk.to_bytes(),
+                bonded_stake: 10,
+            },
         );
         validators.insert(
             "silent".into(),
-            ValidatorInfo { pubkey: [0u8; 32], bonded_stake: 100 },
+            ValidatorInfo {
+                pubkey: [0u8; 32],
+                bonded_stake: 100,
+            },
         );
         // 10 / 110 < 2/3
         assert!(check_bft_quorum(&validators, &[vote], &hash_hex, height).is_err());
@@ -1412,7 +1473,10 @@ mod tests {
         let mut validators = HashMap::new();
         validators.insert(
             "v1".into(),
-            ValidatorInfo { pubkey: pk.to_bytes(), bonded_stake: 100 },
+            ValidatorInfo {
+                pubkey: pk.to_bytes(),
+                bonded_stake: 100,
+            },
         );
         assert!(check_bft_quorum(&validators, &[vote], &hash_hex, height).is_err());
     }

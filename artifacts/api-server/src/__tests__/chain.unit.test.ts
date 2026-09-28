@@ -10,8 +10,11 @@ import { BTC_GENESIS_HEADER_HEX } from "../chain/btc-header.js";
 import { nextFinalizedHeight } from "../chain/finality.js";
 import { kernelParty, KERNEL_ALLOCATIONS, KERNEL_POOLS, KERNEL_VALIDATOR_LIQUID } from "../chain/kernel-genesis.js";
 import { wasmLeafOf } from "../chain/wasm-leaf.js";
-import { applySuccessor, initialOmega } from "../../../../site/src/protocol/constitution";
-import { canonicalCoinbase } from "@workspace/coinomics";
+import { applySuccessor, adjustDifficulty, foreignDifficultyFactor, initialOmega } from "../../../../site/src/protocol/constitution";
+import { ARBITRAGE_CODE } from "../../../../site/src/protocol/evidence";
+import { callArbitrage } from "../../../../site/src/protocol/wasm-host";
+import { ethKeygen, hashEthHeader, hexOf, signEthHeader } from "../../../../site/src/protocol/eth-light";
+import { NETWORKS } from "../../../../site/src/protocol/networks";
 import { rebuildStateSmt } from "../chain/state-root.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "../chain/mining-policy.js";
 import type { BlockRecord, ValidatorRecord } from "../chain/types.js";
@@ -1308,6 +1311,151 @@ describe("ChainState UTXO fee sweep", () => {
       betweenTestnet,
       supply: [...state.ledger.getAllAccounts().values()].reduce((s, a) => s + a.balance, 0),
     }));
+  });
+
+  it("both bodies store the wasm map the kernel call returned", async () => {
+    const caller = "c".repeat(40);
+    const storage = new Map<string, string>();
+    const executed = await callArbitrage(0, new TextEncoder().encode(caller), {
+      caller,
+      storage,
+      blockNumber: 0,
+    });
+    expect(executed.code).toBe(1);
+    const wasmAfter = new Map(executed.storage);
+    expect(wasmAfter.size).toBeGreaterThan(0);
+
+    const born = initialOmega("mainnet");
+    const stepped = applySuccessor(born, {
+      transactions: [],
+      evidence: {
+        v: 1,
+        chainId: born.chainId,
+        wasmCode: ARBITRAGE_CODE,
+        btc: [],
+        eth: [],
+        wasm: [{ method: "init", caller }],
+        stake: [],
+      },
+      timestamp: 1_700_000_000,
+      nonce: 6,
+      miner: kernelParty("mainnet").miner,
+      committedPressure: 0,
+      couplings: { ...born.couplings },
+      difficulty: born.difficulty,
+      wasmAfter,
+    });
+    expect(stepped.ok).toBe(true);
+    if (!stepped.ok) return;
+    expect(wasmLeafOf(stepped.next.wasm.entries())).toBe(wasmLeafOf(wasmAfter.entries()));
+
+    const state = new ChainState();
+    const staged = await state.executeKernelWasm("init", caller);
+    expect(staged.ok).toBe(true);
+    expect(wasmLeafOf(state.canonicalWasm.entries())).toBe(wasmLeafOf(stepped.next.wasm.entries()));
+
+    state.addBlock({
+      ...fakeBlock(0, 1_700_000_000),
+      miner: "b".repeat(40),
+      coinbaseReward: 0,
+      wasmEntries: [["cell", "from-call"]],
+    });
+    expect(wasmLeafOf(state.canonicalWasm.entries())).not.toBe("none");
+    expect(state.canonicalWasm.get("cell")).toBeUndefined();
+  });
+
+  it("an ethereum header is admitted only by the bls predicate", () => {
+    const key = ethKeygen();
+    const pubkey = hexOf(key.pubkey);
+    const fields = {
+      slot: 7,
+      proposerIndex: 3,
+      parentRoot: "11".repeat(32),
+      stateRoot: "22".repeat(32),
+      bodyRoot: "33".repeat(32),
+    };
+    const signature = hexOf(signEthHeader(key.secret, fields));
+    const state = new ChainState();
+    state.currentDifficulty = 1_000_000;
+    state.blocks.push(fakeBlock(0, 1_700_000_000));
+    state.blocks.push(fakeBlock(1, 1_700_000_015));
+    state.ethTipHash = "ff".repeat(32);
+    expect(state.admitEthHeader({
+      pubkeyHex: pubkey,
+      ...fields,
+      participants: 341,
+      signatureHex: signature,
+    })).toBeNull();
+    expect(state.admitEthHeader({
+      pubkeyHex: pubkey,
+      ...fields,
+      participants: 342,
+      signatureHex: "00".repeat(96),
+    })).toBeNull();
+    state.updateDifficulty();
+    expect(state.currentDifficulty).toBe(1_000_000);
+    expect(state.admittedEthTip).toBeNull();
+
+    const hash = state.admitEthHeader({
+      pubkeyHex: pubkey,
+      ...fields,
+      participants: 342,
+      signatureHex: signature,
+    });
+    expect(hash).toBe(hexOf(hashEthHeader(fields)));
+    state.currentDifficulty = 1_000_000;
+    state.updateDifficulty();
+    const factor = foreignDifficultyFactor({
+      btc: [],
+      eth: [{
+        slot: fields.slot,
+        hash: hash!,
+        parentRoot: fields.parentRoot,
+        stateRoot: fields.stateRoot,
+        bodyRoot: fields.bodyRoot,
+        participants: 342,
+      }],
+    });
+    const born = initialOmega("mainnet");
+    expect(state.currentDifficulty).toBe(adjustDifficulty(1_000_000, 15, NETWORKS.mainnet, factor));
+    const stepped = applySuccessor(born, {
+      transactions: [],
+      evidence: {
+        v: 1,
+        chainId: born.chainId,
+        wasmCode: ARBITRAGE_CODE,
+        btc: [],
+        eth: [
+          { op: "bootstrap", pubkey },
+          { op: "header", ...fields, participants: 342, signature },
+        ],
+        wasm: [],
+        stake: [],
+      },
+      timestamp: 1_700_000_000,
+      nonce: 6,
+      miner: kernelParty("mainnet").miner,
+      committedPressure: 0,
+      couplings: { ...born.couplings },
+      difficulty: born.difficulty,
+      wasmAfter: null,
+    });
+    expect(stepped.ok).toBe(true);
+    if (!stepped.ok) return;
+    expect(stepped.next.eth.at(-1)?.hash).toBe(hash);
+    expect(stepped.next.difficulty).toBe(state.currentDifficulty);
+  });
+
+  it("an explicit slash does not move a validator", () => {
+    const state = new ChainState();
+    const addr = "b".repeat(40);
+    state.validators.set(addr, validator(addr));
+    const before = state.validators.get(addr)!.bondedStake;
+    const refused = state.slashValidator(addr, "double_sign", 1, 1_700_000_000);
+    expect(refused.ok).toBe(false);
+    expect(state.validators.get(addr)!.bondedStake).toBe(before);
+    expect(state.validators.get(addr)!.slashed).toBe(false);
+    expect(state.slashEvents).toEqual([]);
   });
 });
 
