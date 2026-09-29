@@ -32,6 +32,8 @@ import { btcHeaderHash } from "./btc-header.js";
 import { nextFinalizedHeight, stakeForFinality } from "./finality.js";
 import { allocationsMatchKernel, applyPassedCouplings, kernelNetworkOf, kernelParty, KERNEL_POOLS, KERNEL_VALIDATOR_LIQUID, type KernelCouplingProposal } from "./kernel-genesis.js";
 import { CanonicalBody } from "./canonical-body.js";
+import { selectSuccessorTxs } from "../../../../site/src/protocol/tx-select";
+import { poolAddress } from "../../../../site/src/protocol/dex";
 import { callArbitrage } from "../../../../site/src/protocol/wasm-host";
 import {
   ETH_MIN_PARTICIPANTS,
@@ -116,28 +118,12 @@ export class Ledger {
    * Those omitted transactions must not become a UTXO.
    */
   selectApplicable(txs: TxRecord[]): TxRecord[] {
-    const shadow = new Map<string, AccountState>();
-    const read = (addr: string): AccountState => {
-      const cached = shadow.get(addr);
-      if (cached) return cached;
-      const live = this.getAccount(addr);
-      const copy = { balance: live.balance, nonce: live.nonce };
-      shadow.set(addr, copy);
-      return copy;
-    };
-    const kept: TxRecord[] = [];
-    for (const tx of txs) {
-      if (!Number.isSafeInteger(tx.amount) || !Number.isSafeInteger(tx.fee) || tx.amount <= 0 || tx.fee < 0) continue;
-      const sender = read(tx.from);
-      const total = tx.amount + tx.fee;
-      if (tx.nonce !== sender.nonce || sender.balance < total) continue;
-      sender.balance -= total;
-      sender.nonce += 1;
-      const recipient = read(tx.to);
-      recipient.balance += tx.amount;
-      kept.push(tx);
-    }
-    return kept;
+    return selectSuccessorTxs(
+      (addr) => this.getAccount(addr).balance,
+      (addr) => this.getAccount(addr).nonce,
+      txs,
+      txs.length,
+    );
   }
 
   getAccount(addr: string): AccountState {
@@ -526,6 +512,19 @@ export class ChainState {
 
   // ── Block management ─────────────────────────────────────────────────────────
 
+  /** Transactions the successor can apply, in successor order. The operational ledger does not choose them. */
+  selectCanonical(txs: TxRecord[], limit = 50): TxRecord[] {
+    const omega = this.canonicalBody.omega;
+    const pools = new Set(omega.pools.map((p) => p.address || poolAddress(p.id)));
+    return selectSuccessorTxs(
+      (addr) => omega.ledger.get(addr)?.balance ?? 0,
+      (addr) => omega.ledger.get(addr)?.nonce ?? 0,
+      txs,
+      limit,
+      (tx) => !pools.has(tx.to),
+    );
+  }
+
   addBlock(block: BlockRecord): void {
     if (block.evidence) {
       throw new Error("canonical evidence is adopted by the successor, not addBlock");
@@ -555,6 +554,14 @@ export class ChainState {
       for (const addr of [tx.from, tx.to]) {
         if (!this.addressTxs.has(addr)) this.addressTxs.set(addr, new Set());
         this.addressTxs.get(addr)!.add(tx.hash);
+      }
+
+      const poolDest = this.dexPools.has(tx.to)
+        || this.canonicalBody.omega.pools.some((p) => (p.address || poolAddress(p.id)) === tx.to);
+      if (poolDest) {
+        const failed: TxRecord = { ...confirmed, status: "failed" };
+        this.txIndex.set(tx.hash, failed);
+        continue;
       }
 
       // The account ledger is the monetary state. A transfer it rejects does
@@ -1715,7 +1722,7 @@ export async function mineNextBlockAsync(
   const height = state.height + 1;
   const now = Math.floor(Date.now() / 1000);
 
-  const candidates = state.ledger.selectApplicable(state.mempool.all()).slice(0, 50);
+  const candidates = state.selectCanonical(state.mempool.all());
   const signed = candidates.filter((t) => t.signature && t.publicKey);
   let invalidHashes = new Set<string>();
   if (signed.length > 0) {
@@ -1803,11 +1810,11 @@ export async function mineNextBlockAsync(
         merkleRoot: mr,
         timestamp: now,
         nonce,
-        difficulty: state.currentDifficulty,
+        difficulty: state.canonicalBody.omega.difficulty,
       },
       selected.map((t) => ({ hash: t.hash, fee: t.fee })),
       { cumulativeWork: height, mempoolPressure: state.mempool.pressure },
-      state.couplings,
+      state.canonicalBody.omega.couplings,
     );
     if (solverAdmitted === false) {
       throw new Error(`solver candidate nonce ${nonce} was not admitted`);
@@ -1841,7 +1848,7 @@ export async function mineNextBlockAsync(
     merkleRoot:     mr,
     timestamp:      now,
     nonce,
-    difficulty:     state.currentDifficulty,
+    difficulty:     state.canonicalBody.omega.difficulty,
     residual,
     residualFp:     Math.floor(residual * 1e18),
     recursionDepth: 2,
@@ -1878,7 +1885,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   const height = state.height + 1;
   const now = Math.floor(Date.now() / 1000);
 
-  const candidates = state.ledger.selectApplicable(state.mempool.all()).slice(0, 50);
+  const candidates = state.selectCanonical(state.mempool.all());
 
   // Re-verify signatures at block-assembly time using batch verification —
   // one combined check instead of N full verifications. Any tx that fails
@@ -1930,7 +1937,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
     merkleRoot: mr,
     timestamp: now,
     nonce: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER),
-    difficulty: state.currentDifficulty,
+    difficulty: state.canonicalBody.omega.difficulty,
     residual,
     residualFp: Math.floor(residual * 1e18),
     recursionDepth: 2,

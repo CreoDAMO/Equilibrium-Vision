@@ -274,21 +274,22 @@ router.post("/blocks/submit", async (req, res) => {
     : Math.floor(Date.now() / 1000);
 
   // Pull pending txs from the mempool (same as the internal miner)
-  const selected  = chainState.ledger.selectApplicable(chainState.mempool.all()).slice(0, 50);
+  const selected  = chainState.selectCanonical(chainState.mempool.all());
   const txHashes  = selected.map((t) => t.hash);
   const mr        = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
   const blockHash = hash256(`block-${height}-${tipHash}-${now}`);
+  const difficulty = chainState.canonicalBody.omega.difficulty;
   const recomputed = canonicalResidual(
     {
       prevHash: tipHash,
       merkleRoot: mr,
       timestamp: now,
       nonce: Math.floor(nonce),
-      difficulty: chainState.currentDifficulty,
+      difficulty,
     },
     selected.map((t) => ({ hash: t.hash, fee: t.fee })),
     { cumulativeWork: height, mempoolPressure: chainState.mempool.pressure },
-    chainState.couplings,
+    chainState.canonicalBody.omega.couplings,
   );
   const admission = admitResidual(residual, recomputed, chainState.admissionTarget);
   if (!admission.ok) {
@@ -319,7 +320,7 @@ router.post("/blocks/submit", async (req, res) => {
     merkleRoot:    mr,
     timestamp:     now,
     nonce:         Math.floor(nonce),
-    difficulty:    chainState.currentDifficulty,
+    difficulty:    difficulty,
     residual:      admission.residual,
     recursionDepth: 2,
     coinbaseReward: reward,

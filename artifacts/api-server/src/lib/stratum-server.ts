@@ -341,20 +341,21 @@ export class StratumServer {
     const now     = Number.isFinite(parsedNtime) ? parsedNtime : Math.floor(Date.now() / 1000);
     const nonce   = Number.isFinite(parsedNonce) ? parsedNonce : 0;
 
-    const selected  = cs.ledger.selectApplicable(cs.mempool.all()).slice(0, 50);
+    const selected  = cs.selectCanonical(cs.mempool.all());
     const txHashes  = selected.map((t) => t.hash);
     const mr        = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
+    const difficulty = cs.canonicalBody.omega.difficulty;
     const recomputed = canonicalResidual(
       {
         prevHash: prev.hash,
         merkleRoot: mr,
         timestamp: now,
         nonce,
-        difficulty: cs.currentDifficulty,
+        difficulty,
       },
       selected.map((t) => ({ hash: t.hash, fee: t.fee })),
       { cumulativeWork: height, mempoolPressure: cs.mempool.pressure },
-      cs.couplings,
+      cs.canonicalBody.omega.couplings,
     );
     const admission = admitResidual(residual, recomputed, cs.admissionTarget);
     if (!admission.ok) {
@@ -383,7 +384,7 @@ export class StratumServer {
       merkleRoot:    mr,
       timestamp:     now,
       nonce,
-      difficulty:    cs.currentDifficulty,
+      difficulty:    difficulty,
       residual,
       residualFp:    Math.floor(residual * 1e18),
       recursionDepth: 2,

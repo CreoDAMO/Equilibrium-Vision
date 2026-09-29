@@ -127,6 +127,14 @@ if (Number.isNaN(port) || port <= 0) {
             }
 
             // The claimed residual is not the rule. Recompute it.
+            const canonicalDifficulty = chainState.canonicalBody.omega.difficulty;
+            if (Number(remote.difficulty) !== canonicalDifficulty) {
+              logger.warn(
+                { blockHash, claimed: remote.difficulty, canonical: canonicalDifficulty },
+                "P2P sync: difficulty is not the canonical difficulty",
+              );
+              return;
+            }
             const remoteTxs = Array.isArray(remote.transactions) ? remote.transactions as Array<{ hash?: string; fee?: number }> : [];
             const recomputed = canonicalResidual(
               {
@@ -134,14 +142,14 @@ if (Number.isNaN(port) || port <= 0) {
                 merkleRoot: String(remote.merkleRoot ?? "0".repeat(64)),
                 timestamp: Number(remote.timestamp),
                 nonce: Number(remote.nonce),
-                difficulty: Number(remote.difficulty),
+                difficulty: canonicalDifficulty,
               },
               remoteTxs.map((t) => ({ hash: String(t.hash ?? ""), fee: Number(t.fee ?? 0) })),
               {
                 cumulativeWork: remoteHeight,
                 mempoolPressure: Number(remote.committedPressure ?? chainState.mempool.pressure),
               },
-              chainState.couplings,
+              chainState.canonicalBody.omega.couplings,
             );
             const admission = admitResidual(remoteResidual, recomputed, chainState.admissionTarget);
             if (!admission.ok) {

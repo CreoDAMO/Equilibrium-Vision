@@ -462,6 +462,7 @@ function applyEffects(
     }
     const sender = omega.ledger.get(tx.from) ?? { balance: 0, nonce: 0 };
     const total = tx.amount + tx.fee;
+    if (tx.nonce !== sender.nonce) return "bad nonce";
     if (sender.balance < total) return "insufficient funds";
     omega.ledger.set(tx.from, { balance: sender.balance - total, nonce: sender.nonce + 1 });
     credit(omega.ledger, miner, tx.fee);

@@ -55,6 +55,7 @@ import { onPlaneMessage } from "./network-plane";
 import { stationarityRelation } from "./relation";
 import { hexToBytes } from "./bytes";
 import { ARBITRAGE_CODE } from "./evidence";
+import { selectSuccessorTxs } from "./tx-select";
 import { sealFromSuccessor } from "./seal";
 import {
   applySuccessor,
@@ -551,22 +552,26 @@ export class OrganismNode {
     const height = prev.height + 1;
     const now = Math.max(prev.timestamp + 1, at ?? this.clock ?? Math.floor(Date.now() / 1000));
     const preview = this.pools.map((p) => ({ ...p }));
-    const selected: TxRecord[] = [];
-    const reserved = new Map<string, number>();
-    for (const tx of [...this.mempool.values()].sort((a, b) => b.fee - a.fee)) {
-      if (selected.length >= this.params.maxTxPerBlock) break;
+    const verified: TxRecord[] = [];
+    for (const tx of this.mempool.values()) {
       if (!verifyTx(tx, this.params.chainId)) {
         this.mempool.delete(tx.hash);
         continue;
       }
-      const already = reserved.get(tx.from) ?? 0;
-      const acc = this.account(tx.from);
-      if (acc.balance < this.held(tx.from) + already + tx.amount + tx.fee) continue;
       const pool = preview.find((p) => (p.address || poolAddress(p.id)) === tx.to);
       if (pool && quoteSwap(pool, pool.tokenA, tx.amount) <= 0) continue;
+      verified.push(tx);
+    }
+    const selected = selectSuccessorTxs(
+      (addr) => this.account(addr).balance - this.held(addr),
+      (addr) => this.account(addr).nonce,
+      verified,
+      this.params.maxTxPerBlock,
+      (tx) => !preview.some((p) => (p.address || poolAddress(p.id)) === tx.to),
+    );
+    for (const tx of selected) {
+      const pool = preview.find((p) => (p.address || poolAddress(p.id)) === tx.to);
       if (pool) applySwap(pool, pool.tokenA, tx.amount);
-      reserved.set(tx.from, already + tx.amount + tx.fee);
-      selected.push(tx);
     }
     this.emit("in", "mempool", `pressure ${this.mempoolPressure.toFixed(3)} · ${this.mempool.size} queued · ${selected.length} selected`);
     this.emit("out", "solver", `discovering stationary nonce at height ${height}`);

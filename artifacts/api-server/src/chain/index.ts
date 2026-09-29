@@ -508,11 +508,16 @@ export async function initChain(): Promise<void> {
     const merkle = typeof body["merkleRoot"] === "string" && /^[0-9a-f]{64}$/i.test(body["merkleRoot"])
       ? body["merkleRoot"]
       : "0".repeat(64);
+    const canonicalDifficulty = chainState.canonicalBody.omega.difficulty;
+    if (difficulty !== canonicalDifficulty) {
+      logger.warn({ hash: hash.slice(0, 16), height, claimed: difficulty, canonical: canonicalDifficulty }, "p2p: difficulty is not the canonical difficulty");
+      return;
+    }
     const recomputed = canonicalResidual(
-      { prevHash, merkleRoot: merkle, timestamp, nonce, difficulty },
+      { prevHash, merkleRoot: merkle, timestamp, nonce, difficulty: canonicalDifficulty },
       [],
       { cumulativeWork: height, mempoolPressure: 0 },
-      chainState.couplings,
+      chainState.canonicalBody.omega.couplings,
     );
     const admission = admitResidual(residual, recomputed, chainState.admissionTarget);
     if (!admission.ok) {
