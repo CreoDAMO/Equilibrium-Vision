@@ -80,5 +80,5 @@ pub unsafe extern "C" fn solve_block(
     let (nonce, residual) = search_canonical(&header, &[], &state, max_attempts.max(1), 2e-3);
     *out_nonce = nonce;
     *out_residual = residual_to_fixed(residual);
-    residual.is_finite() && residual >= 0.0 && residual < 2e-3
+    (0.0..2e-3).contains(&residual)
 }

@@ -1,6 +1,6 @@
-import { successor, initialOmega, openedCouplings } from "../../../../site/src/protocol/constitution";
-import { omegaRecord, sealFromSuccessor } from "../../../../site/src/protocol/seal";
-import type { CanonicalInputs, NetworkId, Omega, TransitionEvidence, TxRecord } from "../../../../site/src/protocol/types";
+import { successor, initialOmega, openedCouplings } from "../../../../site/src/protocol/constitution.js";
+import { omegaRecord, sealFromSuccessor } from "../../../../site/src/protocol/seal.js";
+import type { CanonicalInputs, NetworkId, Omega, TransitionEvidence, TxRecord } from "../../../../site/src/protocol/types.js";
 
 /**
  * The artifact embodiment of the one successor.

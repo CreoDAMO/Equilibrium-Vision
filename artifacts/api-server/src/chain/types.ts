@@ -99,7 +99,7 @@ export interface BlockRecord {
    */
   wasmEntries?: Array<[string, string]>;
   /** Stake, foreign, and wasm inputs. addBlock refuses these. The canonical body replays them. */
-  evidence?: import("../../../../site/src/protocol/types").TransitionEvidence;
+  evidence?: import("../../../../site/src/protocol/types.js").TransitionEvidence;
   /** Next-block coupling written by a kernel proposal. Not governance.params. */
   couplingKey?: "hash" | "structural" | "continuity" | "mempool" | "fees";
   couplingValue?: number;

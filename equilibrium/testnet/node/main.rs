@@ -37,7 +37,7 @@ async fn main() {
 
     println!("Mining block...");
     let (nonce, residual) = search_canonical(&header, &[], &state, 10_000, 2e-3);
-    if !(residual.is_finite() && residual >= 0.0 && residual < 2e-3) {
+    if !(0.0..2e-3).contains(&residual) {
         println!(
             "Refused: residual {residual} is not under the admission target 0.002. The search returned a candidate. That is not a block."
         );

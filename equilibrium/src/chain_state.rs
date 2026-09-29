@@ -142,7 +142,7 @@ pub const CANONICAL_RESIDUAL_TARGET: f64 = 2e-3;
 /// That candidate is not a block. Admission is this comparison.
 pub fn admits_canonical(residual_fp: i64, target: f64) -> bool {
     let residual = residual_to_float(residual_fp);
-    residual.is_finite() && residual >= 0.0 && residual < target
+    (0.0..target).contains(&residual)
 }
 
 #[cfg(test)]

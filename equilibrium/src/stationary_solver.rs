@@ -173,6 +173,7 @@ impl StationarySolver {
 /// Same function as `canonicalResidual` in the TypeScript node and
 /// `evaluateResidual` in `site/src/protocol/solver.ts`.
 /// The territory residual in `joint_residual_and_gradient` is not this number.
+#[allow(clippy::too_many_arguments)]
 pub fn canonical_residual(
     prev_hash: &[u8; 32],
     merkle_root: &[u8; 32],
@@ -333,6 +334,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::type_complexity, clippy::excessive_precision)]
     fn canonical_residual_grid_matches_the_public_kernel() {
         let prev = [0u8; 32];
         let merkle = [0u8; 32];

@@ -248,7 +248,7 @@ fn handle(line: &str) -> Response {
                 ok: true,
                 nonce,
                 residual,
-                admitted: residual.is_finite() && residual >= 0.0 && residual < 2e-3,
+                admitted: (0.0..2e-3).contains(&residual),
             }
         }
 

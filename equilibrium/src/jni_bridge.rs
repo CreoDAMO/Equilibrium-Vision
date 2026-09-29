@@ -115,7 +115,7 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
     if env.set_long_array_region(&out_residual, 0, &[residual_to_fixed(residual)]).is_err() {
         return JNI_FALSE;
     }
-    if residual.is_finite() && residual >= 0.0 && residual < 2e-3 { JNI_TRUE } else { JNI_FALSE }
+    if (0.0..2e-3).contains(&residual) { JNI_TRUE } else { JNI_FALSE }
 }
 
 /// Start the in-process mobile swarm. The Android UI supplies the TCP and QUIC

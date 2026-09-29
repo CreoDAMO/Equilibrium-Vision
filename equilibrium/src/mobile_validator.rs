@@ -364,6 +364,7 @@ pub fn block_hash(header: &BlockHeader) -> [u8; 32] {
 
 /// EQ-07 header hash. Same preimage as the TypeScript `canonicalHeaderHash`.
 /// Double SHA-256 of the UTF-8 field string. Not the phone preimage above.
+#[allow(clippy::too_many_arguments)]
 pub fn canonical_header_hash(
     prev_hash: &str,
     merkle_root: &str,
@@ -393,6 +394,7 @@ pub fn canonical_header_hash(
 
 /// The evidence-bearing preimage. Appends chain id, evidence root, and omega root.
 /// Same branch as TypeScript `canonicalHeaderHash` when those fields are set.
+#[allow(clippy::too_many_arguments)]
 pub fn canonical_header_hash_evidence(
     prev_hash: &str,
     merkle_root: &str,

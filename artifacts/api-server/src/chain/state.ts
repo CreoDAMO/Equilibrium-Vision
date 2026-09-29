@@ -32,16 +32,16 @@ import { btcHeaderHash } from "./btc-header.js";
 import { nextFinalizedHeight, stakeForFinality } from "./finality.js";
 import { allocationsMatchKernel, applyPassedCouplings, kernelNetworkOf, kernelParty, KERNEL_POOLS, KERNEL_VALIDATOR_LIQUID, type KernelCouplingProposal } from "./kernel-genesis.js";
 import { CanonicalBody } from "./canonical-body.js";
-import { selectSuccessorTxs } from "../../../../site/src/protocol/tx-select";
-import { poolAddress } from "../../../../site/src/protocol/dex";
-import { callArbitrage } from "../../../../site/src/protocol/wasm-host";
+import { selectSuccessorTxs } from "../../../../site/src/protocol/tx-select.js";
+import { poolAddress } from "../../../../site/src/protocol/dex.js";
+import { callArbitrage } from "../../../../site/src/protocol/wasm-host.js";
 import {
   ETH_MIN_PARTICIPANTS,
   hashEthHeader,
   hexOf,
   hexToBytes as ethHex,
   verifyEthHeader,
-} from "../../../../site/src/protocol/eth-light";
+} from "../../../../site/src/protocol/eth-light.js";
 import {
   canonicalCoinbase,
   CANONICAL_RESIDUAL_TARGET,

@@ -104,6 +104,11 @@ export const SPECS: SpecDoc[] = [
     summary: "Lowest cumulative canonical residual wins.",
     body: [
       "Comparisons use residualFp (floor(R × 1e18)) so ARM and x86 agree.",
+      "The chain with the lower sum of residualFp from the common ancestor wins.",
+      "If the sums are equal, the chain whose tip hash is lexicographically smaller wins. Arrival order is not a tie-break.",
+      "A block that does not extend the current tip is still a candidate. It is not rejected for arriving second.",
+      "A successor computed from an older Ω is not installed. The candidate is selected again against the Ω that is current.",
+      "A finalized ancestor is not reorganized.",
     ],
   },
   {

@@ -2,9 +2,9 @@
  * Local writers do not decide Ω. The successor does.
  */
 import assert from "node:assert/strict";
-import { ChainState } from "./state";
-import { BTC_GENESIS_HEADER_HEX } from "./btc-header";
-import { ARBITRAGE_CODE } from "../../../../site/src/protocol/evidence";
+import { ChainState } from "./state.js";
+import { BTC_GENESIS_HEADER_HEX } from "./btc-header.js";
+import { ARBITRAGE_CODE } from "../../../../site/src/protocol/evidence.js";
 
 const state = new ChainState();
 state.currentDifficulty = 1_000_000;

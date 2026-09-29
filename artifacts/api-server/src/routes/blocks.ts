@@ -9,7 +9,8 @@ import type { TxRecord } from "../chain/types.js";
 import { RateLimiter, ReplaySet } from "../lib/submission-guard.js";
 import { canonicalCoinbase } from "@workspace/coinomics";
 import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
-import { openedCouplings } from "../../../../site/src/protocol/constitution";
+import { openedCouplings } from "../../../../site/src/protocol/constitution.js";
+import type { TransitionEvidence } from "../../../../site/src/protocol/types.js";
 
 const router = Router();
 
@@ -167,7 +168,7 @@ router.post("/blocks/submit", async (req, res) => {
       : Math.floor(Date.now() / 1000);
     const committed = await chainState.canonicalBody.commit({
       transactions: [],
-      evidence: evidence as import("../../../../site/src/protocol/types").TransitionEvidence,
+      evidence: evidence as TransitionEvidence,
       timestamp: now,
       nonce: Math.floor(nonce),
       miner: miner.toLowerCase(),

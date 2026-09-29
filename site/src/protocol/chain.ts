@@ -56,6 +56,7 @@ import { stationarityRelation } from "./relation";
 import { hexToBytes } from "./bytes";
 import { ARBITRAGE_CODE } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
+import { chainWeight, preferChain } from "./frontier";
 import { sealFromSuccessor } from "./seal";
 import {
   applySuccessor,
@@ -137,6 +138,9 @@ export class OrganismNode {
   private kin: OrganismNode | null = null;
   private kinStarted = false;
   private kinQueue: Promise<void> = Promise.resolve();
+  /** Competing blocks. Operational only. None of these is canonical until EQ-09 selects one. */
+  private frontier = new Map<string, BlockRecord>();
+  private settleAgain = false;
 
   constructor(network: NetworkId, opts?: { skipBootstrap?: boolean }) {
     this.network = network;
@@ -1272,42 +1276,211 @@ export class OrganismNode {
 
   async submitExternal(claimed: BlockRecord): Promise<{ ok: boolean; report: VerificationReport; error?: string }> {
     this.emit("in", "network", `external candidate ${claimed.hash.slice(0, 12)}… at membrane`);
-    const prev = claimed.height === 0 ? null : (this.blocks.find((b) => b.hash === claimed.prevHash) ?? null);
-    const report = verifyStationaryEvidence({
-      block: claimed,
-      prev,
-      mempoolPressure: claimed.committedPressure,
-      cumulativeWork: claimed.height,
-      params: this.params,
-      authorizedCouplings: openedCouplings(this.toOmega()),
-    });
-    if (!report.ok) {
-      const failed = report.checks.filter((c) => !c.ok).map((c) => c.name);
-      this.emit("in", "verify", `external rejected · ${failed.join(", ")}`);
-      return { ok: false, report, error: `VerifyStationaryEvidence failed: ${failed.join(", ")}` };
+    if (this.blocks.some((b) => b.hash === claimed.hash)) {
+      const report = verifyStationaryEvidence({
+        block: claimed,
+        prev: claimed.height === 0 ? null : (this.blocks.find((b) => b.hash === claimed.prevHash) ?? null),
+        cumulativeWork: claimed.height,
+        params: this.params,
+      });
+      return { ok: true, report };
     }
+    const proved = await this.proveCandidate(claimed);
+    if (!proved.ok) {
+      this.emit("in", "verify", `external rejected · ${proved.error}`);
+      return { ok: false, report: proved.report, error: proved.error };
+    }
+    this.frontier.set(claimed.hash, claimed);
+    await this.settle();
+    if (!this.blocks.some((b) => b.hash === claimed.hash)) {
+      return { ok: false, report: proved.report, error: "not the lowest cumulative residual" };
+    }
+    if (this.kinStarted) this.noteKin(claimed);
+    for (const listener of this.commitListeners) listener(claimed);
+    this.emit("close", "memory", `external Ω${claimed.height} admitted`);
+    return { ok: true, report: proved.report };
+  }
+
+  private async proveCandidate(claimed: BlockRecord): Promise<{ ok: true; report: VerificationReport } | { ok: false; report: VerificationReport; error: string }> {
+    const blank: VerificationReport = { ok: false, verifyEvals: 0, checks: [] };
     if (claimed.relation) {
       const again = stationarityRelation(claimed, this.params.residualThreshold);
       if (!again.ok || again.hashLo !== claimed.relation.hashLo || again.hashHi !== claimed.relation.hashHi) {
-        this.emit("in", "verify", "external rejected · stationarity relation does not bind this header");
-        return { ok: false, report, error: "stationarity relation does not bind this header" };
+        return { ok: false, report: blank, error: "stationarity relation does not bind this header" };
       }
     }
-    if (!this.tip || claimed.height !== this.tip.height + 1 || claimed.prevHash !== this.tip.hash) {
-      this.emit("in", "verify", "external rejected · not the next candidate");
-      return { ok: false, report, error: "not the next candidate" };
+    if (claimed.height === 0 && this.blocks.length > 0) {
+      return { ok: false, report: blank, error: "genesis is already canonical" };
     }
-    const err = await this.absorb(claimed);
-    if (err) {
-      this.emit("in", "verify", `external rejected · ${err}`);
-      return { ok: false, report, error: err };
+    const parentKnown = claimed.prevHash === "0".repeat(64) || this.blocks.some((b) => b.hash === claimed.prevHash);
+    if (!parentKnown) return { ok: false, report: blank, error: "parent is not on the canonical chain" };
+    const view = await this.viewAt(claimed.prevHash);
+    if (!view) return { ok: false, report: blank, error: "parent did not replay" };
+    const prev = claimed.prevHash === "0".repeat(64) ? null : view.tip;
+    const report = verifyStationaryEvidence({
+      block: claimed,
+      prev,
+      cumulativeWork: claimed.height,
+      params: view.params,
+      authorizedCouplings: openedCouplings(view.toOmega()),
+    });
+    if (!report.ok) {
+      const failed = report.checks.filter((c) => !c.ok).map((c) => c.name);
+      return { ok: false, report, error: `VerifyStationaryEvidence failed: ${failed.join(", ")}` };
     }
-    if (this.kinStarted) this.noteKin(claimed);
-    if (claimed.verified) {
-      for (const listener of this.commitListeners) listener(claimed);
-    }
-    this.emit("close", "memory", `external Ω${claimed.height} admitted`);
+    const err = await view.absorb(claimed);
+    if (err) return { ok: false, report, error: err };
     return { ok: true, report };
+  }
+
+  private async viewAt(parentHash: string): Promise<OrganismNode | null> {
+    if ((this.tip?.hash ?? "0".repeat(64)) === parentHash) return this.fork();
+    if (parentHash === "0".repeat(64)) {
+      const kin = new OrganismNode(this.network, { skipBootstrap: true });
+      kin.constitute();
+      return kin;
+    }
+    const idx = this.blocks.findIndex((b) => b.hash === parentHash);
+    if (idx < 0) return null;
+    const kin = new OrganismNode(this.network, { skipBootstrap: true });
+    kin.constitute();
+    for (const block of this.blocks.slice(0, idx + 1)) {
+      const err = await kin.absorb(block);
+      if (err) return null;
+    }
+    return kin;
+  }
+
+  private settleChain: Promise<void> = Promise.resolve();
+
+  private settle(): Promise<void> {
+    const run = this.settleChain.then(() => this.settleBody());
+    this.settleChain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async settleBody(): Promise<void> {
+    let spins = 0;
+    do {
+      this.settleAgain = false;
+      await this.settleOnce();
+      spins += 1;
+    } while (this.settleAgain && spins < 32);
+  }
+
+  private childrenOf(parent: string): BlockRecord[] {
+    return [...this.frontier.values()].filter((b) => b.prevHash === parent);
+  }
+
+  private bestExtension(): BlockRecord | null {
+    const parent = this.tip?.hash ?? "0".repeat(64);
+    let best: BlockRecord | null = null;
+    for (const block of this.childrenOf(parent)) {
+      if (!best) {
+        best = block;
+        continue;
+      }
+      const challenger = { weight: chainWeight([block]), tipHash: block.hash };
+      const incumbent = { weight: chainWeight([best]), tipHash: best.hash };
+      if (preferChain(challenger, incumbent)) best = block;
+    }
+    return best;
+  }
+
+  private bestFork(): BlockRecord[] | null {
+    let best: BlockRecord[] | null = null;
+    const tip = this.tip?.hash;
+    for (const block of this.frontier.values()) {
+      if (block.prevHash === tip) continue;
+      const chain = this.chainFromCanonical(block);
+      if (!chain) continue;
+      const parentIdx = this.blocks.findIndex((b) => b.hash === chain[0]!.prevHash);
+      if (parentIdx < 0) continue;
+      const tail = this.blocks.slice(parentIdx + 1);
+      if (tail.length === 0 || tail.some((b) => b.finalized)) continue;
+      const challenger = { weight: chainWeight(chain), tipHash: chain[chain.length - 1]!.hash };
+      const incumbent = { weight: chainWeight(tail), tipHash: tail[tail.length - 1]!.hash };
+      if (!preferChain(challenger, incumbent)) continue;
+      if (!best || preferChain(challenger, { weight: chainWeight(best), tipHash: best[best.length - 1]!.hash })) best = chain;
+    }
+    return best;
+  }
+
+  /** The frontier path from a canonical parent through `block`, if it is contiguous. */
+  private chainFromCanonical(block: BlockRecord): BlockRecord[] | null {
+    const reversed: BlockRecord[] = [block];
+    let cursor = block;
+    while (!this.blocks.some((b) => b.hash === cursor.prevHash)) {
+      if (cursor.prevHash === "0".repeat(64)) break;
+      const parent = this.frontier.get(cursor.prevHash);
+      if (!parent) return null;
+      reversed.push(parent);
+      cursor = parent;
+    }
+    if (cursor.prevHash !== "0".repeat(64) && !this.blocks.some((b) => b.hash === cursor.prevHash)) return null;
+    return reversed.reverse();
+  }
+
+  private async settleOnce(): Promise<void> {
+    const fork = this.bestFork();
+    if (fork) {
+      const err = await this.reorg(fork);
+      if (err) this.frontier.delete(fork[fork.length - 1]!.hash);
+      this.settleAgain = true;
+      return;
+    }
+    const next = this.bestExtension();
+    if (!next) return;
+    const err = await this.absorb(next);
+    if (err === "successor is stale") {
+      this.settleAgain = true;
+      return;
+    }
+    if (err) {
+      this.frontier.delete(next.hash);
+      this.settleAgain = true;
+      return;
+    }
+    this.frontier.delete(next.hash);
+    this.settleAgain = true;
+  }
+
+  private async reorg(chain: BlockRecord[]): Promise<string | null> {
+    const parentIdx = this.blocks.findIndex((b) => b.hash === chain[0]!.prevHash);
+    if (parentIdx < 0) return "fork point is not canonical";
+    const tail = this.blocks.slice(parentIdx + 1);
+    if (tail.some((b) => b.finalized)) return "finalized ancestor";
+    const kin = new OrganismNode(this.network, { skipBootstrap: true });
+    kin.constitute();
+    for (const block of [...this.blocks.slice(0, parentIdx + 1), ...chain]) {
+      const err = await kin.absorb(block);
+      if (err) return err;
+    }
+    for (const block of tail) this.frontier.set(block.hash, block);
+    for (const block of chain) this.frontier.delete(block.hash);
+    this.blocks = kin.blocks;
+    this.ledger = kin.ledger;
+    this.txIndex = kin.txIndex;
+    this.validators = kin.validators;
+    this.finality = kin.finality;
+    this.stats = kin.stats;
+    this.pools = kin.pools;
+    this.swaps = kin.swaps;
+    this.btcHeaders = kin.btcHeaders;
+    this.ethHeaders = kin.ethHeaders;
+    this.ethPubkey = kin.ethPubkey;
+    this.wasmStorage = kin.wasmStorage;
+    this.couplings = { ...kin.couplings };
+    this.difficulty = kin.difficulty;
+    this.delegations = kin.delegations;
+    this.proposals = kin.proposals;
+    this.finalizedThrough = kin.finalizedThrough;
+    if (this.kinStarted) {
+      this.kin = null;
+      this.kinStarted = false;
+      this.startKin();
+    }
+    return null;
   }
 
   /**
@@ -1477,6 +1650,7 @@ export class OrganismNode {
       authorizedCouplings: openedCouplings(this.toOmega()),
     });
     if (!report.ok) return report.checks.filter((c) => !c.ok).map((c) => c.name).join(", ");
+    const baseTip = this.tip?.hash ?? "0".repeat(64);
     const stepped = await successor(this.toOmega(), {
       transactions: block.transactions,
       evidence: block.evidence,
@@ -1488,6 +1662,7 @@ export class OrganismNode {
       difficulty: block.difficulty,
     });
     if (!stepped.ok) return stepped.error;
+    if ((this.tip?.hash ?? "0".repeat(64)) !== baseTip) return "successor is stale";
     if (stepped.stateRoot !== block.stateRoot) return "state root does not replay";
     if (block.evidence && stepped.omegaRoot !== block.omegaRoot) return "omega root does not replay";
     if (stepped.reward !== block.coinbaseReward) return "coinbase is not the reward law";
