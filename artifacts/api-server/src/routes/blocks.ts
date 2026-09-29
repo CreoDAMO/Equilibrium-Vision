@@ -9,6 +9,7 @@ import type { TxRecord } from "../chain/types.js";
 import { RateLimiter, ReplaySet } from "../lib/submission-guard.js";
 import { canonicalCoinbase } from "@workspace/coinomics";
 import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
+import { openedCouplings } from "../../../../site/src/protocol/constitution";
 
 const router = Router();
 
@@ -171,7 +172,7 @@ router.post("/blocks/submit", async (req, res) => {
       nonce: Math.floor(nonce),
       miner: miner.toLowerCase(),
       committedPressure: 0,
-      couplings: { ...chainState.canonicalBody.omega.couplings },
+      couplings: openedCouplings(chainState.canonicalBody.omega),
       difficulty: chainState.canonicalBody.omega.difficulty,
     });
     if (!committed.ok) {

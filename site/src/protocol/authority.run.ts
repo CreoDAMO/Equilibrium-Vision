@@ -8,7 +8,7 @@ import { nextFinalizedHeight, stakeForFinality } from "../../../artifacts/api-se
 import { kernelParty } from "../../../artifacts/api-server/src/chain/kernel-genesis";
 import { wasmLeafOf as artifactsWasmLeaf } from "../../../artifacts/api-server/src/chain/wasm-leaf";
 import { BTC_GENESIS_HEADER_HEX, decodeHeaderHex, parseBtcHeader, verifyBtcPow } from "./btc";
-import { applySuccessor, cloneOmega, stateRootOf, wasmLeafOf } from "./constitution";
+import { applySuccessor, cloneOmega, openedCouplings, stateRootOf, wasmLeafOf } from "./constitution";
 import { ARBITRAGE_CODE } from "./evidence";
 import { activityKeys, minerKey, treasuryKey } from "./genesis";
 import { NETWORKS } from "./networks";
@@ -88,7 +88,7 @@ function step(current: Omega, wasmAfter: Map<string, string> | null, ev: Transit
     nonce: 6,
     miner: "a".repeat(40),
     committedPressure: 0,
-    couplings: { ...current.couplings },
+    couplings: openedCouplings(current),
     difficulty: current.difficulty,
     wasmAfter,
   });
@@ -132,7 +132,7 @@ governed.proposals.push({
 const moved = step(governed, null);
 assert.equal(quiet.ok && moved.ok, true);
 if (!quiet.ok || !moved.ok) throw new Error("unreachable");
-assert.equal(moved.residual, quiet.residual);
+assert.notEqual(moved.residual, quiet.residual);
 assert.notEqual(moved.omegaRoot, quiet.omegaRoot);
 assert.equal(moved.next.couplings.structural, 0);
 assert.equal(quiet.next.couplings.structural, 1);

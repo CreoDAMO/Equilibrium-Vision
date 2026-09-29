@@ -83,13 +83,15 @@ export function dependencyFindings(): DependencyRow[] {
     });
   }
 
-  const otherMiner = applySuccessor(omega, { ...inputs, miner: "other-miner" });
+  const live = [...omega.validators.keys()].filter((k) => k !== inputs.miner);
+  const otherMiner = applySuccessor(omega, { ...inputs, miner: live[0] ?? inputs.miner });
+  const stranger = applySuccessor(omega, { ...inputs, miner: "other-miner" });
   rows.push({
     id: "miner",
-    specifiedBy: "not fixed by EQ-00–EQ-21",
+    specifiedBy: "The miner must already be a live validator in Ω.",
     omegaChanges: once.ok && otherMiner.ok && otherMiner.omegaRoot !== once.omegaRoot,
     verdict: "input",
-    detail: "The miner is not chosen by the specification. Given as an input, it selects one Ω. Left free, two miners are two states.",
+    detail: `Two live validators are two states. A stranger is ${stranger.ok ? "accepted" : "refused"}.`,
   });
 
   const later = applySuccessor(omega, { ...inputs, timestamp: inputs.timestamp + 10_000 });
@@ -102,15 +104,17 @@ export function dependencyFindings(): DependencyRow[] {
   });
 
   const pressured = applySuccessor(omega, { ...inputs, committedPressure: 1 });
+  const wildPressure = applySuccessor(omega, { ...inputs, committedPressure: 2 });
   rows.push({
     id: "pressure",
-    specifiedBy: "EQ-02 names pressure as a field. It does not derive it from Ω.",
+    specifiedBy: "EQ-02 names pressure as a field. It does not derive it from Ω. It is bounded.",
     omegaChanges: once.ok && pressured.ok && pressured.omegaRoot !== once.omegaRoot,
     verdict: once.ok && pressured.ok && pressured.omegaRoot !== once.omegaRoot ? "input" : "free-same-omega",
     detail:
-      once.ok && pressured.ok && pressured.omegaRoot === once.omegaRoot
+      `${wildPressure.ok ? "Pressure 2 was accepted." : "Pressure outside [0, 1] is refused."} ` +
+      (once.ok && pressured.ok && pressured.omegaRoot === once.omegaRoot
         ? "Pressure 0 and pressure 1 changed the residual and not Ω, while both rewards stayed on the clip."
-        : "Pressure changed Ω. It has to be an input, or a function the specification writes down. The mempool is not that function.",
+        : "Pressure inside [0, 1] changed Ω. The committed value is the input. The receiver's mempool is not."),
   });
 
   const ablated = applySuccessor(omega, {
@@ -119,13 +123,12 @@ export function dependencyFindings(): DependencyRow[] {
   });
   rows.push({
     id: "couplings",
-    specifiedBy: "EQ-02 names the couplings. It does not fix their values.",
-    omegaChanges: once.ok && ablated.ok && ablated.omegaRoot !== once.omegaRoot,
-    verdict: once.ok && ablated.ok && ablated.omegaRoot !== once.omegaRoot ? "free-changes-omega" : "free-same-omega",
-    detail:
-      once.ok && ablated.ok && ablated.omegaRoot === once.omegaRoot
-        ? "Zeroing λ_structural changed the residual and not Ω under the clip. The value still has to be an input of the block, because it changes the header."
-        : "The coupling value changed Ω. Passed proposals are one way this body sets it. The specification does not require that way.",
+    specifiedBy: "EQ-02 names the couplings. A passed proposal is what changes them.",
+    omegaChanges: false,
+    verdict: "fixed",
+    detail: ablated.ok
+      ? "A foreign coupling vector was accepted."
+      : "A coupling vector other than the opened Ω is refused. The residual uses that opened vector and no other.",
   });
 
   if (once.ok) {

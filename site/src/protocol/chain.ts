@@ -32,7 +32,7 @@ import type {
 } from "./types";
 import { DEFAULT_COUPLINGS } from "./types";
 import { NETWORKS } from "./networks";
-import { merkleRoot, sha256Hex } from "./crypto";
+import { merkleRoot, residualsMatch, sha256Hex } from "./crypto";
 import { evaluateResidual, solveStationary } from "./solver";
 import { verifyStationaryEvidence } from "./verify";
 import { signTx, verifyTx, type Keypair } from "./wallet";
@@ -63,6 +63,7 @@ import {
   constitutionalAnswer,
   initialOmega,
   openOmega,
+  openedCouplings,
   successor,
   type Successor,
 } from "./constitution";
@@ -1278,6 +1279,7 @@ export class OrganismNode {
       mempoolPressure: claimed.committedPressure,
       cumulativeWork: claimed.height,
       params: this.params,
+      authorizedCouplings: openedCouplings(this.toOmega()),
     });
     if (!report.ok) {
       const failed = report.checks.filter((c) => !c.ok).map((c) => c.name);
@@ -1472,7 +1474,7 @@ export class OrganismNode {
       mempoolPressure: block.committedPressure,
       cumulativeWork: block.height,
       params: this.params,
-      now: block.timestamp,
+      authorizedCouplings: openedCouplings(this.toOmega()),
     });
     if (!report.ok) return report.checks.filter((c) => !c.ok).map((c) => c.name).join(", ");
     const stepped = await successor(this.toOmega(), {
@@ -1490,7 +1492,7 @@ export class OrganismNode {
     if (block.evidence && stepped.omegaRoot !== block.omegaRoot) return "omega root does not replay";
     if (stepped.reward !== block.coinbaseReward) return "coinbase is not the reward law";
     if (stepped.liquid !== (block.liquidIssuance ?? block.coinbaseReward)) return "liquid issuance is not the stake law";
-    if (Math.abs(stepped.residual - block.residual) > 1e-12) return "residual is not the transition";
+    if (!residualsMatch(block.residual, stepped.residual)) return "residual is not the transition";
     this.adopt(block, stepped);
     return null;
   }
@@ -1654,7 +1656,7 @@ export class OrganismNode {
         height: tip.height,
         claimedR: tip.residual,
         inferredR: local.canonical,
-        agree: Math.abs(local.canonical - tip.residual) < 1e-12,
+        agree: residualsMatch(tip.residual, local.canonical),
         discoveryIters: tip.solverIterations,
         verifyEvals: 1,
         forgedRejected: true,

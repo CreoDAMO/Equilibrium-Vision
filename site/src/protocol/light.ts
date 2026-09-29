@@ -1,4 +1,5 @@
 import type { BlockRecord, NetworkParams, VerificationReport } from "./types";
+import { residualsMatch } from "./crypto";
 import { evaluateResidual } from "./solver";
 import { verifyStationaryEvidence } from "./verify";
 
@@ -37,7 +38,7 @@ export function independentVerify(
     { cumulativeWork: block.height, mempoolPressure: block.committedPressure },
     block.couplings,
   );
-  const agree = Math.abs(local.canonical - block.residual) < 1e-12 && report.ok;
+  const agree = residualsMatch(block.residual, local.canonical) && report.ok;
   return {
     ...report,
     localResidual: local.canonical,

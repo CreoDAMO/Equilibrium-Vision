@@ -1,8 +1,9 @@
-import type { BlockRecord, NetworkParams, TxRecord, VerificationReport } from "./types";
-import { canonicalHeaderHash, merkleRoot } from "./crypto";
+import { canonicalHeaderHash, merkleRoot, residualsMatch } from "./crypto";
 import { evaluateResidual } from "./solver";
 import { verifyTx } from "./wallet";
 import { evidenceRoot } from "./evidence";
+import type { BlockRecord, Couplings, NetworkParams, TxRecord, VerificationReport } from "./types";
+import { sameCouplings } from "./constitution";
 
 const MAX_FUTURE_SECS = 7200;
 
@@ -13,10 +14,11 @@ export function verifyStationaryEvidence(args: {
   cumulativeWork?: number;
   params: NetworkParams;
   now?: number;
+  authorizedCouplings?: Couplings;
 }): VerificationReport {
   const { block, prev, params } = args;
   const now = args.now ?? Math.floor(Date.now() / 1000);
-  const pressure = args.mempoolPressure ?? block.committedPressure;
+  const pressure = block.committedPressure;
   const work = args.cumulativeWork ?? block.height;
   const checks: VerificationReport["checks"] = [];
 
@@ -56,6 +58,21 @@ export function verifyStationaryEvidence(args: {
     detail: merkleOk ? block.merkleRoot.slice(0, 16) + "…" : "merkle root does not recompute",
   });
 
+  const lambda = args.authorizedCouplings ?? block.couplings;
+  const couplingsOk = !args.authorizedCouplings || sameCouplings(block.couplings, args.authorizedCouplings);
+  checks.push({
+    name: "couplings",
+    ok: couplingsOk,
+    detail: couplingsOk ? "couplings are the opened Ω" : "block couplings are not the opened Ω",
+  });
+
+  const pressureOk = Number.isFinite(pressure) && pressure >= 0 && pressure <= 1;
+  checks.push({
+    name: "pressure",
+    ok: pressureOk,
+    detail: pressureOk ? "pressure is in [0,1]" : "pressure is not in [0,1]",
+  });
+
   const recomputed = evaluateResidual(
     {
       prevHash: block.prevHash,
@@ -66,19 +83,19 @@ export function verifyStationaryEvidence(args: {
     },
     block.transactions.map((t) => ({ hash: t.hash, fee: t.fee })),
     { cumulativeWork: work, mempoolPressure: pressure },
-    block.couplings,
+    lambda,
   );
 
-  const residualMatch = Math.abs(recomputed.canonical - block.residual) < 1e-12;
+  const residualMatch = residualsMatch(block.residual, recomputed.canonical);
   checks.push({
     name: "residual-recompute",
     ok: residualMatch,
     detail: residualMatch
       ? `R = ${recomputed.canonical.toExponential(4)} (1 eval, ${block.solverIterations} discovery iters)`
-      : `claimed ${block.residual} ≠ recomputed ${recomputed.canonical}`,
+      : `claimed ${block.residual} fingerprint ≠ recomputed ${recomputed.canonical}`,
   });
 
-  const underThreshold = block.height === 0 || block.residual < params.residualThreshold;
+  const underThreshold = block.height === 0 || recomputed.canonical < params.residualThreshold;
   checks.push({
     name: "threshold",
     ok: underThreshold,

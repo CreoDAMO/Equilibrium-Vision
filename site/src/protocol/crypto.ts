@@ -112,8 +112,15 @@ export const PHI = (1 + Math.sqrt(5)) / 2;
 export const RESIDUAL_SCALE = 1e18;
 
 export function residualToFixed(residual: number): number {
-  if (!Number.isFinite(residual)) return Number.MAX_SAFE_INTEGER;
+  if (!Number.isFinite(residual) || residual < 0) return -1;
   return Math.floor(residual * RESIDUAL_SCALE);
+}
+
+/** The admission predicate. A float window is not this comparison. */
+export function residualsMatch(claimed: number, recomputed: number): boolean {
+  const left = residualToFixed(claimed);
+  const right = residualToFixed(recomputed);
+  return left >= 0 && left === right;
 }
 
 export function u64LeFromHash(digest: Uint8Array): bigint {

@@ -158,6 +158,21 @@ export function openOmega(omega: Omega): void {
   }
 }
 
+export function sameCouplings(a: Couplings, b: Couplings): boolean {
+  return a.hash === b.hash
+    && a.structural === b.structural
+    && a.continuity === b.continuity
+    && a.mempool === b.mempool
+    && a.fees === b.fees;
+}
+
+/** The couplings the next block is allowed to carry. Not a field a peer may choose. */
+export function openedCouplings(omega: Omega): Couplings {
+  const next = cloneOmega(omega);
+  openOmega(next);
+  return next.couplings;
+}
+
 function credit(ledger: Map<string, AccountState>, addr: string, amount: number) {
   const acc = ledger.get(addr) ?? { balance: 0, nonce: 0 };
   ledger.set(addr, { balance: acc.balance + amount, nonce: acc.nonce });
@@ -496,11 +511,21 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor
   const params = paramsOf(omega.chainId);
   if (!params) return { ok: false, error: "unknown chain" };
   if (inputs.difficulty !== omega.difficulty) return { ok: false, error: "difficulty is not the next difficulty" };
+  if (!Number.isFinite(inputs.committedPressure) || inputs.committedPressure < 0 || inputs.committedPressure > 1) {
+    return { ok: false, error: "pressure is not in [0,1]" };
+  }
+  if (!Number.isSafeInteger(inputs.timestamp) || inputs.timestamp < 0) return { ok: false, error: "timestamp is not a time" };
+  if (omega.height >= 0 && inputs.timestamp < omega.tipTimestamp) return { ok: false, error: "timestamp is not monotonic" };
   for (const tx of inputs.transactions) {
     if (!verifyTx(tx, omega.chainId)) return { ok: false, error: "signature refused" };
   }
   const next = cloneOmega(omega);
   openOmega(next);
+  if (!sameCouplings(inputs.couplings, next.couplings)) return { ok: false, error: "couplings are not the opened couplings" };
+  const producer = next.validators.get(inputs.miner);
+  if (!producer || producer.jailed || producer.slashed || producer.bondedStake <= 0) {
+    return { ok: false, error: "miner is not a live validator" };
+  }
   const materialError = applyMaterial(next, inputs.evidence, params);
   if (materialError) return { ok: false, error: materialError };
   if (inputs.evidence?.wasm.length) {
@@ -521,7 +546,7 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor
     header,
     inputs.transactions.map((t) => ({ hash: t.hash, fee: t.fee })),
     { cumulativeWork: Math.max(0, height), mempoolPressure: inputs.committedPressure },
-    inputs.couplings,
+    next.couplings,
   );
   const reward = rewardOf(params, height, breakdown.canonical);
   const split = issuanceSplit(next.validators, inputs.miner, reward);
@@ -693,7 +718,8 @@ export function constitutionalAnswer(): ConstitutionAnswer {
   const window = 512;
   const t0 = test.tipTimestamp + 15;
   const admitted = admittingNonces(test, window, t0);
-  const miner = [...test.validators.keys()][0] ?? "miner";
+  const keys = [...test.validators.keys()];
+  const miner = keys[0] ?? "miner";
   const base = blankInputs(test, admitted[0] ?? 0, t0, miner);
   const once = applySuccessor(test, base);
   const twice = applySuccessor(test, base);
@@ -712,9 +738,11 @@ export function constitutionalAnswer(): ConstitutionAnswer {
   const later = applySuccessor(test, { ...base, timestamp: t0 + 10_000 });
   const timestampChangesOmega = once.ok && later.ok && later.omegaRoot !== once.omegaRoot;
 
-  const otherMiner = miner === "other" ? "miner" : "other";
-  const paid = applySuccessor(test, { ...base, miner: otherMiner });
-  const minerChangesOmega = once.ok && paid.ok && paid.omegaRoot !== once.omegaRoot;
+  const otherLive = keys.find((k) => k !== miner) ?? miner;
+  const paid = applySuccessor(test, { ...base, miner: otherLive });
+  const minerChangesOmega = miner !== otherLive && once.ok && paid.ok && paid.omegaRoot !== once.omegaRoot;
+  const stranger = applySuccessor(test, { ...base, miner: "0".repeat(40) });
+  const strangerRefused = !stranger.ok && stranger.error === "miner is not a live validator";
 
   const garbage: TxRecord = {
     hash: "11",
@@ -759,13 +787,13 @@ export function constitutionalAnswer(): ConstitutionAnswer {
   const offBandVoteIsDifferentOmega =
     unvoted.ok && offBand.ok && withVote.ok && offBand.omegaRoot !== withVote.omegaRoot;
 
-  const q1 = deterministic && deterministicStep && networksDiverge && !readsClock && signatureRefused;
+  const q1 = deterministic && deterministicStep && networksDiverge && !readsClock && signatureRefused && strangerRefused;
 
   const fixesForState = [
     "Ω itself, including couplings after passed proposals open",
     "ordered transactions and their signatures",
     "evidence in canonical order, votes included",
-    "miner",
+    "miner, and the miner must already be a live validator",
     "timestamp, because the next difficulty is a function of it",
     "the numeric model ECMA-262",
     "the wasm binary and host ABI, when a call is in the evidence",

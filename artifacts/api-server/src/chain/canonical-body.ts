@@ -1,5 +1,4 @@
-import { successor } from "../../../../site/src/protocol/constitution";
-import { initialOmega } from "../../../../site/src/protocol/constitution";
+import { successor, initialOmega, openedCouplings } from "../../../../site/src/protocol/constitution";
 import { omegaRecord, sealFromSuccessor } from "../../../../site/src/protocol/seal";
 import type { CanonicalInputs, NetworkId, Omega, TransitionEvidence, TxRecord } from "../../../../site/src/protocol/types";
 
@@ -93,7 +92,7 @@ export class CanonicalBody {
       nonce: block.nonce,
       miner: block.miner,
       committedPressure: block.committedPressure ?? 0,
-      couplings: { ...before.couplings },
+      couplings: openedCouplings(before),
       difficulty: block.difficulty,
     });
     if (!committed.ok) return committed.error;

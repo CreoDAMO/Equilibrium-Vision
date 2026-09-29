@@ -32,7 +32,7 @@ const picked = selectSuccessorTxs(
 assert.deepEqual(picked.map((t) => t.nonce), [0, 1]);
 
 const omega = initialOmega("mainnet");
-const miner = "c".repeat(40);
+const miner = [...omega.validators.keys()][0]!;
 omega.ledger.set(alice, { balance: 1_000, nonce: 0 });
 const signedHigh = signTx(aliceKey, { to: bob, amount: 10, fee: 200, nonce: 1, chainId: omega.chainId, timestamp: 1_700_000_000 });
 const signedLow = signTx(aliceKey, { to: bob, amount: 10, fee: 100, nonce: 0, chainId: omega.chainId, timestamp: 1_700_000_000 });
