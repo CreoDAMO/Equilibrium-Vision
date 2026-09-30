@@ -103,7 +103,7 @@ export const SPECS: SpecDoc[] = [
     title: "Fork choice",
     summary: "Lowest cumulative canonical residual wins.",
     body: [
-      "Comparisons use residualFp (floor(R × 1e18)) so ARM and x86 agree.",
+      "Comparisons use residualFp, which is floor of the specified binary64 evaluation of R, times 1e18. That integer is the protocol. The real-number value of the same formula is not, and it already differs on the public nonce-6 vector.",
       "The chain with the lower sum of residualFp from the common ancestor wins.",
       "If the sums are equal, the chain whose tip hash is lexicographically smaller wins. Arrival order is not a tie-break.",
       "A block that does not extend the current tip is still a candidate. It is not rejected for arriving second.",

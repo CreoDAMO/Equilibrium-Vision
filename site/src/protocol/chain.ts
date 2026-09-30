@@ -65,6 +65,7 @@ import {
   initialOmega,
   openOmega,
   openedCouplings,
+  omegaDigest,
   successor,
   type Successor,
 } from "./constitution";
@@ -417,25 +418,6 @@ export class OrganismNode {
     this.seedPeers();
   }
 
-  /** Move producer stake out of liquid so the coinbase has a validator to pay. */
-  private bondProducer() {
-    if (this.validators.has(this.miner.address)) return;
-    const bond = 500_000;
-    if (!this.debit(this.miner.address, bond)) return;
-    this.validators.set(this.miner.address, {
-      address: this.miner.address,
-      moniker: "Foundation miner",
-      bondedStake: bond,
-      accumulatedRewards: 0,
-      slashed: false,
-      jailed: false,
-      uptime: 1,
-      blocksProposed: 0,
-      commission: 0.1,
-    });
-    this.emit("close", "governance", "producer bonded · staking is inside the transition");
-  }
-
   private composeBlock(args: {
     height: number;
     prevHash: string;
@@ -446,6 +428,9 @@ export class OrganismNode {
     const txHashes = args.txs.map((t) => t.hash);
     const mr = merkleRoot(txHashes.length ? txHashes : ["0".repeat(64)]);
     const pressure = this.mempoolPressure;
+    const opened = cloneOmega(this.toOmega());
+    openOmega(opened);
+    const couplings = opened.couplings;
     const solution = solveStationary({
       header: {
         prevHash: args.prevHash,
@@ -456,7 +441,7 @@ export class OrganismNode {
       },
       txs: args.txs.map((t) => ({ hash: t.hash, fee: t.fee })),
       state: { cumulativeWork: this.blocks.length, mempoolPressure: pressure },
-      couplings: this.couplings,
+      couplings,
       maxIter: args.height === 0 ? 80 : 360,
       recursionDepth: 2,
       target: this.params.residualThreshold,
@@ -472,7 +457,7 @@ export class OrganismNode {
         nonce: solution.nonce,
         miner: args.miner,
         committedPressure: pressure,
-        couplings: this.couplings,
+        couplings,
         difficulty: this.difficulty,
         wasmAfter: wasm,
       });
@@ -493,7 +478,7 @@ export class OrganismNode {
       nonce: solution.nonce,
       miner: args.miner,
       committedPressure: pressure,
-      couplings: this.couplings,
+      couplings,
       difficulty: this.difficulty,
       wasmAfter,
     }, stepped);
@@ -524,7 +509,7 @@ export class OrganismNode {
       txCount: txs.length,
       transactions: txs,
       finalized: false,
-      couplings: { ...this.couplings },
+      couplings: { ...couplings },
       breakdown: stepped.breakdown,
       solverIterations: solution.iterations,
       verified: false,
@@ -548,11 +533,10 @@ export class OrganismNode {
   }
 
   mine(at?: number): BlockRecord {
-    this.bondProducer();
-    const opened = cloneOmega(this.toOmega());
-    openOmega(opened);
-    this.couplings = opened.couplings;
-    this.proposals = opened.proposals;
+    const producer = this.validators.get(this.miner.address);
+    if (!producer || producer.jailed || producer.slashed || producer.bondedStake <= 0) {
+      throw new Error("miner is not a live validator");
+    }
     const prev = this.tip!;
     const height = prev.height + 1;
     const now = Math.max(prev.timestamp + 1, at ?? this.clock ?? Math.floor(Date.now() / 1000));
@@ -1237,7 +1221,6 @@ export class OrganismNode {
       abstain: 0,
       status: "open",
     };
-    this.proposals.unshift(p);
     this.pending.stake.push({ op: "propose", proposer, title: p.title, deposit, id: p.id });
     this.emit("in", "governance", `proposal #${p.id} ${p.title} · deposit queued`);
     return { ok: true, id: p.id };
@@ -1450,11 +1433,16 @@ export class OrganismNode {
     if (parentIdx < 0) return "fork point is not canonical";
     const tail = this.blocks.slice(parentIdx + 1);
     if (tail.some((b) => b.finalized)) return "finalized ancestor";
+    const baseTip = this.tip?.hash ?? "0".repeat(64);
+    const baseOmega = omegaDigest(this.toOmega());
     const kin = new OrganismNode(this.network, { skipBootstrap: true });
     kin.constitute();
     for (const block of [...this.blocks.slice(0, parentIdx + 1), ...chain]) {
       const err = await kin.absorb(block);
       if (err) return err;
+    }
+    if ((this.tip?.hash ?? "0".repeat(64)) !== baseTip || omegaDigest(this.toOmega()) !== baseOmega) {
+      return "successor is stale";
     }
     for (const block of tail) this.frontier.set(block.hash, block);
     for (const block of chain) this.frontier.delete(block.hash);
@@ -1651,6 +1639,7 @@ export class OrganismNode {
     });
     if (!report.ok) return report.checks.filter((c) => !c.ok).map((c) => c.name).join(", ");
     const baseTip = this.tip?.hash ?? "0".repeat(64);
+    const baseOmega = omegaDigest(this.toOmega());
     const stepped = await successor(this.toOmega(), {
       transactions: block.transactions,
       evidence: block.evidence,
@@ -1662,7 +1651,9 @@ export class OrganismNode {
       difficulty: block.difficulty,
     });
     if (!stepped.ok) return stepped.error;
-    if ((this.tip?.hash ?? "0".repeat(64)) !== baseTip) return "successor is stale";
+    if ((this.tip?.hash ?? "0".repeat(64)) !== baseTip || omegaDigest(this.toOmega()) !== baseOmega) {
+      return "successor is stale";
+    }
     if (stepped.stateRoot !== block.stateRoot) return "state root does not replay";
     if (block.evidence && stepped.omegaRoot !== block.omegaRoot) return "omega root does not replay";
     if (stepped.reward !== block.coinbaseReward) return "coinbase is not the reward law";

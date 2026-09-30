@@ -529,6 +529,16 @@ export class ChainState {
     if (block.evidence) {
       throw new Error("canonical evidence is adopted by the successor, not addBlock");
     }
+    const tip = this.blocks[this.blocks.length - 1];
+    if (tip && block.timestamp < tip.timestamp) {
+      throw new Error("timestamp is not monotonic");
+    }
+    const poolHit = block.transactions.some((tx) =>
+      this.dexPools.has(tx.to)
+      || this.canonicalBody.omega.pools.some((p) => (p.address || poolAddress(p.id)) === tx.to));
+    if (poolHit) {
+      throw new Error("pool effects are applied by the successor, not addBlock");
+    }
     this.preBlockLedger.set(block.height, Object.fromEntries(
       [...this.ledger.getAllAccounts().entries()].map(([addr, acc]) => [addr, { balance: acc.balance, nonce: acc.nonce }]),
     ));
@@ -1088,12 +1098,8 @@ export class ChainState {
     this.wasmVM.replaceContracts(snap.contracts);
   }
 
-  processUnbonding(height: number): void {
-    const completed = this.unbondingQueue.filter(u => u.completionHeight <= height);
-    this.unbondingQueue = this.unbondingQueue.filter(u => u.completionHeight > height);
-    for (const u of completed) {
-      this.ledger.credit(u.delegator, u.amount);
-    }
+  processUnbonding(_height: number): void {
+    // Returning a bond is a ledger credit. addBlock does not pay it.
   }
 
   // ── DEX AMM ──────────────────────────────────────────────────────────────────

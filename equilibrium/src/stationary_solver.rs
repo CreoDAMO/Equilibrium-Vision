@@ -331,6 +331,11 @@ mod tests {
         assert!((zero - 0.02519000125198503).abs() < 1e-12, "nonce 0 residual {zero}");
         assert!((admitted - 0.0002011002025239986).abs() < 1e-12, "nonce 6 residual {admitted}");
         assert!(admitted < 2e-3);
+        assert_eq!(
+            residual_to_fixed(admitted),
+            201_100_202_523_998,
+            "residualFp is the binary64 floor, not the real-number residual"
+        );
     }
 
     #[test]

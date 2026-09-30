@@ -246,6 +246,9 @@ router.post("/blocks/submit", async (req, res) => {
   // seconds away from server time.  This prevents far-future or far-past
   // timestamps being used to manipulate the chain's time series.
   const serverNow = Math.floor(Date.now() / 1000);
+  const claimedTime = (typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0)
+    ? Math.floor(timestamp)
+    : serverNow;
   if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
     const drift = Math.abs(Math.floor(timestamp) - serverNow);
     if (drift > TIMESTAMP_DRIFT_LIMIT) {
@@ -257,6 +260,16 @@ router.post("/blocks/submit", async (req, res) => {
       });
       return;
     }
+  }
+  const tipTime = chainState.canonicalBody.omega.tipTimestamp;
+  if (chainState.canonicalBody.omega.height >= 0 && claimedTime < tipTime) {
+    res.status(422).json({ error: "timestamp is not monotonic", submitted: claimedTime, tipTimestamp: tipTime });
+    return;
+  }
+  const producer = chainState.canonicalBody.omega.validators.get(miner.toLowerCase());
+  if (!producer || producer.jailed || producer.slashed || producer.bondedStake <= 0) {
+    res.status(422).json({ error: "miner is not a live validator" });
+    return;
   }
 
   // ── Replay detection — reject duplicate (prevHash, nonce) pairs ─────────────
