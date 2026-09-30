@@ -22,7 +22,6 @@ export function independentVerify(
   const report = verifyStationaryEvidence({
     block,
     prev,
-    mempoolPressure: block.committedPressure,
     cumulativeWork: block.height,
     params,
   });

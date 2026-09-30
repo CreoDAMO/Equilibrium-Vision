@@ -218,27 +218,19 @@ describe("POST /api/blocks/submit", () => {
     }
   });
 
-  it("returns 201 and a valid block record for a good submission", async () => {
-    // Fetch the live chain tip so prevHash is correct
+  it("returns 422 when the submission does not commit pressure", async () => {
     const status = await api.get("/api/chain/status");
-    const { latestHash, height } = status.body;
+    const { latestHash } = status.body;
 
     const res = await api.post("/api/blocks/submit").send({
       miner:     "a".repeat(40),
       prevHash:  latestHash,
       nonce:     999_999,
-      residual:  3e-9, // well below 1e-7 threshold
+      residual:  3e-9,
       timestamp: Math.floor(Date.now() / 1000),
     });
-    expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({
-      hash:     expect.any(String),
-      height:   height + 1,
-      reward:   expect.any(Number),
-      txCount:  expect.any(Number),
-    });
-    expect(res.body.hash).toHaveLength(64);
-    expect(res.body.reward).toBeGreaterThan(0);
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/committed pressure/i);
   });
 
   it("block submitted above reflects in chain status height", async () => {

@@ -521,7 +521,6 @@ export class OrganismNode {
     const report = verifyStationaryEvidence({
       block,
       prev: this.tip,
-      mempoolPressure: pressure,
       cumulativeWork: this.blocks.length,
       params: this.params,
       now: args.timestamp,
@@ -1632,7 +1631,6 @@ export class OrganismNode {
     const report = verifyStationaryEvidence({
       block,
       prev: this.tip,
-      mempoolPressure: block.committedPressure,
       cumulativeWork: block.height,
       params: this.params,
       authorizedCouplings: openedCouplings(this.toOmega()),

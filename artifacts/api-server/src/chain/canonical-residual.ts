@@ -137,3 +137,9 @@ export function admitResidual(
   }
   return { ok: true, residual: recomputed };
 }
+
+/** Pressure is block evidence. The receiver's mempool is not a substitute. */
+export function pressureEvidence(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) return null;
+  return value;
+}

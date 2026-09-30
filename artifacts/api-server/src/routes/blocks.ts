@@ -8,7 +8,7 @@ import { logger } from "../lib/logger.js";
 import type { TxRecord } from "../chain/types.js";
 import { RateLimiter, ReplaySet } from "../lib/submission-guard.js";
 import { canonicalCoinbase } from "@workspace/coinomics";
-import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js";
+import { admitResidual, canonicalResidual, pressureEvidence } from "../chain/canonical-residual.js";
 import { openedCouplings } from "../../../../site/src/protocol/constitution.js";
 import type { TransitionEvidence } from "../../../../site/src/protocol/types.js";
 
@@ -271,6 +271,11 @@ router.post("/blocks/submit", async (req, res) => {
     res.status(422).json({ error: "miner is not a live validator" });
     return;
   }
+  const committedPressure = pressureEvidence((req.body as { committedPressure?: unknown }).committedPressure);
+  if (committedPressure === null) {
+    res.status(422).json({ error: "committed pressure is block evidence" });
+    return;
+  }
 
   // ── Replay detection — reject duplicate (prevHash, nonce) pairs ─────────────
   // A valid PoS solution is unique to a given chain tip; the same (tip, nonce)
@@ -303,7 +308,7 @@ router.post("/blocks/submit", async (req, res) => {
       difficulty,
     },
     selected.map((t) => ({ hash: t.hash, fee: t.fee })),
-    { cumulativeWork: height, mempoolPressure: chainState.mempool.pressure },
+    { cumulativeWork: height, mempoolPressure: committedPressure },
     chainState.canonicalBody.omega.couplings,
   );
   const admission = admitResidual(residual, recomputed, chainState.admissionTarget);
@@ -344,7 +349,7 @@ router.post("/blocks/submit", async (req, res) => {
     transactions:  txs,
     finalized:     false,
     zkProof,
-    committedPressure: chainState.mempool.pressure,
+    committedPressure,
     sealIdentity: true,
   };
 

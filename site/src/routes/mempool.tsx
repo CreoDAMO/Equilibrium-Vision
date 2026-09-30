@@ -13,12 +13,12 @@ function MempoolPage() {
       <h1 className="font-display text-4xl tracking-tight">Mempool</h1>
       <div className="grid grid-cols-2 gap-3">
         <Stat label="Size" value={snap.mempoolSize} hint="cap 500" />
-        <Stat label="Pressure" value={snap.mempoolPressure.toFixed(3)} hint="P = min(|M|/500, 1)" />
+        <Stat label="Observation" value={snap.mempoolPressure.toFixed(3)} hint="candidate only · min(|M|/500, 1)" />
       </div>
       <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">
         <ul className="divide-y divide-border">
           {snap.mempool.length === 0 ? (
-            <li className="py-3 text-sm text-muted">Empty. The next solve will see P ≈ 0.</li>
+            <li className="py-3 text-sm text-muted">Empty. A block produced now would commit P = 0. A peer does not recompute that from its own mempool.</li>
           ) : (
             snap.mempool.map((t) => (
               <li key={t.hash} className="flex justify-between py-3 text-sm">

@@ -52,7 +52,7 @@ function Home() {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label="Height" value={formatAmount(data.height)} hint={`finalized ${data.finalizedHeight} · lag ${data.height - data.finalizedHeight}`} />
             <Stat label="Canonical R" value={formatSci(data.lastResidual)} hint={`territory ${formatSci(data.lastTerritoryResidual)}`} />
-            <Stat label="Mempool P" value={data.mempoolPressure.toFixed(3)} hint={`${data.mempoolSize} queued`} />
+            <Stat label="Mempool observation" value={data.mempoolPressure.toFixed(3)} hint={`${data.mempoolSize} queued · not the header`} />
             <Stat label="Validators" value={data.validatorCount} hint={`${formatAmount(data.totalBonded)} bonded`} />
           </div>
 

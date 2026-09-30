@@ -66,7 +66,7 @@ export class StratumServer {
   private chainState: ChainState | null = null;
   // Maps jobIdHex → the chain-tip hash that was current when the job was sent.
   // Used to reject submissions against stale work (tip has advanced).
-  private activeJobs = new Map<string, string>();
+  private activeJobs = new Map<string, { tipHash: string; pressure: number }>();
   private static readonly MAX_ACTIVE_JOBS = 64; // bounded ring-buffer size
 
   // ── Submission guards ─────────────────────────────────────────────────────
@@ -248,8 +248,8 @@ export class StratumServer {
     const [workerParam, jobId, extraNonce2, ntimeHex, nonceHex, residualStr] = req.params as string[];
 
     // ── Validate the job is known and not stale ─────────────────────────────
-    const jobTipHash = this.activeJobs.get(jobId);
-    if (!jobTipHash) {
+    const job = this.activeJobs.get(jobId);
+    if (!job) {
       this.respond(session.socket, req.id, false, [21, `Unknown job: ${jobId}`, null]);
       return;
     }
@@ -267,8 +267,8 @@ export class StratumServer {
     }
 
     // Reject stale work — the chain tip advanced since this job was issued.
-    if (prev.hash !== jobTipHash) {
-      logger.info({ worker: session.worker, job: jobId, jobTip: jobTipHash, currentTip: prev.hash }, "Stratum share rejected: stale job");
+    if (prev.hash !== job.tipHash) {
+      logger.info({ worker: session.worker, job: jobId, jobTip: job.tipHash, currentTip: prev.hash }, "Stratum share rejected: stale job");
       this.respond(session.socket, req.id, false, [21, "Stale job — chain tip has advanced", null]);
       return;
     }
@@ -354,7 +354,7 @@ export class StratumServer {
         difficulty,
       },
       selected.map((t) => ({ hash: t.hash, fee: t.fee })),
-      { cumulativeWork: height, mempoolPressure: cs.mempool.pressure },
+      { cumulativeWork: height, mempoolPressure: job.pressure },
       cs.canonicalBody.omega.couplings,
     );
     const admission = admitResidual(residual, recomputed, cs.admissionTarget);
@@ -394,7 +394,7 @@ export class StratumServer {
       transactions:  txs,
       finalized:     false,
       zkProof,
-      committedPressure: cs.mempool.pressure,
+      committedPressure: job.pressure,
       sealIdentity: true,
     };
 
@@ -432,7 +432,8 @@ export class StratumServer {
 
     // Track tip hash per job so submit can verify the work is not stale.
     // Evict oldest entries when the map exceeds the ring-buffer limit.
-    this.activeJobs.set(jobIdHex, tipHash);
+    const pressure = this.chainState?.mempool.pressure ?? 0;
+    this.activeJobs.set(jobIdHex, { tipHash, pressure });
     if (this.activeJobs.size > StratumServer.MAX_ACTIVE_JOBS) {
       const oldest = this.activeJobs.keys().next().value;
       if (oldest !== undefined) this.activeJobs.delete(oldest);

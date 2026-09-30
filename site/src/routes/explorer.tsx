@@ -26,8 +26,8 @@ function Explorer() {
         <p className="text-xs uppercase tracking-[0.2em] text-subtle">{snap.params.name}</p>
         <h1 className="mt-1 font-display text-4xl tracking-tight">Network</h1>
         <p className="mt-2 max-w-2xl text-muted">
-          Observable projection of the live {network} kernel. Height, residual, mempool
-          pressure, and finality are independent readings of the same organism.
+          Observable projection of the live {network} kernel. Height, committed
+          pressure, and finality are independent readings. The mempool is not the pressure in a header.
         </p>
       </header>
 

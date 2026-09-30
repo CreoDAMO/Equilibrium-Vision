@@ -107,7 +107,7 @@ export function dependencyFindings(): DependencyRow[] {
   const wildPressure = applySuccessor(omega, { ...inputs, committedPressure: 2 });
   rows.push({
     id: "pressure",
-    specifiedBy: "EQ-02 names pressure as a field. It does not derive it from Ω. It is bounded.",
+    specifiedBy: "EQ-02 commits pressure as block evidence. It does not derive it from Ω or from the receiver mempool.",
     omegaChanges: once.ok && pressured.ok && pressured.omegaRoot !== once.omegaRoot,
     verdict: once.ok && pressured.ok && pressured.omegaRoot !== once.omegaRoot ? "input" : "free-same-omega",
     detail:

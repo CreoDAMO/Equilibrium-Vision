@@ -33,7 +33,7 @@ export const SPECS: SpecDoc[] = [
     summary: "State is metabolism: inputs, couplings, regulation, memory, observation.",
     body: [
       "A block is not a row in a ledger. It is a candidate state transition that must satisfy stationarity before it becomes memory.",
-      "Mempool pressure, fees, continuity, structural golden-ratio coupling, and hash admissibility are first-class fields of Ω.",
+      "Mempool pressure is not a field of Ω. It is committed block evidence. A producer may observe min(|M| / 500, 1) and seal that number. The successor and every receiver use the sealed number. They do not read the mempool.",
     ],
   },
   {

@@ -10,7 +10,6 @@ const MAX_FUTURE_SECS = 7200;
 export function verifyStationaryEvidence(args: {
   block: BlockRecord;
   prev: BlockRecord | null;
-  mempoolPressure?: number;
   cumulativeWork?: number;
   params: NetworkParams;
   now?: number;

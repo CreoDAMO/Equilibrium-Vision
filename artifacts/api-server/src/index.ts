@@ -10,7 +10,7 @@ import { epidemicBroadcaster } from "./chain/epidemic.js";
 import { contributionTracker } from "./chain/contribution.js";
 import { smtKey } from "./chain/smt.js";
 import { getVerifiedStateRoot } from "./chain/state-root.js";
-import { admitResidual, canonicalResidual } from "./chain/canonical-residual.js";
+import { admitResidual, canonicalResidual, pressureEvidence } from "./chain/canonical-residual.js";
 
 const rawPort = process.env["PORT"];
 
@@ -136,6 +136,11 @@ if (Number.isNaN(port) || port <= 0) {
               return;
             }
             const remoteTxs = Array.isArray(remote.transactions) ? remote.transactions as Array<{ hash?: string; fee?: number }> : [];
+            const committedPressure = pressureEvidence(remote.committedPressure);
+            if (committedPressure === null) {
+              logger.warn({ blockHash, peerId }, "P2P sync: committed pressure is block evidence");
+              return;
+            }
             const recomputed = canonicalResidual(
               {
                 prevHash: String(remote.prevHash ?? ""),
@@ -147,7 +152,7 @@ if (Number.isNaN(port) || port <= 0) {
               remoteTxs.map((t) => ({ hash: String(t.hash ?? ""), fee: Number(t.fee ?? 0) })),
               {
                 cumulativeWork: remoteHeight,
-                mempoolPressure: Number(remote.committedPressure ?? chainState.mempool.pressure),
+                mempoolPressure: committedPressure,
               },
               chainState.canonicalBody.omega.couplings,
             );

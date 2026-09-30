@@ -605,7 +605,7 @@ export class ChainState {
       height: block.height,
       txCount: block.txCount,
       residual: block.residual,
-      mempoolPressure: this.mempool.pressure,
+      mempoolPressure: block.committedPressure ?? 0,
       timestamp: block.timestamp,
       difficulty: this.currentDifficulty,
       blockTime,
@@ -1761,6 +1761,7 @@ export async function mineNextBlockAsync(
   // stationarity constraint.
   //
   // Escape hatches: NODE_ENV=test | ALLOW_RANDOM_MINING=true | REQUIRE_REAL_SOLVER=false
+  const committedPressure = state.mempool.pressure;
   let nonce    = 0;
   let residual = 0;
   let usedSolver = false;
@@ -1773,7 +1774,7 @@ export async function mineNextBlockAsync(
       timestamp:       now,
       difficulty:      state.currentDifficulty,
       maxIter:         500,
-      mempoolPressure: state.mempool.pressure,
+      mempoolPressure: committedPressure,
       cumulativeWork:  height,
       txs:             selected.map((t) => ({ hash: t.hash, fee: t.fee })),
     }, 20_000);
@@ -1819,7 +1820,7 @@ export async function mineNextBlockAsync(
         difficulty: state.canonicalBody.omega.difficulty,
       },
       selected.map((t) => ({ hash: t.hash, fee: t.fee })),
-      { cumulativeWork: height, mempoolPressure: state.mempool.pressure },
+      { cumulativeWork: height, mempoolPressure: committedPressure },
       state.canonicalBody.omega.couplings,
     );
     if (solverAdmitted === false) {
@@ -1864,7 +1865,7 @@ export async function mineNextBlockAsync(
     transactions:   txs,
     finalized:      false,
     zkProof,
-    committedPressure: state.mempool.pressure,
+    committedPressure,
     sealIdentity:   true,
   };
 
@@ -1890,6 +1891,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   const prev = state.latestBlock ?? { hash: "0".repeat(64) };
   const height = state.height + 1;
   const now = Math.floor(Date.now() / 1000);
+  const committedPressure = state.mempool.pressure;
 
   const candidates = state.selectCanonical(state.mempool.all());
 
@@ -1953,7 +1955,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
     transactions: txs,
     finalized: false,
     zkProof,
-    committedPressure: state.mempool.pressure,
+    committedPressure,
     sealIdentity: true,
   };
 
