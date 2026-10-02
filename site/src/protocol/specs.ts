@@ -71,6 +71,7 @@ export const SPECS: SpecDoc[] = [
     body: [
       "Account model is canonical. Coinbase is credited on that ledger and is not also created as a second output.",
       "successor is defined on the inputs it is given. A transfer the sender cannot cover is refused inside the transition. The refusal is not a precondition that only the producer knows.",
+      "An operational block installs canonical Ω only when it is that successor. A miner who is not a live validator does not move Ω.",
       "Difficulty moves by the ratio of the target block time to the actual block time, multiplied by the foreign-tip factor in EQ-20, clamped to 0.8 and 1.2, and does not fall below 100,000.",
       "The coinbase target is the network residual threshold. Mainnet is 8e-4. Testnet is 2e-3. At height 1, a residual of 0.001 pays 79 against the mainnet target and 99 against the testnet target.",
       "The wasm host is callArbitrage. It runs the arbitrage module whose sha256 is the evidence code. Any other code is refused. The storage it writes is part of Ω. A storage map that execution did not produce is not Ω.wasm.",

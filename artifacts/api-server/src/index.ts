@@ -173,6 +173,17 @@ if (Number.isNaN(port) || port <= 0) {
               return;
             }
 
+            const producer = chainState.canonicalBody.omega.validators.get(String(remote.miner ?? "").toLowerCase());
+            if (!producer || producer.jailed || producer.slashed || producer.bondedStake <= 0) {
+              logger.warn({ blockHash, miner: remote.miner }, "P2P sync: miner is not a live validator");
+              return;
+            }
+            const tipTime = chainState.canonicalBody.omega.tipTimestamp;
+            if (chainState.canonicalBody.omega.height >= 0 && Number(remote.timestamp) < tipTime) {
+              logger.warn({ blockHash, timestamp: remote.timestamp, tipTime }, "P2P sync: timestamp is not monotonic");
+              return;
+            }
+
             // All checks pass — insert into chain state
             logger.info({ blockHash, height: remoteHeight, miner: remote.miner, peerId }, 'P2P sync: accepting block from peer');
             chainState.addBlock(remote);

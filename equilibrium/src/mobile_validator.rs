@@ -311,16 +311,10 @@ impl ValidationEngine {
     }
 
     /// Recompute the canonical residual at the claimed nonce. No search.
-    /// Pressure is 0, the value `canonical_identity` binds. The territory
-    /// residual in `joint_residual_and_gradient` is not this check.
+    /// Pressure and fees come from the body. The territory residual is not this check.
     fn verify_residual(&self, block: &GossipedBlock) -> Result<(), String> {
-        let txs: Vec<TxCandidate> = block
-            .tx_hashes
-            .iter()
-            .map(|h| TxCandidate { hash: *h, fee: 0 })
-            .collect();
-
-        let recomputed_fp = admitted_residual_fp(&block.header, &txs);
+        let (pressure, txs) = pressure_and_txs(block);
+        let recomputed_fp = admitted_residual_fp(&block.header, &txs, pressure);
         let claimed_fp = block.header.residual;
         let delta = (recomputed_fp - claimed_fp).abs();
 
@@ -333,9 +327,49 @@ impl ValidationEngine {
     }
 }
 
+/// Pressure and transaction fees from the gossip body. A body that omits
+/// them is pressure 0 and fee 0, which is not the producer's input.
+fn pressure_and_txs(block: &GossipedBlock) -> (f64, Vec<TxCandidate>) {
+    let parsed = serde_json::from_str::<serde_json::Value>(&block.block_json).ok();
+    let pressure = parsed
+        .as_ref()
+        .and_then(|v| {
+            v.get("committedPressure")
+                .or_else(|| v.get("committed_pressure"))
+                .and_then(|p| p.as_f64())
+        })
+        .filter(|p| p.is_finite() && (0.0..=1.0).contains(p))
+        .unwrap_or(0.0);
+    if let Some(txs) = parsed
+        .as_ref()
+        .and_then(|v| v.get("transactions"))
+        .and_then(|t| t.as_array())
+    {
+        let mut out = Vec::new();
+        for tx in txs {
+            let Some(hash) = tx.get("hash").and_then(|h| h.as_str()) else {
+                continue;
+            };
+            let Ok(bytes) = parse_hash32(hash) else {
+                continue;
+            };
+            let fee = tx.get("fee").and_then(|f| f.as_u64()).unwrap_or(0);
+            out.push(TxCandidate { hash: bytes, fee });
+        }
+        return (pressure, out);
+    }
+    let txs = block
+        .tx_hashes
+        .iter()
+        .map(|h| TxCandidate { hash: *h, fee: 0 })
+        .collect();
+    (pressure, txs)
+}
+
 /// Fixed-point canonical residual. Same relation as `canonical_residual` and
-/// the TypeScript kernel. Cumulative work is the block height. Pressure is 0.
-fn admitted_residual_fp(header: &BlockHeader, txs: &[TxCandidate]) -> i64 {
+/// the TypeScript kernel. Cumulative work is the block height. Pressure and
+/// fees are the committed block inputs, not zeroes invented by the phone.
+fn admitted_residual_fp(header: &BlockHeader, txs: &[TxCandidate], pressure: f64) -> i64 {
     residual_to_fixed(canonical_residual(
         &header.prev_hash,
         &header.merkle_root,
@@ -344,7 +378,7 @@ fn admitted_residual_fp(header: &BlockHeader, txs: &[TxCandidate]) -> i64 {
         header.difficulty,
         txs,
         header.recursion_depth as u64,
-        0.0,
+        pressure,
     ))
 }
 
@@ -419,9 +453,11 @@ pub fn canonical_header_hash_evidence(
 }
 
 /// EQ-07 identity of a gossiped block. Missing merkle, state, and miner are
-/// zeros. Pressure is 0.000000. A zero state root is not the artifacts seal.
+/// zeros. Pressure is the committed value on the body, or 0 when the body
+/// does not carry one. A zero state root is not the artifacts seal.
 pub fn canonical_identity(block: &GossipedBlock) -> [u8; 32] {
     let miner = miner_from_block_json(&block.block_json);
+    let (pressure, _) = pressure_and_txs(block);
     let hex_hash = canonical_header_hash(
         &hex::encode(block.header.prev_hash),
         &hex::encode(block.header.merkle_root),
@@ -432,7 +468,7 @@ pub fn canonical_identity(block: &GossipedBlock) -> [u8; 32] {
         block.header.residual,
         &miner,
         block.header.recursion_depth as u64,
-        0.0,
+        pressure,
     );
     parse_hash32(&hex_hash).unwrap_or([0u8; 32])
 }
@@ -1214,7 +1250,7 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let genesis_residual = admitted_residual_fp(&genesis_base, &[]);
+        let genesis_residual = admitted_residual_fp(&genesis_base, &[], 0.0);
         let genesis_header = BlockHeader {
             residual: genesis_residual,
             ..genesis_base
@@ -1273,7 +1309,7 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let good_residual = admitted_residual_fp(&good_base, &[]);
+        let good_residual = admitted_residual_fp(&good_base, &[], 0.0);
         let good_block = GossipedBlock {
             header: BlockHeader {
                 residual: good_residual,
@@ -1323,7 +1359,7 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let res0 = admitted_residual_fp(&genesis_base, &[]);
+        let res0 = admitted_residual_fp(&genesis_base, &[], 0.0);
         let genesis_header = BlockHeader {
             residual: res0,
             ..genesis_base
@@ -1361,7 +1397,7 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let res1 = admitted_residual_fp(&block1_base, &[]);
+        let res1 = admitted_residual_fp(&block1_base, &[], 0.0);
         let block1_header = BlockHeader {
             residual: res1,
             ..block1_base

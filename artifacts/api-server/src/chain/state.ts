@@ -25,7 +25,7 @@ import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
 import { generateZkProof } from "./zkproof.js";
 import { verifyEd25519BatchDetailed } from "./batchVerify.js";
-import { canonicalResidual } from "./canonical-residual.js";
+import { canonicalResidual, pressureEvidence } from "./canonical-residual.js";
 import { withDbRetry } from "./persistence.js";
 import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import { btcHeaderHash } from "./btc-header.js";
@@ -34,6 +34,8 @@ import { allocationsMatchKernel, applyPassedCouplings, kernelNetworkOf, kernelPa
 import { CanonicalBody } from "./canonical-body.js";
 import { selectSuccessorTxs } from "../../../../site/src/protocol/tx-select.js";
 import { poolAddress } from "../../../../site/src/protocol/dex.js";
+import { applySuccessor, openedCouplings } from "../../../../site/src/protocol/constitution.js";
+import { sealFromSuccessor } from "../../../../site/src/protocol/seal.js";
 import { callArbitrage } from "../../../../site/src/protocol/wasm-host.js";
 import {
   ETH_MIN_PARTICIPANTS,
@@ -539,6 +541,7 @@ export class ChainState {
     if (poolHit) {
       throw new Error("pool effects are applied by the successor, not addBlock");
     }
+    this.installCanonical(block);
     this.preBlockLedger.set(block.height, Object.fromEntries(
       [...this.ledger.getAllAccounts().entries()].map(([addr, acc]) => [addr, { balance: acc.balance, nonce: acc.nonce }]),
     ));
@@ -727,6 +730,40 @@ export class ChainState {
     } catch (err) {
       logger.warn({ err, height: block.height }, "State root computation failed — skipping");
     }
+  }
+
+  /**
+   * Ordinary addBlock still keeps the operational ledger.
+   * Canonical Ω moves only when this block is the successor G would install.
+   * A stranger, a stale parent, or a refused transaction leaves Ω where it is.
+   */
+  private installCanonical(block: BlockRecord): void {
+    const omega = this.canonicalBody.omega;
+    const pressure = typeof block.committedPressure === "number" ? block.committedPressure : 0;
+    if (pressureEvidence(pressure) === null) return;
+    if (block.difficulty !== omega.difficulty) return;
+    if (block.prevHash !== omega.tipHash) return;
+    if (omega.height >= 0 && block.timestamp < omega.tipTimestamp) return;
+    const inputs = {
+      transactions: block.transactions as Parameters<typeof applySuccessor>[1]["transactions"],
+      evidence: undefined,
+      timestamp: block.timestamp,
+      nonce: block.nonce,
+      miner: block.miner,
+      committedPressure: pressure,
+      couplings: openedCouplings(omega),
+      difficulty: omega.difficulty,
+      wasmAfter: null,
+    };
+    const stepped = applySuccessor(omega, inputs);
+    if (!stepped.ok) return;
+    const sealed = sealFromSuccessor(omega, inputs, stepped);
+    this.canonicalBody.omega = sealed.carried;
+    this.canonicalBody.blocks.push({
+      hash: sealed.hash,
+      height: sealed.carried.height,
+      evidence: sealed.evidence,
+    });
   }
 
   // ── Chain reorganization ─────────────────────────────────────────────────────
