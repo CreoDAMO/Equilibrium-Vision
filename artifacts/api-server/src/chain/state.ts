@@ -34,8 +34,9 @@ import { allocationsMatchKernel, kernelNetworkOf, kernelParty, KERNEL_POOLS, KER
 import { CanonicalBody } from "./canonical-body.js";
 import { selectSuccessorTxs } from "../../../../site/src/protocol/tx-select.js";
 import { poolAddress } from "../../../../site/src/protocol/dex.js";
-import { applySuccessor, openedCouplings, cloneOmega, type Omega } from "../../../../site/src/protocol/constitution.js";
+import { applySuccessor, openedCouplings, cloneOmega, type CanonicalInputs, type Omega } from "../../../../site/src/protocol/constitution.js";
 import { sealFromSuccessor, omegaRecord } from "../../../../site/src/protocol/seal.js";
+import type { BtcHeaderRecord, EthHeaderRecord, ModelClaim, Proposal, Settlement } from "../../../../site/src/protocol/types.js";
 import { callArbitrage } from "../../../../site/src/protocol/wasm-host.js";
 import {
   ETH_MIN_PARTICIPANTS,
@@ -161,6 +162,11 @@ export class Mempool {
 
   remove(hashes: string[]): void {
     for (const h of hashes) this.txs.delete(h);
+  }
+
+  replace(txs: TxRecord[]): void {
+    this.txs.clear();
+    for (const tx of txs) this.txs.set(tx.hash, { ...tx });
   }
 
   all(): TxRecord[] {
@@ -325,6 +331,12 @@ export class ChainState {
   /** Residual target that scales the coinbase. Mainnet 8e-4, testnet 2e-3. Not miningThreshold. */
   admissionTarget = CANONICAL_RESIDUAL_TARGET;
   kernelProposals: KernelCouplingProposal[] = [];
+  /** Ω.proposals. Written only when the successor is embodied. Not kernelProposals. */
+  canonicalProposals: Proposal[] = [];
+  canonicalModels: ModelClaim[] = [];
+  canonicalSettlements: Settlement[] = [];
+  canonicalBtc: BtcHeaderRecord[] = [];
+  canonicalEth: EthHeaderRecord[] = [];
   /** Evidence-bearing Ω. addBlock does not write this. */
   canonicalBody = new CanonicalBody("mainnet");
 
@@ -477,6 +489,7 @@ export class ChainState {
   private preBlockCouplings = new Map<number, ChainState["couplings"]>();
   private preBlockWasm = new Map<number, Array<[string, string]>>();
   private preBlockProposals = new Map<number, KernelCouplingProposal[]>();
+  private preBlockPools = new Map<number, DexPool[]>();
   private preOmega = new Map<number, Omega>();
   private preOmegaBlocks = new Map<number, CanonicalBody["blocks"]>();
 
@@ -553,9 +566,6 @@ export class ChainState {
   }
 
   addBlock(block: BlockRecord): void {
-    if (block.evidence) {
-      throw new Error("canonical evidence is adopted by the successor, not addBlock");
-    }
     const tip = this.blocks[this.blocks.length - 1];
     if (tip && block.timestamp < tip.timestamp) {
       throw new Error("timestamp is not monotonic");
@@ -563,26 +573,28 @@ export class ChainState {
     const poolHit = block.transactions.some((tx) =>
       this.dexPools.has(tx.to)
       || this.canonicalBody.omega.pools.some((p) => (p.address || poolAddress(p.id)) === tx.to));
-    if (poolHit) {
-      throw new Error("pool effects are applied by the successor, not addBlock");
-    }
     const priorOmega = cloneOmega(this.canonicalBody.omega);
     const priorCanonBlocks = this.canonicalBody.blocks.slice();
     const admitted = this.installCanonical(block);
     if (admitted.kind === "reject") throw new Error(admitted.error);
-    this.preOmega.set(block.height, priorOmega);
-    this.preOmegaBlocks.set(block.height, priorCanonBlocks);
-    this.preBlockLedger.set(block.height, Object.fromEntries(
-      [...this.ledger.getAllAccounts().entries()].map(([addr, acc]) => [addr, { balance: acc.balance, nonce: acc.nonce }]),
-    ));
-    this.preBlockValidators.set(block.height, [...this.validators.values()].map((v) => ({ ...v })));
-    this.preBlockStakes.set(block.height, [...this.stakes.values()].map((s) => ({ ...s })));
-    this.preBlockDifficulty.set(block.height, this.currentDifficulty);
-    this.preBlockUnbonding.set(block.height, this.unbondingQueue.map((u) => ({ ...u })));
-    this.preBlockPendingFees.set(block.height, this.pendingUtxoFees);
-    this.preBlockCouplings.set(block.height, { ...this.couplings });
-    this.preBlockWasm.set(block.height, [...this.canonicalWasm.entries()]);
-    this.preBlockProposals.set(block.height, this.kernelProposals.map((p) => ({ ...p })));
+    if (admitted.kind === "skip" && block.evidence) {
+      throw new Error("canonical evidence is adopted by the successor, not addBlock");
+    }
+    if (admitted.kind === "skip" && poolHit) {
+      throw new Error("pool effects are applied by the successor, not addBlock");
+    }
+    this.noteBefore(block.height, priorOmega, priorCanonBlocks);
+    if (admitted.kind === "accept") {
+      block.hash = admitted.hash;
+      block.merkleRoot = admitted.merkleRoot;
+      block.stateRoot = admitted.stateRoot;
+      block.evidenceRoot = admitted.evidenceRoot;
+      block.omegaRoot = admitted.omegaRoot;
+      block.chainId = admitted.chainId;
+      block.residual = admitted.residual;
+      block.residualFp = admitted.residualFp;
+      block.coinbaseReward = admitted.reward;
+    }
     this.blocks.push(block);
     if (admitted.kind === "accept") {
       for (const tx of block.transactions) {
@@ -777,7 +789,21 @@ export class ChainState {
    * A candidate G refuses does not change Ω or the operational body.
    * A block that does not extend this Ω is not a candidate.
    */
-  private installCanonical(block: BlockRecord): { kind: "skip" } | { kind: "reject"; error: string } | { kind: "accept" } {
+  private installCanonical(block: BlockRecord):
+    | { kind: "skip" }
+    | { kind: "reject"; error: string }
+    | {
+        kind: "accept";
+        hash: string;
+        merkleRoot: string;
+        stateRoot: string;
+        evidenceRoot: string;
+        omegaRoot: string;
+        residual: number;
+        residualFp: number;
+        reward: number;
+        chainId: number;
+      } {
     const omega = this.canonicalBody.omega;
     const pressure = typeof block.committedPressure === "number" ? block.committedPressure : 0;
     if (pressureEvidence(pressure) === null) return { kind: "skip" };
@@ -786,7 +812,7 @@ export class ChainState {
     if (omega.height >= 0 && block.timestamp < omega.tipTimestamp) return { kind: "skip" };
     const inputs = {
       transactions: block.transactions as Parameters<typeof applySuccessor>[1]["transactions"],
-      evidence: undefined,
+      evidence: block.evidence,
       timestamp: block.timestamp,
       nonce: block.nonce,
       miner: block.miner,
@@ -804,7 +830,18 @@ export class ChainState {
       height: sealed.carried.height,
       evidence: sealed.evidence,
     });
-    return { kind: "accept" };
+    return {
+      kind: "accept",
+      hash: sealed.hash,
+      merkleRoot: sealed.merkleRoot,
+      stateRoot: stepped.stateRoot,
+      evidenceRoot: sealed.evidenceRoot,
+      omegaRoot: stepped.omegaRoot,
+      residual: stepped.residual,
+      residualFp: stepped.residualFp,
+      reward: stepped.reward,
+      chainId: sealed.evidence.chainId,
+    };
   }
 
   /** Operational fields that are canonical take the successor's values. UTXOs stay operational. */
@@ -829,9 +866,129 @@ export class ChainState {
         commission: v.commission,
       });
     }
+    this.dexPools.clear();
+    for (const p of omega.pools) {
+      this.dexPools.set(p.id, {
+        id: p.id,
+        tokenA: p.tokenA,
+        tokenB: p.tokenB,
+        reserveA: p.reserveA,
+        reserveB: p.reserveB,
+        totalLiquidity: Math.floor(Math.sqrt(Math.max(p.reserveA, 0) * Math.max(p.reserveB, 0))),
+        fee: p.fee,
+        volumeA: 0,
+        volumeB: 0,
+        txCount: p.txCount,
+        createdAt: 0,
+      });
+    }
+    this.stakes.clear();
+    for (const d of omega.delegations) {
+      this.stakes.set(`${d.delegator}-${d.validator}`, {
+        delegator: d.delegator,
+        validator: d.validator,
+        amount: d.amount,
+        startHeight: omega.height,
+        startTimestamp: omega.tipTimestamp,
+        unbonding: false,
+        rewardsEarned: 0,
+      });
+    }
     this.couplings = { ...omega.couplings };
     this.currentDifficulty = omega.difficulty;
     this.finalizedHeight = omega.finalizedHeight;
+    this.canonicalWasm = new Map(omega.wasm);
+    this.canonicalProposals = omega.proposals.map((p) => ({ ...p }));
+    this.canonicalModels = omega.models.map((m) => ({ ...m }));
+    this.canonicalSettlements = omega.settlements.map((s) => ({ ...s }));
+    this.canonicalBtc = omega.btc.map((h) => ({ ...h }));
+    this.canonicalEth = omega.eth.map((h) => ({ ...h }));
+  }
+
+  /** The successor already moved Ω. Copy it onto the operational body. */
+  alignEmbodiment(): void {
+    this.embodyCanonical();
+  }
+
+  private noteBefore(height: number, priorOmega: Omega, priorCanonBlocks: CanonicalBody["blocks"]): void {
+    this.preOmega.set(height, priorOmega);
+    this.preOmegaBlocks.set(height, priorCanonBlocks);
+    this.preBlockLedger.set(height, Object.fromEntries(
+      [...this.ledger.getAllAccounts().entries()].map(([addr, acc]) => [addr, { balance: acc.balance, nonce: acc.nonce }]),
+    ));
+    this.preBlockValidators.set(height, [...this.validators.values()].map((v) => ({ ...v })));
+    this.preBlockStakes.set(height, [...this.stakes.values()].map((s) => ({ ...s })));
+    this.preBlockPools.set(height, [...this.dexPools.values()].map((p) => ({ ...p })));
+    this.preBlockDifficulty.set(height, this.currentDifficulty);
+    this.preBlockUnbonding.set(height, this.unbondingQueue.map((u) => ({ ...u })));
+    this.preBlockPendingFees.set(height, this.pendingUtxoFees);
+    this.preBlockCouplings.set(height, { ...this.couplings });
+    this.preBlockWasm.set(height, [...this.canonicalWasm.entries()]);
+    this.preBlockProposals.set(height, this.kernelProposals.map((p) => ({ ...p })));
+  }
+
+  /**
+   * One evidence-bearing successor. G runs, then the operational body becomes Ω′.
+   * A refusal leaves both where they were.
+   */
+  async admitEvidence(inputs: Omit<CanonicalInputs, "wasmAfter">) {
+    const priorOmega = cloneOmega(this.canonicalBody.omega);
+    const priorCanon = this.canonicalBody.blocks.slice();
+    const committed = await this.canonicalBody.commit(inputs);
+    if (!committed.ok) return committed;
+    const block: BlockRecord = {
+      hash: committed.hash,
+      height: committed.height,
+      prevHash: committed.prevHash,
+      merkleRoot: committed.merkleRoot,
+      timestamp: inputs.timestamp,
+      nonce: inputs.nonce,
+      difficulty: inputs.difficulty,
+      residual: committed.residual,
+      residualFp: committed.residualFp,
+      recursionDepth: 2,
+      coinbaseReward: committed.reward,
+      miner: inputs.miner,
+      txCount: inputs.transactions.length,
+      transactions: inputs.transactions as BlockRecord["transactions"],
+      stateRoot: committed.stateRoot,
+      chainId: committed.evidence.chainId,
+      evidenceRoot: committed.evidenceRoot,
+      omegaRoot: committed.omegaRoot,
+      evidence: committed.evidence,
+      committedPressure: inputs.committedPressure,
+    };
+    this.noteBefore(block.height, priorOmega, priorCanon);
+    this.blocks.push(block);
+    this.embodyCanonical();
+    this.wasmVM.setBlockHeight(block.height);
+    return committed;
+  }
+
+  /** Replay a sealed evidence block. A mismatch does not move either body. */
+  async adoptReplay(block: BlockRecord): Promise<string | null> {
+    const priorOmega = cloneOmega(this.canonicalBody.omega);
+    const priorCanon = this.canonicalBody.blocks.slice();
+    const err = await this.canonicalBody.replay({
+      hash: block.hash,
+      evidence: block.evidence,
+      transactions: block.transactions as Parameters<CanonicalBody["replay"]>[0]["transactions"],
+      timestamp: block.timestamp,
+      nonce: block.nonce,
+      miner: block.miner,
+      difficulty: block.difficulty,
+      committedPressure: block.committedPressure,
+      stateRoot: block.stateRoot,
+      omegaRoot: block.omegaRoot,
+    });
+    if (err) return err;
+    if (!this.getBlockByHash(block.hash)) {
+      this.noteBefore(block.height, priorOmega, priorCanon);
+      this.blocks.push(block);
+    }
+    this.embodyCanonical();
+    this.wasmVM.setBlockHeight(this.height);
+    return null;
   }
 
   private captureTemporal() {
@@ -852,6 +1009,17 @@ export class ChainState {
       wasm: [...this.canonicalWasm.entries()],
       fees: this.pendingUtxoFees,
       unbonding: this.unbondingQueue.map((u) => ({ ...u })),
+      utxos: this.utxoSet.getAllUnspent().map((u) => ({ ...u })),
+      txIndex: [...this.txIndex.entries()].map(([hash, tx]) => [hash, { ...tx }] as const),
+      mempool: this.mempool.all().map((tx) => ({ ...tx })),
+      addressTxs: [...this.addressTxs.entries()].map(([addr, hashes]) => [addr, [...hashes]] as const),
+      stakes: [...this.stakes.values()].map((s) => ({ ...s })),
+      pools: [...this.dexPools.values()].map((p) => ({ ...p })),
+      canonicalProposals: this.canonicalProposals.map((p) => ({ ...p })),
+      canonicalModels: this.canonicalModels.map((m) => ({ ...m })),
+      canonicalSettlements: this.canonicalSettlements.map((s) => ({ ...s })),
+      canonicalBtc: this.canonicalBtc.map((h) => ({ ...h })),
+      canonicalEth: this.canonicalEth.map((h) => ({ ...h })),
       preOmega: new Map(this.preOmega),
       preOmegaBlocks: new Map(this.preOmegaBlocks),
       preLedger: new Map(this.preBlockLedger),
@@ -863,6 +1031,7 @@ export class ChainState {
       preCouplings: new Map(this.preBlockCouplings),
       preWasm: new Map(this.preBlockWasm),
       preProposals: new Map(this.preBlockProposals),
+      prePools: new Map(this.preBlockPools),
     };
   }
 
@@ -882,6 +1051,19 @@ export class ChainState {
     this.canonicalWasm = new Map(saved.wasm);
     this.pendingUtxoFees = saved.fees;
     this.unbondingQueue = saved.unbonding.map((u) => ({ ...u }));
+    this.utxoSet.restoreFromSnapshot(saved.utxos);
+    this.txIndex = new Map(saved.txIndex.map(([hash, tx]) => [hash, { ...tx }]));
+    this.mempool.replace(saved.mempool);
+    this.addressTxs = new Map(saved.addressTxs.map(([addr, hashes]) => [addr, new Set(hashes)]));
+    this.stakes.clear();
+    for (const s of saved.stakes) this.stakes.set(`${s.delegator}-${s.validator}`, { ...s });
+    this.dexPools.clear();
+    for (const p of saved.pools) this.dexPools.set(p.id, { ...p });
+    this.canonicalProposals = saved.canonicalProposals.map((p) => ({ ...p }));
+    this.canonicalModels = saved.canonicalModels.map((m) => ({ ...m }));
+    this.canonicalSettlements = saved.canonicalSettlements.map((s) => ({ ...s }));
+    this.canonicalBtc = saved.canonicalBtc.map((h) => ({ ...h }));
+    this.canonicalEth = saved.canonicalEth.map((h) => ({ ...h }));
     this.preOmega = saved.preOmega;
     this.preOmegaBlocks = saved.preOmegaBlocks;
     this.preBlockLedger = saved.preLedger;
@@ -893,6 +1075,7 @@ export class ChainState {
     this.preBlockCouplings = saved.preCouplings;
     this.preBlockWasm = saved.preWasm;
     this.preBlockProposals = saved.preProposals;
+    this.preBlockPools = saved.prePools;
     this.wasmVM.setBlockHeight(this.height);
   }
 
@@ -970,8 +1153,20 @@ export class ChainState {
       if (wasm) this.canonicalWasm = new Map(wasm);
       const proposals = this.preBlockProposals.get(oldest.height);
       if (proposals) this.kernelProposals = proposals.map((p) => ({ ...p }));
+      const pools = this.preBlockPools.get(oldest.height);
+      if (pools) {
+        this.dexPools.clear();
+        for (const p of pools) this.dexPools.set(p.id, { ...p });
+      }
       const omega = this.preOmega.get(oldest.height);
-      if (omega) this.canonicalBody.omega = omega;
+      if (omega) {
+        this.canonicalBody.omega = omega;
+        this.canonicalProposals = omega.proposals.map((p) => ({ ...p }));
+        this.canonicalModels = omega.models.map((m) => ({ ...m }));
+        this.canonicalSettlements = omega.settlements.map((s) => ({ ...s }));
+        this.canonicalBtc = omega.btc.map((h) => ({ ...h }));
+        this.canonicalEth = omega.eth.map((h) => ({ ...h }));
+      }
       const canonBlocks = this.preOmegaBlocks.get(oldest.height);
       if (canonBlocks) this.canonicalBody.blocks = canonBlocks;
     }
@@ -985,6 +1180,7 @@ export class ChainState {
       this.preBlockCouplings.delete(block.height);
       this.preBlockWasm.delete(block.height);
       this.preBlockProposals.delete(block.height);
+      this.preBlockPools.delete(block.height);
       this.preOmega.delete(block.height);
       this.preOmegaBlocks.delete(block.height);
     }
@@ -1034,7 +1230,19 @@ export class ChainState {
     const saved = this.captureTemporal();
     try {
       this.rollbackToHeight(forkHeight);
-      for (const block of newBlocks) this.addBlock(block);
+      for (const block of newBlocks) {
+        const omega = this.canonicalBody.omega;
+        const pressure = typeof block.committedPressure === "number" ? block.committedPressure : 0;
+        if (pressureEvidence(pressure) === null) throw new Error("reorg block is not the successor");
+        if (block.prevHash !== omega.tipHash || block.difficulty !== omega.difficulty) {
+          throw new Error("reorg block is not the successor");
+        }
+        if (omega.height >= 0 && block.timestamp < omega.tipTimestamp) {
+          throw new Error("reorg block is not the successor");
+        }
+        this.addBlock(block);
+        if (block.hash !== this.canonicalBody.omega.tipHash) throw new Error("reorg block is not the successor");
+      }
     } catch (err) {
       this.restoreTemporal(saved);
       return { switched: false, reason: (err as Error).message };
@@ -1271,7 +1479,16 @@ export class ChainState {
     this.admittedEthSlot = snap.admittedEthSlot ?? null;
     this.unbondingQueue = snap.unbonding.map((u) => ({ ...u }));
     this.wasmVM.replaceContracts(snap.contracts);
-    if (snap.omega) this.canonicalBody.omega = omegaFromRecord(snap.omega);
+    if (snap.omega) {
+      this.canonicalBody.omega = omegaFromRecord(snap.omega);
+      const omega = this.canonicalBody.omega;
+      this.canonicalProposals = omega.proposals.map((p) => ({ ...p }));
+      this.canonicalModels = omega.models.map((m) => ({ ...m }));
+      this.canonicalSettlements = omega.settlements.map((s) => ({ ...s }));
+      this.canonicalBtc = omega.btc.map((h) => ({ ...h }));
+      this.canonicalEth = omega.eth.map((h) => ({ ...h }));
+      this.canonicalWasm = new Map(omega.wasm);
+    }
   }
 
   processUnbonding(_height: number): void {

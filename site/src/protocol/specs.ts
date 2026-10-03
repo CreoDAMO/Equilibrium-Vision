@@ -71,7 +71,7 @@ export const SPECS: SpecDoc[] = [
     body: [
       "Account model is canonical. Coinbase is credited on that ledger and is not also created as a second output.",
       "successor is defined on the inputs it is given. A transfer the sender cannot cover is refused inside the transition. The refusal is not a precondition that only the producer knows.",
-      "An operational block installs canonical Ω only when it is that successor. A miner who is not a live validator does not move Ω. If the successor refuses the block, the operational body does not move either. A rollback restores both. A snapshot carries Ω, not only the operational ledger.",
+      "An operational block installs canonical Ω only when it is that successor. The install replaces the operational ledger, pools, validators, delegations, couplings, difficulty, finality, wasm, proposals, models, settlements, and foreign headers with that Ω′. A miner who is not a live validator does not move Ω. If the successor refuses the block, the operational body does not move either. A rollback restores both. A snapshot carries Ω, not only the operational ledger. A reorganization switches only when every new block is admitted by that same successor; otherwise both bodies stay.",
       "Difficulty moves by the ratio of the target block time to the actual block time, multiplied by the foreign-tip factor in EQ-20, clamped to 0.8 and 1.2, and does not fall below 100,000.",
       "The coinbase target is the network residual threshold. Mainnet is 8e-4. Testnet is 2e-3. At height 1, a residual of 0.001 pays 79 against the mainnet target and 99 against the testnet target.",
       "The wasm host is callArbitrage. It runs the arbitrage module whose sha256 is the evidence code. Any other code is refused. The storage it writes is part of Ω. A storage map that execution did not produce is not Ω.wasm.",
@@ -113,7 +113,7 @@ export const SPECS: SpecDoc[] = [
       "If the sums are equal, the chain whose tip hash is lexicographically smaller wins. Arrival order is not a tie-break.",
       "A block that does not extend the current tip is still a candidate. It is not rejected for arriving second.",
       "A successor computed from an older Ω is not installed. The candidate is selected again against the Ω that is current.",
-      "A finalized ancestor is not reorganized.",
+      "A reorganization that admits the candidate through the successor switches both bodies onto that history. A candidate the successor refuses restores both and does not switch. A finalized ancestor is not reorganized. kernelProposals are not a second coupling authority. A coupling changes only when a passed proposal, admitted as stake evidence, is opened by the next successor.",
     ],
   },
   {

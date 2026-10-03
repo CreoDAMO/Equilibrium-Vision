@@ -4,8 +4,8 @@ import type { CanonicalInputs, NetworkId, Omega, TransitionEvidence, TxRecord } 
 
 /**
  * The artifact embodiment of the one successor.
- * Operational addBlock is not this. An evidence block is refused there
- * and committed here, including a slash that arrived as stake evidence.
+ * A block that is not the successor does not install evidence.
+ * A successor's evidence is an input to G. ChainState then copies Ω′ onto the operational body.
  */
 export class CanonicalBody {
   omega: Omega;

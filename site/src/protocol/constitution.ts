@@ -400,6 +400,15 @@ function applyStake(omega: Omega, op: StakeEvidence, params: NetworkParams): str
     return null;
   }
   if (!debit(omega.ledger, op.proposer, op.deposit)) return "proposal deposit refused";
+  const couplingKeys = ["hash", "structural", "continuity", "mempool", "fees"] as const;
+  let couplingKey: (typeof couplingKeys)[number] | undefined;
+  let couplingValue: number | undefined;
+  if (op.couplingKey !== undefined || op.couplingValue !== undefined) {
+    if (!op.couplingKey || !(couplingKeys as readonly string[]).includes(op.couplingKey)) return "coupling is not a coupling";
+    if (typeof op.couplingValue !== "number" || !Number.isFinite(op.couplingValue)) return "coupling is not a coupling";
+    couplingKey = op.couplingKey;
+    couplingValue = op.couplingValue;
+  }
   if (!omega.proposals.some((p) => p.id === op.id)) {
     omega.proposals.unshift({
       id: op.id,
@@ -410,6 +419,7 @@ function applyStake(omega: Omega, op: StakeEvidence, params: NetworkParams): str
       no: 0,
       abstain: 0,
       status: "open",
+      ...(couplingKey ? { couplingKey, couplingValue } : {}),
     });
   }
   return null;

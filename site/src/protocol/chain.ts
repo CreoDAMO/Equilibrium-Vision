@@ -1222,7 +1222,12 @@ export class OrganismNode {
     return { ok: true, amount };
   }
 
-  propose(proposer: string, title: string, deposit: number): { ok: boolean; error?: string; id?: number } {
+  propose(
+    proposer: string,
+    title: string,
+    deposit: number,
+    coupling?: { key: keyof Couplings; value: number },
+  ): { ok: boolean; error?: string; id?: number } {
     if (!title.trim()) return { ok: false, error: "title" };
     if (deposit < 0) return { ok: false, error: "deposit" };
     if (this.account(proposer).balance - this.held(proposer) < deposit) return { ok: false, error: "insufficient deposit" };
@@ -1236,7 +1241,14 @@ export class OrganismNode {
       abstain: 0,
       status: "open",
     };
-    this.pending.stake.push({ op: "propose", proposer, title: p.title, deposit, id: p.id });
+    this.pending.stake.push({
+      op: "propose",
+      proposer,
+      title: p.title,
+      deposit,
+      id: p.id,
+      ...(coupling ? { couplingKey: coupling.key, couplingValue: coupling.value } : {}),
+    });
     this.emit("in", "governance", `proposal #${p.id} ${p.title} · deposit queued`);
     return { ok: true, id: p.id };
   }

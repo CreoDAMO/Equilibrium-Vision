@@ -118,7 +118,16 @@ export type StakeEvidence =
   | { op: "delegate"; delegator: string; validator: string; amount: number }
   | { op: "claim"; address: string }
   | { op: "slash"; validator: string; reason: "double_sign" | "downtime" }
-  | { op: "propose"; proposer: string; title: string; deposit: number; id: number }
+  | {
+      op: "propose";
+      proposer: string;
+      title: string;
+      deposit: number;
+      id: number;
+      /** Named here so a passed proposal can change λ only inside the next successor. */
+      couplingKey?: "hash" | "structural" | "continuity" | "mempool" | "fees";
+      couplingValue?: number;
+    }
   | { op: "vote"; voter: string; id: number; option: "yes" | "no" | "abstain" };
 
 /**

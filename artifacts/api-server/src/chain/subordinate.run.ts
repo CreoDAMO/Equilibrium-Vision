@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { ChainState } from "./state.js";
 import { BTC_GENESIS_HEADER_HEX } from "./btc-header.js";
+import { kernelParty } from "./kernel-genesis.js";
 import { ARBITRAGE_CODE } from "../../../../site/src/protocol/evidence.js";
 
 const state = new ChainState();
@@ -67,6 +68,7 @@ state.blocks.push({
 } as never);
 state.updateDifficulty();
 assert.equal(state.currentDifficulty, 1_000_000);
+assert.equal(state.ledger.balance(alice), 10_000);
 
 const before = state.canonicalBody.omega.difficulty;
 const committed = await state.canonicalBody.commit({
@@ -82,7 +84,7 @@ const committed = await state.canonicalBody.commit({
   },
   timestamp: 1_700_000_000,
   nonce: 6,
-  miner: alice,
+  miner: kernelParty("mainnet").miner,
   committedPressure: 0,
   couplings: { ...state.canonicalBody.omega.couplings },
   difficulty: before,
@@ -90,7 +92,9 @@ const committed = await state.canonicalBody.commit({
 assert.equal(committed.ok, true);
 if (!committed.ok) throw new Error(committed.error);
 assert.notEqual(committed.record.difficulty, before);
-assert.equal(state.currentDifficulty, 1_000_000);
+state.alignEmbodiment();
+assert.equal(state.currentDifficulty, committed.record.difficulty);
+assert.equal(state.ledger.balance(kernelParty("mainnet").miner), committed.record.ledger.find((row) => row.address === kernelParty("mainnet").miner)?.balance);
 
 state.dexPools.set("EQU-USDC", {
   id: "EQU-USDC",
@@ -105,8 +109,9 @@ state.dexPools.set("EQU-USDC", {
   txCount: 0,
   createdAt: 0,
 });
+const aliceHeld = state.ledger.balance(alice);
 assert.equal(state.swap("EQU-USDC", alice, "EQU", 100), "a pool moves only inside the successor");
-assert.equal(state.ledger.balance(alice), 10_000);
+assert.equal(state.ledger.balance(alice), aliceHeld);
 assert.equal(state.dexPools.get("EQU-USDC")!.reserveA, 1_000_000);
 
 const wasm = await state.executeKernelWasm("init", alice);

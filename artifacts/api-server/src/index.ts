@@ -76,18 +76,28 @@ if (Number.isNaN(port) || port <= 0) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const remote = res.data as any;
 
-            if (remote.evidence) {
-              const err = await chainState.canonicalBody.replay({
+            if (remote.evidence && chainState) {
+              const err = await chainState.adoptReplay({
                 hash: typeof remote.hash === "string" ? remote.hash : blockHash,
-                evidence: remote.evidence,
-                transactions: [],
-                timestamp: Number(remote.timestamp),
-                nonce: Number(remote.nonce),
+                height: Number(remote.height) || 0,
+                prevHash: typeof remote.prevHash === "string" ? remote.prevHash : "",
+                merkleRoot: typeof remote.merkleRoot === "string" ? remote.merkleRoot : "0".repeat(64),
+                timestamp: Number(remote.timestamp) || 0,
+                nonce: Number(remote.nonce) || 0,
+                difficulty: Number(remote.difficulty) || 0,
+                residual: Number(remote.residual) || 0,
+                residualFp: typeof remote.residualFp === "number" ? remote.residualFp : undefined,
+                recursionDepth: 2,
+                coinbaseReward: Number(remote.coinbaseReward) || 0,
                 miner: String(remote.miner ?? ""),
-                difficulty: Number(remote.difficulty),
+                txCount: 0,
+                transactions: [],
                 committedPressure: typeof remote.committedPressure === "number" ? remote.committedPressure : 0,
                 stateRoot: typeof remote.stateRoot === "string" ? remote.stateRoot : undefined,
+                chainId: typeof remote.chainId === "number" ? remote.chainId : undefined,
+                evidenceRoot: typeof remote.evidenceRoot === "string" ? remote.evidenceRoot : undefined,
                 omegaRoot: typeof remote.omegaRoot === "string" ? remote.omegaRoot : undefined,
+                evidence: remote.evidence,
               });
               if (err) {
                 logger.warn({ err, blockHash, peerId }, "P2P sync: canonical evidence refused");

@@ -293,18 +293,7 @@ export async function initChain(): Promise<void> {
   }
 
   for (const block of evidenceReplay.sort((a, b) => a.height - b.height)) {
-    const err = await chainState.canonicalBody.replay({
-      hash: block.hash,
-      evidence: block.evidence,
-      transactions: [],
-      timestamp: block.timestamp,
-      nonce: block.nonce,
-      miner: block.miner,
-      difficulty: block.difficulty,
-      committedPressure: block.committedPressure,
-      stateRoot: block.stateRoot,
-      omegaRoot: block.omegaRoot,
-    });
+    const err = await chainState.adoptReplay(block);
     if (err) logger.warn({ err, height: block.height, hash: block.hash }, "canonical evidence did not replay");
   }
 

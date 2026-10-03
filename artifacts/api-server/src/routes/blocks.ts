@@ -166,7 +166,7 @@ router.post("/blocks/submit", async (req, res) => {
     const now = (typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0)
       ? Math.floor(timestamp)
       : Math.floor(Date.now() / 1000);
-    const committed = await chainState.canonicalBody.commit({
+    const committed = await chainState.admitEvidence({
       transactions: [],
       evidence: evidence as TransitionEvidence,
       timestamp: now,

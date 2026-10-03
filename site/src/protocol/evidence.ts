@@ -25,7 +25,11 @@ export function canonicalEvidence(ev: TransitionEvidence): string {
       if (s.op === "claim") return `c:${s.address}`;
       if (s.op === "slash") return `s:${s.validator}:${s.reason}`;
       if (s.op === "vote") return `v:${s.voter}:${s.id}:${s.option}`;
-      return `p:${s.id}:${s.proposer}:${s.deposit}:${encodeURIComponent(s.title)}`;
+      const proposed = `p:${s.id}:${s.proposer}:${s.deposit}:${encodeURIComponent(s.title)}`;
+      if (s.couplingKey && typeof s.couplingValue === "number") {
+        return `${proposed}:${s.couplingKey}:${s.couplingValue}`;
+      }
+      return proposed;
     })
     .join(";");
   const cognition = (ev.cognition ?? [])
