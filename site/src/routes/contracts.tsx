@@ -228,7 +228,7 @@ function ContractsPage() {
             ))}
             {(snap?.models ?? []).map((m) => (
               <li key={m.id} className="text-muted">
-                model #{m.id} {m.status} · not zkML
+                model #{m.id} {m.status} · commitment, not a circuit
               </li>
             ))}
           </ul>

@@ -24,6 +24,7 @@ import type {
   EthHeaderRecord,
   TransitionEvidence,
   SecondBodyReport,
+  Settlement,
   TakeoverReport,
   StakeEvidence,
   ProductionRow,
@@ -37,6 +38,7 @@ import { evaluateResidual, solveStationary } from "./solver";
 import { verifyStationaryEvidence } from "./verify";
 import { signTx, verifyTx, type Keypair } from "./wallet";
 import { slashAmount } from "./coinomics";
+import { challengeBinding, modelBinding } from "./membranes";
 import { applySwap, poolAddress, quoteSwap } from "./dex";
 import { decodeHeaderHex, parseBtcHeader, verifyBtcMerkle, verifyBtcPow } from "./btc";
 import { callArbitrage } from "./wasm-host";
@@ -80,7 +82,6 @@ import {
 
 let eventSeq = 1;
 let proposalSeq = 1;
-let modelSeq = 1;
 
 export class OrganismNode {
   readonly network: NetworkId;
@@ -114,6 +115,7 @@ export class OrganismNode {
   delegations: Delegation[] = [];
   proposals: Proposal[] = [];
   models: ModelClaim[] = [];
+  settlements: Settlement[] = [];
   lastPaired: PairedResult | null = null;
   lastWhole: WholeReport | null = null;
   kinReport: SecondBodyReport | null = null;
@@ -169,6 +171,7 @@ export class OrganismNode {
     n.delegations = body.delegations ?? [];
     n.proposals = body.proposals ?? [];
     n.models = body.models ?? [];
+    n.settlements = body.settlements ?? [];
     n.difficulty = body.difficulty ?? n.difficulty;
     n.couplings = body.couplings ?? { ...DEFAULT_COUPLINGS };
     n.lastMineAt = body.lastMineAt ?? Date.now();
@@ -207,6 +210,7 @@ export class OrganismNode {
     n.delegations = this.delegations.map((d) => ({ ...d }));
     n.proposals = this.proposals.map((p) => ({ ...p }));
     n.models = this.models.map((m) => ({ ...m }));
+    n.settlements = this.settlements.map((s) => ({ ...s }));
     n.pending = this.cloneEvidence(this.pending);
     n.pendingWasm = this.pendingWasm ? new Map(this.pendingWasm) : null;
     n.detStep = this.detStep;
@@ -235,6 +239,8 @@ export class OrganismNode {
       validators: new Map([...this.validators.entries()].map(([k, v]) => [k, { ...v }])),
       delegations: this.delegations.map((d) => ({ ...d })),
       proposals: this.proposals.map((p) => ({ ...p })),
+      models: this.models.map((m) => ({ ...m })),
+      settlements: this.settlements.map((s) => ({ ...s })),
       finalizedHeight: this.finalizedThrough,
     };
   }
@@ -249,6 +255,8 @@ export class OrganismNode {
     this.validators = next.validators;
     this.delegations = next.delegations;
     this.proposals = next.proposals;
+    this.models = next.models;
+    this.settlements = next.settlements;
     this.couplings = { ...next.couplings };
     this.difficulty = next.difficulty;
     this.finalizedThrough = next.finalizedHeight;
@@ -308,6 +316,8 @@ export class OrganismNode {
       eth: [],
       wasm: [],
       stake: [],
+      cognition: [],
+      settle: [],
     };
   }
 
@@ -320,6 +330,8 @@ export class OrganismNode {
       eth: ev.eth.map((e) => ({ ...e })),
       wasm: ev.wasm.map((w) => ({ ...w })),
       stake: ev.stake.map((s) => ({ ...s })),
+      cognition: (ev.cognition ?? []).map((c) => ({ ...c })),
+      settle: (ev.settle ?? []).map((s) => ({ ...s })),
     };
   }
 
@@ -327,6 +339,9 @@ export class OrganismNode {
     return this.pending.stake.reduce((sum, op) => {
       if (op.op === "delegate" && op.delegator === addr) return sum + op.amount;
       if (op.op === "propose" && op.proposer === addr) return sum + op.deposit;
+      return sum;
+    }, 0) + (this.pending.settle ?? []).reduce((sum, op) => {
+      if (op.op === "lock" && op.from === addr) return sum + op.amount;
       return sum;
     }, 0);
   }
@@ -1035,6 +1050,7 @@ export class OrganismNode {
       delegations: this.delegations,
       proposals: this.proposals,
       models: this.models,
+      settlements: this.settlements,
       difficulty: this.difficulty,
       couplings: this.couplings,
       lastMineAt: this.lastMineAt,
@@ -1237,18 +1253,78 @@ export class OrganismNode {
     return { ok: true };
   }
 
-  proposeModel(uri: string, residualFp: number, supportHash: string): ModelClaim {
-    const m: ModelClaim = {
-      id: modelSeq++,
+  proposeModel(uri: string, residualFp: number, supportHash: string): { ok: true; id: number } | { ok: false; error: string } {
+    if (!uri.trim() || uri.length > 128) return { ok: false, error: "model uri refused" };
+    if (!Number.isSafeInteger(residualFp) || residualFp < 0) return { ok: false, error: "model residual refused" };
+    if (!/^[0-9a-f]{64}$/.test(supportHash)) return { ok: false, error: "model support refused" };
+    const used = [
+      ...this.models.map((m) => m.id),
+      ...(this.pending.cognition ?? []).flatMap((c) => (c.kind === "bind" ? [] : [c.id])),
+    ];
+    const id = (used.length ? Math.max(...used) : 0) + 1;
+    const claim = {
+      kind: "model" as const,
+      id,
       uri: uri.slice(0, 128),
       residualFp,
       supportHash,
-      status: "proposed",
-      proposedAt: Math.floor(Date.now() / 1000),
+      proof: modelBinding(this.params.chainId, { id, uri: uri.slice(0, 128), residualFp, supportHash }),
     };
-    this.models.unshift(m);
-    this.emit("in", "governance", `model #${m.id} proposed (optimistic, not zkML)`);
-    return m;
+    this.pending.cognition = [...(this.pending.cognition ?? []), claim];
+    this.emit("in", "governance", `model #${id} staged for the successor`);
+    return { ok: true, id };
+  }
+
+  challengeModel(id: number, supportHash: string): { ok: true } | { ok: false; error: string } {
+    const row = this.models.find((m) => m.id === id);
+    if (!row || row.status === "slashed") return { ok: false, error: "model is not bound" };
+    if (!/^[0-9a-f]{64}$/.test(supportHash) || supportHash === row.supportHash) {
+      return { ok: false, error: "challenge does not disagree" };
+    }
+    this.pending.cognition = [
+      ...(this.pending.cognition ?? []),
+      { kind: "challenge", id, supportHash, proof: challengeBinding(this.params.chainId, id, supportHash) },
+    ];
+    this.emit("in", "governance", `model #${id} challenge staged`);
+    return { ok: true };
+  }
+
+  lockForeign(
+    from: string,
+    to: string,
+    amount: number,
+    asset: "btc" | "eth",
+    foreignRef: string,
+  ): { ok: true; id: number } | { ok: false; error: string } {
+    if (!Number.isSafeInteger(amount) || amount <= 0) return { ok: false, error: "settlement amount refused" };
+    if (this.account(from).balance - this.held(from) < amount) return { ok: false, error: "settlement lock refused" };
+    const known = asset === "btc"
+      ? this.btcHeaders.some((h) => h.hash === foreignRef) || this.pending.btc.length > 0
+      : this.ethHeaders.some((h) => h.hash === foreignRef) || this.pending.eth.some((e) => e.op === "header");
+    if (!known) return { ok: false, error: "foreign observation is not in Ω" };
+    const used = [
+      ...this.settlements.map((s) => s.id),
+      ...(this.pending.settle ?? []).flatMap((s) => (s.op === "lock" ? [s.id] : [])),
+    ];
+    const id = (used.length ? Math.max(...used) : 0) + 1;
+    this.pending.settle = [
+      ...(this.pending.settle ?? []),
+      { op: "lock", id, asset, foreignRef, from, to, amount },
+    ];
+    this.emit("in", "bridge", `lock ${amount} EQU against ${asset} ${foreignRef.slice(0, 12)} · staged`);
+    return { ok: true, id };
+  }
+
+  releaseForeign(id: number): { ok: true } | { ok: false; error: string } {
+    const row = this.settlements.find((s) => s.id === id && s.status === "locked");
+    const staged = (this.pending.settle ?? []).some((s) => s.op === "lock" && s.id === id);
+    if (!row && !staged) return { ok: false, error: "settlement is not locked" };
+    if ((this.pending.settle ?? []).some((s) => s.op === "release" && s.id === id)) {
+      return { ok: false, error: "release already queued" };
+    }
+    this.pending.settle = [...(this.pending.settle ?? []), { op: "release", id }];
+    this.emit("in", "bridge", `release settlement #${id} · staged`);
+    return { ok: true };
   }
 
   ingestGossip(claimed: BlockRecord): Promise<{ ok: boolean; error?: string; report?: VerificationReport }> {

@@ -52,6 +52,8 @@ function omega(): Omega {
     ]),
     delegations: [],
     proposals: [],
+    models: [],
+    settlements: [],
     finalizedHeight: -1,
   };
 }

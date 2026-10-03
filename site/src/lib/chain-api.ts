@@ -253,7 +253,7 @@ export const stakeAction = createServerFn({ method: "POST" })
     else if (data.op === "vote" && data.id && data.option) res = node.vote(data.address, data.id, data.option);
     else if (data.op === "model") {
       const m = node.proposeModel(data.uri ?? "ipfs://model", 0, "0".repeat(64));
-      res = { ok: true, error: undefined, id: m.id };
+      res = m.ok ? { ok: true, id: m.id } : { ok: false, error: m.error };
     }
     if (res.ok) await persist(data.network);
     return { ok: Boolean(res.ok), error: typeof res.error === "string" ? res.error : undefined };

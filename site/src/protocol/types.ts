@@ -133,6 +133,10 @@ export interface TransitionEvidence {
   eth: EthEvidence[];
   wasm: WasmEvidence[];
   stake: StakeEvidence[];
+  /** Absent on evidence minted before the cognition membrane. */
+  cognition?: CognitionEvidence[];
+  /** Absent on evidence minted before foreign settlement. */
+  settle?: SettlementEvidence[];
 }
 
 /** Measured answer of the transition relation. Produced by running it, not by describing it. */
@@ -250,9 +254,29 @@ export interface ModelClaim {
   uri: string;
   residualFp: number;
   supportHash: string;
-  status: "proposed" | "verified" | "slashed";
+  /** proposed is staged. bound means G recomputed the commitment. slashed is a later challenge. verified is a restored row from before this boundary. */
+  status: "proposed" | "bound" | "verified" | "slashed";
   proposedAt: number;
 }
+
+export interface Settlement {
+  id: number;
+  asset: "btc" | "eth";
+  foreignRef: string;
+  from: string;
+  to: string;
+  amount: number;
+  status: "locked" | "settled";
+}
+
+export type CognitionEvidence =
+  | { kind: "bind"; residualFp: number; proof: string }
+  | { kind: "model"; id: number; uri: string; residualFp: number; supportHash: string; proof: string }
+  | { kind: "challenge"; id: number; supportHash: string; proof: string };
+
+export type SettlementEvidence =
+  | { op: "lock"; id: number; asset: "btc" | "eth"; foreignRef: string; from: string; to: string; amount: number }
+  | { op: "release"; id: number };
 
 export interface FinalityRound {
   height: number;
@@ -455,6 +479,7 @@ export interface PersistedBody {
   delegations: Delegation[];
   proposals: Proposal[];
   models: ModelClaim[];
+  settlements?: Settlement[];
   btcHeaders?: BtcHeaderRecord[];
   wasmStorage?: Array<[string, string]>;
   ethPubkey?: string;

@@ -6,9 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Stat } from "@/components/stat";
 import { formatSci, truncateHash } from "@/lib/format";
 import { independentVerify, type IndependentReport } from "@/protocol/light";
+import { participation, type DeviceResources } from "@/protocol/membranes";
 import type { BlockRecord } from "@/protocol/types";
 
 export const Route = createFileRoute("/mobile")({ component: MobilePage });
+
+const COOL: DeviceResources = { thermalC: 31, battery: 0.86 };
+const HOT: DeviceResources = { thermalC: 46, battery: 0.12 };
 
 const PIPELINE = [
   { name: "continuity", label: "Chain continuity", why: "prev_hash matches the real tip" },
@@ -22,7 +26,9 @@ const PIPELINE = [
 function MobilePage() {
   const { snap } = useNetwork();
   const [selected, setSelected] = useState<string | null>(null);
-  const [thermalDefer, setThermalDefer] = useState(false);
+  const [hot, setHot] = useState(false);
+  const resources = hot ? HOT : COOL;
+  const policy = participation(resources);
 
   const blocks = snap?.recentBlocks ?? [];
   const hash = selected ?? blocks[0]?.hash ?? null;
@@ -32,19 +38,18 @@ function MobilePage() {
 
   const report: IndependentReport | null = useMemo(() => {
     if (!snap || !block) return null;
-    if (thermalDefer) return null;
+    if (policy === "defer") return null;
     return independentVerify(block, prev, snap.params);
-  }, [snap, block, prev, thermalDefer]);
+  }, [snap, block, prev, policy]);
 
   return (
     <div className="space-y-8">
       <header>
         <h1 className="font-display text-4xl tracking-tight">Mobile body</h1>
         <p className="mt-2 max-w-2xl text-muted">
-          Mobile does not rediscover expensive work in order to independently verify
-          it. This is the Android validator pipeline — continuity, timestamp, residual
-          recompute, merkle, header commitment — running in this browser as a light
-          body. Discovery stays on the kernel. Agreement is the product.
+          Mobile verifies this organism. It does not keep another one. Heat and battery
+          decide whether this device solves, only verifies, or waits. That decision is
+          not canonical state. A nonce found here is a candidate. The kernel admits it.
         </p>
       </header>
 
@@ -55,11 +60,11 @@ function MobilePage() {
           value={block?.solverIterations ?? "—"}
           hint="kernel nonce iters"
         />
-        <Stat label="Verify cost" value={thermalDefer ? "deferred" : 1} hint="evals in this body" />
+        <Stat label="Verify cost" value={policy === "defer" ? "deferred" : 1} hint="evals in this body" />
         <Stat
           label="Agreement"
-          value={thermalDefer ? "—" : report?.agree ? "yes" : "no"}
-          hint={report ? formatSci(report.localResidual) : "waiting"}
+          value={policy === "defer" ? "—" : report?.agree ? "yes" : "no"}
+          hint={policy === "defer" ? "device is waiting" : report ? formatSci(report.localResidual) : "waiting"}
         />
       </div>
 
@@ -70,10 +75,10 @@ function MobilePage() {
             <h2 className="mt-1 font-display text-xl">What this body actually receives</h2>
           </div>
           <Button
-            variant={thermalDefer ? "secondary" : "ghost"}
-            onClick={() => setThermalDefer((v) => !v)}
+            variant={policy === "defer" ? "secondary" : "ghost"}
+            onClick={() => setHot((v) => !v)}
           >
-            {thermalDefer ? "Thermal defer on" : "Simulate thermal defer"}
+            {policy === "defer" ? "Device hot — waiting" : `${policy} · ${resources.thermalC}°C`}
           </Button>
         </div>
         {block ? (
@@ -104,13 +109,14 @@ function MobilePage() {
         </div>
       </div>
 
-      {thermalDefer ? (
+      {policy === "defer" ? (
         <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">
           <Badge tone="warn">deferred</Badge>
           <p className="mt-3 max-w-xl text-sm text-muted">
-            The Rust mobile validator may skip work under thermal or battery load
-            (`should_validate_now`). Deferral is not acceptance. The header stays
-            unverified until this body runs the cheap path.
+            This device is too hot or too low to verify. Deferral is not acceptance.
+            The header stays unchecked. Temperature is not written into Ω. A peer
+            introduced by QR or NFC is a bootstrap string in the local book, and a
+            peer hello is not a block.
           </p>
         </div>
       ) : (

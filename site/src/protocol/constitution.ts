@@ -12,6 +12,7 @@ import {
   verifyEthHeader,
 } from "./eth-light";
 import { ARBITRAGE_CODE } from "./evidence";
+import { challengeBinding, modelBinding, residualBinding } from "./membranes";
 import { verifyTx } from "./wallet";
 import { NETWORKS } from "./networks";
 import {
@@ -29,10 +30,13 @@ import type {
   Delegation,
   DexPool,
   EthHeaderRecord,
+  ModelClaim,
   NetworkId,
   NetworkParams,
   Proposal,
   ResidualBreakdown,
+  Settlement,
+  SettlementEvidence,
   StakeEvidence,
   SwapEvent,
   TransitionEvidence,
@@ -62,6 +66,8 @@ export interface Omega {
   validators: Map<string, ValidatorRecord>;
   delegations: Delegation[];
   proposals: Proposal[];
+  models: ModelClaim[];
+  settlements: Settlement[];
   finalizedHeight: number;
 }
 
@@ -118,6 +124,8 @@ const OUTSIDE = [
   "solver search",
   "wasm storage cache",
   "pending memory",
+  "device temperature",
+  "peer book",
 ] as const;
 
 export function cloneOmega(omega: Omega): Omega {
@@ -138,6 +146,8 @@ export function cloneOmega(omega: Omega): Omega {
     validators: new Map([...omega.validators.entries()].map(([k, v]) => [k, { ...v }])),
     delegations: omega.delegations.map((d) => ({ ...d })),
     proposals: omega.proposals.map((p) => ({ ...p })),
+    models: omega.models.map((m) => ({ ...m })),
+    settlements: omega.settlements.map((s) => ({ ...s })),
   };
 }
 
@@ -203,7 +213,9 @@ export function wasmLeafOf(storage: Map<string, string>): string {
     .join("|");
 }
 
-export function stateRootOf(omega: Pick<Omega, "ledger" | "pools" | "btc" | "eth" | "wasm">): string {
+export function stateRootOf(
+  omega: Pick<Omega, "ledger" | "pools" | "btc" | "eth" | "wasm" | "models" | "settlements">,
+): string {
   const leaves = [
     ...[...omega.ledger.entries()]
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -214,8 +226,20 @@ export function stateRootOf(omega: Pick<Omega, "ledger" | "pools" | "btc" | "eth
     sha256Hex(`btc:${btcLeafOf(omega.btc)}`),
     sha256Hex(`eth:${ethLeafOf(omega.eth)}`),
     sha256Hex(`wasm:${wasmLeafOf(omega.wasm)}`),
+    sha256Hex(`models:${modelLeaf(omega.models)}`),
+    sha256Hex(`settle:${settlementLeaf(omega.settlements)}`),
   ];
   return merkleRoot(leaves);
+}
+
+function modelLeaf(models: ModelClaim[]): string {
+  return models.map((m) => `${m.id}:${m.status}:${m.residualFp}:${m.supportHash}`).join(";");
+}
+
+function settlementLeaf(rows: Settlement[]): string {
+  return rows
+    .map((s) => `${s.id}:${s.status}:${s.asset}:${s.foreignRef}:${s.from}:${s.to}:${s.amount}`)
+    .join(";");
 }
 
 function num(n: number): string {
@@ -264,6 +288,8 @@ export function omegaDigest(omega: Omega): string {
     validators.join(";"),
     delegations,
     proposals,
+    modelLeaf(omega.models),
+    settlementLeaf(omega.settlements),
   ].join("|");
   return sha256Hex(`eq-omega|${body}`);
 }
@@ -461,6 +487,90 @@ function applyMaterial(omega: Omega, ev: TransitionEvidence | undefined, params:
       participants: item.participants,
     });
   }
+  for (const item of ev.settle ?? []) {
+    const refused = applySettlement(omega, item);
+    if (refused) return refused;
+  }
+  return null;
+}
+
+function foreignKnown(omega: Omega, asset: "btc" | "eth", foreignRef: string): boolean {
+  if (asset === "btc") return omega.btc.some((h) => h.hash === foreignRef);
+  return omega.eth.some((h) => h.hash === foreignRef);
+}
+
+/** Lock moves EQU already in the ledger. Release pays that same EQU. Nothing is minted. */
+function applySettlement(omega: Omega, item: SettlementEvidence): string | null {
+  if (item.op === "lock") {
+    if (!Number.isSafeInteger(item.amount) || item.amount <= 0) return "settlement amount refused";
+    if (!Number.isSafeInteger(item.id) || item.id < 0) return "settlement id refused";
+    if (omega.settlements.some((s) => s.id === item.id)) return "settlement already exists";
+    if (item.asset !== "btc" && item.asset !== "eth") return "settlement asset refused";
+    if (!foreignKnown(omega, item.asset, item.foreignRef)) return "foreign observation is not in Ω";
+    if (!debit(omega.ledger, item.from, item.amount)) return "settlement lock refused";
+    omega.settlements.push({
+      id: item.id,
+      asset: item.asset,
+      foreignRef: item.foreignRef,
+      from: item.from,
+      to: item.to,
+      amount: item.amount,
+      status: "locked",
+    });
+    return null;
+  }
+  const row = omega.settlements.find((s) => s.id === item.id);
+  if (!row || row.status !== "locked") return "settlement is not locked";
+  if (!foreignKnown(omega, row.asset, row.foreignRef)) return "foreign observation left the window";
+  credit(omega.ledger, row.to, row.amount);
+  row.status = "settled";
+  return null;
+}
+
+function admitModels(omega: Omega, ev: TransitionEvidence | undefined, timestamp: number): string | null {
+  for (const item of ev?.cognition ?? []) {
+    if (item.kind === "bind") continue;
+    if (item.kind === "challenge") {
+      const row = omega.models.find((m) => m.id === item.id);
+      if (!row || row.status === "slashed") return "model is not bound";
+      if (!/^[0-9a-f]{64}$/.test(item.supportHash)) return "challenge support refused";
+      if (item.supportHash === row.supportHash) return "challenge does not disagree";
+      if (item.proof !== challengeBinding(omega.chainId, item.id, item.supportHash)) {
+        return "challenge commitment refused";
+      }
+      row.status = "slashed";
+      continue;
+    }
+    if (!item.uri || item.uri.length > 128) return "model uri refused";
+    if (!Number.isSafeInteger(item.residualFp) || item.residualFp < 0) return "model residual refused";
+    if (!/^[0-9a-f]{64}$/.test(item.supportHash)) return "model support refused";
+    if (item.proof !== modelBinding(omega.chainId, item)) return "model commitment refused";
+    const existing = omega.models.find((m) => m.id === item.id);
+    if (!existing) {
+      omega.models.unshift({
+        id: item.id,
+        uri: item.uri,
+        residualFp: item.residualFp,
+        supportHash: item.supportHash,
+        status: "bound",
+        proposedAt: timestamp,
+      });
+      continue;
+    }
+    if (existing.supportHash !== item.supportHash || existing.residualFp !== item.residualFp) {
+      return "model claim does not match the registry";
+    }
+  }
+  return null;
+}
+
+/** The binding names the residual and state root G just computed. It does not replace them. */
+function admitBinding(ev: TransitionEvidence | undefined, residualFp: number, stateRoot: string): string | null {
+  for (const item of ev?.cognition ?? []) {
+    if (item.kind !== "bind") continue;
+    if (item.residualFp !== residualFp) return "proof does not name this residual";
+    if (item.proof !== residualBinding(residualFp, stateRoot)) return "proof does not bind this state";
+  }
   return null;
 }
 
@@ -553,7 +663,11 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor
   const swaps: SwapEvent[] = [];
   const effectError = applyEffects(next, inputs.transactions, inputs.miner, split.liquid, swaps);
   if (effectError) return { ok: false, error: effectError };
+  const modelError = admitModels(next, inputs.evidence, inputs.timestamp);
+  if (modelError) return { ok: false, error: modelError };
   const stateRoot = stateRootOf(next);
+  const bindError = admitBinding(inputs.evidence, breakdown.canonicalFp, stateRoot);
+  if (bindError) return { ok: false, error: bindError };
   const minerV = next.validators.get(inputs.miner);
   if (minerV) minerV.blocksProposed += 1;
   distribute(next.validators, reward - split.liquid);
@@ -635,6 +749,8 @@ export function initialOmega(network: NetworkId): Omega {
     validators: new Map(),
     delegations: [],
     proposals: [],
+    models: [],
+    settlements: [],
     finalizedHeight: -1,
   };
   for (const a of GENESIS_ALLOCATIONS) credit(omega.ledger, a.address, a.amount);

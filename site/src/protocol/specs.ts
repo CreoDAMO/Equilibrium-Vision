@@ -86,8 +86,10 @@ export const SPECS: SpecDoc[] = [
       "The header hash is canonicalHeaderHash. It binds the previous hash, the merkle root, the state root, the timestamp, the nonce, the difficulty, the residual fingerprint, the miner, the height, and the committed pressure. It is not hash256(`block-${height}-${prev}-${now}`).",
       "A phone that does not know the post-state root fills the merkle root and the state root with 64 zero bytes and hashes this same preimage. The residual fingerprint in that string is the solver's territory residual. That hash is the phone's tip. It is not the artifacts seal.",
       "When the block carries a chain id, an evidence root, and an omega digest, the preimage also binds those. That longer preimage is a different hash. The state root in that header is the canonical projection supplied with the block. The artifacts operational root is a separate commitment and is not written into that field.",
-      "The state root merkle-izes account leaves, pool reserves, the admitted Bitcoin tip, the admitted Ethereum tip, and wasm storage. A validator-only change does not move it.",
-      "Validator bond, jail, slash, delegations, difficulty, and proposals are in the omega digest. An evidence header binds that digest as well as the state root. Peers and the mempool are outside both.",
+      "The state root merkle-izes account leaves, pool reserves, the admitted Bitcoin tip, the admitted Ethereum tip, wasm storage, model claims, and foreign settlements. A validator-only change does not move it.",
+      "Validator bond, jail, slash, delegations, difficulty, proposals, model claims, and settlements are in the omega digest. An evidence header binds that digest as well as the state root. Peers, the mempool, device temperature, and the mobile peer book are outside both.",
+      "A residual proof is accepted only when it names the residual fingerprint and the state root this transition computed. A model enters Ω only when G recomputes its commitment. That commitment is not a Groth16 or RISC Zero transcript. A challenge that disagrees, and whose commitment G recomputes, marks the claim slashed. It does not prove the model false.",
+      "Foreign settlement locks EQU already on the ledger against a Bitcoin or Ethereum observation already in Ω, then releases that same EQU. It does not mint.",
     ],
   },
   {
@@ -97,6 +99,8 @@ export const SPECS: SpecDoc[] = [
     body: [
       "Discovery may be specialised. Verification must not be.",
       "A light body that cannot recompute residual is an observer, not a verifier.",
+      "A phone may solve only while it is cool enough and charged enough. That decision stays on the device. The nonce it finds is a candidate. The organism admits it, or it does not. Heat does not enter Ω.",
+      "QR and NFC carry one bootstrap string. The peer book survives a process restart. A peer hello is not a block.",
     ],
   },
   {

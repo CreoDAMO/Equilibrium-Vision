@@ -52,7 +52,7 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     title: "Model registry",
     layer: "operational",
     live: true,
-    summary: "Optimistic oracle for residual claims on models. Challenge window. Not zkML.",
+    summary: "A model claim enters Ω only when the successor recomputes its commitment. A later challenge with a different support hash marks it slashed. Neither step is a Groth16 proof of the model.",
     methods: [
       { id: 0, name: "propose", note: "commit support-set hash + residualFp" },
       { id: 1, name: "verify_model", note: "finalize after window" },

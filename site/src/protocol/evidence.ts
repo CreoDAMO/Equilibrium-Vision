@@ -28,7 +28,23 @@ export function canonicalEvidence(ev: TransitionEvidence): string {
       return `p:${s.id}:${s.proposer}:${s.deposit}:${encodeURIComponent(s.title)}`;
     })
     .join(";");
-  return ["v1", String(ev.chainId), ev.wasmCode, btc, eth, wasm, stake].join("|");
+  const cognition = (ev.cognition ?? [])
+    .map((c) => {
+      if (c.kind === "bind") return `b:${c.residualFp}:${c.proof}`;
+      if (c.kind === "challenge") return `x:${c.id}:${c.supportHash}:${c.proof}`;
+      return `m:${c.id}:${c.residualFp}:${c.supportHash}:${c.proof}:${encodeURIComponent(c.uri)}`;
+    })
+    .join(";");
+  const settle = (ev.settle ?? [])
+    .map((s) =>
+      s.op === "lock"
+        ? `l:${s.id}:${s.asset}:${s.foreignRef}:${s.from}:${s.to}:${s.amount}`
+        : `r:${s.id}`,
+    )
+    .join(";");
+  const body = ["v1", String(ev.chainId), ev.wasmCode, btc, eth, wasm, stake].join("|");
+  if (!cognition && !settle) return body;
+  return `${body}|${cognition}|${settle}`;
 }
 
 export function evidenceRoot(ev: TransitionEvidence): string {
