@@ -473,6 +473,8 @@ export interface SnapshotPartitions {
   difficulty: number;
   unbonding: UnbondingEntry[];
   contracts: ContractRecord[];
+  /** Canonical Ω at this height. Absent on snapshots taken before the temporal membrane. */
+  omega?: Record<string, unknown>;
 }
 
 /** Stored inside the ledger JSONB so a restart does not need a new column. */

@@ -590,6 +590,7 @@ async function takeSnapshot(): Promise<void> {
       difficulty: snap.difficulty,
       unbonding: snap.unbonding,
       contracts: snap.contracts,
+      omega: snap.omega as unknown as Record<string, unknown>,
     },
   });
 }

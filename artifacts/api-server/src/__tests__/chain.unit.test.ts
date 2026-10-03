@@ -28,7 +28,7 @@ function fakeBlock(height: number, timestamp: number): BlockRecord {
   return {
     hash: `${"0".repeat(63 - String(height).length)}${height}`,
     height,
-    prevHash: "0".repeat(64),
+    prevHash: "1".repeat(64),
     merkleRoot: "0".repeat(64),
     timestamp,
     nonce: 0,
@@ -1162,12 +1162,11 @@ describe("ChainState UTXO fee sweep", () => {
       couplingValue: 0,
     });
     state.addBlock({ ...fakeBlock(1, 1_700_000_015), miner: "b".repeat(40), coinbaseReward: 0 });
-    expect(state.kernelProposals[0]?.status).toBe("executed");
-    expect(state.couplings.structural).toBe(0);
+    expect(state.kernelProposals[0]?.status).toBe("passed");
+    expect(state.couplings.structural).toBe(1);
     const after = canonicalResidual(header, [], { cumulativeWork: 1, mempoolPressure: 0 }, state.couplings);
-    expect(after).not.toBe(before);
-    expect(residualFingerprint(after)).not.toBe(residualFingerprint(before));
-    expect(after).toBe(0);
+    expect(after).toBe(before);
+    expect(residualFingerprint(after)).toBe(residualFingerprint(before));
   });
 
   it("the same inputs produce the same reward, split, difficulty, and finality on both bodies", () => {

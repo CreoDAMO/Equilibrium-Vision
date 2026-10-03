@@ -120,7 +120,8 @@ const refused = applySuccessor(strangerOmega, {
   wasmAfter: null,
 });
 assert.equal(refused.ok, false);
-strangerState.addBlock(ordinary(strangerOmega, "ab".repeat(20), 6, 0, []));
+assert.throws(() => strangerState.addBlock(ordinary(strangerOmega, "ab".repeat(20), 6, 0, [])), /live validator/);
+assert.equal(strangerState.blocks.length, 0);
 assert.equal(omegaDigest(strangerState.canonicalBody.omega), strangerBefore);
 
 console.log(JSON.stringify({
