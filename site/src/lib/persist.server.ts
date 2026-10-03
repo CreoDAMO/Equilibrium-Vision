@@ -2,8 +2,8 @@ import { dbSource, getSql } from "@/lib/db";
 import { OrganismNode } from "@/protocol/chain";
 import type { NetworkId, PersistedBody } from "@/protocol/types";
 
-export async function persistNode(node: OrganismNode): Promise<void> {
-  if (dbSource === "memory") return;
+export async function persistNode(node: OrganismNode): Promise<boolean> {
+  if (dbSource === "memory") return false;
   try {
     const sql = await getSql();
     const body: PersistedBody = node.toBody();
@@ -48,8 +48,10 @@ export async function persistNode(node: OrganismNode): Promise<void> {
         ],
       );
     }
+    return true;
   } catch (err) {
     console.error("[equilibrium] persist", err);
+    return false;
   }
 }
 

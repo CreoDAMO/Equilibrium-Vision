@@ -242,6 +242,7 @@ class TransactionsClient {
     fee: number;
     nonce: number;
     signature: string;
+    publicKey: string;
   }): Promise<BroadcastResult> {
     return this.http.post("/tx/broadcast", signedTx);
   }

@@ -24,12 +24,14 @@ async function ensure() {
             const t = g.__eqTestnetV7?.tick() ?? null;
             const m = g.__eqMainnetV7?.tick() ?? null;
             if (t && g.__eqTestnetV7) {
-              g.__eqTestnetV7.persisted = true;
-              void persistNode(g.__eqTestnetV7);
+              void persistNode(g.__eqTestnetV7).then((ok) => {
+                if (ok && g.__eqTestnetV7) g.__eqTestnetV7.persisted = true;
+              });
             }
             if (m && g.__eqMainnetV7) {
-              g.__eqMainnetV7.persisted = true;
-              void persistNode(g.__eqMainnetV7);
+              void persistNode(g.__eqMainnetV7).then((ok) => {
+                if (ok && g.__eqMainnetV7) g.__eqMainnetV7.persisted = true;
+              });
             }
           } catch (err) {
             console.error("[equilibrium] miner tick", err);
@@ -51,8 +53,7 @@ export async function getNode(network: NetworkId): Promise<OrganismNode> {
 
 export async function persist(network: NetworkId) {
   const node = await getNode(network);
-  node.persisted = true;
-  await persistNode(node);
+  node.persisted = await persistNode(node);
   const tip = node.tip;
   if (!tip) return;
   const local = evaluateResidual(
