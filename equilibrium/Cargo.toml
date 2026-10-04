@@ -64,6 +64,9 @@ tracing-subscriber = { version = ">=0.3.19", optional = true }
 [features]
 risc0 = ["dep:risc0-zkvm", "dep:methods", "dep:reqwest"]
 
+[dev-dependencies]
+wasmi = "0.40"
+
 # ── Android JNI bridge ────────────────────────────────────────────────────────
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", default-features = false }

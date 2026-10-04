@@ -1,9 +1,13 @@
-//! `omegaDigest` and `transitionDigest` of a state the site already produced.
-//! `apply_opened_successor` is different: it derives Ω′ from the pre-state and I.
-//! It covers the genesis continuity transition only. It does not install a chain.
+//! `apply_opened_successor` derives Ω′ from the pre-state and I.
+//! The genesis continuity transition, a signed transfer, stake evidence,
+//! canonical wasm, a bitcoin header, a model, and a settlement are that
+//! execution. An Ethereum signature is not. It does not install a chain.
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+
+#[path = "successor_apply.rs"]
+mod apply;
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -169,6 +173,10 @@ struct TxSnap {
     amount: f64,
     fee: f64,
     nonce: f64,
+    #[serde(default)]
+    signature: String,
+    #[serde(default, rename = "publicKey")]
+    public_key: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -181,6 +189,9 @@ struct TransitionSnap {
     pressure: f64,
     difficulty: f64,
     couplings: Couplings,
+    /// Structured I. Absent on the continuity oracle, which carries blank evidence.
+    #[serde(default)]
+    body: Option<apply::EvidenceBody>,
 }
 
 fn sha256_hex(text: &str) -> String {
@@ -474,12 +485,9 @@ struct OpenedSuccessor {
     proposal_status: Option<String>,
 }
 
-/// One genesis transition. Pre-state and I only. Ω′ is not an argument.
-/// Empty transactions and blank evidence. Anything else is not this surface.
+/// One transition. Pre-state and I only. Ω′ is not an argument.
+/// Ethereum header signatures are not this execution.
 fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<OpenedSuccessor, String> {
-    if !input.txs.is_empty() {
-        return Err("not this surface".into());
-    }
     if !input.pressure.is_finite() || !(0.0..=1.0).contains(&input.pressure) {
         return Err("pressure is not in [0,1]".into());
     }
@@ -492,16 +500,18 @@ fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<Ope
     if input.difficulty != pre.difficulty {
         return Err("difficulty is not the next difficulty".into());
     }
-    let blank = format!("v1|{}|", pre.chain_id);
-    let Some(rest) = input.evidence.strip_prefix(&blank) else {
-        return Err("not this surface".into());
+    let evidence = if let Some(body) = &input.body {
+        let encoded = apply::canonical_evidence(body)?;
+        if encoded != input.evidence {
+            return Err("evidence is not the canonical encoding".into());
+        }
+        encoded
+    } else {
+        apply::blank_code(pre.chain_id, &input.evidence)?;
+        input.evidence.clone()
     };
-    let Some(code) = rest.strip_suffix("||||") else {
-        return Err("not this surface".into());
-    };
-    if code.len() != 64 || !code.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err("not this surface".into());
-    }
+    let order = apply::verify_order(pre, &input.txs)?;
+    apply::selection_is(&order, input.txs.len(), false)?;
     let (target, block_target) = match pre.chain_id {
         1 => (8e-4, 15.0),
         2 => (2e-3, 8.0),
@@ -545,11 +555,20 @@ fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<Ope
         return Err("miner is not a live validator".into());
     }
     let commission = producer.commission;
+    if let Some(body) = &input.body {
+        apply::apply_material(&mut next, body)?;
+        apply::execute_wasm(&mut next, &body.wasm, pre.height)?;
+    }
 
     let height = pre.height + 1;
     let work = if height > 0 { height as u64 } else { 0 };
     let prev = decode_hash32(&pre.tip_hash)?;
-    let merkle = [0u8; 32];
+    let merkle_hex_root = if input.txs.is_empty() {
+        "0".repeat(64)
+    } else {
+        merkle_hex(&input.txs.iter().map(|tx| tx.hash.clone()).collect::<Vec<_>>())
+    };
+    let merkle = decode_hash32(&merkle_hex_root)?;
     let lambda = [
         next.couplings.hash,
         next.couplings.structural,
@@ -557,13 +576,20 @@ fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<Ope
         next.couplings.mempool,
         next.couplings.fees,
     ];
+    let mut fee_txs = Vec::new();
+    for tx in &input.txs {
+        fee_txs.push(crate::chain_state::TxCandidate {
+            hash: decode_hash32(&tx.hash)?,
+            fee: tx.fee as u64,
+        });
+    }
     let residual = crate::stationary_solver::canonical_residual_lambda(
         &prev,
         &merkle,
         input.timestamp as u64,
         input.nonce as u64,
         input.difficulty as u64,
-        &[],
+        &fee_txs,
         work,
         input.pressure,
         &lambda,
@@ -574,13 +600,10 @@ fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<Ope
         return Err("reward refused".into());
     }
     let staked = reward - liquid;
-    {
-        let miner = next
-            .ledger
-            .iter_mut()
-            .find(|acc| acc.address == input.miner)
-            .ok_or("reward refused")?;
-        miner.balance += liquid as f64;
+    apply::apply_effects(&mut next, &input.txs, &input.miner, liquid as f64)?;
+    apply::selection_is(&order, input.txs.len(), true)?;
+    if let Some(body) = &input.body {
+        apply::admit_models(&mut next, body, input.timestamp)?;
     }
     {
         let miner = next
@@ -636,14 +659,19 @@ fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<Ope
     next.height = height;
     next.tip_timestamp = input.timestamp;
 
+    let mut sealed = input.clone();
+    sealed.evidence = evidence;
     let omega_root = sha256_hex(&format!("eq-omega|{}", omega_preimage(&next)));
-    let transition_root = sha256_hex(&format!("eq-transition|{}", transition_preimage(pre, input)));
+    let transition_root = sha256_hex(&format!("eq-transition|{}", transition_preimage(pre, &sealed)));
     let state_root = state_root_of(&next);
-    let evidence_root = sha256_hex(&input.evidence);
+    if let Some(body) = &input.body {
+        apply::admit_binding(body, &js_residual_fp(residual).1, &state_root)?;
+    }
+    let evidence_root = sha256_hex(&sealed.evidence);
     let (residual_fp, residual_fp_js) = js_residual_fp(residual);
     let header = header_with_transition(
         &pre.tip_hash,
-        &"0".repeat(64),
+        &merkle_hex_root,
         &state_root,
         input.timestamp as u64,
         input.nonce as u64,
@@ -1003,5 +1031,72 @@ mod tests {
         miner_balance: f64,
         continuity: f64,
         proposal_status: Option<String>,
+    }
+
+    #[test]
+    fn native_successor_expands_the_input() {
+        let Some(path) = std::env::var_os("EQ_MEMBRANE_ORACLE") else {
+            println!("membrane: not supplied");
+            return;
+        };
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("oracle {}: {err}", path.to_string_lossy()));
+        let oracle: MembraneOracle = serde_json::from_str(&text).expect("membrane oracle json");
+        assert_eq!(oracle.cases.len(), 18, "oracle rows");
+        let mut pay = String::new();
+        let mut other = String::new();
+        for case in &oracle.cases {
+            let got = super::apply_opened_successor(&case.pre, &case.transition);
+            if let Some(reason) = &case.refuse {
+                let err = got.expect_err(&case.name);
+                assert_eq!(&err, reason, "{}", case.name);
+                continue;
+            }
+            let got = got.unwrap_or_else(|err| panic!("{}: {err}", case.name));
+            let site = case.site.as_ref().expect("site");
+            assert_eq!(got.omega_root, site.omega_root, "{} omega", case.name);
+            assert_eq!(got.transition_root, site.transition_root, "{} transition", case.name);
+            assert_eq!(got.state_root, site.state_root, "{} state", case.name);
+            assert_eq!(got.header, site.header, "{} header", case.name);
+            if let Some(decoy) = case.decoy_balance {
+                assert_ne!(got.miner_balance, decoy, "{} accepted a caller balance", case.name);
+            }
+            if case.name == "tx-pay" {
+                pay = got.omega_root.clone();
+            }
+            if case.name == "tx-other" {
+                other = got.omega_root.clone();
+            }
+        }
+        assert_ne!(pay, other, "an altered signed transaction must move Ω′");
+        println!("membrane: rows {}", oracle.cases.len());
+        println!("membrane: signature refused");
+        println!("membrane: wasm executed");
+        println!("membrane: btc admitted");
+    }
+
+    #[derive(serde::Deserialize)]
+    struct MembraneOracle {
+        cases: Vec<MembraneCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct MembraneCase {
+        name: String,
+        pre: super::OmegaSnap,
+        transition: super::TransitionSnap,
+        site: Option<MembraneSite>,
+        refuse: Option<String>,
+        decoy_balance: Option<f64>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct MembraneSite {
+        omega_root: String,
+        transition_root: String,
+        header: String,
+        state_root: String,
     }
 }

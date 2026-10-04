@@ -29,8 +29,8 @@ pub mod jni_bridge;
 #[cfg(test)]
 mod site_contract;
 
-// Digests of a site-produced state, and one native continuity successor.
-// That successor is not a second chain, and it is not the phone.
+// Digests of a site-produced state, and the native successor for the
+// transitions membrane.run.ts executes. Not a second chain, and not the phone.
 #[cfg(test)]
 mod commitment;
 

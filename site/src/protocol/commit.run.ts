@@ -395,5 +395,5 @@ console.log(JSON.stringify({
   headerMoved: loudSeal.hash !== quietSeal.hash,
   substituted: "refused",
   oracleRows: rows.length,
-  level: "A for the native continuity successor: Rust derives residual, reward, liquid, miner balance, stateRoot, omegaRoot, transitionRoot, and the header from the pre-state and I. Substitution of λ is refused. Not A for transactions, stake evidence, wasm execution, or Android.",
+  level: "A for the native continuity successor: Rust derives residual, reward, liquid, miner balance, stateRoot, omegaRoot, transitionRoot, and the header from the pre-state and I. Substitution of λ is refused. Transfers, stake, wasm, and bitcoin are membrane.run.ts. Not A for Android.",
 }));

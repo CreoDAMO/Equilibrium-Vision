@@ -299,7 +299,7 @@ console.log(JSON.stringify({
     apkEmbodies: contract.apkEmbodies,
     sameAdmission: 201_100_202_523_998 < thresholdFp && reference < thresholdFp,
     couplings: DEFAULT_COUPLINGS,
-    level: "A on the shared residual, header, coinbase, λ-weighted residual, and the digests of a site-produced Ω′. The continuity successor is commit.run.ts. Not A for Android.",
+    level: "A on the shared residual, header, coinbase, λ-weighted residual, and the digests of a site-produced Ω′. The successor expansion is membrane.run.ts. Not A for Android.",
   },
   s7: {
     commit,
