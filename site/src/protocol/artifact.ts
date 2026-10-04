@@ -1,9 +1,9 @@
 /**
  * Digest of the production output the process can see on disk.
- * The Nitro build date is removed. Absolute route paths and the content
- * hash in the TanStack start manifest are removed, because those name the
- * build machine rather than the program. The digest is not written back
- * into the output.
+ * The Nitro build date, the Node major written into the Vercel runtime
+ * field, the random lazy-handler id, absolute route paths, and the content
+ * hash of those paths are removed. Those name the build machine. The digest
+ * is not written back into the output.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -18,11 +18,26 @@ function canonical(value: unknown): string {
 
 const MANIFEST = /_tanstack-start-manifest_v-[A-Za-z0-9_-]+\.mjs$/;
 
+function machineFree(value: unknown): unknown {
+  if (typeof value === "string") return /^nodejs\d+\.x$/.test(value) ? "nodejs" : value;
+  if (Array.isArray(value)) return value.map((item) => machineFree(item));
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      if (key === "date") continue;
+      out[key] = machineFree(item);
+    }
+    return out;
+  }
+  return value;
+}
+
 function normalize(rel: string, bytes: Buffer): { rel: string; bytes: Buffer } {
-  if (rel === "nitro.json") {
-    const parsed = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
-    delete parsed.date;
-    return { rel, bytes: Buffer.from(canonical(parsed)) };
+  if (rel === "nitro.json" || rel.endsWith("/.vc-config.json")) {
+    return { rel, bytes: Buffer.from(canonical(machineFree(JSON.parse(bytes.toString("utf8"))))) };
+  }
+  if (rel.endsWith("/__server.func/index.mjs")) {
+    return { rel, bytes: Buffer.from(bytes.toString("utf8").replace(/_lazy_[A-Za-z0-9]+/g, "_lazy")) };
   }
   if (MANIFEST.test(rel) || rel.endsWith("/_ssr/ssr.mjs")) {
     const text = bytes
@@ -103,22 +118,4 @@ export function artifactIdentity(): { digest: string; files: number; lines: stri
     cached = null;
   }
   return cached;
-}
-
-const READABLE = new Set([
-  "nitro.json",
-  "functions/__server.func/.vc-config.json",
-  "functions/__server.func/index.mjs",
-]);
-
-/** Raw text of one output file. Only the three files that disagreed are readable. */
-export function artifactFile(rel: string): string | null {
-  if (!READABLE.has(rel)) return null;
-  try {
-    const root = findArtifactRoot();
-    if (!root) return null;
-    return readFileSync(join(root, rel), "utf8");
-  } catch {
-    return null;
-  }
 }
