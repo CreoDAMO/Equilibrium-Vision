@@ -14,7 +14,7 @@
 #![cfg(target_os = "android")]
 
 use jni::{
-    objects::{JByteArray, JLongArray, JObject, JString},
+    objects::{JByteArray, JLongArray, JObject, JObjectArray, JString},
     sys::{jboolean, jdouble, jint, jlong, jstring, JNI_FALSE, JNI_TRUE},
     JNIEnv,
 };
@@ -38,8 +38,8 @@ use crate::{
 ///     mempoolPressure: Double,
 ///     cumWork:         Long,
 ///     maxAttempts:     Long,
-///     outNonce:        LongArray,   // out: [nonce]
-///     outResidual:     LongArray    // out: [residual], fixed-point scaled by 10^18
+///     outNonce:        Array<String>, // out: [decimal u64]. Not a signed Long.
+///     outResidual:     LongArray      // out: [residual], fixed-point scaled by 10^18
 /// ): Boolean
 /// ```
 ///
@@ -61,7 +61,7 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
     mempool_pressure:   jdouble,
     cum_work:           jlong,
     max_attempts:       jlong,
-    out_nonce:          JLongArray,
+    out_nonce:          JObjectArray,
     out_residual:       JLongArray,
 ) -> jboolean {
     // ── 1. Copy byte arrays from the JVM heap ─────────────────────────────────
@@ -111,7 +111,12 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
     // It does not apply the successor, and the phone does not install Ω.
     // The boolean is admission, not "a candidate exists".
     let (nonce, residual) = search_canonical(&header, &[], &state, (max_attempts as u64).max(1), 2e-3);
-    if env.set_long_array_region(&out_nonce, 0, &[nonce as i64]).is_err() {
+    // Decimal text. A signed long would turn 2^64-1 into -1.
+    let text = match env.new_string(&nonce.to_string()) {
+        Ok(s) => s,
+        Err(_) => return JNI_FALSE,
+    };
+    if env.set_object_array_element(&out_nonce, 0, text).is_err() {
         return JNI_FALSE;
     }
     if env.set_long_array_region(&out_residual, 0, &[residual_to_fixed(residual)]).is_err() {

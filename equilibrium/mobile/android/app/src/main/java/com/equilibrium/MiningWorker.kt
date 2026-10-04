@@ -73,7 +73,8 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
      * @param mempoolPressure Mempool pressure scalar [0, 1]
      * @param cumWork         Cumulative chain work estimate
      * @param maxAttempts     Maximum solver iterations before giving up
-     * @param outNonce        Out: LongArray[0] receives the winning nonce
+     * @param outNonce        Out: String[0] receives the winning nonce as decimal text.
+     *                        A signed long is not a u64. 2^64-1 is not -1.
      * @param outResidual     Out: LongArray[0] receives the achieved residual, fixed-point
      *                        (scaled by 10^18) — never a Double, so this ARM build agrees
      *                        bit-for-bit with the x86 cloud validator's consensus check.
@@ -88,7 +89,7 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         mempoolPressure: Double,
         cumWork:         Long,
         maxAttempts:     Long,
-        outNonce:        LongArray,
+        outNonce:        Array<String>,
         outResidual:     LongArray
     ): Boolean
 
@@ -183,7 +184,7 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         val prevHashBytes   = hexToByteArray(latestHash)
         val merkleRootBytes = ByteArray(32) // placeholder — server recomputes from mempool
         val timestamp       = System.currentTimeMillis() / 1000L
-        val outNonce        = LongArray(1)
+        val outNonce        = arrayOf("")
         val outResidual     = LongArray(1) // fixed-point, scaled by 10^18
 
         val solved = solveBlock(
@@ -199,6 +200,10 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         }
 
         val nonce      = outNonce[0]
+        if (!isU64Decimal(nonce)) {
+            Log.e(TAG, "Solver nonce is not a u64: $nonce")
+            return Result.failure(workDataOf("error" to "nonce is not a u64"))
+        }
         val residualFp = outResidual[0]
         // The node API still speaks floating-point residuals over JSON — convert once,
         // here, at the network boundary. The consensus-critical comparison already
@@ -399,7 +404,7 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         merkleRoot: String,
         stateRoot: String,
         timestamp: Long,
-        nonce: Long,
+        nonce: String,
         difficulty: Long,
         residualFp: Long,
         miner: String,
@@ -462,7 +467,7 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         nodeUrl:      String,
         miner:        String,
         prevHash:     String,
-        nonce:        Long,
+        nonce:        String,
         residual:     Double,
         timestamp:    Long,
         difficulty:   Long,
@@ -554,7 +559,7 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         hash:       String,
         height:     Int,
         prevHash:   String,
-        nonce:      Long,
+        nonce:      String,
         residual:   Double,
         residualFp: Long,
         timestamp:  Long,
@@ -575,6 +580,13 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         put("merkleRoot", merkleRoot)
         put("stateRoot",  stateRoot)
     }.toString()
+
+    private fun isU64Decimal(text: String): Boolean {
+        if (text == "0") return true
+        if (text.isEmpty() || text[0] == '0') return false
+        if (text.length > 20 || text.any { it !in '0'..'9' }) return false
+        return text.length < 20 || text <= "18446744073709551615"
+    }
 
     /**
      * Convert a hex string (with or without 0x prefix) to a 32-byte array.

@@ -17,7 +17,8 @@
 //! standard power-supply paths (see LIMITATIONS §10).
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex};
@@ -581,6 +582,39 @@ pub struct GossipedBlock {
     pub block_json: String,
 }
 
+/// A wire nonce is a u64. A decimal string is exact. A JSON integer that fits
+/// in u64 is exact. A sign, a fraction, a leading zero, and an out-of-range
+/// value are refused. This is not `as i64`.
+pub fn decode_u64_decimal(text: &str) -> Result<u64, String> {
+    if text == "0" {
+        return Ok(0);
+    }
+    let bytes = text.as_bytes();
+    if bytes.is_empty() || bytes[0] == b'0' || !bytes.iter().all(|b| b.is_ascii_digit()) {
+        return Err("nonce is not a u64".into());
+    }
+    text.parse::<u64>().map_err(|_| "nonce is not a u64".into())
+}
+
+pub fn parse_wire_u64(value: &serde_json::Value) -> Result<u64, String> {
+    match value {
+        serde_json::Value::String(text) => decode_u64_decimal(text),
+        serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| "nonce is not a u64".into()),
+        _ => Err("nonce is not a u64".into()),
+    }
+}
+
+fn wire_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Null => Ok(None),
+        other => parse_wire_u64(&other).map(Some).map_err(D::Error::custom),
+    }
+}
+
 /// Flat wire format emitted by MiningWorker.buildBlockBodyJson.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)] // hash/miner are part of the wire schema but not consumed by the Rust mapper
@@ -591,7 +625,7 @@ struct FlatMiningBody {
     height: Option<u64>,
     #[serde(default, alias = "prevHash", alias = "prev_hash")]
     prev_hash: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "wire_u64")]
     nonce: Option<u64>,
     #[serde(default)]
     residual: Option<f64>,
@@ -1256,6 +1290,36 @@ mod tests {
         assert_eq!(block.header.residual, residual_to_fixed(0.000001));
         assert_eq!(block.header.merkle_root, [0u8; 32]);
         assert!(block.tx_hashes.is_empty());
+    }
+
+    #[test]
+    fn flat_nonce_string_keeps_the_full_u64() {
+        let above = 1u64 << 53;
+        let json = format!(
+            r#"{{"prevHash":"00","nonce":"{}","residualFp":1,"timestamp":1,"difficulty":1}}"#,
+            above + 1
+        );
+        let block = parse_block_json(&json).expect("string nonce");
+        assert_eq!(block.header.nonce, above + 1);
+        assert_ne!(block.header.nonce, above);
+        let maxed = r#"{"prevHash":"00","nonce":"18446744073709551615","residualFp":1,"timestamp":1,"difficulty":1}"#;
+        assert_eq!(parse_block_json(maxed).unwrap().header.nonce, u64::MAX);
+        // The signed cast the JNI used to apply. The wire must not.
+        assert_eq!(u64::MAX as i64, -1);
+        assert_eq!(u64::MAX.to_string(), "18446744073709551615");
+    }
+
+    #[test]
+    fn flat_nonce_refuses_a_collapsed_or_malformed_value() {
+        for bad in [
+            r#"{"prevHash":"00","nonce":"01","residualFp":1,"timestamp":1,"difficulty":1}"#,
+            r#"{"prevHash":"00","nonce":"-1","residualFp":1,"timestamp":1,"difficulty":1}"#,
+            r#"{"prevHash":"00","nonce":"","residualFp":1,"timestamp":1,"difficulty":1}"#,
+            r#"{"prevHash":"00","nonce":1.5,"residualFp":1,"timestamp":1,"difficulty":1}"#,
+            r#"{"prevHash":"00","nonce":"18446744073709551616","residualFp":1,"timestamp":1,"difficulty":1}"#,
+        ] {
+            assert!(parse_block_json(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

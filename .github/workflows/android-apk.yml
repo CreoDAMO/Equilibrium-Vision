@@ -5,7 +5,8 @@
 # The APK is not the organism and it is not a second successor.
 # site/ is G. This workflow runs the site constitution first. The native
 # layer then builds the subordinate residual search (search_canonical).
-# It does not applySuccessor, and it does not install Ω.
+# The phone's solved nonce leaves JNI as decimal text, not a signed long.
+# 2^64-1 is "18446744073709551615", not -1. This compile does not applySuccessor, and it does not install Ω.
 #
 # HOW TO INSTALL
 # ──────────────
