@@ -13,6 +13,8 @@ export const Route = createFileRoute("/api/light")({
         const prev = tip && tip.height > 0 ? node.getBlock(String(tip.height - 1)) ?? null : null;
         const { independentVerify } = await import("@/protocol/light");
         const report = tip ? independentVerify(tip, prev, node.params) : null;
+        const { artifactIdentity } = await import("@/protocol/artifact");
+        const artifact = artifactIdentity();
         const body = {
           network,
           chainId: node.params.chainId,
@@ -47,11 +49,13 @@ export const Route = createFileRoute("/api/light")({
               }
             : null,
           checks: report?.checks ?? [],
-          note: "This body names the commit the host was given and the wasm this process executes. It does not search for a nonce. It is not an APK.",
+          note: "This body names the commit the host was given, the wasm this process executes, and the normalized digest of the output directory on disk. It does not search for a nonce. It is not an APK.",
           deployment: {
             commit: process.env.RENDER_GIT_COMMIT || process.env.EQUILIBRIUM_COMMIT || null,
             node: process.version,
             wasm: EMBEDDED_WASM,
+            artifact: artifact?.digest ?? null,
+            artifactFiles: artifact?.files ?? null,
           },
         };
         return new Response(JSON.stringify(body), {

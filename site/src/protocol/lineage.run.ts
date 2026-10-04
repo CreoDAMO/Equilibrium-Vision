@@ -31,24 +31,28 @@ const locks = {
   workspace: existsSync(join(repo, "pnpm-lock.yaml")) ? sha256(join(repo, "pnpm-lock.yaml")) : null,
 };
 
-let live: { status: number; commit: string | null; wasm: string | null; error?: string } = {
+let live: { status: number; commit: string | null; wasm: string | null; artifact: string | null; artifactFiles: number | null; error?: string } = {
   status: 0,
   commit: null,
   wasm: null,
+  artifact: null,
+  artifactFiles: null,
 };
 try {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 8_000);
   const response = await fetch("https://equilibrium-vision.onrender.com/api/light", { signal: ctrl.signal });
   clearTimeout(timer);
-  const body = await response.json() as { deployment?: { commit?: string | null; wasm?: string | null } };
+  const body = await response.json() as { deployment?: { commit?: string | null; wasm?: string | null; artifact?: string | null; artifactFiles?: number | null } };
   live = {
     status: response.status,
     commit: body.deployment?.commit ?? null,
     wasm: body.deployment?.wasm ?? null,
+    artifact: body.deployment?.artifact ?? null,
+    artifactFiles: body.deployment?.artifactFiles ?? null,
   };
 } catch (error) {
-  live = { status: 0, commit: null, wasm: null, error: error instanceof Error ? error.message : "unreachable" };
+  live = { status: 0, commit: null, wasm: null, artifact: null, artifactFiles: null, error: error instanceof Error ? error.message : "unreachable" };
 }
 
 const commitBound = live.commit === commit;
@@ -70,7 +74,7 @@ console.log(JSON.stringify({
     wasmBound,
     bound: commitBound && wasmBound,
     level: commitBound && wasmBound
-      ? "The live host names this commit and this wasm."
+      ? "The live host names this commit and this wasm. The artifact digest is whatever deployment.artifact says."
       : "Local file bytes equal the embedded bytes. The live host does not name this candidate, so source is not bound to deployment.",
   },
 }));
