@@ -23,7 +23,7 @@ function baseOmega(): Omega {
   return omega;
 }
 
-function inputsFor(omega: Omega, nonce: number): CanonicalInputs {
+function inputsFor(omega: Omega, nonce: bigint): CanonicalInputs {
   const miner = [...omega.validators.keys()].at(-1) ?? "miner";
   return {
     transactions: [],
@@ -52,8 +52,7 @@ export function dependencyFindings(): DependencyRow[] {
   const omega = baseOmega();
   const params = NETWORKS.testnet;
   const admitted = admittingNonces(omega, 512, omega.tipTimestamp + 15);
-  const nonce = admitted[0] ?? 0;
-  const inputs = inputsFor(omega, nonce);
+  const inputs = inputsFor(omega, BigInt(admitted[0] ?? 0));
   const once = applySuccessor(omega, inputs);
   const twice = applySuccessor(omega, inputs);
   const rows: DependencyRow[] = [];
@@ -70,7 +69,7 @@ export function dependencyFindings(): DependencyRow[] {
   });
 
   if (once.ok && admitted.length >= 2) {
-    const other = applySuccessor(omega, { ...inputs, nonce: admitted[1]! });
+    const other = applySuccessor(omega, { ...inputs, nonce: BigInt(admitted[1]!) });
     const same = other.ok && other.omegaRoot === once.omegaRoot;
     rows.push({
       id: "nonce",

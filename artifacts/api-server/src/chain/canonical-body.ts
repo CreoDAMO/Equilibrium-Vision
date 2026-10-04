@@ -1,4 +1,5 @@
 import { successor, initialOmega, openedCouplings, transitionDigest } from "../../../../site/src/protocol/constitution.js";
+import { asBlockNonce, blockNonce } from "../../../../site/src/protocol/domain.js";
 import { omegaRecord, sealFromSuccessor } from "../../../../site/src/protocol/seal.js";
 import type { CanonicalInputs, NetworkId, Omega, TransitionEvidence, TxRecord } from "../../../../site/src/protocol/types.js";
 
@@ -75,7 +76,7 @@ export class CanonicalBody {
     evidence?: TransitionEvidence;
     transactions?: TxRecord[];
     timestamp: number;
-    nonce: number;
+    nonce: number | bigint;
     miner: string;
     difficulty: number;
     committedPressure?: number;
@@ -85,12 +86,13 @@ export class CanonicalBody {
   }): Promise<string | null> {
     if (!block.evidence) return "no evidence";
     if (block.difficulty !== this.omega.difficulty) return "difficulty is not the next difficulty";
+    const nonce = typeof block.nonce === "bigint" ? blockNonce(block.nonce) : asBlockNonce(block.nonce);
     const before = this.omega;
     const claim = transitionDigest(before, {
       transactions: block.transactions ?? [],
       evidence: block.evidence,
       timestamp: block.timestamp,
-      nonce: block.nonce,
+      nonce,
       miner: block.miner,
       committedPressure: block.committedPressure ?? 0,
       couplings: openedCouplings(before),
@@ -104,7 +106,7 @@ export class CanonicalBody {
       transactions: block.transactions ?? [],
       evidence: block.evidence,
       timestamp: block.timestamp,
-      nonce: block.nonce,
+      nonce,
       miner: block.miner,
       committedPressure: block.committedPressure ?? 0,
       couplings: openedCouplings(before),

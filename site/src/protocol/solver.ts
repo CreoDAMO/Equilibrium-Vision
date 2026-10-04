@@ -11,7 +11,8 @@ export interface SolverHeader {
   prevHash: string;
   merkleRoot: string;
   timestamp: number;
-  nonce: number;
+  /** Search still walks a uint32. G passes the exact u64. */
+  nonce: number | bigint;
   difficulty: number;
 }
 
@@ -46,12 +47,21 @@ export interface SolveResult {
 
 const TWO_64 = 2 ** 64;
 
+function nonceBytes(nonce: number | bigint): Uint8Array {
+  if (typeof nonce === "bigint") {
+    if (nonce < 0n || nonce > 0xffffffffffffffffn) throw new Error("nonce is not a u64");
+    return u64ToLe(nonce);
+  }
+  if (!Number.isSafeInteger(nonce) || nonce < 0) throw new Error("nonce is not a u64");
+  return u64ToLe(nonce);
+}
+
 function headerDigest(header: SolverHeader, txs: SolverTx[]): Uint8Array {
   const parts: Uint8Array[] = [
     hex32(header.prevHash),
     hex32(header.merkleRoot),
     u64ToLe(header.timestamp),
-    u64ToLe(header.nonce),
+    nonceBytes(header.nonce),
   ];
   for (const tx of txs) parts.push(hex32(tx.hash));
   return sha256(concatBytes(...parts));
@@ -152,6 +162,7 @@ export function solveStationary(input: SolveInput): SolveResult {
   const target = input.target ?? 1e-4;
 
   let header: SolverHeader = { ...input.header };
+  if (typeof header.nonce !== "number") throw new Error("solver search nonce is a uint32");
   let best = evaluateResidual(header, input.txs, input.state, lambda);
   let bestNonce = header.nonce;
   let iterations = 0;

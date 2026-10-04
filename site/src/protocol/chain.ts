@@ -53,7 +53,7 @@ import {
   countParticipants,
   participationMask,
 } from "./eth-light";
-import { participationBytes, popcount } from "./domain";
+import { asBlockNonce, participationBytes, popcount } from "./domain";
 import { onPlaneMessage } from "./network-plane";
 import { stationarityRelation } from "./relation";
 import { hexToBytes } from "./bytes";
@@ -471,7 +471,7 @@ export class OrganismNode {
         transactions: args.txs,
         evidence: ev,
         timestamp: args.timestamp,
-        nonce: solution.nonce,
+        nonce: asBlockNonce(solution.nonce),
         miner: args.miner,
         committedPressure: pressure,
         couplings,
@@ -492,7 +492,7 @@ export class OrganismNode {
       transactions: args.txs,
       evidence,
       timestamp: args.timestamp,
-      nonce: solution.nonce,
+      nonce: asBlockNonce(solution.nonce),
       miner: args.miner,
       committedPressure: pressure,
       couplings,
@@ -620,7 +620,7 @@ export class OrganismNode {
       transactions: block.transactions,
       evidence: ev,
       timestamp: block.timestamp,
-      nonce: block.nonce,
+      nonce: asBlockNonce(block.nonce),
       miner: block.miner,
       committedPressure: block.committedPressure,
       couplings: block.couplings,
@@ -636,7 +636,7 @@ export class OrganismNode {
         transactions: block.transactions,
         evidence: ev,
         timestamp: block.timestamp,
-        nonce: block.nonce,
+        nonce: asBlockNonce(block.nonce),
         miner: block.miner,
         committedPressure: block.committedPressure,
         couplings: block.couplings,
@@ -1765,7 +1765,7 @@ export class OrganismNode {
       transactions: block.transactions,
       evidence: block.evidence,
       timestamp: block.timestamp,
-      nonce: block.nonce,
+      nonce: asBlockNonce(block.nonce),
       miner: block.miner,
       committedPressure: block.committedPressure,
       couplings: block.couplings,
@@ -1882,7 +1882,7 @@ export class OrganismNode {
       transactions: [unfunded],
       evidence: undefined,
       timestamp: (guard.tip?.timestamp ?? 0) + 15,
-      nonce: guard.tip?.nonce ?? 0,
+      nonce: asBlockNonce(guard.tip?.nonce ?? 0),
       miner: guard.miner.address,
       committedPressure: 0,
       couplings: guard.couplings,

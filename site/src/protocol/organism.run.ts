@@ -45,7 +45,7 @@ const inputs = {
   transactions: [],
   evidence,
   timestamp: 1_700_000_000,
-  nonce: 6,
+  nonce: 6n,
   miner,
   committedPressure: 0,
   couplings: { ...kernel.omega.couplings },

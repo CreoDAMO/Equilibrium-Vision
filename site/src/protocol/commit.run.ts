@@ -22,6 +22,7 @@ import {
   type Omega,
 } from "./constitution";
 import { canonicalEvidence } from "./evidence";
+import { jsonText } from "./domain";
 import { minerKey } from "./genesis";
 import { blankEvidence, sealFromSuccessor } from "./seal";
 import type { TxRecord } from "./types";
@@ -36,7 +37,7 @@ function inputs(current: Omega, couplings = openedCouplings(current)): Canonical
     transactions: [],
     evidence: blankEvidence(current.chainId),
     timestamp: 1_700_000_000,
-    nonce: 6,
+    nonce: 6n,
     miner,
     committedPressure: 0,
     couplings,
@@ -289,7 +290,7 @@ const rows = [
   row("fields", rich, rich, richIn, richRoot, richTransition),
 ];
 const oracle = join(tmpdir(), "eq-commit-oracle.json");
-writeFileSync(oracle, JSON.stringify({ rows }));
+writeFileSync(oracle, jsonText({ rows }));
 
 const wrongIn = inputs(substituted, { ...openedHash, hash: 0.8 });
 function successorCase(
@@ -361,7 +362,7 @@ const cases = [
   successorCase("substituted", substituted, wrongIn, null, "couplings are not the opened couplings"),
 ];
 const successorOracle = join(tmpdir(), "eq-successor-oracle.json");
-writeFileSync(successorOracle, JSON.stringify({ cases }));
+writeFileSync(successorOracle, jsonText({ cases }));
 
 const rust = execFileSync(
   "cargo",

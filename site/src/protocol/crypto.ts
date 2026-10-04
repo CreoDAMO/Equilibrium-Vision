@@ -21,7 +21,8 @@ export interface HeaderCommitment {
   merkleRoot: string;
   stateRoot: string;
   timestamp: number;
-  nonce: number;
+  /** Exact when a bigint. A safe integer is the same text. An unsafe number is refused. */
+  nonce: number | bigint;
   difficulty: number;
   residualFp: number;
   miner: string;
@@ -39,13 +40,22 @@ export interface HeaderCommitment {
  * and the mempool pressure that entered the solver — so a light body can
  * recompute without trusting the miner's claimed residual.
  */
+function headerNonce(nonce: number | bigint): string {
+  if (typeof nonce === "bigint") {
+    if (nonce < 0n || nonce > 0xffffffffffffffffn) throw new Error("nonce is not a u64");
+    return nonce.toString();
+  }
+  if (!Number.isSafeInteger(nonce) || nonce < 0) throw new Error("nonce is not a u64");
+  return String(nonce);
+}
+
 export function canonicalHeaderHash(parts: HeaderCommitment): string {
   const fields = [
     parts.prevHash,
     parts.merkleRoot,
     parts.stateRoot,
     String(parts.timestamp),
-    String(parts.nonce),
+    headerNonce(parts.nonce),
     String(parts.difficulty),
     String(parts.residualFp),
     parts.miner,

@@ -11,7 +11,7 @@ import {
   hexToBytes as ethHex,
   verifyEthHeader,
 } from "./eth-light";
-import { participationBytes, popcount } from "./domain";
+import { participationBytes, popcount, U64_MAX } from "./domain";
 import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { challengeBinding, modelBinding, residualBinding } from "./membranes";
@@ -78,7 +78,8 @@ export interface CanonicalInputs {
   transactions: TxRecord[];
   evidence: TransitionEvidence | undefined;
   timestamp: number;
-  nonce: number;
+  /** Exact u64. A JavaScript number is not this field. */
+  nonce: bigint;
   miner: string;
   committedPressure: number;
   couplings: Couplings;
@@ -365,6 +366,9 @@ export function transitionDigest(omega: Omega, inputs: CanonicalInputs): string 
     .map((t) => `${t.hash}:${t.from}:${t.to}:${t.amount}:${t.fee}:${t.nonce}`)
     .join(";");
   const evidence = inputs.evidence ? canonicalEvidence(inputs.evidence) : "";
+  if (typeof inputs.nonce !== "bigint" || inputs.nonce < 0n || inputs.nonce > U64_MAX) {
+    throw new Error("nonce is not a u64");
+  }
   const c = inputs.couplings;
   const body = [
     omega.tipHash,
@@ -372,7 +376,7 @@ export function transitionDigest(omega: Omega, inputs: CanonicalInputs): string 
     txs,
     evidence,
     String(inputs.timestamp),
-    String(inputs.nonce),
+    inputs.nonce.toString(),
     inputs.miner,
     inputs.committedPressure.toFixed(6),
     String(inputs.difficulty),
@@ -773,6 +777,9 @@ class DerivedWasm {
 export function applySuccessor(omega: Omega, inputs: CanonicalInputs, derived?: DerivedWasm): Successor {
   const params = paramsOf(omega.chainId);
   if (!params) return { ok: false, error: "unknown chain" };
+  if (typeof inputs.nonce !== "bigint" || inputs.nonce < 0n || inputs.nonce > U64_MAX) {
+    return { ok: false, error: "nonce is not a u64" };
+  }
   const invalid = monetaryError(omega);
   if (invalid) return { ok: false, error: invalid };
   if (inputs.difficulty !== omega.difficulty) return { ok: false, error: "difficulty is not the next difficulty" };
@@ -980,7 +987,7 @@ export function initialOmega(network: NetworkId): Omega {
   return omega;
 }
 
-function blankInputs(omega: Omega, nonce: number, timestamp: number, miner: string): CanonicalInputs {
+function blankInputs(omega: Omega, nonce: bigint, timestamp: number, miner: string): CanonicalInputs {
   return {
     transactions: [],
     evidence: undefined,
@@ -1033,7 +1040,7 @@ export function constitutionalAnswer(): ConstitutionAnswer {
   const admitted = admittingNonces(test, window, t0);
   const keys = [...test.validators.keys()];
   const miner = keys[0] ?? "miner";
-  const base = blankInputs(test, admitted[0] ?? 0, t0, miner);
+  const base = blankInputs(test, BigInt(admitted[0] ?? 0), t0, miner);
   const once = applySuccessor(test, base);
   const twice = applySuccessor(test, base);
   const deterministicStep = once.ok && twice.ok && once.omegaRoot === twice.omegaRoot;
@@ -1041,7 +1048,7 @@ export function constitutionalAnswer(): ConstitutionAnswer {
   let admittingShareState = false;
   let admittingResidualsDiffer = false;
   if (admitted.length >= 2 && once.ok) {
-    const other = applySuccessor(test, { ...base, nonce: admitted[1]! });
+    const other = applySuccessor(test, { ...base, nonce: BigInt(admitted[1]!) });
     if (other.ok) {
       admittingShareState = other.omegaRoot === once.omegaRoot;
       admittingResidualsDiffer = other.residual !== once.residual;

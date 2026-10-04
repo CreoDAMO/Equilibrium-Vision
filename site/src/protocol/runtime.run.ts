@@ -187,7 +187,7 @@ const nan = applySuccessor(omega, {
   transactions: [],
   evidence: undefined,
   timestamp: 1_700_000_000,
-  nonce: 6,
+  nonce: 6n,
   miner: minerKey("mainnet").address,
   committedPressure: Number.NaN,
   couplings: openedCouplings(omega),

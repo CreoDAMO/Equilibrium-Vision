@@ -37,6 +37,25 @@ export function popcount(bits: Uint8Array): number {
   return n;
 }
 
+export function blockNonce(value: bigint): bigint {
+  if (value < 0n || value > U64_MAX) throw new Error("nonce is not a u64");
+  return value;
+}
+
+/** A stored safe integer is already a u64. An unsafe number is refused, not rounded. */
+export function asBlockNonce(value: number | bigint): bigint {
+  if (typeof value === "bigint") return blockNonce(value);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("nonce is not a u64");
+  return blockNonce(BigInt(value));
+}
+
+/** JSON text that keeps a u64 bigint as a decimal integer, not a string and not a JS number. */
+export function jsonText(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => (typeof item === "bigint" ? `__U64__${item.toString()}` : item)).replaceAll(
+    /"__U64__(\d+)"/g,
+    "$1",
+  );
+}
 /** Exactly 64 bytes. The participant count is popcount of these bits, never a second field. */
 export function participationBytes(hex: string): Uint8Array {
   const clean = hex.trim().replace(/^0x/i, "").toLowerCase();

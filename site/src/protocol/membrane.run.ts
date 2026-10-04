@@ -21,6 +21,7 @@ import {
   type Omega,
 } from "./constitution";
 import { poolAddress } from "./dex";
+import { jsonText } from "./domain";
 import { canonicalEvidence } from "./evidence";
 import { ethKeygen, hashEthHeader, hexOf, participationMask, signEthHeader } from "./eth-light";
 import { activityKeys, minerKey } from "./genesis";
@@ -40,7 +41,7 @@ function spec(current: Omega, evidence: TransitionEvidence = blankEvidence(curre
     transactions: [],
     evidence,
     timestamp: 1_700_000_000,
-    nonce: 6,
+    nonce: 6n,
     miner,
     committedPressure: 0,
     couplings: openedCouplings(current),
@@ -676,7 +677,7 @@ assert.equal(extendStepped.next.eth[1]!.parentRoot, extendStepped.next.eth[0]!.h
 assert.notEqual(extendSite.omegaRoot, ethSite.omegaRoot);
 
 const nonceIn = spec(born);
-nonceIn.nonce = 7;
+nonceIn.nonce = 7n;
 const nonceSite = run(born, nonceIn);
 assert.equal(nonceSite.ok, true);
 if (!nonceSite.ok) throw new Error("nonce");
@@ -810,7 +811,7 @@ const cases = [
 ];
 
 const oracle = join(tmpdir(), "eq-membrane-oracle.json");
-writeFileSync(oracle, JSON.stringify({ cases }));
+writeFileSync(oracle, jsonText({ cases }));
 const rust = execFileSync(
   "cargo",
   ["test", "--manifest-path", join(repo, "equilibrium/Cargo.toml"), "--lib", "--", "--nocapture", "native_successor_expands_the_input"],
@@ -832,5 +833,5 @@ console.log(JSON.stringify({
   ethMoved: ethSite.ok && swappedSite.ok && ethSite.omegaRoot !== swappedSite.omegaRoot,
   composeMoved: composeSite.omegaRoot !== loudSite.omegaRoot,
   wasmOwner: composeStepped.ok ? composeStepped.next.wasm.get("owner") ?? null : null,
-  level: "S6 is closed on the mainnet surface this file enumerates: native derives Ω′ from Ω and I, and the listed refusals match. Ethereum participants are the popcount of the signed participation bitset. Outside that surface: no valid second Bitcoin header was available, other networks were not run, Android was not executed, and this is not a proof about every byte string. Admission remains the named binary64 fingerprint.",
+  level: "S6 is closed on the mainnet surface this file enumerates: native derives Ω′ from Ω and I, and the listed refusals match. Ethereum participants are the popcount of the signed participation bitset. Block nonce is a u64 bigint through the transition digest and the header. 2^53 and 2^53+1 stay distinct, and the nonce-6 fingerprint is still 201100202523998. Outside that surface: committee identity is not a stored 512-key set, no valid second Bitcoin header was available, other networks were not run, Android was not executed, and this is not a proof about every byte string. Admission remains the named binary64 fingerprint.",
 }));

@@ -83,7 +83,7 @@ const committed = await state.canonicalBody.commit({
     stake: [],
   },
   timestamp: 1_700_000_000,
-  nonce: 6,
+  nonce: 6n,
   miner: kernelParty("mainnet").miner,
   committedPressure: 0,
   couplings: { ...state.canonicalBody.omega.couplings },

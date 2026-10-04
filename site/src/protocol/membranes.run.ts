@@ -43,7 +43,7 @@ const miner = minerKey("mainnet").address;
 const base = {
   transactions: [],
   timestamp: 1_700_000_000,
-  nonce: 1,
+  nonce: 1n,
   miner,
   committedPressure: 0,
   couplings: openedCouplings(omega),

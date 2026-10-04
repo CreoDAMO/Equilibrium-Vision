@@ -34,6 +34,7 @@ import { allocationsMatchKernel, kernelNetworkOf, kernelParty, KERNEL_POOLS, KER
 import { CanonicalBody } from "./canonical-body.js";
 import { selectSuccessorTxs } from "../../../../site/src/protocol/tx-select.js";
 import { poolAddress } from "../../../../site/src/protocol/dex.js";
+import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
 import { applySuccessor, openedCouplings, cloneOmega, type CanonicalInputs, type Omega } from "../../../../site/src/protocol/constitution.js";
 import { sealFromSuccessor, omegaRecord } from "../../../../site/src/protocol/seal.js";
 import type { BtcHeaderRecord, EthHeaderRecord, ModelClaim, Proposal, Settlement } from "../../../../site/src/protocol/types.js";
@@ -816,7 +817,7 @@ export class ChainState {
       transactions: block.transactions as Parameters<typeof applySuccessor>[1]["transactions"],
       evidence: block.evidence,
       timestamp: block.timestamp,
-      nonce: block.nonce,
+      nonce: asBlockNonce(block.nonce),
       miner: block.miner,
       committedPressure: pressure,
       couplings: openedCouplings(omega),

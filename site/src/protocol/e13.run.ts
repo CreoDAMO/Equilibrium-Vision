@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { OrganismNode } from "./chain";
 import { applySuccessor } from "./constitution";
+import { asBlockNonce } from "./domain";
 import { verifyStationaryEvidence } from "./verify";
 import { signTx } from "./wallet";
 
@@ -53,7 +54,7 @@ const inputs = {
   transactions: [] as [],
   evidence: undefined,
   timestamp: block.timestamp + 1,
-  nonce: block.nonce,
+  nonce: asBlockNonce(block.nonce),
   miner: block.miner,
   couplings: block.couplings,
   difficulty: omega.difficulty,

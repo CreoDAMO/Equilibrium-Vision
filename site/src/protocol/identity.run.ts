@@ -50,7 +50,7 @@ assert.equal(verifyTx(high, omega.chainId), true);
 const base = {
   evidence: undefined,
   timestamp: 1_700_000_000,
-  nonce: 6,
+  nonce: 6n,
   miner,
   committedPressure: 0,
   couplings: openedCouplings(omega),
@@ -101,7 +101,7 @@ assert.equal(canonicalHeaderHash({
   omegaRoot: "2777b2548cd75d2d9712b3d0983bc38420c0306b132d458083bcb5c844a59fbd",
 }), "795d67b1ed75cd450c86f6dd4569c0b7b33f194ce6d38e3441f1c6ad5b4fc5b2");
 assert.notEqual(
-  transitionDigest(omega, { ...base, transactions: [high, low], nonce: 7, evidence: sealed.evidence }),
+  transitionDigest(omega, { ...base, transactions: [high, low], nonce: 7n, evidence: sealed.evidence }),
   instance,
 );
 
