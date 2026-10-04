@@ -18,13 +18,15 @@ export interface EthHeaderFields {
 }
 
 function u64le(n: number): Uint8Array {
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error("u64 refused");
   const out = new Uint8Array(8);
   new DataView(out.buffer).setBigUint64(0, BigInt(n), true);
   return out;
 }
 
-/** SHA256("equilibrium-eth-lc-v1" || slot || proposer || parent || state || body). */
-export function hashEthHeader(header: EthHeaderFields): Uint8Array {
+/** SHA256("equilibrium-eth-lc-v1" || slot || proposer || parent || state || body || participation). */
+export function hashEthHeader(header: EthHeaderFields, participation: Uint8Array): Uint8Array {
+  if (participation.length !== 64) throw new Error("participation refused");
   return sha256(
     concatBytes(
       utf8("equilibrium-eth-lc-v1"),
@@ -33,6 +35,7 @@ export function hashEthHeader(header: EthHeaderFields): Uint8Array {
       hexToBytes(header.parentRoot),
       hexToBytes(header.stateRoot),
       hexToBytes(header.bodyRoot),
+      participation,
     ),
   );
 }
@@ -61,14 +64,19 @@ export function ethKeygen(secret?: Uint8Array): { secret: Uint8Array; pubkey: Ui
   return { secret: sk, pubkey: long.getPublicKey(sk).toBytes(true) };
 }
 
-export function signEthHeader(secret: Uint8Array, header: EthHeaderFields): Uint8Array {
-  const message = long.hash(hashEthHeader(header));
+export function signEthHeader(secret: Uint8Array, header: EthHeaderFields, participation: Uint8Array): Uint8Array {
+  const message = long.hash(hashEthHeader(header, participation));
   return long.sign(message, secret).toBytes(true);
 }
 
-export function verifyEthHeader(pubkey: Uint8Array, header: EthHeaderFields, signature: Uint8Array): boolean {
+export function verifyEthHeader(
+  pubkey: Uint8Array,
+  header: EthHeaderFields,
+  signature: Uint8Array,
+  participation: Uint8Array,
+): boolean {
   try {
-    const message = long.hash(hashEthHeader(header));
+    const message = long.hash(hashEthHeader(header, participation));
     return long.verify(signature, message, pubkey);
   } catch {
     return false;

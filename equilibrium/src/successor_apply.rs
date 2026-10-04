@@ -50,7 +50,7 @@ pub(super) enum EthOp {
         state_root: String,
         #[serde(rename = "bodyRoot")]
         body_root: String,
-        participants: i64,
+        participation: String,
         signature: String,
     },
 }
@@ -233,10 +233,10 @@ fn eth_line(op: &EthOp) -> String {
             parent_root,
             state_root,
             body_root,
-            participants,
+            participation,
             signature,
         } => format!(
-            "h:{slot}:{proposer_index}:{parent_root}:{state_root}:{body_root}:{participants}:{signature}"
+            "h:{slot}:{proposer_index}:{parent_root}:{state_root}:{body_root}:{participation}:{signature}"
         ),
     }
 }
@@ -718,13 +718,18 @@ fn apply_eth(omega: &mut OmegaSnap, item: &EthOp) -> Result<(), String> {
             parent_root,
             state_root,
             body_root,
-            participants,
+            participation,
             signature,
         } => {
             if omega.eth_pubkey.is_empty() {
                 return Err("eth header before committee".into());
             }
-            if *participants < ETH_MIN_PARTICIPANTS {
+            let bits = match participation_bytes(participation) {
+                Some(bits) => bits,
+                None => return Err("participation refused".into()),
+            };
+            let participants = popcount(&bits);
+            if participants < ETH_MIN_PARTICIPANTS {
                 return Err("eth quorum not met".into());
             }
             if let Some(tip) = omega.eth.last() {
@@ -739,8 +744,15 @@ fn apply_eth(omega: &mut OmegaSnap, item: &EthOp) -> Result<(), String> {
                 Ok(bytes) => bytes,
                 Err(()) => return Err("eth signature is not hex".into()),
             };
-            let hash = hash_eth_header(*slot, *proposer_index, parent_root, state_root, body_root)
-                .ok_or("eth signature refused")?;
+            let hash = hash_eth_header(
+                *slot,
+                *proposer_index,
+                parent_root,
+                state_root,
+                body_root,
+                &bits,
+            )
+            .ok_or("eth signature refused")?;
             let pubkey = decode_hex(&omega.eth_pubkey).map_err(|_| "eth signature refused")?;
             if !verify_eth_signature(&pubkey, &hash, &sig) {
                 return Err("eth signature refused".into());
@@ -748,7 +760,8 @@ fn apply_eth(omega: &mut OmegaSnap, item: &EthOp) -> Result<(), String> {
             omega.eth.push(super::EthSnap {
                 slot: *slot,
                 hash: hex::encode(hash),
-                participants: *participants,
+                participants,
+                participation: hex::encode(bits),
                 parent_root: parent_root.clone(),
                 state_root: state_root.clone(),
                 body_root: body_root.clone(),
@@ -769,14 +782,33 @@ fn decode_hex(text: &str) -> Result<Vec<u8>, ()> {
     hex::decode(clean).map_err(|_| ())
 }
 
+fn participation_bytes(text: &str) -> Option<[u8; 64]> {
+    let clean = text
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    if clean.len() != 128 || !clean.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let raw = hex::decode(clean).ok()?;
+    let mut out = [0u8; 64];
+    out.copy_from_slice(&raw);
+    Some(out)
+}
+
+fn popcount(bits: &[u8]) -> i64 {
+    bits.iter().map(|byte| byte.count_ones() as i64).sum()
+}
+
 fn hash_eth_header(
     slot: i64,
     proposer: i64,
     parent: &str,
     state: &str,
     body: &str,
+    participation: &[u8],
 ) -> Option<[u8; 32]> {
-    if slot < 0 || proposer < 0 {
+    if slot < 0 || proposer < 0 || participation.len() != 64 {
         return None;
     }
     let parent = decode_hex(parent).ok()?;
@@ -785,13 +817,14 @@ fn hash_eth_header(
     if parent.len() != 32 || state.len() != 32 || body.len() != 32 {
         return None;
     }
-    let mut pre = Vec::with_capacity(24 + 8 + 8 + 96);
+    let mut pre = Vec::with_capacity(24 + 8 + 8 + 96 + 64);
     pre.extend_from_slice(b"equilibrium-eth-lc-v1");
     pre.extend_from_slice(&(slot as u64).to_le_bytes());
     pre.extend_from_slice(&(proposer as u64).to_le_bytes());
     pre.extend_from_slice(&parent);
     pre.extend_from_slice(&state);
     pre.extend_from_slice(&body);
+    pre.extend_from_slice(participation);
     let digest = Sha256::digest(&pre);
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);

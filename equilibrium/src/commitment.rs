@@ -93,6 +93,8 @@ struct EthSnap {
     slot: i64,
     hash: String,
     participants: i64,
+    #[serde(default)]
+    participation: String,
     parent_root: String,
     state_root: String,
     body_root: String,
@@ -303,8 +305,14 @@ fn omega_preimage(omega: &OmegaSnap) -> String {
         .iter()
         .map(|h| {
             format!(
-                "{}:{}:{}:{}:{}:{}",
-                h.slot, h.hash, h.participants, h.parent_root, h.state_root, h.body_root
+                "{}:{}:{}:{}:{}:{}:{}",
+                h.slot,
+                h.hash,
+                h.participants,
+                h.participation,
+                h.parent_root,
+                h.state_root,
+                h.body_root
             )
         })
         .collect::<Vec<_>>()
@@ -1077,7 +1085,7 @@ mod tests {
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("oracle {}: {err}", path.to_string_lossy()));
         let oracle: MembraneOracle = serde_json::from_str(&text).expect("membrane oracle json");
-        assert_eq!(oracle.cases.len(), 43, "oracle rows");
+        assert_eq!(oracle.cases.len(), 44, "oracle rows");
         let mut pay = String::new();
         let mut other = String::new();
         let mut eth_honest = String::new();
@@ -1130,7 +1138,7 @@ mod tests {
         assert_ne!(pay, other, "an altered signed transaction must move Ω′");
         assert_ne!(
             eth_honest, eth_swapped,
-            "a participant count above quorum is stored, and it moves Ω′"
+            "a different signed participation bitset moves Ω′"
         );
         assert_ne!(
             composed, composed_loud,

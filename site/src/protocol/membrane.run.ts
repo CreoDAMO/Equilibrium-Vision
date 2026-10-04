@@ -22,7 +22,7 @@ import {
 } from "./constitution";
 import { poolAddress } from "./dex";
 import { canonicalEvidence } from "./evidence";
-import { ethKeygen, hashEthHeader, hexOf, signEthHeader } from "./eth-light";
+import { ethKeygen, hashEthHeader, hexOf, participationMask, signEthHeader } from "./eth-light";
 import { activityKeys, minerKey } from "./genesis";
 import { challengeBinding, modelBinding, residualBinding } from "./membranes";
 import { blankEvidence, sealFromSuccessor } from "./seal";
@@ -376,13 +376,23 @@ const ethFields = {
   bodyRoot: "33".repeat(32),
 };
 const ethPub = hexOf(ethKey.pubkey);
-const ethSig = hexOf(signEthHeader(ethKey.secret, ethFields));
-function ethEvidence(participants: number, fields = ethFields, signature = ethSig): TransitionEvidence {
+const bits342 = participationMask(342);
+const ethSig = hexOf(signEthHeader(ethKey.secret, ethFields, bits342));
+function ethHeader(count: number, fields = ethFields, signature?: string) {
+  const bits = participationMask(count);
+  return {
+    op: "header" as const,
+    ...fields,
+    participation: hexOf(bits),
+    signature: signature ?? hexOf(signEthHeader(ethKey.secret, fields, bits)),
+  };
+}
+function ethEvidence(count: number, fields = ethFields, signature?: string): TransitionEvidence {
   return {
     ...blankEvidence(1),
     eth: [
       { op: "bootstrap", pubkey: ethPub },
-      { op: "header", ...fields, participants, signature },
+      ethHeader(count, fields, signature),
     ],
   };
 }
@@ -394,7 +404,7 @@ const ethStepped = applySuccessor(born, ethIn);
 if (!ethStepped.ok) throw new Error(ethStepped.error);
 assert.equal(ethStepped.next.eth.length, 1);
 assert.equal(ethStepped.next.eth[0]!.participants, 342);
-assert.equal(ethStepped.next.eth[0]!.hash, hexOf(hashEthHeader(ethFields)));
+assert.equal(ethStepped.next.eth[0]!.hash, hexOf(hashEthHeader(ethFields, bits342)));
 assert.equal(ethStepped.next.ethPubkey, ethPub);
 
 const badSig = ethSig.slice(0, -1) + (ethSig.endsWith("a") ? "b" : "a");
@@ -421,9 +431,19 @@ const swappedIn = spec(born, ethEvidence(400));
 const swappedSite = run(born, swappedIn);
 assert.equal(swappedSite.ok, true);
 if (!swappedSite.ok || !ethSite.ok) throw new Error("participants");
-assert.notEqual(swappedSite.omegaRoot, ethSite.omegaRoot);
+assert.equal(swappedSite.ok && swappedSite.omegaRoot !== ethSite.omegaRoot, true);
 assert.notEqual(swappedSite.transitionRoot, ethSite.transitionRoot);
 assert.notEqual(swappedSite.header, ethSite.header);
+
+const forgedBits = ethEvidence(342);
+const forgedHeader = forgedBits.eth[1];
+if (forgedHeader?.op !== "header") throw new Error("forged bits");
+forgedHeader.participation = hexOf(participationMask(400));
+const forgedBitsIn = spec(born, forgedBits);
+const forgedBitsSite = run(born, forgedBitsIn);
+assert.equal(forgedBitsSite.ok, false);
+if (forgedBitsSite.ok) throw new Error("forged bits");
+assert.equal(forgedBitsSite.error, "eth signature refused");
 
 const genesisBtcHash = parseBtcHeader(hexToBytes(BTC_GENESIS_HEADER_HEX)).hash;
 function composedEvidence(headerHex: string): TransitionEvidence {
@@ -432,7 +452,7 @@ function composedEvidence(headerHex: string): TransitionEvidence {
     btc: [{ height: 0, headerHex }],
     eth: [
       { op: "bootstrap", pubkey: ethPub },
-      { op: "header", ...ethFields, participants: 342, signature: ethSig },
+      { op: "header", ...ethFields, participation: hexOf(bits342), signature: ethSig },
     ],
     wasm: [{ method: "init", caller: miner }],
     stake: [{ op: "delegate", delegator: payer.address, validator: miner, amount: 10 }],
@@ -630,7 +650,7 @@ assert.equal(wbtc.reserveB, 99);
 assert.equal(wbtc.txCount, 1);
 assert.notEqual(swapSite.stateRoot, txSite.stateRoot);
 
-const firstHash = hexOf(hashEthHeader(ethFields));
+const firstHash = hexOf(hashEthHeader(ethFields, bits342));
 const extendFields = {
   slot: 8,
   proposerIndex: 3,
@@ -642,8 +662,8 @@ const extendIn = spec(born, {
   ...blankEvidence(1),
   eth: [
     { op: "bootstrap", pubkey: ethPub },
-    { op: "header", ...ethFields, participants: 342, signature: ethSig },
-    { op: "header", ...extendFields, participants: 342, signature: hexOf(signEthHeader(ethKey.secret, extendFields)) },
+    { op: "header", ...ethFields, participation: hexOf(bits342), signature: ethSig },
+    { op: "header", ...extendFields, participation: hexOf(bits342), signature: hexOf(signEthHeader(ethKey.secret, extendFields, bits342)) },
   ],
 });
 const extendSite = run(born, extendIn);
@@ -724,8 +744,8 @@ const ethParentIn = spec(born, {
   ...blankEvidence(1),
   eth: [
     { op: "bootstrap", pubkey: ethPub },
-    { op: "header", ...ethFields, participants: 342, signature: ethSig },
-    { op: "header", ...badParent, participants: 342, signature: hexOf(signEthHeader(ethKey.secret, badParent)) },
+    { op: "header", ...ethFields, participation: hexOf(bits342), signature: ethSig },
+    { op: "header", ...badParent, participation: hexOf(bits342), signature: hexOf(signEthHeader(ethKey.secret, badParent, bits342)) },
   ],
 });
 const ethParentSite = run(born, ethParentIn);
@@ -766,6 +786,7 @@ const cases = [
   pack("eth-bad-field", born, badFieldIn, badFieldSite),
   pack("eth-quorum", born, quorumIn, quorumSite),
   pack("eth-participants", born, swappedIn, swappedSite),
+  pack("eth-forged-bits", born, forgedBitsIn, forgedBitsSite),
   pack("compose", composeQuiet, composeIn, composeSite),
   pack("compose-loud", born, loudIn, loudSite),
   pack("compose-forged", composeQuiet, forgedComposeIn, forgedComposeSite),
@@ -795,7 +816,7 @@ const rust = execFileSync(
   ["test", "--manifest-path", join(repo, "equilibrium/Cargo.toml"), "--lib", "--", "--nocapture", "native_successor_expands_the_input"],
   { encoding: "utf8", env: { ...process.env, EQ_MEMBRANE_ORACLE: oracle } },
 );
-assert.match(rust, /membrane: rows 43/);
+assert.match(rust, /membrane: rows 44/);
 assert.match(rust, /native_successor_expands_the_input \.\.\. ok/);
 assert.match(rust, /membrane: signature refused/);
 assert.match(rust, /membrane: wasm executed/);
@@ -811,5 +832,5 @@ console.log(JSON.stringify({
   ethMoved: ethSite.ok && swappedSite.ok && ethSite.omegaRoot !== swappedSite.omegaRoot,
   composeMoved: composeSite.omegaRoot !== loudSite.omegaRoot,
   wasmOwner: composeStepped.ok ? composeStepped.next.wasm.get("owner") ?? null : null,
-  level: "S6 is closed on the mainnet surface this file enumerates: native derives Ω′ from Ω and I, and the listed refusals match. Outside that surface: no valid second Bitcoin header was available, other networks were not run, Android was not executed, and this is not a proof about every byte string.",
+  level: "S6 is closed on the mainnet surface this file enumerates: native derives Ω′ from Ω and I, and the listed refusals match. Ethereum participants are the popcount of the signed participation bitset. Outside that surface: no valid second Bitcoin header was available, other networks were not run, Android was not executed, and this is not a proof about every byte string. Admission remains the named binary64 fingerprint.",
 }));

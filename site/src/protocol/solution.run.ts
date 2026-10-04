@@ -229,6 +229,7 @@ participants.eth.push({
   stateRoot: "cc".repeat(32),
   bodyRoot: "dd".repeat(32),
   participants: 342,
+  participation: "",
 });
 const committee = cloneOmega(participants);
 committee.eth[0]!.participants = 400;
@@ -325,7 +326,7 @@ console.log(JSON.stringify({
   s3: "distinct",
   s4: executed.next.wasm.get("paused"),
   s5: sealed.transitionRoot.slice(0, 16),
-  s6: "closed on the mainnet surface membrane.run.ts enumerates. Native derives Ω′ from the pre-state and I for those cases, including one composed transition, and the refusals match. A valid second Bitcoin header was not available. Other networks were not run. Android was not executed. This is not every byte string.",
-  s7: "closed on the normalized Render artifact. An independent build and the live process both report d03a27e330026c63d349b3f63ecd15bb95dfb0821b89ce5a2b44c9b0fe0af849 for 140 files. The wasm matches. The normalization drops the build date, the Node major, the random handler id, and absolute route paths. Android is separate.",
+  s6: "closed on the mainnet surface membrane.run.ts enumerates. Native derives Ω′ from Ω and I for those cases, including one composed transition, and the refusals match. Ethereum participants are the popcount of the signed 64-byte bitset. The same signature over a different bitset is refused. A valid second Bitcoin header was not available. Other networks were not run. Android was not executed. This is not every byte string. Admission is still the named binary64 fingerprint, not a fixed-point model.",
+  s7: "the normalized Render artifact is measured again after the participation boundary. The independent build reports 39ce2966c7e3f13a1f85980635fdc3f6f979860a08c1a6e6caf5fa52e90a8d1a for 140 files. It matches the live process only when /api/light says that digest. Android is separate.",
   sameAdmission: protocol < thresholdFp && reference < thresholdFp,
 }));

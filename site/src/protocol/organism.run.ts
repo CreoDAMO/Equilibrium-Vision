@@ -9,7 +9,7 @@ import { CanonicalBody } from "../../../artifacts/api-server/src/chain/canonical
 import { BTC_GENESIS_HEADER_HEX } from "./btc";
 import { successor, omegaDigest } from "./constitution";
 import { ARBITRAGE_CODE } from "./evidence";
-import { ethKeygen, hexOf, signEthHeader } from "./eth-light";
+import { ethKeygen, hexOf, participationMask, signEthHeader } from "./eth-light";
 import { minerKey } from "./genesis";
 import { omegaRecord, sealFromSuccessor } from "./seal";
 import type { TransitionEvidence } from "./types";
@@ -36,7 +36,7 @@ const evidence: TransitionEvidence = {
   btc: [{ headerHex: BTC_GENESIS_HEADER_HEX, height: 0 }],
   eth: [
     { op: "bootstrap", pubkey: hexOf(key.pubkey) },
-    { op: "header", ...fields, participants: 342, signature: hexOf(signEthHeader(key.secret, fields)) },
+    { op: "header", ...fields, participation: hexOf(participationMask(342)), signature: hexOf(signEthHeader(key.secret, fields, participationMask(342))) },
   ],
   wasm: [{ method: "init", caller: miner }],
   stake: [{ op: "slash", validator: victim.address, reason: "double_sign" }],

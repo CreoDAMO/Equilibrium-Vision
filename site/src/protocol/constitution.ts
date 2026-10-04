@@ -11,6 +11,7 @@ import {
   hexToBytes as ethHex,
   verifyEthHeader,
 } from "./eth-light";
+import { participationBytes, popcount } from "./domain";
 import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { challengeBinding, modelBinding, residualBinding } from "./membranes";
@@ -315,7 +316,7 @@ export function omegaDigest(omega: Omega): string {
     .map((h) => `${h.height}:${h.hash}:${h.prevHash}:${h.merkleRoot}:${num(h.bits)}`)
     .join(";");
   const eth = `${omega.ethPubkey}:${omega.eth
-    .map((h) => `${h.slot}:${h.hash}:${h.participants}:${h.parentRoot}:${h.stateRoot}:${h.bodyRoot}`)
+    .map((h) => `${h.slot}:${h.hash}:${h.participants}:${h.participation}:${h.parentRoot}:${h.stateRoot}:${h.bodyRoot}`)
     .join(";")}`;
   const wasm = wasmLeafOf(omega.wasm);
   const validators = [...omega.validators.values()]
@@ -594,7 +595,14 @@ function applyMaterial(omega: Omega, ev: TransitionEvidence | undefined, params:
       continue;
     }
     if (!omega.ethPubkey) return "eth header before committee";
-    if (item.participants < ETH_MIN_PARTICIPANTS) return "eth quorum not met";
+    let bits: Uint8Array;
+    try {
+      bits = participationBytes(item.participation);
+    } catch {
+      return "participation refused";
+    }
+    const participants = popcount(bits);
+    if (participants < ETH_MIN_PARTICIPANTS) return "eth quorum not met";
     const fields = {
       slot: item.slot,
       proposerIndex: item.proposerIndex,
@@ -613,14 +621,15 @@ function applyMaterial(omega: Omega, ev: TransitionEvidence | undefined, params:
     } catch {
       return "eth signature is not hex";
     }
-    if (!verifyEthHeader(ethHex(omega.ethPubkey), fields, sig)) return "eth signature refused";
+    if (!verifyEthHeader(ethHex(omega.ethPubkey), fields, sig, bits)) return "eth signature refused";
     omega.eth.push({
       slot: item.slot,
-      hash: hexOf(hashEthHeader(fields)),
+      hash: hexOf(hashEthHeader(fields, bits)),
       parentRoot: item.parentRoot,
       stateRoot: item.stateRoot,
       bodyRoot: item.bodyRoot,
-      participants: item.participants,
+      participants,
+      participation: hexOf(bits),
     });
   }
   for (const item of ev.settle ?? []) {

@@ -87,7 +87,10 @@ export interface EthHeaderRecord {
   parentRoot: string;
   stateRoot: string;
   bodyRoot: string;
+  /** Derived from the participation bitset. Not an input. */
   participants: number;
+  /** 64 bytes, hex. The signed participation. */
+  participation: string;
 }
 
 /** Bitcoin header admitted inside one transition. The hex is the evidence. */
@@ -105,7 +108,8 @@ export type EthEvidence =
       parentRoot: string;
       stateRoot: string;
       bodyRoot: string;
-      participants: number;
+      /** 128 hex chars. Participants are the popcount, not a field. */
+      participation: string;
       signature: string;
     };
 

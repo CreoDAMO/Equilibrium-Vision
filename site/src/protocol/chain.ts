@@ -53,6 +53,7 @@ import {
   countParticipants,
   participationMask,
 } from "./eth-light";
+import { participationBytes, popcount } from "./domain";
 import { onPlaneMessage } from "./network-plane";
 import { stationarityRelation } from "./relation";
 import { hexToBytes } from "./bytes";
@@ -850,13 +851,15 @@ export class OrganismNode {
         stateRoot: item.stateRoot,
         bodyRoot: item.bodyRoot,
       };
+      const bits = participationBytes(item.participation);
       headers.push({
         slot: item.slot,
-        hash: hexOf(hashEthHeader(fields)),
+        hash: hexOf(hashEthHeader(fields, bits)),
         parentRoot: item.parentRoot,
         stateRoot: item.stateRoot,
         bodyRoot: item.bodyRoot,
-        participants: item.participants,
+        participants: popcount(bits),
+        participation: hexOf(bits),
       });
     }
     return { pubkey, headers };
@@ -891,12 +894,18 @@ export class OrganismNode {
     parentRoot: string;
     stateRoot: string;
     bodyRoot: string;
-    participants: number;
+    participation: string;
     signature: string;
   }): { ok: boolean; error?: string; hash?: string } {
     const staged = this.ethStaged();
     if (!staged.pubkey) return { ok: false, error: "not bootstrapped" };
-    if (header.participants < ETH_MIN_PARTICIPANTS) return { ok: false, error: "quorum not met" };
+    let bits: Uint8Array;
+    try {
+      bits = participationBytes(header.participation);
+    } catch {
+      return { ok: false, error: "participation refused" };
+    }
+    if (popcount(bits) < ETH_MIN_PARTICIPANTS) return { ok: false, error: "quorum not met" };
     const fields = {
       slot: header.slot,
       proposerIndex: header.proposerIndex ?? 0,
@@ -915,8 +924,8 @@ export class OrganismNode {
     } catch {
       return { ok: false, error: "signature is not hex" };
     }
-    if (!verifyEthHeader(ethHex(staged.pubkey), fields, sig)) return { ok: false, error: "bad signature" };
-    const hash = hexOf(hashEthHeader(fields));
+    if (!verifyEthHeader(ethHex(staged.pubkey), fields, sig, bits)) return { ok: false, error: "bad signature" };
+    const hash = hexOf(hashEthHeader(fields, bits));
     this.pending.eth.push({
       op: "header",
       slot: fields.slot,
@@ -924,7 +933,7 @@ export class OrganismNode {
       parentRoot: fields.parentRoot,
       stateRoot: fields.stateRoot,
       bodyRoot: fields.bodyRoot,
-      participants: header.participants,
+      participation: hexOf(bits),
       signature: header.signature.replace(/^0x/, ""),
     });
     this.emit("in", "verify", `ETH header slot ${header.slot} queued · no credit`);
@@ -938,7 +947,7 @@ export class OrganismNode {
     parentRoot: string;
     stateRoot: string;
     bodyRoot: string;
-    participants: number;
+    participation: string;
     signature: string;
   } } {
     if (!this.ethSecret) return { ok: false, error: "no local signing key" };
@@ -950,10 +959,10 @@ export class OrganismNode {
       stateRoot,
       bodyRoot,
     };
-    const participants = countParticipants(participationMask(ETH_MIN_PARTICIPANTS));
-    if (participants < ETH_MIN_PARTICIPANTS) return { ok: false, error: "mask short" };
-    const signature = hexOf(signEthHeader(this.ethSecret, fields));
-    return { ok: true, header: { ...fields, participants, signature } };
+    const bits = participationMask(ETH_MIN_PARTICIPANTS);
+    if (countParticipants(bits) < ETH_MIN_PARTICIPANTS) return { ok: false, error: "mask short" };
+    const signature = hexOf(signEthHeader(this.ethSecret, fields, bits));
+    return { ok: true, header: { ...fields, participation: hexOf(bits), signature } };
   }
 
   /** A peer announced a hash. Record it. Do not commit it. */
