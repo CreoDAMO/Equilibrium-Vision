@@ -1,7 +1,9 @@
 /**
- * λ → residual → reward → Ω′ → omegaRoot → transitionRoot.
- * Site applies the successor. Rust rebuilds the two digests from the fields.
- * Rust does not apply the successor. Android is not this file.
+ * λ → residual → reward → Ω′ → omegaRoot → transitionRoot → header.
+ * Site applies the successor. Rust applies the same genesis transition
+ * from the pre-state and I, and does not read Ω′.
+ * Transactions, stake evidence, and wasm execution are not this file.
+ * Android is not this file.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -287,6 +289,78 @@ const rows = [
 const oracle = join(tmpdir(), "eq-commit-oracle.json");
 writeFileSync(oracle, JSON.stringify({ rows }));
 
+const wrongIn = inputs(substituted, { ...openedHash, hash: 0.8 });
+function successorCase(
+  name: string,
+  pre: Omega,
+  spec: CanonicalInputs,
+  site: {
+    omegaRoot: string;
+    transitionRoot: string;
+    header: string;
+    stateRoot: string;
+    residual: number;
+    residualFp: number;
+    reward: number;
+    liquid: number;
+    minerBalance: number;
+    continuity: number;
+    proposalStatus: string | null;
+  } | null,
+  refuse?: string,
+) {
+  return {
+    name,
+    pre: snap(pre),
+    transition: transitionOf(pre, spec),
+    site: site && {
+      omegaRoot: site.omegaRoot,
+      transitionRoot: site.transitionRoot,
+      header: site.header,
+      stateRoot: site.stateRoot,
+      residual: String(site.residual),
+      residualFp: String(site.residualFp),
+      reward: site.reward,
+      liquid: site.liquid,
+      minerBalance: site.minerBalance,
+      continuity: site.continuity,
+      proposalStatus: site.proposalStatus,
+    },
+    refuse: refuse ?? null,
+  };
+}
+const cases = [
+  successorCase("continuity-on", omega, loudIn, {
+    omegaRoot: loud.omegaRoot,
+    transitionRoot: loudSeal.transitionRoot,
+    header: loudSeal.hash,
+    stateRoot: loud.stateRoot,
+    residual: loud.residual,
+    residualFp: loud.residualFp,
+    reward: loud.reward,
+    liquid: loud.liquid,
+    minerBalance: loud.next.ledger.get(miner)!.balance,
+    continuity: loud.next.couplings.continuity,
+    proposalStatus: null,
+  }),
+  successorCase("continuity-off", quietOmega, quietIn, {
+    omegaRoot: quiet.omegaRoot,
+    transitionRoot: quietSeal.transitionRoot,
+    header: quietSeal.hash,
+    stateRoot: quiet.stateRoot,
+    residual: quiet.residual,
+    residualFp: quiet.residualFp,
+    reward: quiet.reward,
+    liquid: quiet.liquid,
+    minerBalance: quiet.next.ledger.get(miner)!.balance,
+    continuity: quiet.next.couplings.continuity,
+    proposalStatus: quiet.next.proposals[0]!.status,
+  }),
+  successorCase("substituted", substituted, wrongIn, null, "couplings are not the opened couplings"),
+];
+const successorOracle = join(tmpdir(), "eq-successor-oracle.json");
+writeFileSync(successorOracle, JSON.stringify({ cases }));
+
 const rust = execFileSync(
   "cargo",
   [
@@ -298,12 +372,17 @@ const rust = execFileSync(
     "--nocapture",
     "commitment_matches_the_site_oracle",
     "js_number_and_uri_match_the_digest_alphabet",
+    "native_successor_applies_the_continuity_transition",
   ],
-  { encoding: "utf8", env: { ...process.env, EQ_COMMIT_ORACLE: oracle } },
+  { encoding: "utf8", env: { ...process.env, EQ_COMMIT_ORACLE: oracle, EQ_SUCCESSOR_ORACLE: successorOracle } },
 );
 assert.match(rust, /commit-oracle: rows 3/);
 assert.match(rust, /commitment_matches_the_site_oracle \.\.\. ok/);
 assert.match(rust, /js_number_and_uri_match_the_digest_alphabet \.\.\. ok/);
+assert.match(rust, /native-successor: rows 3/);
+assert.match(rust, /native-successor: substituted refused/);
+assert.match(rust, /native-successor: continuity-off reward 100/);
+assert.match(rust, /native_successor_applies_the_continuity_transition \.\.\. ok/);
 
 console.log(JSON.stringify({
   ok: true,
@@ -316,5 +395,5 @@ console.log(JSON.stringify({
   headerMoved: loudSeal.hash !== quietSeal.hash,
   substituted: "refused",
   oracleRows: rows.length,
-  level: "A for λ into the site successor: reward, omegaRoot, and transitionRoot move, and Rust rebuilds both digests from the fields. Not A for a native successor or Android.",
+  level: "A for the native continuity successor: Rust derives residual, reward, liquid, miner balance, stateRoot, omegaRoot, transitionRoot, and the header from the pre-state and I. Substitution of λ is refused. Not A for transactions, stake evidence, wasm execution, or Android.",
 }));

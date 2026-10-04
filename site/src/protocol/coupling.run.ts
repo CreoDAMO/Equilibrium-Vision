@@ -152,5 +152,5 @@ console.log(JSON.stringify({
   openedHash: opened.hash,
   governanceDelta: base.canonical - governed.canonical,
   oracleRows: rows.length,
-  level: "A for the λ-weighted canonical residual, including a coupling opened by a passed proposal. The successor that spends that λ is commit.run.ts. Not A for a native successor, Android, or the live host.",
+  level: "A for the λ-weighted canonical residual, including a coupling opened by a passed proposal. The successor that spends that λ is commit.run.ts. Not A for Android or the live host.",
 }));

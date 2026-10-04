@@ -29,8 +29,8 @@ pub mod jni_bridge;
 #[cfg(test)]
 mod site_contract;
 
-// omegaDigest and transitionDigest of a state the site already produced.
-// Not the successor.
+// Digests of a site-produced state, and one native continuity successor.
+// That successor is not a second chain, and it is not the phone.
 #[cfg(test)]
 mod commitment;
 

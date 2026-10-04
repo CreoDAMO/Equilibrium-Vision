@@ -1,17 +1,17 @@
-//! Commitment of a state the site already produced.
-//! This rebuilds `omegaDigest` and `transitionDigest` from fields.
-//! It does not apply the successor, and it does not install Ω.
+//! `omegaDigest` and `transitionDigest` of a state the site already produced.
+//! `apply_opened_successor` is different: it derives Ω′ from the pre-state and I.
+//! It covers the genesis continuity transition only. It does not install a chain.
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CommitOracle {
     rows: Vec<CommitRow>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CommitRow {
     name: String,
@@ -22,7 +22,7 @@ struct CommitRow {
     transition: TransitionSnap,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OmegaSnap {
     tip_hash: String,
@@ -45,7 +45,7 @@ struct OmegaSnap {
     settlements: Vec<SettlementSnap>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Couplings {
     hash: f64,
@@ -55,14 +55,14 @@ struct Couplings {
     fees: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct AccountSnap {
     address: String,
     balance: f64,
     nonce: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PoolSnap {
     id: String,
@@ -73,7 +73,7 @@ struct PoolSnap {
     fee: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BtcSnap {
     height: i64,
@@ -83,7 +83,7 @@ struct BtcSnap {
     bits: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EthSnap {
     slot: i64,
@@ -94,7 +94,7 @@ struct EthSnap {
     body_root: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ValidatorSnap {
     address: String,
@@ -108,21 +108,21 @@ struct ValidatorSnap {
     commission: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct DelegationSnap {
     delegator: String,
     validator: String,
     amount: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BallotSnap {
     voter: String,
     option: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProposalSnap {
     id: i64,
@@ -138,7 +138,7 @@ struct ProposalSnap {
     ballots: Vec<BallotSnap>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ModelSnap {
     id: i64,
@@ -149,7 +149,7 @@ struct ModelSnap {
     proposed_at: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SettlementSnap {
     id: i64,
@@ -161,7 +161,7 @@ struct SettlementSnap {
     amount: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct TxSnap {
     hash: String,
     from: String,
@@ -171,7 +171,7 @@ struct TxSnap {
     nonce: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct TransitionSnap {
     txs: Vec<TxSnap>,
     evidence: String,
@@ -458,6 +458,414 @@ fn transition_preimage(omega: &OmegaSnap, inputs: &TransitionSnap) -> String {
     .join("|")
 }
 
+#[derive(Debug)]
+struct OpenedSuccessor {
+    omega_root: String,
+    transition_root: String,
+    header: String,
+    state_root: String,
+    residual: f64,
+    residual_fp: i64,
+    residual_fp_js: String,
+    reward: u64,
+    liquid: u64,
+    miner_balance: f64,
+    continuity: f64,
+    proposal_status: Option<String>,
+}
+
+/// One genesis transition. Pre-state and I only. Ω′ is not an argument.
+/// Empty transactions and blank evidence. Anything else is not this surface.
+fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<OpenedSuccessor, String> {
+    if !input.txs.is_empty() {
+        return Err("not this surface".into());
+    }
+    if !input.pressure.is_finite() || !(0.0..=1.0).contains(&input.pressure) {
+        return Err("pressure is not in [0,1]".into());
+    }
+    if input.timestamp < 0 {
+        return Err("timestamp is not a time".into());
+    }
+    if pre.height >= 0 && input.timestamp < pre.tip_timestamp {
+        return Err("timestamp is not monotonic".into());
+    }
+    if input.difficulty != pre.difficulty {
+        return Err("difficulty is not the next difficulty".into());
+    }
+    let blank = format!("v1|{}|", pre.chain_id);
+    let Some(rest) = input.evidence.strip_prefix(&blank) else {
+        return Err("not this surface".into());
+    };
+    let Some(code) = rest.strip_suffix("||||") else {
+        return Err("not this surface".into());
+    };
+    if code.len() != 64 || !code.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("not this surface".into());
+    }
+    let (target, block_target) = match pre.chain_id {
+        1 => (8e-4, 15.0),
+        2 => (2e-3, 8.0),
+        _ => return Err("unknown chain".into()),
+    };
+
+    let mut next = pre.clone();
+    let mut opened = Vec::new();
+    for (index, proposal) in next.proposals.iter().enumerate() {
+        if proposal.status != "passed" {
+            continue;
+        }
+        let weight = match (&proposal.coupling_key, proposal.coupling_value) {
+            (Some(key), Some(value)) if value.is_finite() => Some((key.clone(), value.max(0.0))),
+            _ => None,
+        };
+        opened.push((index, weight));
+    }
+    for (index, weight) in opened {
+        if let Some((key, weight)) = weight {
+            match key.as_str() {
+                "hash" => next.couplings.hash = weight,
+                "structural" => next.couplings.structural = weight,
+                "continuity" => next.couplings.continuity = weight,
+                "mempool" => next.couplings.mempool = weight,
+                "fees" => next.couplings.fees = weight,
+                _ => return Err("coupling is not a coupling".into()),
+            }
+        }
+        next.proposals[index].status = "executed".into();
+    }
+    if !same_couplings(&input.couplings, &next.couplings) {
+        return Err("couplings are not the opened couplings".into());
+    }
+    let producer = next
+        .validators
+        .iter()
+        .find(|v| v.address == input.miner)
+        .ok_or("miner is not a live validator")?;
+    if producer.jailed || producer.slashed || producer.bonded_stake <= 0.0 {
+        return Err("miner is not a live validator".into());
+    }
+    let commission = producer.commission;
+
+    let height = pre.height + 1;
+    let work = if height > 0 { height as u64 } else { 0 };
+    let prev = decode_hash32(&pre.tip_hash)?;
+    let merkle = [0u8; 32];
+    let lambda = [
+        next.couplings.hash,
+        next.couplings.structural,
+        next.couplings.continuity,
+        next.couplings.mempool,
+        next.couplings.fees,
+    ];
+    let residual = crate::stationary_solver::canonical_residual_lambda(
+        &prev,
+        &merkle,
+        input.timestamp as u64,
+        input.nonce as u64,
+        input.difficulty as u64,
+        &[],
+        work,
+        input.pressure,
+        &lambda,
+    );
+    let reward = crate::chain_state::canonical_coinbase(height as u64, residual, target);
+    let liquid = (reward as f64 * commission).floor().max(0.0) as u64;
+    if liquid > reward {
+        return Err("reward refused".into());
+    }
+    let staked = reward - liquid;
+    {
+        let miner = next
+            .ledger
+            .iter_mut()
+            .find(|acc| acc.address == input.miner)
+            .ok_or("reward refused")?;
+        miner.balance += liquid as f64;
+    }
+    {
+        let miner = next
+            .validators
+            .iter_mut()
+            .find(|v| v.address == input.miner)
+            .ok_or("miner is not a live validator")?;
+        miner.blocks_proposed += 1;
+    }
+    if staked > 0 {
+        let mut total: u128 = 0;
+        let mut live = Vec::new();
+        for (index, validator) in next.validators.iter().enumerate() {
+            if validator.jailed || validator.slashed || validator.bonded_stake <= 0.0 {
+                continue;
+            }
+            if validator.bonded_stake.fract() != 0.0 {
+                return Err("bonded stake refused".into());
+            }
+            total += validator.bonded_stake as u128;
+            live.push(index);
+        }
+        if total == 0 {
+            return Err("bonded stake refused".into());
+        }
+        for index in live {
+            let stake = next.validators[index].bonded_stake as u128;
+            let share = (staked as u128 * stake) / total;
+            next.validators[index].accumulated_rewards += share as f64;
+        }
+    }
+    let (foreign_num, foreign_den) = foreign_factor(&next);
+    let block_time = if pre.height < 0 {
+        block_target
+    } else {
+        input.timestamp as f64 - pre.tip_timestamp as f64
+    };
+    next.difficulty = adjust_difficulty(pre.difficulty, block_time, block_target, foreign_num, foreign_den);
+    let mut bonded = 0.0;
+    let mut voting = 0.0;
+    for validator in &next.validators {
+        bonded += validator.bonded_stake;
+        if !validator.jailed && !validator.slashed {
+            voting += validator.bonded_stake;
+        }
+    }
+    if bonded > 0.0 && voting / bonded >= 2.0 / 3.0 {
+        let cutoff = height - 2;
+        if cutoff > next.finalized_height {
+            next.finalized_height = cutoff;
+        }
+    }
+    next.height = height;
+    next.tip_timestamp = input.timestamp;
+
+    let omega_root = sha256_hex(&format!("eq-omega|{}", omega_preimage(&next)));
+    let transition_root = sha256_hex(&format!("eq-transition|{}", transition_preimage(pre, input)));
+    let state_root = state_root_of(&next);
+    let evidence_root = sha256_hex(&input.evidence);
+    let (residual_fp, residual_fp_js) = js_residual_fp(residual);
+    let header = header_with_transition(
+        &pre.tip_hash,
+        &"0".repeat(64),
+        &state_root,
+        input.timestamp as u64,
+        input.nonce as u64,
+        input.difficulty as u64,
+        &residual_fp_js,
+        &input.miner,
+        height as u64,
+        input.pressure,
+        pre.chain_id as u64,
+        &evidence_root,
+        &omega_root,
+        &transition_root,
+    );
+    let miner_balance = next
+        .ledger
+        .iter()
+        .find(|acc| acc.address == input.miner)
+        .map(|acc| acc.balance)
+        .unwrap_or(0.0);
+    let proposal_status = next.proposals.first().map(|p| p.status.clone());
+    Ok(OpenedSuccessor {
+        omega_root,
+        transition_root,
+        header,
+        state_root,
+        residual,
+        residual_fp,
+        residual_fp_js,
+        reward,
+        liquid,
+        miner_balance,
+        continuity: next.couplings.continuity,
+        proposal_status,
+    })
+}
+
+fn same_couplings(left: &Couplings, right: &Couplings) -> bool {
+    left.hash == right.hash
+        && left.structural == right.structural
+        && left.continuity == right.continuity
+        && left.mempool == right.mempool
+        && left.fees == right.fees
+}
+
+fn decode_hash32(text: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(text).map_err(|_| "not this surface".to_string())?;
+    if bytes.len() != 32 {
+        return Err("not this surface".into());
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn foreign_factor(omega: &OmegaSnap) -> (f64, f64) {
+    let mut num = 1.0;
+    let mut den = 1.0;
+    let mut apply = |hash: &str| {
+        if hash.len() < 2 {
+            return;
+        }
+        let Ok(byte) = u32::from_str_radix(&hash[hash.len() - 2..], 16) else {
+            return;
+        };
+        let bump = (byte as f64 / 255.0 * 100.0).round();
+        num *= 9950.0 + bump;
+        den *= 10_000.0;
+    };
+    if let Some(header) = omega.btc.last() {
+        apply(&header.hash);
+    }
+    if let Some(header) = omega.eth.last() {
+        apply(&header.hash);
+    }
+    (num, den)
+}
+
+fn adjust_difficulty(difficulty: f64, block_time: f64, target: f64, num: f64, den: f64) -> f64 {
+    if block_time <= 0.0 {
+        return difficulty;
+    }
+    let factor = ((target / block_time) * (num / den)).clamp(0.8, 1.2);
+    if factor == 0.8 || factor == 1.2 {
+        return (difficulty * factor).floor().max(100_000.0);
+    }
+    ((difficulty * target * num) / (block_time * den)).floor().max(100_000.0)
+}
+
+fn state_root_of(omega: &OmegaSnap) -> String {
+    let mut leaves = Vec::new();
+    let mut ledger = omega.ledger.iter().collect::<Vec<_>>();
+    ledger.sort_by(|a, b| a.address.cmp(&b.address));
+    for acc in ledger {
+        leaves.push(sha256_hex(&format!(
+            "{}:{}:{}",
+            acc.address,
+            js_num(acc.balance),
+            js_num(acc.nonce)
+        )));
+    }
+    let mut pools = omega.pools.iter().collect::<Vec<_>>();
+    pools.sort_by(|a, b| a.id.cmp(&b.id));
+    for pool in pools {
+        leaves.push(sha256_hex(&format!(
+            "pool:{}:{}:{}:{}:{}:{}",
+            pool.id,
+            pool.address,
+            js_num(pool.reserve_a),
+            js_num(pool.reserve_b),
+            js_num(pool.fee),
+            pool.tx_count
+        )));
+    }
+    let btc = omega
+        .btc
+        .last()
+        .map(|h| format!("{}:{}", h.hash, h.height))
+        .unwrap_or_else(|| "none".into());
+    let eth = omega
+        .eth
+        .last()
+        .map(|h| format!("{}:{}", h.slot, h.hash))
+        .unwrap_or_else(|| "none".into());
+    leaves.push(sha256_hex(&format!("btc:{btc}")));
+    leaves.push(sha256_hex(&format!("eth:{eth}")));
+    let wasm = if omega.wasm.is_empty() {
+        "none".to_string()
+    } else {
+        let mut entries = omega.wasm.iter().collect::<Vec<_>>();
+        entries.sort_by(|a, b| a[0].cmp(&b[0]));
+        entries
+            .into_iter()
+            .map(|pair| format!("{}={}", pair[0], pair[1]))
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+    leaves.push(sha256_hex(&format!("wasm:{wasm}")));
+    let models = omega
+        .models
+        .iter()
+        .map(|m| {
+            format!(
+                "{}:{}:{}:{}:{}:{}",
+                m.id,
+                m.status,
+                js_num(m.residual_fp),
+                m.support_hash,
+                encode_uri_component(&m.uri),
+                m.proposed_at
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    let settlements = omega
+        .settlements
+        .iter()
+        .map(|s| {
+            format!(
+                "{}:{}:{}:{}:{}:{}:{}",
+                s.id, s.status, s.asset, s.foreign_ref, s.from, s.to, s.amount
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    leaves.push(sha256_hex(&format!("models:{models}")));
+    leaves.push(sha256_hex(&format!("settle:{settlements}")));
+    merkle_hex(&leaves)
+}
+
+fn merkle_hex(hashes: &[String]) -> String {
+    if hashes.is_empty() {
+        return "0".repeat(64);
+    }
+    let mut level = hashes.to_vec();
+    if level.len() == 1 {
+        return level.pop().unwrap();
+    }
+    while level.len() > 1 {
+        if level.len() % 2 == 1 {
+            level.push(level.last().unwrap().clone());
+        }
+        let mut next = Vec::new();
+        for pair in level.chunks(2) {
+            next.push(sha256_hex(&sha256_hex(&format!("{}{}", pair[0], pair[1]))));
+        }
+        level = next;
+    }
+    level.pop().unwrap()
+}
+
+fn js_residual_fp(residual: f64) -> (i64, String) {
+    if !residual.is_finite() || residual < 0.0 {
+        return (-1, "-1".into());
+    }
+    let floored = (residual * 1_000_000_000_000_000_000.0).floor();
+    (floored as i64, format!("{floored}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn header_with_transition(
+    prev_hash: &str,
+    merkle_root: &str,
+    state_root: &str,
+    timestamp: u64,
+    nonce: u64,
+    difficulty: u64,
+    residual_fp: &str,
+    miner: &str,
+    height: u64,
+    pressure: f64,
+    chain_id: u64,
+    evidence_root: &str,
+    omega_root: &str,
+    transition_root: &str,
+) -> String {
+    let preimage = format!(
+        "{prev_hash}|{merkle_root}|{state_root}|{timestamp}|{nonce}|{difficulty}|{residual_fp}|{miner}|{height}|{pressure:.6}|{chain_id}|{evidence_root}|{omega_root}|{transition_root}"
+    );
+    let first = Sha256::digest(preimage.as_bytes());
+    hex::encode(Sha256::digest(first))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -507,5 +915,93 @@ mod tests {
             );
         }
         println!("commit-oracle: rows {}", oracle.rows.len());
+    }
+
+    #[test]
+    fn native_successor_applies_the_continuity_transition() {
+        let Some(path) = std::env::var_os("EQ_SUCCESSOR_ORACLE") else {
+            println!("native-successor: not supplied");
+            return;
+        };
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("oracle {}: {err}", path.to_string_lossy()));
+        let oracle: SuccessorOracle = serde_json::from_str(&text).expect("successor oracle json");
+        assert!(!oracle.cases.is_empty(), "oracle has no cases");
+        let mut off_header = String::new();
+        let mut on_header = String::new();
+        for case in &oracle.cases {
+            let got = super::apply_opened_successor(&case.pre, &case.transition);
+            if let Some(reason) = &case.refuse {
+                let err = got.expect_err(&case.name);
+                assert_eq!(&err, reason, "{}", case.name);
+                assert!(case.site.is_none(), "{} refuse is not a result", case.name);
+                continue;
+            }
+            let got = got.unwrap_or_else(|err| panic!("{}: {err}", case.name));
+            let site = case.site.as_ref().expect("site result");
+            assert_eq!(got.omega_root, site.omega_root, "{} omega", case.name);
+            assert_eq!(got.transition_root, site.transition_root, "{} transition", case.name);
+            assert_eq!(got.state_root, site.state_root, "{} state", case.name);
+            assert_eq!(got.reward, site.reward, "{} reward", case.name);
+            assert_eq!(got.liquid, site.liquid, "{} liquid", case.name);
+            assert_eq!(got.miner_balance, site.miner_balance, "{} balance", case.name);
+            assert_eq!(got.continuity, site.continuity, "{} continuity", case.name);
+            assert_eq!(got.proposal_status, site.proposal_status, "{} proposal", case.name);
+            let expected: f64 = site.residual.parse().expect("residual");
+            assert!(
+                (got.residual - expected).abs() < 1e-12,
+                "{} residual {} != {expected}",
+                case.name,
+                got.residual
+            );
+            assert_eq!(got.residual_fp_js, site.residual_fp, "{} fp", case.name);
+            assert_eq!(got.header, site.header, "{} header", case.name);
+            if case.name == "continuity-off" {
+                off_header = got.header.clone();
+                assert_eq!(got.reward, 100);
+                assert_eq!(got.liquid, 10);
+                assert_eq!(got.residual_fp, 201_100_202_523_998);
+                assert_eq!(got.continuity, 0.0);
+            }
+            if case.name == "continuity-on" {
+                on_header = got.header.clone();
+                assert_eq!(got.reward, 0);
+                assert_eq!(got.continuity, 1.0);
+            }
+        }
+        assert_ne!(off_header, on_header, "the opened coupling must move the header");
+        println!("native-successor: rows {}", oracle.cases.len());
+        println!("native-successor: substituted refused");
+        println!("native-successor: continuity-off reward 100");
+    }
+
+    #[derive(serde::Deserialize)]
+    struct SuccessorOracle {
+        cases: Vec<SuccessorCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct SuccessorCase {
+        name: String,
+        pre: super::OmegaSnap,
+        transition: super::TransitionSnap,
+        site: Option<SiteExpect>,
+        refuse: Option<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SiteExpect {
+        omega_root: String,
+        transition_root: String,
+        header: String,
+        state_root: String,
+        residual: String,
+        residual_fp: String,
+        reward: u64,
+        liquid: u64,
+        miner_balance: f64,
+        continuity: f64,
+        proposal_status: Option<String>,
     }
 }

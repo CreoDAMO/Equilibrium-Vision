@@ -325,7 +325,7 @@ console.log(JSON.stringify({
   s3: "distinct",
   s4: executed.next.wasm.get("paused"),
   s5: sealed.transitionRoot.slice(0, 16),
-  s6: "closed on the site successor for λ into Ω′: genesis continuity 1 pays 0; opening it to 0 pays 100 and moves omegaRoot, transitionRoot, and the header. Rust rebuilds those digests from the fields and does not apply the successor. Android was not executed.",
+  s6: "open: native applies the genesis continuity transition from the pre-state and I. Continuity 1 pays 0; opening it to 0 pays 100 and moves omegaRoot, transitionRoot, and the header. Substitution is refused. Transactions, stake evidence, wasm execution, and Android are not that successor.",
   s7: "local identity closed: the wasm file, a second reading, and the embedded bytes are one hash, and /api/light names RENDER_GIT_COMMIT plus that hash. No APK. The live host is this commit only when its light body says so.",
   sameAdmission: protocol < thresholdFp && reference < thresholdFp,
 }));
