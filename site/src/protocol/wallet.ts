@@ -135,6 +135,8 @@ export function verifyTx(tx: TxRecord, chainId: number): boolean {
     });
     const ok = ed.verify(hexToBytes(tx.signature), msg, hexToBytes(tx.publicKey));
     if (!ok) return false;
+    const expectHash = sha256Hex(concatBytes(msg, hexToBytes(tx.signature)));
+    if (expectHash !== tx.hash) return false;
     const addr = addressFromPubkeyHex(tx.publicKey);
     return addr === tx.from;
   } catch {

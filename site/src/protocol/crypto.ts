@@ -30,8 +30,8 @@ export interface HeaderCommitment {
   /** Set together. Old blocks omit both and keep the previous preimage. */
   chainId?: number;
   evidenceRoot?: string;
-  /** Full Ω digest. Present on evidence blocks. */
-  omegaRoot?: string;
+  /** Digest of (Ω, I). Present on evidence blocks sealed after the identity boundary. */
+  transitionRoot?: string;
 }
 
 /**
@@ -54,6 +54,7 @@ export function canonicalHeaderHash(parts: HeaderCommitment): string {
   ];
   if (parts.chainId !== undefined && parts.evidenceRoot !== undefined) {
     fields.push(String(parts.chainId), parts.evidenceRoot, parts.omegaRoot ?? "");
+    if (parts.transitionRoot !== undefined) fields.push(parts.transitionRoot);
   }
   return hash256Bytes(concatBytes(utf8(fields.join("|"))));
 }

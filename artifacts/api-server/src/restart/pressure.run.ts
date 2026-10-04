@@ -11,7 +11,8 @@ const state = new ChainState();
 const block: BlockRecord = {
   hash: "11".repeat(32),
   height: 0,
-  prevHash: "0".repeat(64),
+  // Not the genesis tip. This row seals pressure. It is not a successor.
+  prevHash: "1".repeat(64),
   merkleRoot: "0".repeat(64),
   timestamp: 1_700_000_000,
   nonce: 7,

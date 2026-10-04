@@ -11,7 +11,8 @@ import {
   hexToBytes as ethHex,
   verifyEthHeader,
 } from "./eth-light";
-import { ARBITRAGE_CODE } from "./evidence";
+import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
+import { selectSuccessorTxs } from "./tx-select";
 import { challengeBinding, modelBinding, residualBinding } from "./membranes";
 import { verifyTx } from "./wallet";
 import { NETWORKS } from "./networks";
@@ -222,7 +223,7 @@ export function stateRootOf(
       .map(([addr, acc]) => sha256Hex(`${addr}:${acc.balance}:${acc.nonce}`)),
     ...[...omega.pools]
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-      .map((p) => sha256Hex(`pool:${p.id}:${p.reserveA}:${p.reserveB}:${p.txCount}`)),
+      .map((p) => sha256Hex(`pool:${p.id}:${p.address}:${num(p.reserveA)}:${num(p.reserveB)}:${num(p.fee)}:${p.txCount}`)),
     sha256Hex(`btc:${btcLeafOf(omega.btc)}`),
     sha256Hex(`eth:${ethLeafOf(omega.eth)}`),
     sha256Hex(`wasm:${wasmLeafOf(omega.wasm)}`),
@@ -254,7 +255,7 @@ export function omegaDigest(omega: Omega): string {
     .map(([a, acc]) => `${a}:${num(acc.balance)}:${acc.nonce}`);
   const pools = [...omega.pools]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    .map((p) => `${p.id}:${num(p.reserveA)}:${num(p.reserveB)}:${p.txCount}:${num(p.fee)}`);
+    .map((p) => `${p.id}:${p.address}:${num(p.reserveA)}:${num(p.reserveB)}:${p.txCount}:${num(p.fee)}`);
   const btc = omega.btc.map((h) => `${h.height}:${h.hash}`).join(";");
   const eth = `${omega.ethPubkey}:${omega.eth.map((h) => `${h.slot}:${h.hash}`).join(";")}`;
   const wasm = wasmLeafOf(omega.wasm);
@@ -292,6 +293,34 @@ export function omegaDigest(omega: Omega): string {
     settlementLeaf(omega.settlements),
   ].join("|");
   return sha256Hex(`eq-omega|${body}`);
+}
+
+/**
+ * One identity for (Ω, I). The header binds this digest.
+ * Difficulty and couplings are claims about Ω: a mismatch is a refusal, not a second value.
+ * The mempool is not an input. The transaction list must be the canonical order of itself.
+ */
+export function transitionDigest(omega: Omega, inputs: CanonicalInputs): string {
+  const txs = inputs.transactions
+    .map((t) => `${t.hash}:${t.from}:${t.to}:${t.amount}:${t.fee}:${t.nonce}`)
+    .join(";");
+  const evidence = inputs.evidence ? canonicalEvidence(inputs.evidence) : "";
+  const c = inputs.couplings;
+  const wasm = inputs.wasmAfter ? wasmLeafOf(inputs.wasmAfter) : "";
+  const body = [
+    omega.tipHash,
+    omegaDigest(omega),
+    txs,
+    evidence,
+    String(inputs.timestamp),
+    String(inputs.nonce),
+    inputs.miner,
+    inputs.committedPressure.toFixed(6),
+    String(inputs.difficulty),
+    `${num(c.hash)},${num(c.structural)},${num(c.continuity)},${num(c.mempool)},${num(c.fees)}`,
+    wasm,
+  ].join("|");
+  return sha256Hex(`eq-transition|${body}`);
 }
 
 function rewardOf(params: NetworkParams, height: number, residual: number): number {
@@ -639,6 +668,22 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor
   for (const tx of inputs.transactions) {
     if (!verifyTx(tx, omega.chainId)) return { ok: false, error: "signature refused" };
   }
+  if (inputs.transactions.length > params.maxTxPerBlock) {
+    return { ok: false, error: "transactions are not the canonical selection" };
+  }
+  const ordered = selectSuccessorTxs(
+    (addr) => omega.ledger.get(addr)?.balance ?? 0,
+    (addr) => omega.ledger.get(addr)?.nonce ?? 0,
+    inputs.transactions,
+    params.maxTxPerBlock,
+    (tx) => !omega.pools.some((p) => (p.address || poolAddress(p.id)) === tx.to),
+  );
+  if (
+    ordered.length === inputs.transactions.length
+    && ordered.some((tx, i) => tx !== inputs.transactions[i])
+  ) {
+    return { ok: false, error: "transactions are not the canonical selection" };
+  }
   const next = cloneOmega(omega);
   openOmega(next);
   if (!sameCouplings(inputs.couplings, next.couplings)) return { ok: false, error: "couplings are not the opened couplings" };
@@ -673,6 +718,14 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor
   const swaps: SwapEvent[] = [];
   const effectError = applyEffects(next, inputs.transactions, inputs.miner, split.liquid, swaps);
   if (effectError) return { ok: false, error: effectError };
+  // A list the selector would not emit is not I, even if effects could apply it
+  // (a miner fee credited inside the block is not a balance the selector sees).
+  if (
+    ordered.length !== inputs.transactions.length
+    || ordered.some((tx, i) => tx !== inputs.transactions[i])
+  ) {
+    return { ok: false, error: "transactions are not the canonical selection" };
+  }
   const modelError = admitModels(next, inputs.evidence, inputs.timestamp);
   if (modelError) return { ok: false, error: modelError };
   const stateRoot = stateRootOf(next);

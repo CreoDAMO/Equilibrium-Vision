@@ -594,6 +594,7 @@ export class ChainState {
       block.residual = admitted.residual;
       block.residualFp = admitted.residualFp;
       block.coinbaseReward = admitted.reward;
+      block.transitionRoot = admitted.transitionRoot;
     }
     this.blocks.push(block);
     if (admitted.kind === "accept") {
@@ -803,6 +804,7 @@ export class ChainState {
         residualFp: number;
         reward: number;
         chainId: number;
+        transitionRoot: string;
       } {
     const omega = this.canonicalBody.omega;
     const pressure = typeof block.committedPressure === "number" ? block.committedPressure : 0;
@@ -841,6 +843,7 @@ export class ChainState {
       residualFp: stepped.residualFp,
       reward: stepped.reward,
       chainId: sealed.evidence.chainId,
+      transitionRoot: sealed.transitionRoot,
     };
   }
 

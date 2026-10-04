@@ -93,6 +93,8 @@ export interface BlockRecord {
   chainId?: number;
   evidenceRoot?: string;
   omegaRoot?: string;
+  /** Digest of (Ω, I). Present when the successor sealed this block. */
+  transitionRoot?: string;
   /**
    * Kernel wasm map carried by an evidence block. Contract storage is not this map.
    * Applied only when the block also binds a canonical state root.

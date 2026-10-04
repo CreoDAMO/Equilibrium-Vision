@@ -41,6 +41,8 @@ export interface HeaderCommitment {
   chainId?: number;
   evidenceRoot?: string;
   omegaRoot?: string;
+  /** Digest of (Ω, I). Omitted on the frozen thirteen-field preimage. */
+  transitionRoot?: string;
 }
 
 /**
@@ -63,6 +65,7 @@ export function canonicalHeaderHash(parts: HeaderCommitment): string {
   ];
   if (parts.chainId !== undefined && parts.evidenceRoot !== undefined) {
     fields.push(String(parts.chainId), parts.evidenceRoot, parts.omegaRoot ?? "");
+    if (parts.transitionRoot !== undefined) fields.push(parts.transitionRoot);
   }
   const first = createHash("sha256").update(Buffer.from(fields.join("|"), "utf8")).digest();
   return createHash("sha256").update(first).digest("hex");

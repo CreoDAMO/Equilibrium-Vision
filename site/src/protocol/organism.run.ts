@@ -100,6 +100,7 @@ const again = artifactsHeaderHash({
   chainId: evidence.chainId,
   evidenceRoot: committed.evidenceRoot,
   omegaRoot: committed.omegaRoot,
+  transitionRoot: sealed.transitionRoot,
 });
 assert.equal(again, sealed.hash);
 

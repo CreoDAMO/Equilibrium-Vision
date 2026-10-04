@@ -531,6 +531,7 @@ export class OrganismNode {
       verifyNotes: [],
       evidence,
       omegaRoot: stepped.omegaRoot,
+      transitionRoot: sealed.transitionRoot,
     };
     block.relation = stationarityRelation(block, this.params.residualThreshold);
     const report = verifyStationaryEvidence({

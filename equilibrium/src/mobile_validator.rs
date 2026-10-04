@@ -618,16 +618,6 @@ fn flat_to_gossiped(flat: FlatMiningBody, original_json: &str) -> Result<Gossipe
 
     let recursion_depth = flat.height.unwrap_or(0).min(u32::MAX as u64) as u32;
 
-    let merkle_root = match flat.merkle_root {
-        Some(ref h) if !h.is_empty() => parse_hash32(h)?,
-        _ => [0u8; 32],
-    };
-
-    let state_root = match flat.state_root {
-        Some(ref h) if !h.is_empty() => parse_hash32(h)?,
-        _ => [0u8; 32],
-    };
-
     let tx_hashes = match flat.tx_hashes {
         Some(list) => {
             let mut out = Vec::with_capacity(list.len());
@@ -637,6 +627,18 @@ fn flat_to_gossiped(flat: FlatMiningBody, original_json: &str) -> Result<Gossipe
             out
         }
         None => vec![],
+    };
+
+    // A missing merkle root is the root of the transactions carried, not 32 zero bytes.
+    // An empty transaction list is the empty root, which is 32 zero bytes.
+    let merkle_root = match flat.merkle_root {
+        Some(ref h) if !h.is_empty() => parse_hash32(h)?,
+        _ => merkle_root_from_hashes(&tx_hashes),
+    };
+
+    let state_root = match flat.state_root {
+        Some(ref h) if !h.is_empty() => parse_hash32(h)?,
+        _ => [0u8; 32],
     };
 
     let header = BlockHeader {

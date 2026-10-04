@@ -118,7 +118,12 @@ export function verifyStationaryEvidence(args: {
     height: block.height,
     committedPressure: block.committedPressure,
     ...(block.evidence
-      ? { chainId: block.evidence.chainId, evidenceRoot: evidenceRoot(block.evidence), omegaRoot: block.omegaRoot }
+      ? {
+          chainId: block.evidence.chainId,
+          evidenceRoot: evidenceRoot(block.evidence),
+          omegaRoot: block.omegaRoot,
+          ...(block.transitionRoot ? { transitionRoot: block.transitionRoot } : {}),
+        }
       : {}),
   });
   const hashOk = expectedHash === block.hash;

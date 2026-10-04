@@ -225,6 +225,8 @@ export interface BlockRecord {
   evidence?: TransitionEvidence;
   /** Digest of Ω after this transition. Bound in the header when evidence is present. */
   omegaRoot?: string;
+  /** Digest of (Ω, I). Bound in the header when evidence is present. */
+  transitionRoot?: string;
 }
 
 export interface ValidatorRecord {

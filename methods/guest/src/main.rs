@@ -54,16 +54,8 @@ fn block_hash(prev: &[u8; 32], nonce: u64, timestamp: u64, difficulty: u64) -> [
     h.finalize().into()
 }
 
-/// Integer-only residual proxy aligned with the fixed-point consensus path.
-///
-/// **v1 (hash-fold):** folds SHA-256(all header fields) into a u64. This is
-/// stronger than the old `residual + difference == threshold` witness because
-/// it actually binds the residual to the header's nonce/prev_hash/timestamp.
-///
-/// **v2 (target):** replace with the same pure-integer extraction of
-/// `StationarySolver::joint_residual_and_gradient` once that path is factored
-/// into a shared `residual_fp` crate module.  Bump STATIONARITY_GUEST_ID when
-/// switching.
+/// Integer hash-fold. This is not `canonical_residual` and it is not G.
+/// A receipt from this guest does not admit a block. Admission recomputes G.
 fn residual_at_nonce(inp: &StationarityInput) -> u64 {
     let mut h = Sha256::new();
     h.update(inp.prev_hash);

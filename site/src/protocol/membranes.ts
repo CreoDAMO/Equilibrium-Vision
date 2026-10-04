@@ -1,5 +1,6 @@
-import { sha256Hex } from "./crypto";
-import { solveStationary, type SolveInput } from "./solver";
+import { merkleRoot, sha256Hex } from "./crypto";
+import { solveStationary, type SolveInput, type SolverHeader, type SolverState } from "./solver";
+import type { Couplings } from "./types";
 
 /**
  * Four membranes. None of them is a second successor.
@@ -49,6 +50,26 @@ export function mobileCandidate(
   if (mode !== "solve") return { mode };
   const solved = solveStationary(input);
   return { mode: "solve", nonce: solved.nonce, residualFp: solved.residualFp };
+}
+
+/**
+ * The phone's candidate carries the same transaction identity production seals.
+ * A placeholder merkle root is not I. The candidate is still not Ω′.
+ */
+export function bindMobileCandidate(
+  header: Omit<SolverHeader, "merkleRoot">,
+  txs: { hash: string; fee: number }[],
+  state: SolverState,
+  couplings: Couplings | undefined,
+  resources: DeviceResources,
+): { mode: "defer" | "verify" } | { mode: "solve"; nonce: number; residualFp: number; merkleRoot: string } {
+  const merkleRootHex = merkleRoot(txs.length ? txs.map((t) => t.hash) : ["0".repeat(64)]);
+  const solved = mobileCandidate(
+    { header: { ...header, merkleRoot: merkleRootHex }, txs, state, couplings },
+    resources,
+  );
+  if (solved.mode !== "solve") return solved;
+  return { mode: "solve", nonce: solved.nonce, residualFp: solved.residualFp, merkleRoot: merkleRootHex };
 }
 
 export interface MobilePeer {

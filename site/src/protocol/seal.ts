@@ -1,5 +1,5 @@
 import { merkleRoot, canonicalHeaderHash } from "./crypto";
-import { omegaDigest, type Successor } from "./constitution";
+import { omegaDigest, transitionDigest, type Successor } from "./constitution";
 import { ARBITRAGE_CODE, evidenceRoot } from "./evidence";
 import type { CanonicalInputs, Omega, TransitionEvidence } from "./types";
 
@@ -8,6 +8,8 @@ export type SealedSuccessor = {
   merkleRoot: string;
   evidence: TransitionEvidence;
   evidenceRoot: string;
+  /** Commit_I(Ω, I). Bound by the header beside the omega digest. */
+  transitionRoot: string;
   /** Ω′ as the relation returned it. tipHash is still the previous block. */
   digestOmega: Extract<Successor, { ok: true }>["next"];
   /** The Ω the next block reads. tipHash is the header just sealed. */
@@ -33,6 +35,7 @@ export function sealFromSuccessor(
   const txHashes = inputs.transactions.map((t) => t.hash);
   const mr = merkleRoot(txHashes.length ? txHashes : ["0".repeat(64)]);
   const root = evidenceRoot(evidence);
+  const transitionRoot = transitionDigest(omega, { ...inputs, evidence });
   const hash = canonicalHeaderHash({
     prevHash: omega.tipHash,
     merkleRoot: mr,
@@ -47,12 +50,14 @@ export function sealFromSuccessor(
     chainId: evidence.chainId,
     evidenceRoot: root,
     omegaRoot: stepped.omegaRoot,
+    transitionRoot,
   });
   return {
     hash,
     merkleRoot: mr,
     evidence,
     evidenceRoot: root,
+    transitionRoot,
     digestOmega: stepped.next,
     carried: { ...stepped.next, tipHash: hash },
   };

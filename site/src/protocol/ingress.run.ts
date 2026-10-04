@@ -1,5 +1,6 @@
 /**
  * A higher fee does not jump a nonce, and a pool transfer is not an account credit.
+ * A non-candidate block does not apply the pool. The successor does.
  */
 import assert from "node:assert/strict";
 import { ChainState } from "../../../artifacts/api-server/src/chain/state";
@@ -49,7 +50,7 @@ const jumped = applySuccessor(omega, {
 });
 assert.equal(jumped.ok, false);
 if (jumped.ok) throw new Error("nonce jump was accepted");
-assert.match(jumped.error, /nonce/);
+assert.match(jumped.error, /canonical selection/);
 
 const ordered = applySuccessor(omega, {
   transactions: [signedLow, signedHigh],
@@ -70,32 +71,44 @@ state.couplings = { hash: 0, structural: 0, continuity: 0, mempool: 0, fees: 0 }
 assert.notEqual(state.currentDifficulty, state.canonicalBody.omega.difficulty);
 assert.notDeepEqual(state.couplings, state.canonicalBody.omega.couplings);
 const pool = state.canonicalBody.omega.pools[0]!;
+const reserveBefore = pool.reserveA;
+const heightBefore = state.canonicalBody.omega.height;
 state.ledger.credit(alice, 5_000);
-state.addBlock({
-  hash: "11".repeat(32),
-  height: 0,
-  prevHash: "0".repeat(64),
-  merkleRoot: "0".repeat(64),
-  timestamp: 1_700_000_000,
-  nonce: 1,
-  difficulty: state.currentDifficulty,
-  residual: 0,
-  recursionDepth: 2,
-  coinbaseReward: 0,
-  miner: alice,
-  txCount: 1,
-  transactions: [tx({ hash: "d".repeat(64), from: alice, to: pool.address, amount: 100, fee: 1, nonce: 0 })],
-  finalized: false,
-});
-assert.equal(state.txIndex.get("d".repeat(64))?.status, "failed");
+let refused = "";
+try {
+  state.addBlock({
+    hash: "11".repeat(32),
+    height: 0,
+    prevHash: "0".repeat(64),
+    merkleRoot: "0".repeat(64),
+    timestamp: 1_700_000_000,
+    nonce: 1,
+    difficulty: state.currentDifficulty,
+    residual: 0,
+    recursionDepth: 2,
+    coinbaseReward: 0,
+    miner: alice,
+    txCount: 1,
+    transactions: [tx({ hash: "d".repeat(64), from: alice, to: pool.address, amount: 100, fee: 1, nonce: 0 })],
+    finalized: false,
+  });
+} catch (err) {
+  refused = err instanceof Error ? err.message : String(err);
+}
+assert.equal(refused, "pool effects are applied by the successor, not addBlock");
+assert.equal(state.txIndex.has("d".repeat(64)), false);
+assert.equal(state.blocks.length, 0);
 assert.equal(state.ledger.balance(alice), 5_000);
 assert.equal(state.ledger.balance(pool.address), 0);
-assert.equal(state.canonicalBody.omega.pools[0]!.reserveA, pool.reserveA);
+assert.equal(state.canonicalBody.omega.pools[0]!.reserveA, reserveBefore);
+assert.equal(state.canonicalBody.omega.height, heightBefore);
+assert.equal(state.currentDifficulty, 1);
 
 console.log(JSON.stringify({
   ok: true,
   order: picked.map((t) => t.nonce),
   jumped: jumped.ok ? null : jumped.error,
+  pool: refused,
   operationalDifficulty: state.currentDifficulty,
   canonicalDifficulty: state.canonicalBody.omega.difficulty,
 }));
