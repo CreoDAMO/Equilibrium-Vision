@@ -1077,7 +1077,7 @@ mod tests {
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("oracle {}: {err}", path.to_string_lossy()));
         let oracle: MembraneOracle = serde_json::from_str(&text).expect("membrane oracle json");
-        assert_eq!(oracle.cases.len(), 26, "oracle rows");
+        assert_eq!(oracle.cases.len(), 43, "oracle rows");
         let mut pay = String::new();
         let mut other = String::new();
         let mut eth_honest = String::new();

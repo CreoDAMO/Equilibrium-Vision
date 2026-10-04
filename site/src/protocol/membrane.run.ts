@@ -20,6 +20,7 @@ import {
   type CanonicalInputs,
   type Omega,
 } from "./constitution";
+import { poolAddress } from "./dex";
 import { canonicalEvidence } from "./evidence";
 import { ethKeygen, hashEthHeader, hexOf, signEthHeader } from "./eth-light";
 import { activityKeys, minerKey } from "./genesis";
@@ -509,6 +510,238 @@ if (forgedComposeStepped.ok) throw new Error("forged compose");
 assert.equal(forgedComposeStepped.error, "btc proof of work refused");
 const forgedComposeSite = { ok: false as const, error: forgedComposeStepped.error };
 
+const proposeIn = spec(born, {
+  ...blankEvidence(1),
+  stake: [{
+    op: "propose",
+    proposer: miner,
+    title: "drop continuity",
+    deposit: 0,
+    id: 11,
+    couplingKey: "continuity",
+    couplingValue: 0,
+  }],
+});
+const proposeSite = run(born, proposeIn);
+assert.equal(proposeSite.ok, true);
+if (!proposeSite.ok) throw new Error("propose");
+const proposeStepped = applySuccessor(born, proposeIn);
+if (!proposeStepped.ok) throw new Error(proposeStepped.error);
+assert.equal(proposeStepped.next.couplings.continuity, 1);
+assert.equal(proposeStepped.next.proposals.find((p) => p.id === 11)?.status, "open");
+
+const passOmega = cloneOmega(born);
+passOmega.proposals.push({
+  id: 12,
+  title: "seat",
+  proposer: miner,
+  deposit: 0,
+  yes: 0,
+  no: 0,
+  abstain: 0,
+  status: "open",
+  ballots: [],
+});
+const passIn = spec(passOmega, {
+  ...blankEvidence(1),
+  stake: [
+    { op: "vote", voter: "6ea341f4f8d62cd427434c89d35d3fc6340a8bb1", id: 12, option: "yes" },
+    { op: "vote", voter: "736d0217b01cdaec6288ced8ddb8be7435f711e0", id: 12, option: "yes" },
+    { op: "vote", voter: "cec6a4f606263f462db50d853f599b758cede73b", id: 12, option: "yes" },
+  ],
+});
+const passSite = run(passOmega, passIn);
+assert.equal(passSite.ok, true);
+if (!passSite.ok) throw new Error("pass");
+const passStepped = applySuccessor(passOmega, passIn);
+if (!passStepped.ok) throw new Error(passStepped.error);
+assert.equal(passStepped.next.proposals.find((p) => p.id === 12)?.status, "passed");
+assert.equal(passStepped.next.couplings.continuity, 1);
+
+const doubleIn = spec(born, {
+  ...blankEvidence(1),
+  stake: [{ op: "slash", validator: "cec6a4f606263f462db50d853f599b758cede73b", reason: "double_sign" }],
+});
+const doubleSite = run(born, doubleIn);
+assert.equal(doubleSite.ok, true);
+if (!doubleSite.ok) throw new Error("double");
+const doubleStepped = applySuccessor(born, doubleIn);
+if (!doubleStepped.ok) throw new Error(doubleStepped.error);
+assert.equal(doubleStepped.next.validators.get("cec6a4f606263f462db50d853f599b758cede73b")?.jailed, true);
+
+const paid = applySuccessor(quiet, spec(quiet));
+assert.equal(paid.ok, true);
+if (!paid.ok) throw new Error(paid.error);
+assert.ok((paid.next.validators.get(miner)?.accumulatedRewards ?? 0) > 0);
+const claimPaidIn = spec(paid.next, {
+  ...blankEvidence(1),
+  stake: [{ op: "claim", address: miner }],
+});
+const claimPaidSite = run(paid.next, claimPaidIn);
+assert.equal(claimPaidSite.ok, true);
+if (!claimPaidSite.ok) throw new Error("claim paid");
+
+async function executed(current: Omega, input: CanonicalInputs) {
+  const { wasmAfter: _ignored, ...rest } = input;
+  const stepped = await successor(current, rest);
+  if (!stepped.ok) return { ok: false as const, error: stepped.error };
+  const seal = sealFromSuccessor(current, input, stepped);
+  return {
+    ok: true as const,
+    omegaRoot: stepped.omegaRoot,
+    transitionRoot: seal.transitionRoot,
+    header: seal.hash,
+    stateRoot: stepped.stateRoot,
+    next: stepped.next,
+  };
+}
+
+const pauseIn = spec(wasmStepped.next, {
+  ...blankEvidence(1),
+  wasm: [{ method: "pause", caller: miner }],
+});
+const pauseRan = await executed(wasmStepped.next, pauseIn);
+assert.equal(pauseRan.ok, true, pauseRan.ok ? "" : pauseRan.error);
+if (!pauseRan.ok) throw new Error(pauseRan.error);
+assert.equal(pauseRan.next.wasm.get("paused"), "1");
+const pauseSite = pauseRan;
+
+const unpauseIn = spec(pauseRan.next, {
+  ...blankEvidence(1),
+  wasm: [{ method: "unpause", caller: miner }],
+});
+const unpauseRan = await executed(pauseRan.next, unpauseIn);
+assert.equal(unpauseRan.ok, true, unpauseRan.ok ? "" : unpauseRan.error);
+if (!unpauseRan.ok) throw new Error(unpauseRan.error);
+assert.equal(unpauseRan.next.wasm.get("paused"), "0");
+const unpauseSite = unpauseRan;
+
+const swapIn = spec(born);
+swapIn.transactions = [pay(0, 200_000, 1, poolAddress("EQU-WBTC"))];
+const swapSite = run(born, swapIn);
+assert.equal(swapSite.ok, true);
+if (!swapSite.ok || !txSite.ok) throw new Error("swap");
+const swapStepped = applySuccessor(born, swapIn);
+if (!swapStepped.ok) throw new Error(swapStepped.error);
+const wbtc = swapStepped.next.pools.find((p) => p.id === "EQU-WBTC");
+assert.ok(wbtc);
+assert.equal(wbtc.reserveA, 10_200_000);
+assert.equal(wbtc.reserveB, 99);
+assert.equal(wbtc.txCount, 1);
+assert.notEqual(swapSite.stateRoot, txSite.stateRoot);
+
+const firstHash = hexOf(hashEthHeader(ethFields));
+const extendFields = {
+  slot: 8,
+  proposerIndex: 3,
+  parentRoot: firstHash,
+  stateRoot: "55".repeat(32),
+  bodyRoot: "66".repeat(32),
+};
+const extendIn = spec(born, {
+  ...blankEvidence(1),
+  eth: [
+    { op: "bootstrap", pubkey: ethPub },
+    { op: "header", ...ethFields, participants: 342, signature: ethSig },
+    { op: "header", ...extendFields, participants: 342, signature: hexOf(signEthHeader(ethKey.secret, extendFields)) },
+  ],
+});
+const extendSite = run(born, extendIn);
+assert.equal(extendSite.ok, true);
+if (!extendSite.ok || !ethSite.ok) throw new Error("extend");
+const extendStepped = applySuccessor(born, extendIn);
+if (!extendStepped.ok) throw new Error(extendStepped.error);
+assert.equal(extendStepped.next.eth.length, 2);
+assert.equal(extendStepped.next.eth[1]!.parentRoot, extendStepped.next.eth[0]!.hash);
+assert.notEqual(extendSite.omegaRoot, ethSite.omegaRoot);
+
+const nonceIn = spec(born);
+nonceIn.nonce = 7;
+const nonceSite = run(born, nonceIn);
+assert.equal(nonceSite.ok, true);
+if (!nonceSite.ok) throw new Error("nonce");
+const nonce6 = run(born, spec(born));
+assert.equal(nonce6.ok, true);
+if (!nonce6.ok) throw new Error("nonce6");
+assert.notEqual(nonceSite.header, nonce6.header);
+assert.notEqual(nonceSite.transitionRoot, nonce6.transitionRoot);
+
+const pressureIn = spec(born);
+pressureIn.committedPressure = 0.25;
+const pressureSite = run(born, pressureIn);
+assert.equal(pressureSite.ok, true);
+if (!pressureSite.ok) throw new Error("pressure");
+assert.notEqual(pressureSite.header, nonce6.header);
+
+const timeIn = spec(born);
+timeIn.timestamp = 1_700_000_100;
+const timeSite = run(born, timeIn);
+assert.equal(timeSite.ok, true);
+if (!timeSite.ok) throw new Error("time");
+assert.notEqual(timeSite.omegaRoot, nonce6.omegaRoot);
+
+const difficultyIn = spec(born);
+difficultyIn.difficulty = born.difficulty + 1;
+const difficultySite = run(born, difficultyIn);
+assert.equal(difficultySite.ok, false);
+if (difficultySite.ok) throw new Error("difficulty");
+assert.equal(difficultySite.error, "difficulty is not the next difficulty");
+
+const minerIn = spec(born);
+minerIn.miner = "00".repeat(20);
+const minerSite = run(born, minerIn);
+assert.equal(minerSite.ok, false);
+if (minerSite.ok) throw new Error("stranger miner");
+assert.equal(minerSite.error, "miner is not a live validator");
+
+const ethLockIn = spec(ethStepped.next, {
+  ...blankEvidence(1),
+  settle: [{
+    op: "lock",
+    id: 8,
+    asset: "eth",
+    foreignRef: ethStepped.next.eth[0]!.hash,
+    from: payer.address,
+    to: miner,
+    amount: 10,
+  }],
+});
+const ethLockSite = run(ethStepped.next, ethLockIn);
+assert.equal(ethLockSite.ok, true);
+if (!ethLockSite.ok) throw new Error("eth lock");
+
+const btcExtendIn = spec(btcStepped.next, {
+  ...blankEvidence(1),
+  btc: [{ height: 1, headerHex: BTC_GENESIS_HEADER_HEX }],
+});
+const btcExtendSite = run(btcStepped.next, btcExtendIn);
+assert.equal(btcExtendSite.ok, false);
+if (btcExtendSite.ok) throw new Error("btc extend");
+assert.equal(btcExtendSite.error, "btc prev does not match the tip");
+
+const badParent = { ...extendFields, parentRoot: "00".repeat(32) };
+const ethParentIn = spec(born, {
+  ...blankEvidence(1),
+  eth: [
+    { op: "bootstrap", pubkey: ethPub },
+    { op: "header", ...ethFields, participants: 342, signature: ethSig },
+    { op: "header", ...badParent, participants: 342, signature: hexOf(signEthHeader(ethKey.secret, badParent)) },
+  ],
+});
+const ethParentSite = run(born, ethParentIn);
+assert.equal(ethParentSite.ok, false);
+if (ethParentSite.ok) throw new Error("eth parent");
+assert.equal(ethParentSite.error, "eth parent does not match the tip");
+
+const mismatchIn = spec(modelStepped.next, {
+  ...blankEvidence(1),
+  cognition: [{ kind: "model", ...modelClaim, supportHash: "cd".repeat(32), proof: modelBinding(1, { ...modelClaim, supportHash: "cd".repeat(32) }) }],
+});
+const mismatchSite = run(modelStepped.next, mismatchIn);
+assert.equal(mismatchSite.ok, false);
+if (mismatchSite.ok) throw new Error("model mismatch");
+assert.equal(mismatchSite.error, "model claim does not match the registry");
+
 const cases = [
   pack("tx-pay", born, txIn, txSite, 1),
   pack("tx-altered", born, alteredIn, alteredSite),
@@ -536,6 +769,23 @@ const cases = [
   pack("compose", composeQuiet, composeIn, composeSite),
   pack("compose-loud", born, loudIn, loudSite),
   pack("compose-forged", composeQuiet, forgedComposeIn, forgedComposeSite),
+  pack("stake-propose", born, proposeIn, proposeSite),
+  pack("stake-pass", passOmega, passIn, passSite),
+  pack("stake-double", born, doubleIn, doubleSite),
+  pack("stake-claim-paid", paid.next, claimPaidIn, claimPaidSite),
+  pack("wasm-pause-call", wasmStepped.next, pauseIn, pauseSite),
+  pack("wasm-unpause", pauseRan.next, unpauseIn, unpauseSite),
+  pack("tx-swap", born, swapIn, swapSite),
+  pack("eth-extend", born, extendIn, extendSite),
+  pack("scalar-nonce", born, nonceIn, nonceSite),
+  pack("scalar-pressure", born, pressureIn, pressureSite),
+  pack("scalar-time", born, timeIn, timeSite),
+  pack("difficulty-refused", born, difficultyIn, difficultySite),
+  pack("miner-stranger", born, minerIn, minerSite),
+  pack("settle-eth", ethStepped.next, ethLockIn, ethLockSite),
+  pack("btc-extend-refused", btcStepped.next, btcExtendIn, btcExtendSite),
+  pack("eth-parent", born, ethParentIn, ethParentSite),
+  pack("model-mismatch", modelStepped.next, mismatchIn, mismatchSite),
 ];
 
 const oracle = join(tmpdir(), "eq-membrane-oracle.json");
@@ -545,7 +795,7 @@ const rust = execFileSync(
   ["test", "--manifest-path", join(repo, "equilibrium/Cargo.toml"), "--lib", "--", "--nocapture", "native_successor_expands_the_input"],
   { encoding: "utf8", env: { ...process.env, EQ_MEMBRANE_ORACLE: oracle } },
 );
-assert.match(rust, /membrane: rows 26/);
+assert.match(rust, /membrane: rows 43/);
 assert.match(rust, /native_successor_expands_the_input \.\.\. ok/);
 assert.match(rust, /membrane: signature refused/);
 assert.match(rust, /membrane: wasm executed/);
@@ -561,5 +811,5 @@ console.log(JSON.stringify({
   ethMoved: ethSite.ok && swappedSite.ok && ethSite.omegaRoot !== swappedSite.omegaRoot,
   composeMoved: composeSite.omegaRoot !== loudSite.omegaRoot,
   wasmOwner: composeStepped.ok ? composeStepped.next.wasm.get("owner") ?? null : null,
-  level: "A for the tested classes, including an Ethereum header under the site BLS check and one transition that carries a transfer, a delegation, the opened coupling, wasm init, bitcoin, ethereum, and a settlement. A participant count above quorum is not inside the signature; both sides store it and the roots move. Not A for every input, and not A for Android. S6 stays open.",
+  level: "S6 is closed on the mainnet surface this file enumerates: native derives Ω′ from Ω and I, and the listed refusals match. Outside that surface: no valid second Bitcoin header was available, other networks were not run, Android was not executed, and this is not a proof about every byte string.",
 }));

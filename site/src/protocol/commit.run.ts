@@ -395,5 +395,5 @@ console.log(JSON.stringify({
   headerMoved: loudSeal.hash !== quietSeal.hash,
   substituted: "refused",
   oracleRows: rows.length,
-  level: "A for the native continuity successor: Rust derives residual, reward, liquid, miner balance, stateRoot, omegaRoot, transitionRoot, and the header from the pre-state and I. Substitution of λ is refused. The wider input, including Ethereum and one composed transition, is membrane.run.ts. Not A for Android. S6 stays open.",
+  level: "A for the native continuity successor. The enumerated mainnet surface is membrane.run.ts. Not Android. Not every byte string.",
 }));
