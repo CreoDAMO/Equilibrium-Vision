@@ -69,6 +69,7 @@ import {
   openedCouplings,
   omegaDigest,
   successor,
+  transitionDigest,
   type Successor,
 } from "./constitution";
 import { dependencyFindings } from "./dependencies";
@@ -628,6 +629,23 @@ export class OrganismNode {
     if (!stepped.ok) {
       this.emit("in", "verify", stepped.error);
       return false;
+    }
+    if (block.transitionRoot) {
+      const expected = transitionDigest(this.toOmega(), {
+        transactions: block.transactions,
+        evidence: ev,
+        timestamp: block.timestamp,
+        nonce: block.nonce,
+        miner: block.miner,
+        committedPressure: block.committedPressure,
+        couplings: block.couplings,
+        difficulty: block.difficulty,
+        wasmAfter: null,
+      });
+      if (block.transitionRoot !== expected) {
+        this.emit("in", "verify", "transition is not this input");
+        return false;
+      }
     }
     if (stepped.stateRoot !== block.stateRoot || (block.evidence && stepped.omegaRoot !== block.omegaRoot)) {
       this.emit("in", "verify", "state did not replay");
@@ -1229,8 +1247,12 @@ export class OrganismNode {
     deposit: number,
     coupling?: { key: keyof Couplings; value: number },
   ): { ok: boolean; error?: string; id?: number } {
-    if (!title.trim()) return { ok: false, error: "title" };
-    if (deposit < 0) return { ok: false, error: "deposit" };
+    if (!title.trim() || title.length > 80) return { ok: false, error: "title" };
+    if (!Number.isSafeInteger(deposit) || deposit < 0) return { ok: false, error: "deposit" };
+    const proposerV = this.validators.get(proposer);
+    if (!proposerV || proposerV.jailed || proposerV.slashed || proposerV.bondedStake <= 0) {
+      return { ok: false, error: "proposal proposer unauthorized" };
+    }
     if (this.account(proposer).balance - this.held(proposer) < deposit) return { ok: false, error: "insufficient deposit" };
     const p: Proposal = {
       id: proposalSeq++,
@@ -1259,8 +1281,11 @@ export class OrganismNode {
     const p = this.proposals.find((x) => x.id === id);
     if (!queued && (!p || p.status !== "open")) return { ok: false, error: "not open" };
     const v = this.validators.get(voter);
-    const power = v?.bondedStake ?? this.account(voter).balance;
-    if (power <= 0) return { ok: false, error: "no voting power" };
+    if (!v || v.jailed || v.slashed || v.bondedStake <= 0) return { ok: false, error: "vote refused" };
+    if (p?.ballots?.some((b) => b.voter === voter)) return { ok: false, error: "vote already cast" };
+    if (this.pending.stake.some((s) => s.op === "vote" && s.voter === voter && s.id === id)) {
+      return { ok: false, error: "vote already cast" };
+    }
     this.pending.stake.push({ op: "vote", voter, id, option });
     this.emit("in", "governance", `vote ${option} on #${id} · queued`);
     return { ok: true };

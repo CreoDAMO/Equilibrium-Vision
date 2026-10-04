@@ -1,4 +1,4 @@
-import { successor, initialOmega, openedCouplings } from "../../../../site/src/protocol/constitution.js";
+import { successor, initialOmega, openedCouplings, transitionDigest } from "../../../../site/src/protocol/constitution.js";
 import { omegaRecord, sealFromSuccessor } from "../../../../site/src/protocol/seal.js";
 import type { CanonicalInputs, NetworkId, Omega, TransitionEvidence, TxRecord } from "../../../../site/src/protocol/types.js";
 
@@ -81,10 +81,25 @@ export class CanonicalBody {
     committedPressure?: number;
     stateRoot?: string;
     omegaRoot?: string;
+    transitionRoot?: string;
   }): Promise<string | null> {
     if (!block.evidence) return "no evidence";
     if (block.difficulty !== this.omega.difficulty) return "difficulty is not the next difficulty";
     const before = this.omega;
+    const claim = transitionDigest(before, {
+      transactions: block.transactions ?? [],
+      evidence: block.evidence,
+      timestamp: block.timestamp,
+      nonce: block.nonce,
+      miner: block.miner,
+      committedPressure: block.committedPressure ?? 0,
+      couplings: openedCouplings(before),
+      difficulty: block.difficulty,
+      wasmAfter: null,
+    });
+    if (block.transitionRoot !== undefined && block.transitionRoot !== claim) {
+      return "transition is not this input";
+    }
     const committed = await this.commit({
       transactions: block.transactions ?? [],
       evidence: block.evidence,

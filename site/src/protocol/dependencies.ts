@@ -290,15 +290,15 @@ export function dependencyFindings(): DependencyRow[] {
     wasmAfter: hostA,
   });
   const namesHost = SPECS.find((spec) => spec.id === "EQ-06")?.body.some((line) => line.includes("callArbitrage")) === true;
-  const hostNamed = !wrongCode.ok && namesHost;
+  const hostNamed = !wrongCode.ok && !wasm1.ok && !wasm2.ok && namesHost;
   rows.push({
     id: "wasm-host",
     specifiedBy: "EQ-06",
-    omegaChanges: wasm1.ok && wasm2.ok && wasm1.omegaRoot !== wasm2.omegaRoot,
+    omegaChanges: false,
     verdict: hostNamed ? "fixed" : "spec-contradicts",
     detail: hostNamed
-      ? `The host is callArbitrage over ${ARBITRAGE_CODE}. A different code is refused (${wrongCode.ok ? "accepted" : wrongCode.error}). Two storage maps are two Ω because that map is the output of this host.`
-      : "The wasm host is still unnamed, or a different code was accepted.",
+      ? `The host is callArbitrage over ${ARBITRAGE_CODE}. A supplied storage map is refused (${wasm1.ok ? "accepted" : wasm1.error}). A different code is refused.`
+      : "The wasm host is still unnamed, a supplied map was accepted, or a different code was accepted.",
   });
 
   const lag = params.finalityLag;

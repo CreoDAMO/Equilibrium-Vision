@@ -116,6 +116,7 @@ const err = await replay.replay({
   committedPressure: 0,
   stateRoot: committed.stateRoot,
   omegaRoot: committed.omegaRoot,
+  transitionRoot: sealed.transitionRoot,
 });
 assert.equal(err, null);
 assert.deepEqual(omegaRecord(replay.omega), carriedView);

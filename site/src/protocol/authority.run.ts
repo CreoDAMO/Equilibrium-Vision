@@ -8,7 +8,7 @@ import { nextFinalizedHeight, stakeForFinality } from "../../../artifacts/api-se
 import { kernelParty } from "../../../artifacts/api-server/src/chain/kernel-genesis";
 import { wasmLeafOf as artifactsWasmLeaf } from "../../../artifacts/api-server/src/chain/wasm-leaf";
 import { BTC_GENESIS_HEADER_HEX, decodeHeaderHex, parseBtcHeader, verifyBtcPow } from "./btc";
-import { applySuccessor, cloneOmega, openedCouplings, stateRootOf, wasmLeafOf } from "./constitution";
+import { applySuccessor, cloneOmega, openedCouplings, stateRootOf, successor, wasmLeafOf } from "./constitution";
 import { ARBITRAGE_CODE } from "./evidence";
 import { activityKeys, minerKey, treasuryKey } from "./genesis";
 import { NETWORKS } from "./networks";
@@ -110,12 +110,25 @@ const called: TransitionEvidence = {
   ...evidence,
   wasm: [{ method: "pause", caller: "a".repeat(40) }],
 };
-const executed = step(cloneOmega(blank), new Map([["cell", "from-call"]]), called);
-assert.equal(executed.ok, true);
-if (!executed.ok) throw new Error("unreachable");
-assert.equal(executed.next.wasm.get("cell"), "from-call");
-assert.notEqual(stateRootOf(executed.next), stateRootOf(empty.next));
-assert.notEqual(executed.omegaRoot, empty.omegaRoot);
+const forged = step(cloneOmega(blank), new Map([["cell", "from-call"]]), called);
+assert.equal(forged.ok, false);
+if (forged.ok) throw new Error("forged wasm was installed");
+assert.match(forged.error, /wasm is executed by the successor/);
+const real = await successor(cloneOmega(blank), {
+  transactions: [],
+  evidence: { ...called, wasm: [{ method: "init", caller: "a".repeat(40) }] },
+  timestamp: 1_700_000_000,
+  nonce: 6,
+  miner: "a".repeat(40),
+  committedPressure: 0,
+  couplings: openedCouplings(blank),
+  difficulty: blank.difficulty,
+});
+assert.equal(real.ok, true);
+if (!real.ok) throw new Error(real.error);
+assert.equal(real.next.wasm.has("cell"), false);
+assert.notEqual(stateRootOf(real.next), stateRootOf(empty.next));
+assert.notEqual(real.omegaRoot, empty.omegaRoot);
 
 const quiet = step(cloneOmega(blank), null);
 const governed = cloneOmega(blank);

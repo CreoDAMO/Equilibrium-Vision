@@ -256,6 +256,8 @@ export interface Proposal {
   no: number;
   abstain: number;
   status: "open" | "passed" | "failed" | "executed";
+  /** Votes already consumed. Authority is not re-spent. */
+  ballots?: { voter: string; option: "yes" | "no" | "abstain" }[];
   couplingKey?: keyof Couplings;
   couplingValue?: number;
 }

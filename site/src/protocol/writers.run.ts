@@ -10,18 +10,19 @@ import { DEFAULT_COUPLINGS } from "./types";
 
 const node = new OrganismNode("testnet");
 const before = node.proposals.length;
-const balance = node.getAccount(node.actors[0]!.address).balance;
-const proposed = node.propose(node.actors[0]!.address, "stage only", 1);
+const proposer = [...node.validators.values()].find((v) => v.address !== node.miner.address)!.address;
+const balance = node.getAccount(proposer).balance;
+const proposed = node.propose(proposer, "stage only", 1);
 assert.equal(proposed.ok, true, proposed.error);
 assert.equal(node.proposals.length, before, "propose wrote Ω");
-assert.equal(node.getAccount(node.actors[0]!.address).balance, balance, "propose debited the ledger");
-const voted = node.vote(node.actors[0]!.address, proposed.id!, "yes");
+assert.equal(node.getAccount(proposer).balance, balance, "propose debited the ledger");
+const voted = node.vote(proposer, proposed.id!, "yes");
 assert.equal(voted.ok, true, voted.error);
 
 const mined = node.mine(node.tip!.timestamp + 1);
 assert.equal(mined.verified, true, mined.verifyNotes.join("; "));
 assert.ok(node.proposals.some((p) => p.id === proposed.id), "G did not install the staged proposal");
-assert.ok(node.getAccount(node.actors[0]!.address).balance < balance, "G did not take the deposit");
+assert.equal(node.getAccount(proposer).balance, balance - 1);
 
 const bare = node.fork();
 bare.validators.delete(bare.miner.address);

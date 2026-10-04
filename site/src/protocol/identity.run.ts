@@ -12,6 +12,7 @@ import {
   initialOmega,
   omegaDigest,
   openedCouplings,
+  stateRootOf,
   transitionDigest,
 } from "./constitution";
 import { ARBITRAGE_CODE } from "./evidence";
@@ -120,7 +121,8 @@ const bitsOnly = cloneOmega(foreign);
 bitsOnly.btc[0]!.bits = 9;
 bitsOnly.btc[0]!.merkleRoot = "22".repeat(32);
 bitsOnly.btc[0]!.prevHash = "33".repeat(32);
-assert.equal(omegaDigest(foreign), omegaDigest(bitsOnly));
+assert.notEqual(omegaDigest(foreign), omegaDigest(bitsOnly));
+assert.equal(stateRootOf(foreign), stateRootOf(bitsOnly));
 assert.deepEqual(foreignDifficultyFactor(foreign), foreignDifficultyFactor(bitsOnly));
 bitsOnly.btc[0]!.hash = "ac".repeat(32);
 assert.notEqual(omegaDigest(foreign), omegaDigest(bitsOnly));

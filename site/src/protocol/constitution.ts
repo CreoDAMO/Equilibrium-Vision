@@ -146,7 +146,7 @@ export function cloneOmega(omega: Omega): Omega {
     wasm: new Map(omega.wasm),
     validators: new Map([...omega.validators.entries()].map(([k, v]) => [k, { ...v }])),
     delegations: omega.delegations.map((d) => ({ ...d })),
-    proposals: omega.proposals.map((p) => ({ ...p })),
+    proposals: omega.proposals.map((p) => ({ ...p, ballots: [...(p.ballots ?? [])] })),
     models: omega.models.map((m) => ({ ...m })),
     settlements: omega.settlements.map((s) => ({ ...s })),
   };
@@ -184,15 +184,68 @@ export function openedCouplings(omega: Omega): Couplings {
   return next.couplings;
 }
 
-function credit(ledger: Map<string, AccountState>, addr: string, amount: number) {
+function isSafeNonNegative(x: number): boolean {
+  return Number.isSafeInteger(x) && x >= 0;
+}
+
+function isSafePositive(x: number): boolean {
+  return Number.isSafeInteger(x) && x > 0;
+}
+
+function safeAdd(a: number, b: number): number | null {
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b)) return null;
+  const sum = a + b;
+  return Number.isSafeInteger(sum) ? sum : null;
+}
+
+function safeSub(a: number, b: number): number | null {
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b)) return null;
+  const diff = a - b;
+  return Number.isSafeInteger(diff) ? diff : null;
+}
+
+/** Every monetary field G can reach. Invalid Ω is not a legal start, and not a legal result. */
+export function monetaryError(omega: Omega): string | null {
+  for (const acc of omega.ledger.values()) {
+    if (!isSafeNonNegative(acc.balance) || !isSafeNonNegative(acc.nonce)) return "balance refused";
+  }
+  for (const v of omega.validators.values()) {
+    if (!isSafeNonNegative(v.bondedStake)) return "bonded stake refused";
+    if (!isSafeNonNegative(v.accumulatedRewards)) return "reward refused";
+  }
+  for (const d of omega.delegations) {
+    if (!isSafePositive(d.amount)) return "delegate amount refused";
+  }
+  for (const p of omega.proposals) {
+    if (!isSafeNonNegative(p.deposit) || !isSafeNonNegative(p.yes) || !isSafeNonNegative(p.no) || !isSafeNonNegative(p.abstain)) {
+      return "proposal deposit refused";
+    }
+  }
+  return null;
+}
+
+function credit(ledger: Map<string, AccountState>, addr: string, amount: number): boolean {
+  if (!isSafeNonNegative(amount)) return false;
   const acc = ledger.get(addr) ?? { balance: 0, nonce: 0 };
-  ledger.set(addr, { balance: acc.balance + amount, nonce: acc.nonce });
+  if (!isSafeNonNegative(acc.balance)) return false;
+  if (amount === 0) {
+    if (!ledger.has(addr)) ledger.set(addr, { balance: acc.balance, nonce: acc.nonce });
+    return true;
+  }
+  const next = safeAdd(acc.balance, amount);
+  if (next === null) return false;
+  ledger.set(addr, { balance: next, nonce: acc.nonce });
+  return true;
 }
 
 function debit(ledger: Map<string, AccountState>, addr: string, amount: number): boolean {
+  if (!isSafeNonNegative(amount)) return false;
   const acc = ledger.get(addr) ?? { balance: 0, nonce: 0 };
-  if (acc.balance < amount) return false;
-  ledger.set(addr, { balance: acc.balance - amount, nonce: acc.nonce });
+  if (!isSafeNonNegative(acc.balance)) return false;
+  if (amount === 0) return true;
+  const next = safeSub(acc.balance, amount);
+  if (next === null) return false;
+  ledger.set(addr, { balance: next, nonce: acc.nonce });
   return true;
 }
 
@@ -234,7 +287,9 @@ export function stateRootOf(
 }
 
 function modelLeaf(models: ModelClaim[]): string {
-  return models.map((m) => `${m.id}:${m.status}:${m.residualFp}:${m.supportHash}`).join(";");
+  return models
+    .map((m) => `${m.id}:${m.status}:${m.residualFp}:${m.supportHash}:${encodeURIComponent(m.uri)}:${m.proposedAt}`)
+    .join(";");
 }
 
 function settlementLeaf(rows: Settlement[]): string {
@@ -256,21 +311,25 @@ export function omegaDigest(omega: Omega): string {
   const pools = [...omega.pools]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((p) => `${p.id}:${p.address}:${num(p.reserveA)}:${num(p.reserveB)}:${p.txCount}:${num(p.fee)}`);
-  const btc = omega.btc.map((h) => `${h.height}:${h.hash}`).join(";");
-  const eth = `${omega.ethPubkey}:${omega.eth.map((h) => `${h.slot}:${h.hash}`).join(";")}`;
+  const btc = omega.btc
+    .map((h) => `${h.height}:${h.hash}:${h.prevHash}:${h.merkleRoot}:${num(h.bits)}`)
+    .join(";");
+  const eth = `${omega.ethPubkey}:${omega.eth
+    .map((h) => `${h.slot}:${h.hash}:${h.participants}:${h.parentRoot}:${h.stateRoot}:${h.bodyRoot}`)
+    .join(";")}`;
   const wasm = wasmLeafOf(omega.wasm);
   const validators = [...omega.validators.values()]
     .sort((a, b) => (a.address < b.address ? -1 : 1))
     .map(
       (v) =>
-        `${v.address}:${num(v.bondedStake)}:${num(v.accumulatedRewards)}:${v.slashed ? 1 : 0}:${v.jailed ? 1 : 0}:${v.blocksProposed}:${num(v.commission)}`,
+        `${v.address}:${encodeURIComponent(v.moniker)}:${num(v.uptime)}:${num(v.bondedStake)}:${num(v.accumulatedRewards)}:${v.slashed ? 1 : 0}:${v.jailed ? 1 : 0}:${v.blocksProposed}:${num(v.commission)}`,
     );
   const delegations = omega.delegations.map((d) => `${d.delegator}>${d.validator}:${num(d.amount)}`).join(";");
   const proposals = omega.proposals
-    .map(
-      (p) =>
-        `${p.id}:${p.status}:${num(p.yes)}:${num(p.no)}:${num(p.abstain)}:${p.couplingKey ?? ""}:${p.couplingValue ?? ""}`,
-    )
+    .map((p) => {
+      const ballots = (p.ballots ?? []).map((b) => `${b.voter}:${b.option}`).join(",");
+      return `${p.id}:${p.status}:${encodeURIComponent(p.title)}:${p.proposer}:${num(p.deposit)}:${num(p.yes)}:${num(p.no)}:${num(p.abstain)}:${p.couplingKey ?? ""}:${p.couplingValue ?? ""}:${ballots}`;
+    })
     .join(";");
   const c = omega.couplings;
   const body = [
@@ -306,7 +365,6 @@ export function transitionDigest(omega: Omega, inputs: CanonicalInputs): string 
     .join(";");
   const evidence = inputs.evidence ? canonicalEvidence(inputs.evidence) : "";
   const c = inputs.couplings;
-  const wasm = inputs.wasmAfter ? wasmLeafOf(inputs.wasmAfter) : "";
   const body = [
     omega.tipHash,
     omegaDigest(omega),
@@ -318,7 +376,6 @@ export function transitionDigest(omega: Omega, inputs: CanonicalInputs): string 
     inputs.committedPressure.toFixed(6),
     String(inputs.difficulty),
     `${num(c.hash)},${num(c.structural)},${num(c.continuity)},${num(c.mempool)},${num(c.fees)}`,
-    wasm,
   ].join("|");
   return sha256Hex(`eq-transition|${body}`);
 }
@@ -390,28 +447,57 @@ export function adjustDifficulty(
   return Math.max(100_000, scaled);
 }
 
-function applyStake(omega: Omega, op: StakeEvidence, params: NetworkParams): string | null {
+/** Authority is read from Ω before this transition mutates it. Later stake ops do not rewrite it. */
+function authoritySnapshot(
+  omega: Omega,
+  quorumRatio: number,
+): { power: Map<string, number>; total: number; quorum: number } | string {
+  const power = new Map<string, number>();
+  let total = 0;
+  for (const v of omega.validators.values()) {
+    if (v.jailed || v.slashed || !isSafePositive(v.bondedStake)) continue;
+    const next = safeAdd(total, v.bondedStake);
+    if (next === null) return "bonded stake refused";
+    total = next;
+    power.set(v.address, v.bondedStake);
+  }
+  return { power, total, quorum: quorumRatio * total };
+}
+
+function applyStake(
+  omega: Omega,
+  op: StakeEvidence,
+  params: NetworkParams,
+  authority: { power: Map<string, number>; total: number; quorum: number },
+): string | null {
   if (op.op === "delegate") {
     const v = omega.validators.get(op.validator);
-    if (!v || v.jailed) return "delegate refused";
+    if (!v || v.jailed || v.slashed) return "delegate refused";
+    if (!isSafePositive(op.amount)) return "delegate amount refused";
+    const nextStake = safeAdd(v.bondedStake, op.amount);
+    if (nextStake === null) return "delegate amount refused";
     if (!debit(omega.ledger, op.delegator, op.amount)) return "delegate funds refused";
-    v.bondedStake += op.amount;
+    v.bondedStake = nextStake;
     omega.delegations.push({ delegator: op.delegator, validator: op.validator, amount: op.amount });
     return null;
   }
   if (op.op === "claim") {
     const v = omega.validators.get(op.address);
-    if (!v || v.accumulatedRewards <= 0) return "claim refused";
+    if (!v || !isSafePositive(v.accumulatedRewards)) return "claim refused";
     const amount = v.accumulatedRewards;
+    if (!credit(omega.ledger, op.address, amount)) return "claim refused";
     v.accumulatedRewards = 0;
-    credit(omega.ledger, op.address, amount);
     return null;
   }
   if (op.op === "slash") {
     const v = omega.validators.get(op.validator);
-    if (!v) return "slash refused";
+    if (!v || v.slashed || v.jailed) return "slash refused";
+    if (!isSafePositive(v.bondedStake)) return "slash refused";
     const burned = slashAmount(v.bondedStake, op.reason);
-    v.bondedStake -= burned;
+    if (!isSafeNonNegative(burned) || burned > v.bondedStake) return "slash refused";
+    const nextStake = safeSub(v.bondedStake, burned);
+    if (nextStake === null) return "slash refused";
+    v.bondedStake = nextStake;
     v.slashed = true;
     if (op.reason === "double_sign") v.jailed = true;
     return null;
@@ -419,15 +505,25 @@ function applyStake(omega: Omega, op: StakeEvidence, params: NetworkParams): str
   if (op.op === "vote") {
     const p = omega.proposals.find((x) => x.id === op.id);
     if (!p || p.status !== "open") return "vote refused";
-    const v = omega.validators.get(op.voter);
-    const power = v?.bondedStake ?? omega.ledger.get(op.voter)?.balance ?? 0;
-    if (power <= 0) return "vote refused";
-    p[op.option] += power;
-    const total = p.yes + p.no + p.abstain;
-    const bonded = [...omega.validators.values()].reduce((s, x) => s + x.bondedStake, 0);
-    if (total >= params.finalityQuorum * bonded) p.status = p.yes > p.no ? "passed" : "failed";
+    const power = authority.power.get(op.voter);
+    if (power === undefined) return "vote refused";
+    if ((p.ballots ?? []).some((b) => b.voter === op.voter)) return "vote already cast";
+    const tally = safeAdd(p[op.option], power);
+    if (tally === null) return "vote refused";
+    p[op.option] = tally;
+    p.ballots = [...(p.ballots ?? []), { voter: op.voter, option: op.option }];
+    const yesNo = safeAdd(p.yes, p.no);
+    const total = yesNo === null ? null : safeAdd(yesNo, p.abstain);
+    if (total !== null && authority.total > 0 && total >= authority.quorum) {
+      p.status = p.yes > p.no ? "passed" : "failed";
+    }
     return null;
   }
+  if (!authority.power.has(op.proposer)) return "proposal proposer unauthorized";
+  if (!isSafeNonNegative(op.deposit)) return "proposal deposit refused";
+  if (!Number.isSafeInteger(op.id) || op.id < 0) return "proposal deposit refused";
+  if (typeof op.title !== "string" || op.title.length > 80) return "proposal deposit refused";
+  if (omega.proposals.some((p) => p.id === op.id)) return "proposal already exists";
   if (!debit(omega.ledger, op.proposer, op.deposit)) return "proposal deposit refused";
   const couplingKeys = ["hash", "structural", "continuity", "mempool", "fees"] as const;
   let couplingKey: (typeof couplingKeys)[number] | undefined;
@@ -438,19 +534,18 @@ function applyStake(omega: Omega, op: StakeEvidence, params: NetworkParams): str
     couplingKey = op.couplingKey;
     couplingValue = op.couplingValue;
   }
-  if (!omega.proposals.some((p) => p.id === op.id)) {
-    omega.proposals.unshift({
-      id: op.id,
-      title: op.title,
-      proposer: op.proposer,
-      deposit: op.deposit,
-      yes: 0,
-      no: 0,
-      abstain: 0,
-      status: "open",
-      ...(couplingKey ? { couplingKey, couplingValue } : {}),
-    });
-  }
+  omega.proposals.unshift({
+    id: op.id,
+    title: op.title,
+    proposer: op.proposer,
+    deposit: op.deposit,
+    yes: 0,
+    no: 0,
+    abstain: 0,
+    status: "open",
+    ballots: [],
+    ...(couplingKey ? { couplingKey, couplingValue } : {}),
+  });
   return null;
 }
 
@@ -459,8 +554,10 @@ function applyMaterial(omega: Omega, ev: TransitionEvidence | undefined, params:
   if (ev.v !== 1) return "unknown evidence version";
   if (ev.chainId !== omega.chainId) return `evidence chain ${ev.chainId} is not ${omega.chainId}`;
   if (ev.wasmCode !== ARBITRAGE_CODE) return "wasm code is not this constitution";
+  const authority = authoritySnapshot(omega, params.finalityQuorum);
+  if (typeof authority === "string") return authority;
   for (const op of ev.stake) {
-    const refused = applyStake(omega, op, params);
+    const refused = applyStake(omega, op, params, authority);
     if (refused) return refused;
   }
   for (const item of ev.btc) {
@@ -561,7 +658,7 @@ function applySettlement(omega: Omega, item: SettlementEvidence): string | null 
   const row = omega.settlements.find((s) => s.id === item.id);
   if (!row || row.status !== "locked") return "settlement is not locked";
   if (!foreignKnown(omega, row.asset, row.foreignRef)) return "foreign observation left the window";
-  credit(omega.ledger, row.to, row.amount);
+  if (!credit(omega.ledger, row.to, row.amount)) return "settlement amount refused";
   row.status = "settled";
   return null;
 }
@@ -624,12 +721,16 @@ function applyEffects(
     if (!Number.isSafeInteger(tx.amount) || !Number.isSafeInteger(tx.fee) || tx.amount <= 0 || tx.fee < 0) {
       return "amount refused";
     }
+    const total = safeAdd(tx.amount, tx.fee);
+    if (total === null) return "amount refused";
     const sender = omega.ledger.get(tx.from) ?? { balance: 0, nonce: 0 };
-    const total = tx.amount + tx.fee;
+    if (!isSafeNonNegative(sender.nonce)) return "bad nonce";
     if (tx.nonce !== sender.nonce) return "bad nonce";
-    if (sender.balance < total) return "insufficient funds";
-    omega.ledger.set(tx.from, { balance: sender.balance - total, nonce: sender.nonce + 1 });
-    credit(omega.ledger, miner, tx.fee);
+    if (!isSafeNonNegative(sender.balance) || sender.balance < total) return "insufficient funds";
+    const left = safeSub(sender.balance, total);
+    if (left === null) return "amount refused";
+    omega.ledger.set(tx.from, { balance: left, nonce: sender.nonce + 1 });
+    if (!credit(omega.ledger, miner, tx.fee)) return "amount refused";
     const pool = omega.pools.find((p) => (p.address || poolAddress(p.id)) === tx.to);
     if (pool) {
       const out = applySwap(pool, pool.tokenA, tx.amount);
@@ -644,21 +745,27 @@ function applyEffects(
           timestamp: tx.timestamp,
         });
       }
-    } else {
-      credit(omega.ledger, tx.to, tx.amount);
+    } else if (!credit(omega.ledger, tx.to, tx.amount)) {
+      return "amount refused";
     }
   }
-  credit(omega.ledger, miner, reward);
+  if (!isSafeNonNegative(reward) || !credit(omega.ledger, miner, reward)) return "reward refused";
   return null;
+}
+
+class DerivedWasm {
+  constructor(readonly storage: Map<string, string>) {}
 }
 
 /**
  * The relation. One (Ω, inputs) value, one next Ω.
- * Wasm storage is not chosen here: the caller passes the bytes execution produced.
+ * Wasm storage is not an input. Only successor() can pass a DerivedWasm.
  */
-export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor {
+export function applySuccessor(omega: Omega, inputs: CanonicalInputs, derived?: DerivedWasm): Successor {
   const params = paramsOf(omega.chainId);
   if (!params) return { ok: false, error: "unknown chain" };
+  const invalid = monetaryError(omega);
+  if (invalid) return { ok: false, error: invalid };
   if (inputs.difficulty !== omega.difficulty) return { ok: false, error: "difficulty is not the next difficulty" };
   if (!Number.isFinite(inputs.committedPressure) || inputs.committedPressure < 0 || inputs.committedPressure > 1) {
     return { ok: false, error: "pressure is not in [0,1]" };
@@ -694,8 +801,8 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor
   const materialError = applyMaterial(next, inputs.evidence, params);
   if (materialError) return { ok: false, error: materialError };
   if (inputs.evidence?.wasm.length) {
-    if (!inputs.wasmAfter) return { ok: false, error: "wasm execution missing" };
-    next.wasm = new Map(inputs.wasmAfter);
+    if (!(derived instanceof DerivedWasm)) return { ok: false, error: "wasm is executed by the successor" };
+    next.wasm = new Map(derived.storage);
   }
   const height = omega.height + 1;
   const txHashes = inputs.transactions.map((t) => t.hash);
@@ -733,7 +840,10 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor
   if (bindError) return { ok: false, error: bindError };
   const minerV = next.validators.get(inputs.miner);
   if (minerV) minerV.blocksProposed += 1;
-  distribute(next.validators, reward - split.liquid);
+  const distributed = distribute(next.validators, reward - split.liquid);
+  if (distributed) return { ok: false, error: distributed };
+  const still = monetaryError(next);
+  if (still) return { ok: false, error: still };
   next.height = height;
   next.tipTimestamp = inputs.timestamp;
   const blockTime =
@@ -763,12 +873,27 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs): Successor
   };
 }
 
-function distribute(validators: Map<string, ValidatorRecord>, staked: number) {
-  if (staked <= 0) return;
-  const live = [...validators.values()].filter((x) => !x.jailed && !x.slashed);
-  const total = live.reduce((s, x) => s + x.bondedStake, 0);
-  if (total <= 0) return;
-  for (const x of live) x.accumulatedRewards += Math.floor((staked * x.bondedStake) / total);
+function distribute(validators: Map<string, ValidatorRecord>, staked: number): string | null {
+  if (!isSafeNonNegative(staked)) return "reward refused";
+  if (staked === 0) return null;
+  const live = [...validators.values()].filter((x) => !x.jailed && !x.slashed && isSafePositive(x.bondedStake));
+  let total = 0;
+  for (const x of live) {
+    const next = safeAdd(total, x.bondedStake);
+    if (next === null) return "bonded stake refused";
+    total = next;
+  }
+  if (!isSafePositive(total)) return "bonded stake refused";
+  for (const x of live) {
+    const product = safeAdd(0, staked * x.bondedStake);
+    if (product === null || !Number.isSafeInteger(staked * x.bondedStake)) return "reward refused";
+    const share = Math.floor((staked * x.bondedStake) / total);
+    if (!isSafeNonNegative(share)) return "reward refused";
+    const next = safeAdd(x.accumulatedRewards, share);
+    if (next === null) return "reward refused";
+    x.accumulatedRewards = next;
+  }
+  return null;
 }
 
 async function executeWasm(omega: Omega, ev: TransitionEvidence, blockNumber: number): Promise<Map<string, string> | string> {
@@ -782,15 +907,15 @@ async function executeWasm(omega: Omega, ev: TransitionEvidence, blockNumber: nu
   return storage;
 }
 
-/** Constitution entry. Executes wasm. Does not accept a storage cache. */
+/** Constitution entry. Executes wasm. A caller-supplied map is not Ω.wasm. */
 export async function successor(omega: Omega, inputs: Omit<CanonicalInputs, "wasmAfter">): Promise<Successor> {
-  let wasmAfter: Map<string, string> | null = null;
+  let derived: DerivedWasm | undefined;
   if (inputs.evidence?.wasm.length) {
     const executed = await executeWasm(omega, inputs.evidence, Math.max(0, omega.height));
     if (typeof executed === "string") return { ok: false, error: executed };
-    wasmAfter = executed;
+    derived = new DerivedWasm(executed);
   }
-  return applySuccessor(omega, { ...inputs, wasmAfter });
+  return applySuccessor(omega, { ...inputs, wasmAfter: null }, derived);
 }
 
 /** Ω before any block. Two networks are not the same object. */
