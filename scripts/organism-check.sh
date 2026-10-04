@@ -21,5 +21,6 @@ fi
 
 for f in site/src/protocol/*.run.ts; do
   echo "== $f =="
-  NODE_ENV=production run_tsx "$f"
+  # pnpm --filter exec runs inside that package. The path has to be absolute.
+  NODE_ENV=production run_tsx "$ROOT/$f"
 done
