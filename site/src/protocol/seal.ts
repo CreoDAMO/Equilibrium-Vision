@@ -85,6 +85,7 @@ export function omegaRecord(omega: Omega) {
     pools,
     btc: omega.btc.map((h) => ({ ...h })),
     ethPubkey: omega.ethPubkey,
+    ethCommittee: omega.ethCommittee ?? "",
     eth: omega.eth.map((h) => ({ ...h })),
     wasm: [...omega.wasm.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
     validators,

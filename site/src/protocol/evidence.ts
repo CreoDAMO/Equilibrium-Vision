@@ -14,8 +14,10 @@ export function canonicalEvidence(ev: TransitionEvidence): string {
   const eth = ev.eth
     .map((e) =>
       e.op === "bootstrap"
-        ? `b:${e.pubkey}`
-        : `h:${e.slot}:${e.proposerIndex}:${e.parentRoot}:${e.stateRoot}:${e.bodyRoot}:${e.participation}:${e.signature}`,
+        ? `b:${e.committee}:${e.aggregate}`
+        : e.op === "rotate"
+          ? `r:${e.committee}:${e.aggregate}:${e.participation}:${e.signature}`
+          : `h:${e.slot}:${e.proposerIndex}:${e.parentRoot}:${e.stateRoot}:${e.bodyRoot}:${e.participation}:${e.signature}`,
     )
     .join(";");
   const wasm = ev.wasm.map((w) => `${w.method}:${w.caller}`).join(";");

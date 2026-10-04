@@ -100,7 +100,8 @@ export interface BtcEvidence {
 }
 
 export type EthEvidence =
-  | { op: "bootstrap"; pubkey: string }
+  | { op: "bootstrap"; committee: string; aggregate: string }
+  | { op: "rotate"; committee: string; aggregate: string; participation: string; signature: string }
   | {
       op: "header";
       slot: number;
@@ -500,6 +501,8 @@ export interface PersistedBody {
   btcHeaders?: BtcHeaderRecord[];
   wasmStorage?: Array<[string, string]>;
   ethPubkey?: string;
+  /** 512 compressed keys. The aggregate on ethPubkey is derived from these. */
+  ethCommittee?: string;
   ethHeaders?: EthHeaderRecord[];
   difficulty: number;
   couplings: Couplings;

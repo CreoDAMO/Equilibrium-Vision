@@ -38,7 +38,14 @@ pub(super) struct BtcEv {
 #[serde(tag = "op")]
 pub(super) enum EthOp {
     #[serde(rename = "bootstrap")]
-    Bootstrap { pubkey: String },
+    Bootstrap { committee: String, aggregate: String },
+    #[serde(rename = "rotate")]
+    Rotate {
+        committee: String,
+        aggregate: String,
+        participation: String,
+        signature: String,
+    },
     #[serde(rename = "header")]
     Header {
         slot: i64,
@@ -226,7 +233,13 @@ pub(super) fn canonical_evidence(body: &EvidenceBody) -> Result<String, String> 
 
 fn eth_line(op: &EthOp) -> String {
     match op {
-        EthOp::Bootstrap { pubkey } => format!("b:{pubkey}"),
+        EthOp::Bootstrap { committee, aggregate } => format!("b:{committee}:{aggregate}"),
+        EthOp::Rotate {
+            committee,
+            aggregate,
+            participation,
+            signature,
+        } => format!("r:{committee}:{aggregate}:{participation}:{signature}"),
         EthOp::Header {
             slot,
             proposer_index,
@@ -701,16 +714,35 @@ const ETH_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
 
 fn apply_eth(omega: &mut OmegaSnap, item: &EthOp) -> Result<(), String> {
     match item {
-        EthOp::Bootstrap { pubkey } => {
-            if !omega.eth_pubkey.is_empty() {
+        EthOp::Bootstrap { committee, aggregate } => {
+            if !omega.eth_committee.is_empty() {
                 return Err("eth committee already installed".into());
             }
-            let raw = decode_hex(pubkey).map_err(|_| "eth pubkey is not hex")?;
-            if raw.len() != 48 {
-                return Err("eth pubkey must be 48 bytes".into());
+            install_committee(omega, committee, aggregate)
+        }
+        EthOp::Rotate {
+            committee,
+            aggregate,
+            participation,
+            signature,
+        } => {
+            if omega.eth_committee.is_empty() {
+                return Err("eth header before committee".into());
             }
-            omega.eth_pubkey = hex::encode(raw);
-            Ok(())
+            committee_bound(omega)?;
+            let bits = participation_bytes(participation).ok_or("participation refused")?;
+            if popcount(&bits) < ETH_MIN_PARTICIPANTS {
+                return Err("eth quorum not met".into());
+            }
+            let next = committee_bytes(committee).ok_or("eth rotation refused")?;
+            let sig = read_signature(signature).ok_or("eth rotation refused")?;
+            let current = committee_bytes(&omega.eth_committee).ok_or("eth rotation refused")?;
+            let agg = selected_aggregate(&current, &bits).map_err(|()| "eth rotation refused")?;
+            let payload = rotation_payload(&next);
+            if !verify_eth_signature(&agg, &payload, &sig) {
+                return Err("eth rotation refused".into());
+            }
+            install_committee(omega, committee, aggregate)
         }
         EthOp::Header {
             slot,
@@ -721,9 +753,10 @@ fn apply_eth(omega: &mut OmegaSnap, item: &EthOp) -> Result<(), String> {
             participation,
             signature,
         } => {
-            if omega.eth_pubkey.is_empty() {
+            if omega.eth_committee.is_empty() {
                 return Err("eth header before committee".into());
             }
+            committee_bound(omega)?;
             let bits = match participation_bytes(participation) {
                 Some(bits) => bits,
                 None => return Err("participation refused".into()),
@@ -740,9 +773,9 @@ fn apply_eth(omega: &mut OmegaSnap, item: &EthOp) -> Result<(), String> {
                     return Err("eth parent does not match the tip".into());
                 }
             }
-            let sig = match decode_hex(signature) {
-                Ok(bytes) => bytes,
-                Err(()) => return Err("eth signature is not hex".into()),
+            let sig = match read_signature(signature) {
+                Some(bytes) => bytes,
+                None => return Err("eth signature refused".into()),
             };
             let hash = hash_eth_header(
                 *slot,
@@ -753,8 +786,9 @@ fn apply_eth(omega: &mut OmegaSnap, item: &EthOp) -> Result<(), String> {
                 &bits,
             )
             .ok_or("eth signature refused")?;
-            let pubkey = decode_hex(&omega.eth_pubkey).map_err(|_| "eth signature refused")?;
-            if !verify_eth_signature(&pubkey, &hash, &sig) {
+            let current = committee_bytes(&omega.eth_committee).ok_or("eth signature refused")?;
+            let agg = selected_aggregate(&current, &bits).map_err(|()| "eth signature refused")?;
+            if !verify_eth_signature(&agg, &hash, &sig) {
                 return Err("eth signature refused".into());
             }
             omega.eth.push(super::EthSnap {
@@ -769,6 +803,101 @@ fn apply_eth(omega: &mut OmegaSnap, item: &EthOp) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn install_committee(omega: &mut OmegaSnap, committee: &str, claimed: &str) -> Result<(), String> {
+    let raw = committee_bytes(committee).ok_or("eth committee refused")?;
+    let derived = aggregate_keys(&raw).map_err(|_| "eth committee refused")?;
+    let claim = claimed
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X")
+        .to_ascii_lowercase();
+    let derived_hex = hex::encode(&derived);
+    if claim != derived_hex {
+        return Err("eth aggregate is not the committee".into());
+    }
+    omega.eth_committee = hex::encode(raw);
+    omega.eth_pubkey = derived_hex;
+    Ok(())
+}
+
+fn committee_bound(omega: &OmegaSnap) -> Result<(), String> {
+    if omega.eth_committee.is_empty() {
+        return Ok(());
+    }
+    let raw = committee_bytes(&omega.eth_committee).ok_or("eth committee is not bound")?;
+    let derived = aggregate_keys(&raw).map_err(|_| "eth committee is not bound")?;
+    if hex::encode(derived) != omega.eth_pubkey {
+        return Err("eth committee is not bound".into());
+    }
+    Ok(())
+}
+
+fn committee_bytes(text: &str) -> Option<Vec<u8>> {
+    let raw = decode_hex(text).ok()?;
+    if raw.len() != 512 * 48 {
+        return None;
+    }
+    Some(raw)
+}
+
+fn read_signature(text: &str) -> Option<Vec<u8>> {
+    let raw = decode_hex(text).ok()?;
+    if raw.len() != 96 {
+        return None;
+    }
+    Some(raw)
+}
+
+fn bit_on(bits: &[u8; 64], index: usize) -> bool {
+    bits[index >> 3] & (1u8 << (index & 7)) != 0
+}
+
+fn aggregate_keys(keys: &[u8]) -> Result<Vec<u8>, ()> {
+    use bls12_381::{G1Affine, G1Projective};
+
+    if keys.is_empty() || keys.len() % 48 != 0 {
+        return Err(());
+    }
+    let mut acc = G1Projective::identity();
+    for chunk in keys.chunks(48) {
+        let mut bytes = [0u8; 48];
+        bytes.copy_from_slice(chunk);
+        let Some(point) = Option::<G1Affine>::from(G1Affine::from_compressed(&bytes)) else {
+            return Err(());
+        };
+        acc += G1Projective::from(point);
+    }
+    if bool::from(acc.is_identity()) {
+        return Err(());
+    }
+    Ok(G1Affine::from(acc).to_compressed().to_vec())
+}
+
+fn selected_aggregate(committee: &[u8], bits: &[u8; 64]) -> Result<Vec<u8>, ()> {
+    if committee.len() != 512 * 48 {
+        return Err(());
+    }
+    let mut selected = Vec::new();
+    for index in 0..512 {
+        if !bit_on(bits, index) {
+            continue;
+        }
+        let start = index * 48;
+        selected.extend_from_slice(&committee[start..start + 48]);
+    }
+    aggregate_keys(&selected)
+}
+
+fn rotation_payload(next: &[u8]) -> [u8; 32] {
+    let mut pre = Vec::with_capacity(24 + next.len());
+    pre.extend_from_slice(b"equilibrium-eth-rotate-v1");
+    pre.extend_from_slice(next);
+    let digest = Sha256::digest(&pre);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
 }
 
 fn decode_hex(text: &str) -> Result<Vec<u8>, ()> {

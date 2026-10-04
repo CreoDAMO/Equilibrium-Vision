@@ -40,6 +40,8 @@ struct OmegaSnap {
     pools: Vec<PoolSnap>,
     btc: Vec<BtcSnap>,
     eth_pubkey: String,
+    #[serde(default)]
+    eth_committee: String,
     eth: Vec<EthSnap>,
     wasm: Vec<Vec<String>>,
     validators: Vec<ValidatorSnap>,
@@ -317,7 +319,11 @@ fn omega_preimage(omega: &OmegaSnap) -> String {
         })
         .collect::<Vec<_>>()
         .join(";");
-    let eth = format!("{}:{eth_rows}", omega.eth_pubkey);
+    let eth = if omega.eth_committee.is_empty() {
+        format!("{}:{eth_rows}", omega.eth_pubkey)
+    } else {
+        format!("{}:{}:{eth_rows}", omega.eth_pubkey, omega.eth_committee)
+    };
 
     let wasm = if omega.wasm.is_empty() {
         "none".to_string()
@@ -494,7 +500,7 @@ struct OpenedSuccessor {
 }
 
 /// One transition. Pre-state and I only. Ω′ is not an argument.
-/// Ethereum header signatures are not this execution.
+/// An Ethereum header is checked against the keys its bitset selects.
 fn apply_opened_successor(
     pre: &OmegaSnap,
     input: &TransitionSnap,
@@ -1085,7 +1091,7 @@ mod tests {
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("oracle {}: {err}", path.to_string_lossy()));
         let oracle: MembraneOracle = serde_json::from_str(&text).expect("membrane oracle json");
-        assert_eq!(oracle.cases.len(), 44, "oracle rows");
+        assert_eq!(oracle.cases.len(), 52, "oracle rows");
         let mut pay = String::new();
         let mut other = String::new();
         let mut eth_honest = String::new();

@@ -102,10 +102,11 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     title: "ETH sync bridge",
     layer: "whole",
     live: true,
-    summary: "BLS verification, quorum 342/512, then parent continuity. The bootstrap key and the signed header ride in the block. The secret does not. No EQU is minted. A key this process generates is not Ethereum's sync committee.",
+    summary: "BLS12-381 verification of the keys a participation bitset selects. Quorum is 342 of 512. The committee rides in the block; the aggregate is derived from it. The secrets do not. No EQU is minted. A committee this process generates is not Ethereum's sync committee.",
     methods: [
-      { id: 0, name: "bootstrap", note: "install an aggregate pubkey" },
-      { id: 2, name: "submit_header", note: "BLS + quorum + continuity, no credit" },
+      { id: 0, name: "bootstrap", note: "install 512 keys; the aggregate is derived" },
+      { id: 1, name: "rotate", note: "the current committee authorizes the next 512 keys" },
+      { id: 2, name: "submit_header", note: "subset aggregate + quorum + continuity, no credit" },
     ],
   },
   {

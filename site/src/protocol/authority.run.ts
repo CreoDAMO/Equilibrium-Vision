@@ -61,6 +61,7 @@ function omega(height: number): Omega {
     pools: [],
     btc: [],
     ethPubkey: "",
+    ethCommittee: "",
     eth: [],
     wasm: new Map(),
     validators: new Map(names.map((address) => [address, validator(address)])),

@@ -44,6 +44,7 @@ function omega(): Omega {
     pools: [],
     btc: [],
     ethPubkey: "",
+    ethCommittee: "",
     eth: [],
     wasm: new Map(),
     validators: new Map([

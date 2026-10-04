@@ -9,7 +9,7 @@ import { CanonicalBody } from "../../../artifacts/api-server/src/chain/canonical
 import { BTC_GENESIS_HEADER_HEX } from "./btc";
 import { successor, omegaDigest } from "./constitution";
 import { ARBITRAGE_CODE } from "./evidence";
-import { ethKeygen, hexOf, participationMask, signEthHeader } from "./eth-light";
+import { hexOf, participationMask, signSelected, syncCommittee } from "./eth-light";
 import { minerKey } from "./genesis";
 import { omegaRecord, sealFromSuccessor } from "./seal";
 import type { TransitionEvidence } from "./types";
@@ -21,7 +21,7 @@ const victim = [...kernel.omega.validators.values()].find((v) => v.address !== m
 assert.ok(victim, "a validator other than the miner exists");
 const bondedBefore = victim.bondedStake;
 
-const key = ethKeygen();
+const committee = syncCommittee(1);
 const fields = {
   slot: 7,
   proposerIndex: 3,
@@ -29,14 +29,15 @@ const fields = {
   stateRoot: "22".repeat(32),
   bodyRoot: "33".repeat(32),
 };
+const bits = participationMask(342);
 const evidence: TransitionEvidence = {
   v: 1,
   chainId: kernel.omega.chainId,
   wasmCode: ARBITRAGE_CODE,
   btc: [{ headerHex: BTC_GENESIS_HEADER_HEX, height: 0 }],
   eth: [
-    { op: "bootstrap", pubkey: hexOf(key.pubkey) },
-    { op: "header", ...fields, participation: hexOf(participationMask(342)), signature: hexOf(signEthHeader(key.secret, fields, participationMask(342))) },
+    { op: "bootstrap", committee: committee.committee, aggregate: committee.aggregate },
+    { op: "header", ...fields, participation: hexOf(bits), signature: hexOf(signSelected(committee.secrets, fields, bits)) },
   ],
   wasm: [{ method: "init", caller: miner }],
   stake: [{ op: "slash", validator: victim.address, reason: "double_sign" }],
@@ -84,6 +85,8 @@ assert.equal(slashed.bondedStake, bondedBefore - Math.floor(bondedBefore * 0.05)
 assert.equal(committed.record.wasm.length > 0, true);
 assert.equal(committed.record.btc.length, 1);
 assert.equal(committed.record.eth.length, 1);
+assert.equal(committed.record.ethPubkey, committee.aggregate);
+assert.equal(committed.record.ethCommittee, committee.committee);
 assert.equal(committed.record.ethPubkey.length, 96);
 
 const again = artifactsHeaderHash({

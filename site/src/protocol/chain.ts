@@ -44,14 +44,16 @@ import { decodeHeaderHex, parseBtcHeader, verifyBtcMerkle, verifyBtcPow } from "
 import { callArbitrage } from "./wasm-host";
 import {
   ETH_MIN_PARTICIPANTS,
-  ethKeygen,
+  committeeAggregate,
+  committeeRaw,
+  countParticipants,
   hashEthHeader,
   hexOf,
   hexToBytes as ethHex,
-  signEthHeader,
-  verifyEthHeader,
-  countParticipants,
   participationMask,
+  signSelected,
+  syncCommittee,
+  verifySelectedHeader,
 } from "./eth-light";
 import { asBlockNonce, participationBytes, popcount } from "./domain";
 import { onPlaneMessage } from "./network-plane";
@@ -105,7 +107,8 @@ export class OrganismNode {
   btcHeaders: BtcHeaderRecord[] = [];
   ethHeaders: EthHeaderRecord[] = [];
   ethPubkey = "";
-  private ethSecret: Uint8Array | null = null;
+  ethCommittee = "";
+  private ethSecrets: Uint8Array[] | null = null;
   wasmStorage = new Map<string, string>();
   announcements: string[] = [];
   peers: PeerRecord[] = [];
@@ -169,6 +172,7 @@ export class OrganismNode {
     n.btcHeaders = body.btcHeaders ?? [];
     n.ethHeaders = body.ethHeaders ?? [];
     n.ethPubkey = body.ethPubkey ?? "";
+    n.ethCommittee = body.ethCommittee ?? "";
     n.wasmStorage = new Map(body.wasmStorage ?? []);
     n.delegations = body.delegations ?? [];
     n.proposals = body.proposals ?? [];
@@ -202,7 +206,8 @@ export class OrganismNode {
     n.btcHeaders = this.btcHeaders.map((h) => ({ ...h }));
     n.ethHeaders = this.ethHeaders.map((h) => ({ ...h }));
     n.ethPubkey = this.ethPubkey;
-    n.ethSecret = this.ethSecret ? new Uint8Array(this.ethSecret) : null;
+    n.ethCommittee = this.ethCommittee;
+    n.ethSecrets = this.ethSecrets ? this.ethSecrets.map((secret) => new Uint8Array(secret)) : null;
     n.wasmStorage = new Map(this.wasmStorage);
     n.couplings = { ...this.couplings };
     n.difficulty = this.difficulty;
@@ -236,6 +241,7 @@ export class OrganismNode {
       pools: this.pools.map((p) => ({ ...p })),
       btc: this.btcHeaders.map((h) => ({ ...h })),
       ethPubkey: this.ethPubkey,
+      ethCommittee: this.ethCommittee,
       eth: this.ethHeaders.map((h) => ({ ...h })),
       wasm: new Map(this.wasmStorage),
       validators: new Map([...this.validators.entries()].map(([k, v]) => [k, { ...v }])),
@@ -253,6 +259,7 @@ export class OrganismNode {
     this.btcHeaders = next.btc;
     this.ethHeaders = next.eth;
     this.ethPubkey = next.ethPubkey;
+    this.ethCommittee = next.ethCommittee;
     this.wasmStorage = next.wasm;
     this.validators = next.validators;
     this.delegations = next.delegations;
@@ -836,12 +843,14 @@ export class OrganismNode {
     return { ok, code: result.code, logs: result.logs, error: ok ? undefined : `contract returned ${result.code}` };
   }
 
-  private ethStaged(): { pubkey: string; headers: EthHeaderRecord[] } {
+  private ethStaged(): { pubkey: string; committee: string; headers: EthHeaderRecord[] } {
     let pubkey = this.ethPubkey;
+    let committee = this.ethCommittee;
     const headers = this.ethHeaders.map((h) => ({ ...h }));
     for (const item of this.pending.eth) {
-      if (item.op === "bootstrap") {
-        pubkey = item.pubkey;
+      if (item.op === "bootstrap" || item.op === "rotate") {
+        pubkey = item.aggregate;
+        committee = item.committee;
         continue;
       }
       const fields = {
@@ -862,30 +871,44 @@ export class OrganismNode {
         participation: hexOf(bits),
       });
     }
-    return { pubkey, headers };
+    return { pubkey, committee, headers };
   }
 
   /**
-   * Queue a BLS aggregate key. The secret stays in this process and is not
-   * written into the block. This is not Ethereum's sync committee unless
-   * the caller supplies that committee's key.
+   * Queue a 512-key committee. The aggregate is derived here and checked
+   * again by G. Secrets stay in this process and are not written into the
+   * block. This is not Ethereum's sync committee.
    */
-  bootstrapEth(pubkeyHex?: string): { ok: boolean; error?: string; pubkey?: string } {
-    if (this.ethStaged().pubkey) return { ok: false, error: "already bootstrapped", pubkey: this.ethStaged().pubkey };
-    let pubkey: string;
-    if (pubkeyHex) {
-      const raw = ethHex(pubkeyHex.replace(/^0x/, ""));
-      if (raw.length !== 48) return { ok: false, error: "aggregate pubkey must be 48 bytes" };
-      pubkey = hexOf(raw);
-      this.ethSecret = null;
+  bootstrapEth(supplied?: { committee: string; aggregate: string }): {
+    ok: boolean;
+    error?: string;
+    pubkey?: string;
+    committee?: string;
+  } {
+    const staged = this.ethStaged();
+    if (staged.committee) return { ok: false, error: "already bootstrapped", pubkey: staged.pubkey };
+    let committee: string;
+    let aggregate: string;
+    if (supplied) {
+      const raw = committeeRaw(supplied.committee);
+      const derived = raw ? committeeAggregate(supplied.committee) : null;
+      if (!raw || !derived) return { ok: false, error: "eth committee refused" };
+      const claim = supplied.aggregate.trim().replace(/^0x/i, "").toLowerCase();
+      if (claim !== derived) return { ok: false, error: "eth aggregate is not the committee" };
+      committee = hexOf(raw);
+      aggregate = derived;
+      this.ethSecrets = null;
     } else {
-      const key = ethKeygen();
-      this.ethSecret = key.secret;
-      pubkey = hexOf(key.pubkey);
+      const buf = new Uint32Array(1);
+      crypto.getRandomValues(buf);
+      const built = syncCommittee((buf[0]! % 0x7ffffffe) + 1);
+      committee = built.committee;
+      aggregate = built.aggregate;
+      this.ethSecrets = built.secrets.map((secret) => new Uint8Array(secret));
     }
-    this.pending.eth.push({ op: "bootstrap", pubkey });
-    this.emit("in", "verify", `ETH committee queued · ${pubkey.slice(0, 16)}… · no credit`);
-    return { ok: true, pubkey };
+    this.pending.eth.push({ op: "bootstrap", committee, aggregate });
+    this.emit("in", "verify", `ETH committee queued · ${aggregate.slice(0, 16)}… · no credit`);
+    return { ok: true, pubkey: aggregate, committee };
   }
 
   submitEthHeader(header: {
@@ -898,7 +921,7 @@ export class OrganismNode {
     signature: string;
   }): { ok: boolean; error?: string; hash?: string } {
     const staged = this.ethStaged();
-    if (!staged.pubkey) return { ok: false, error: "not bootstrapped" };
+    if (!staged.committee) return { ok: false, error: "not bootstrapped" };
     let bits: Uint8Array;
     try {
       bits = participationBytes(header.participation);
@@ -924,7 +947,7 @@ export class OrganismNode {
     } catch {
       return { ok: false, error: "signature is not hex" };
     }
-    if (!verifyEthHeader(ethHex(staged.pubkey), fields, sig, bits)) return { ok: false, error: "bad signature" };
+    if (!verifySelectedHeader(staged.committee, fields, sig, bits)) return { ok: false, error: "bad signature" };
     const hash = hexOf(hashEthHeader(fields, bits));
     this.pending.eth.push({
       op: "header",
@@ -940,7 +963,7 @@ export class OrganismNode {
     return { ok: true, hash };
   }
 
-  /** Sign the next header with the in-process key. Refuses if that key was not kept. */
+  /** Sign the next header with the in-process committee. Refuses if those secrets were not kept. */
   signNextEthHeader(bodyRoot: string, stateRoot: string): { ok: boolean; error?: string; header?: {
     slot: number;
     proposerIndex: number;
@@ -950,7 +973,7 @@ export class OrganismNode {
     participation: string;
     signature: string;
   } } {
-    if (!this.ethSecret) return { ok: false, error: "no local signing key" };
+    if (!this.ethSecrets) return { ok: false, error: "no local signing key" };
     const tip = this.ethStaged().headers.at(-1);
     const fields = {
       slot: tip ? tip.slot + 1 : 1,
@@ -961,7 +984,7 @@ export class OrganismNode {
     };
     const bits = participationMask(ETH_MIN_PARTICIPANTS);
     if (countParticipants(bits) < ETH_MIN_PARTICIPANTS) return { ok: false, error: "mask short" };
-    const signature = hexOf(signEthHeader(this.ethSecret, fields, bits));
+    const signature = hexOf(signSelected(this.ethSecrets, fields, bits));
     return { ok: true, header: { ...fields, participation: hexOf(bits), signature } };
   }
 
@@ -1074,6 +1097,7 @@ export class OrganismNode {
       btcHeaders: this.btcHeaders,
       wasmStorage: [...this.wasmStorage.entries()],
       ethPubkey: this.ethPubkey,
+      ethCommittee: this.ethCommittee,
       ethHeaders: this.ethHeaders,
       delegations: this.delegations,
       proposals: this.proposals,
@@ -1577,8 +1601,11 @@ export class OrganismNode {
     this.pools = kin.pools;
     this.swaps = kin.swaps;
     this.btcHeaders = kin.btcHeaders;
+    const previousCommittee = this.ethCommittee;
     this.ethHeaders = kin.ethHeaders;
     this.ethPubkey = kin.ethPubkey;
+    this.ethCommittee = kin.ethCommittee;
+    if (this.ethCommittee !== previousCommittee) this.ethSecrets = null;
     this.wasmStorage = kin.wasmStorage;
     this.couplings = { ...kin.couplings };
     this.difficulty = kin.difficulty;
@@ -1982,7 +2009,7 @@ export class OrganismNode {
         tipHeight: this.btcHeaders[this.btcHeaders.length - 1]?.height ?? null,
       },
       eth: {
-        bootstrapped: this.ethPubkey.length > 0,
+        bootstrapped: this.ethCommittee.length > 0,
         tipSlot: this.ethHeaders[this.ethHeaders.length - 1]?.slot ?? null,
         tipHash: this.ethHeaders[this.ethHeaders.length - 1]?.hash ?? null,
       },

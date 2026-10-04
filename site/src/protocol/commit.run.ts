@@ -76,6 +76,7 @@ function snap(current: Omega) {
       bits: h.bits,
     })),
     ethPubkey: current.ethPubkey,
+    ethCommittee: current.ethCommittee ?? "",
     eth: current.eth.map((h) => ({
       slot: h.slot,
       hash: h.hash,

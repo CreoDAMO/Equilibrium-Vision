@@ -6,10 +6,13 @@ import { decodeHeaderHex, parseBtcHeader, verifyBtcPow } from "./btc";
 import { callArbitrage } from "./wasm-host";
 import {
   ETH_MIN_PARTICIPANTS,
+  committeeAggregate,
+  committeeRaw,
   hashEthHeader,
   hexOf,
   hexToBytes as ethHex,
-  verifyEthHeader,
+  verifyRotation,
+  verifySelectedHeader,
 } from "./eth-light";
 import { participationBytes, popcount, U64_MAX } from "./domain";
 import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
@@ -63,6 +66,8 @@ export interface Omega {
   pools: DexPool[];
   btc: BtcHeaderRecord[];
   ethPubkey: string;
+  /** 512 compressed keys, hex. Empty until a committee is installed. The aggregate is derived from this. */
+  ethCommittee: string;
   eth: EthHeaderRecord[];
   wasm: Map<string, string>;
   validators: Map<string, ValidatorRecord>;
@@ -144,6 +149,7 @@ export function cloneOmega(omega: Omega): Omega {
     pools: omega.pools.map((p) => ({ ...p })),
     btc: omega.btc.map((h) => ({ ...h })),
     ethPubkey: omega.ethPubkey,
+    ethCommittee: omega.ethCommittee ?? "",
     eth: omega.eth.map((h) => ({ ...h })),
     wasm: new Map(omega.wasm),
     validators: new Map([...omega.validators.entries()].map(([k, v]) => [k, { ...v }])),
@@ -316,9 +322,11 @@ export function omegaDigest(omega: Omega): string {
   const btc = omega.btc
     .map((h) => `${h.height}:${h.hash}:${h.prevHash}:${h.merkleRoot}:${num(h.bits)}`)
     .join(";");
-  const eth = `${omega.ethPubkey}:${omega.eth
+  const headers = omega.eth
     .map((h) => `${h.slot}:${h.hash}:${h.participants}:${h.participation}:${h.parentRoot}:${h.stateRoot}:${h.bodyRoot}`)
-    .join(";")}`;
+    .join(";");
+  const committee = omega.ethCommittee ?? "";
+  const eth = committee ? `${omega.ethPubkey}:${committee}:${headers}` : `${omega.ethPubkey}:${headers}`;
   const wasm = wasmLeafOf(omega.wasm);
   const validators = [...omega.validators.values()]
     .sort((a, b) => (a.address < b.address ? -1 : 1))
@@ -554,6 +562,34 @@ function applyStake(
   return null;
 }
 
+function installCommittee(omega: Omega, committeeHex: string, claimed: string): string | null {
+  const raw = committeeRaw(committeeHex);
+  if (!raw) return "eth committee refused";
+  const derived = committeeAggregate(committeeHex);
+  if (!derived) return "eth committee refused";
+  const claim = claimed.trim().replace(/^0x/i, "").toLowerCase();
+  if (claim !== derived) return "eth aggregate is not the committee";
+  omega.ethCommittee = hexOf(raw);
+  omega.ethPubkey = derived;
+  return null;
+}
+
+function committeeBound(omega: Omega): string | null {
+  if (!omega.ethCommittee) return null;
+  const derived = committeeAggregate(omega.ethCommittee);
+  if (!derived || derived !== omega.ethPubkey) return "eth committee is not bound";
+  return null;
+}
+
+function readSignature(hex: string): Uint8Array | null {
+  try {
+    const raw = ethHex(hex.replace(/^0x/, ""));
+    return raw.length === 96 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
 function applyMaterial(omega: Omega, ev: TransitionEvidence | undefined, params: NetworkParams): string | null {
   if (!ev) return null;
   if (ev.v !== 1) return "unknown evidence version";
@@ -586,19 +622,31 @@ function applyMaterial(omega: Omega, ev: TransitionEvidence | undefined, params:
     if (omega.btc.length > 2016) omega.btc.shift();
   }
   for (const item of ev.eth) {
-    if (item.op === "bootstrap") {
-      if (omega.ethPubkey) return "eth committee already installed";
-      let raw: Uint8Array;
-      try {
-        raw = ethHex(item.pubkey.replace(/^0x/, ""));
-      } catch {
-        return "eth pubkey is not hex";
+    if (item.op === "bootstrap" || item.op === "rotate") {
+      if (item.op === "bootstrap") {
+        if (omega.ethCommittee) return "eth committee already installed";
+      } else {
+        if (!omega.ethCommittee) return "eth header before committee";
+        const bound = committeeBound(omega);
+        if (bound) return bound;
+        let bits: Uint8Array;
+        try {
+          bits = participationBytes(item.participation);
+        } catch {
+          return "participation refused";
+        }
+        if (popcount(bits) < ETH_MIN_PARTICIPANTS) return "eth quorum not met";
+        const next = committeeRaw(item.committee);
+        const sig = readSignature(item.signature);
+        if (!next || !sig || !verifyRotation(omega.ethCommittee, bits, sig, next)) return "eth rotation refused";
       }
-      if (raw.length !== 48) return "eth pubkey must be 48 bytes";
-      omega.ethPubkey = hexOf(raw);
+      const installed = installCommittee(omega, item.committee, item.aggregate);
+      if (installed) return installed;
       continue;
     }
-    if (!omega.ethPubkey) return "eth header before committee";
+    if (!omega.ethCommittee) return "eth header before committee";
+    const bound = committeeBound(omega);
+    if (bound) return bound;
     let bits: Uint8Array;
     try {
       bits = participationBytes(item.participation);
@@ -619,13 +667,8 @@ function applyMaterial(omega: Omega, ev: TransitionEvidence | undefined, params:
       if (item.slot !== tip.slot + 1) return "eth slot does not extend the tip";
       if (item.parentRoot !== tip.hash) return "eth parent does not match the tip";
     }
-    let sig: Uint8Array;
-    try {
-      sig = ethHex(item.signature.replace(/^0x/, ""));
-    } catch {
-      return "eth signature is not hex";
-    }
-    if (!verifyEthHeader(ethHex(omega.ethPubkey), fields, sig, bits)) return "eth signature refused";
+    const sig = readSignature(item.signature);
+    if (!sig || !verifySelectedHeader(omega.ethCommittee, fields, sig, bits)) return "eth signature refused";
     omega.eth.push({
       slot: item.slot,
       hash: hexOf(hashEthHeader(fields, bits)),
@@ -948,6 +991,7 @@ export function initialOmega(network: NetworkId): Omega {
     pools: [],
     btc: [],
     ethPubkey: "",
+    ethCommittee: "",
     eth: [],
     wasm: new Map(),
     validators: new Map(),

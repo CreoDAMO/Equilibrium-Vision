@@ -23,7 +23,7 @@ import {
 import { poolAddress } from "./dex";
 import { jsonText } from "./domain";
 import { canonicalEvidence } from "./evidence";
-import { ethKeygen, hashEthHeader, hexOf, participationMask, signEthHeader } from "./eth-light";
+import { committeeAggregate, hashEthHeader, hexOf, participationMask, signRotation, signSelected, syncCommittee } from "./eth-light";
 import { activityKeys, minerKey } from "./genesis";
 import { challengeBinding, modelBinding, residualBinding } from "./membranes";
 import { blankEvidence, sealFromSuccessor } from "./seal";
@@ -78,6 +78,7 @@ function snap(current: Omega) {
     })),
     btc: current.btc.map((h) => ({ ...h })),
     ethPubkey: current.ethPubkey,
+    ethCommittee: current.ethCommittee ?? "",
     eth: current.eth.map((h) => ({ ...h })),
     wasm: [...current.wasm.entries()],
     validators: [...current.validators.values()].map((v) => ({ ...v })),
@@ -366,9 +367,8 @@ const releaseIn = spec(lockStepped.next, {
 const releaseSite = run(lockStepped.next, releaseIn);
 assert.equal(releaseSite.ok, true);
 
-const secret = new Uint8Array(32);
-secret[31] = 7;
-const ethKey = ethKeygen(secret);
+const committee = syncCommittee(1);
+const otherCommittee = syncCommittee(2);
 const ethFields = {
   slot: 7,
   proposerIndex: 3,
@@ -376,25 +376,27 @@ const ethFields = {
   stateRoot: "22".repeat(32),
   bodyRoot: "33".repeat(32),
 };
-const ethPub = hexOf(ethKey.pubkey);
 const bits342 = participationMask(342);
-const ethSig = hexOf(signEthHeader(ethKey.secret, ethFields, bits342));
+const ethSig = hexOf(signSelected(committee.secrets, ethFields, bits342));
+const ethBoot = { op: "bootstrap" as const, committee: committee.committee, aggregate: committee.aggregate };
 function ethHeader(count: number, fields = ethFields, signature?: string) {
   const bits = participationMask(count);
+  const signed =
+    signature ??
+    (fields === ethFields && count === 342
+      ? ethSig
+      : hexOf(signSelected(committee.secrets, fields, bits)));
   return {
     op: "header" as const,
     ...fields,
     participation: hexOf(bits),
-    signature: signature ?? hexOf(signEthHeader(ethKey.secret, fields, bits)),
+    signature: signed,
   };
 }
 function ethEvidence(count: number, fields = ethFields, signature?: string): TransitionEvidence {
   return {
     ...blankEvidence(1),
-    eth: [
-      { op: "bootstrap", pubkey: ethPub },
-      ethHeader(count, fields, signature),
-    ],
+    eth: [ethBoot, ethHeader(count, fields, signature)],
   };
 }
 const ethIn = spec(born, ethEvidence(342));
@@ -406,7 +408,8 @@ if (!ethStepped.ok) throw new Error(ethStepped.error);
 assert.equal(ethStepped.next.eth.length, 1);
 assert.equal(ethStepped.next.eth[0]!.participants, 342);
 assert.equal(ethStepped.next.eth[0]!.hash, hexOf(hashEthHeader(ethFields, bits342)));
-assert.equal(ethStepped.next.ethPubkey, ethPub);
+assert.equal(ethStepped.next.ethPubkey, committee.aggregate);
+assert.equal(ethStepped.next.ethCommittee, committee.committee);
 
 const badSig = ethSig.slice(0, -1) + (ethSig.endsWith("a") ? "b" : "a");
 const badSigIn = spec(born, ethEvidence(342, ethFields, badSig));
@@ -422,7 +425,7 @@ assert.equal(badFieldSite.ok, false);
 if (badFieldSite.ok) throw new Error("bad eth field");
 assert.equal(badFieldSite.error, "eth signature refused");
 
-const quorumIn = spec(born, ethEvidence(341));
+const quorumIn = spec(born, ethEvidence(341, ethFields, "11".repeat(96)));
 const quorumSite = run(born, quorumIn);
 assert.equal(quorumSite.ok, false);
 if (quorumSite.ok) throw new Error("quorum");
@@ -452,7 +455,7 @@ function composedEvidence(headerHex: string): TransitionEvidence {
     ...blankEvidence(1),
     btc: [{ height: 0, headerHex }],
     eth: [
-      { op: "bootstrap", pubkey: ethPub },
+      { op: "bootstrap", committee: committee.committee, aggregate: committee.aggregate },
       { op: "header", ...ethFields, participation: hexOf(bits342), signature: ethSig },
     ],
     wasm: [{ method: "init", caller: miner }],
@@ -662,9 +665,9 @@ const extendFields = {
 const extendIn = spec(born, {
   ...blankEvidence(1),
   eth: [
-    { op: "bootstrap", pubkey: ethPub },
+    { op: "bootstrap", committee: committee.committee, aggregate: committee.aggregate },
     { op: "header", ...ethFields, participation: hexOf(bits342), signature: ethSig },
-    { op: "header", ...extendFields, participation: hexOf(bits342), signature: hexOf(signEthHeader(ethKey.secret, extendFields, bits342)) },
+    { op: "header", ...extendFields, participation: hexOf(bits342), signature: hexOf(signSelected(committee.secrets, extendFields, bits342)) },
   ],
 });
 const extendSite = run(born, extendIn);
@@ -744,9 +747,9 @@ const badParent = { ...extendFields, parentRoot: "00".repeat(32) };
 const ethParentIn = spec(born, {
   ...blankEvidence(1),
   eth: [
-    { op: "bootstrap", pubkey: ethPub },
+    { op: "bootstrap", committee: committee.committee, aggregate: committee.aggregate },
     { op: "header", ...ethFields, participation: hexOf(bits342), signature: ethSig },
-    { op: "header", ...badParent, participation: hexOf(bits342), signature: hexOf(signEthHeader(ethKey.secret, badParent, bits342)) },
+    { op: "header", ...badParent, participation: hexOf(bits342), signature: hexOf(signSelected(committee.secrets, badParent, bits342)) },
   ],
 });
 const ethParentSite = run(born, ethParentIn);
@@ -762,6 +765,150 @@ const mismatchSite = run(modelStepped.next, mismatchIn);
 assert.equal(mismatchSite.ok, false);
 if (mismatchSite.ok) throw new Error("model mismatch");
 assert.equal(mismatchSite.error, "model claim does not match the registry");
+
+function flipHex(hex: string): string {
+  const tail = hex.slice(-2) === "00" ? "01" : "00";
+  return hex.slice(0, -2) + tail;
+}
+
+const wrongAgg = flipHex(committee.aggregate);
+const wrongIn = spec(born, {
+  ...blankEvidence(1),
+  eth: [{ op: "bootstrap", committee: committee.committee, aggregate: wrongAgg }],
+});
+const wrongSite = run(born, wrongIn);
+assert.equal(wrongSite.ok, false);
+if (wrongSite.ok) throw new Error("wrong aggregate");
+assert.equal(wrongSite.error, "eth aggregate is not the committee");
+
+const permRaw = new Uint8Array(committee.raw);
+const permFirst = permRaw.slice(0, 48);
+permRaw.set(permRaw.subarray(48, 96), 0);
+permRaw.set(permFirst, 48);
+const permHex = hexOf(permRaw);
+const permAggregate = committeeAggregate(permHex);
+if (!permAggregate) throw new Error("permuted committee");
+assert.equal(permAggregate, committee.aggregate);
+const permIn = spec(born, {
+  ...blankEvidence(1),
+  eth: [{ op: "bootstrap", committee: permHex, aggregate: permAggregate }],
+});
+const permSite = run(born, permIn);
+assert.equal(permSite.ok, true);
+if (!permSite.ok) throw new Error("perm");
+const plainBoot = run(born, {
+  ...spec(born),
+  evidence: { ...blankEvidence(1), eth: [ethBoot] },
+});
+assert.equal(plainBoot.ok, true);
+if (!plainBoot.ok) throw new Error("plain boot");
+assert.notEqual(permSite.omegaRoot, plainBoot.omegaRoot);
+
+const extraIn = spec(born, {
+  ...blankEvidence(1),
+  eth: [
+    ethBoot,
+    { op: "header", ...ethFields, participation: hexOf(participationMask(343)), signature: ethSig },
+  ],
+});
+const extraSite = run(born, extraIn);
+assert.equal(extraSite.ok, false);
+if (extraSite.ok) throw new Error("extra bit");
+assert.equal(extraSite.error, "eth signature refused");
+
+const replacedRaw = new Uint8Array(committee.raw);
+replacedRaw.set(otherCommittee.raw.subarray(0, 48), 0);
+const replacedHex = hexOf(replacedRaw);
+const replacedAgg = committeeAggregate(replacedHex);
+if (!replacedAgg) throw new Error("replaced committee");
+assert.notEqual(replacedAgg, committee.aggregate);
+const replacedSecrets = committee.secrets.map((secret) => new Uint8Array(secret));
+replacedSecrets[0] = otherCommittee.secrets[0]!;
+const replacedSig = hexOf(signSelected(replacedSecrets, ethFields, bits342));
+const replacedOldIn = spec(born, {
+  ...blankEvidence(1),
+  eth: [
+    { op: "bootstrap", committee: replacedHex, aggregate: replacedAgg },
+    { op: "header", ...ethFields, participation: hexOf(bits342), signature: ethSig },
+  ],
+});
+const replacedOldSite = run(born, replacedOldIn);
+assert.equal(replacedOldSite.ok, false);
+if (replacedOldSite.ok) throw new Error("replaced old");
+assert.equal(replacedOldSite.error, "eth signature refused");
+const replacedIn = spec(born, {
+  ...blankEvidence(1),
+  eth: [
+    { op: "bootstrap", committee: replacedHex, aggregate: replacedAgg },
+    { op: "header", ...ethFields, participation: hexOf(bits342), signature: replacedSig },
+  ],
+});
+const replacedSite = run(born, replacedIn);
+assert.equal(replacedSite.ok, true);
+if (!replacedSite.ok) throw new Error("replaced");
+
+const rotSig = hexOf(signRotation(committee.secrets, bits342, otherCommittee.raw));
+const rotateIn = spec(born, {
+  ...blankEvidence(1),
+  eth: [
+    ethBoot,
+    {
+      op: "rotate",
+      committee: otherCommittee.committee,
+      aggregate: otherCommittee.aggregate,
+      participation: hexOf(bits342),
+      signature: rotSig,
+    },
+  ],
+});
+const rotateSite = run(born, rotateIn);
+assert.equal(rotateSite.ok, true);
+if (!rotateSite.ok) throw new Error("rotate");
+const rotateStepped = applySuccessor(born, rotateIn);
+if (!rotateStepped.ok) throw new Error(rotateStepped.error);
+assert.equal(rotateStepped.next.ethCommittee, otherCommittee.committee);
+assert.equal(rotateStepped.next.ethPubkey, otherCommittee.aggregate);
+const rotateWrongIn = spec(born, {
+  ...blankEvidence(1),
+  eth: [
+    ethBoot,
+    {
+      op: "rotate",
+      committee: otherCommittee.committee,
+      aggregate: flipHex(otherCommittee.aggregate),
+      participation: hexOf(bits342),
+      signature: rotSig,
+    },
+  ],
+});
+const rotateWrongSite = run(born, rotateWrongIn);
+assert.equal(rotateWrongSite.ok, false);
+if (rotateWrongSite.ok) throw new Error("rotate wrong");
+assert.equal(rotateWrongSite.error, "eth aggregate is not the committee");
+
+const surviveFields = {
+  slot: 8,
+  proposerIndex: 3,
+  parentRoot: ethStepped.next.eth[0]!.hash,
+  stateRoot: "77".repeat(32),
+  bodyRoot: "88".repeat(32),
+};
+const surviveIn = spec(ethStepped.next, {
+  ...blankEvidence(1),
+  eth: [{
+    op: "header" as const,
+    ...surviveFields,
+    participation: hexOf(bits342),
+    signature: hexOf(signSelected(committee.secrets, surviveFields, bits342)),
+  }],
+});
+const surviveSite = run(ethStepped.next, surviveIn);
+assert.equal(surviveSite.ok, true);
+if (!surviveSite.ok) throw new Error("survive");
+const surviveStepped = applySuccessor(ethStepped.next, surviveIn);
+if (!surviveStepped.ok) throw new Error(surviveStepped.error);
+assert.equal(surviveStepped.next.ethCommittee, committee.committee);
+assert.equal(surviveStepped.next.eth.length, 2);
 
 const cases = [
   pack("tx-pay", born, txIn, txSite, 1),
@@ -808,6 +955,14 @@ const cases = [
   pack("btc-extend-refused", btcStepped.next, btcExtendIn, btcExtendSite),
   pack("eth-parent", born, ethParentIn, ethParentSite),
   pack("model-mismatch", modelStepped.next, mismatchIn, mismatchSite),
+  pack("eth-wrong-aggregate", born, wrongIn, wrongSite),
+  pack("eth-perm", born, permIn, permSite),
+  pack("eth-extra-bit", born, extraIn, extraSite),
+  pack("eth-replaced-old", born, replacedOldIn, replacedOldSite),
+  pack("eth-replaced", born, replacedIn, replacedSite),
+  pack("eth-rotate", born, rotateIn, rotateSite),
+  pack("eth-rotate-wrong", born, rotateWrongIn, rotateWrongSite),
+  pack("eth-survive", ethStepped.next, surviveIn, surviveSite),
 ];
 
 const oracle = join(tmpdir(), "eq-membrane-oracle.json");
@@ -817,7 +972,7 @@ const rust = execFileSync(
   ["test", "--manifest-path", join(repo, "equilibrium/Cargo.toml"), "--lib", "--", "--nocapture", "native_successor_expands_the_input"],
   { encoding: "utf8", env: { ...process.env, EQ_MEMBRANE_ORACLE: oracle } },
 );
-assert.match(rust, /membrane: rows 44/);
+assert.match(rust, /membrane: rows 52/);
 assert.match(rust, /native_successor_expands_the_input \.\.\. ok/);
 assert.match(rust, /membrane: signature refused/);
 assert.match(rust, /membrane: wasm executed/);
@@ -833,5 +988,5 @@ console.log(JSON.stringify({
   ethMoved: ethSite.ok && swappedSite.ok && ethSite.omegaRoot !== swappedSite.omegaRoot,
   composeMoved: composeSite.omegaRoot !== loudSite.omegaRoot,
   wasmOwner: composeStepped.ok ? composeStepped.next.wasm.get("owner") ?? null : null,
-  level: "S6 is closed on the mainnet surface this file enumerates: native derives Ω′ from Ω and I, and the listed refusals match. Ethereum participants are the popcount of the signed participation bitset. Block nonce is a u64 bigint through the transition digest and the header. 2^53 and 2^53+1 stay distinct, and the nonce-6 fingerprint is still 201100202523998. Outside that surface: committee identity is not a stored 512-key set, no valid second Bitcoin header was available, other networks were not run, Android was not executed, and this is not a proof about every byte string. Admission remains the named binary64 fingerprint.",
+  level: "S6 is closed on the mainnet surface this file enumerates: native derives Ω′ from Ω and I, and the listed refusals match. Ethereum participants are the popcount of the signed participation bitset. The committee is 512 keys; the aggregate is derived from those keys; a header verifies the aggregate of the keys the bitset selects; rotation installs the next committee only when that aggregate matches. Block nonce is a u64 bigint through the transition digest and the header. 2^53 and 2^53+1 stay distinct, and the nonce-6 fingerprint is still 201100202523998. Outside that surface: this is not Ethereum mainnet's sync-committee keys, no valid second Bitcoin header was available, other networks were not run, Android was not executed, S7 was not rebuilt, and this is not a proof about every byte string. Admission remains the named binary64 fingerprint.",
 }));

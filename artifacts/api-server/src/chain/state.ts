@@ -205,6 +205,7 @@ function omegaFromRecord(record: ReturnType<typeof omegaRecord>): Omega {
     pools: record.pools.map((p) => ({ ...p })),
     btc: record.btc.map((h) => ({ ...h })),
     ethPubkey: record.ethPubkey,
+    ethCommittee: record.ethCommittee ?? "",
     eth: record.eth.map((h) => ({ ...h })),
     wasm: new Map(record.wasm),
     validators: new Map(record.validators.map((v) => [v.address, { ...v }])),
