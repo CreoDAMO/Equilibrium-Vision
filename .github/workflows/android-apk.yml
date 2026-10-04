@@ -66,9 +66,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: pnpm
 
       - name: Install Rust toolchain (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -78,7 +83,10 @@ jobs:
         with:
           workspaces: equilibrium -> target
 
-      - name: Run the site constitution
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run the site constitution scripts
         run: bash scripts/organism-check.sh
 
   build-apk:

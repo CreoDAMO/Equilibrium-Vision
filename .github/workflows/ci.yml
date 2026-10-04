@@ -26,16 +26,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Site organism. This is G. equilibrium/ is not this job. ────────────────
+  # ── Site constitution scripts. Not the Render process, not deployed G. ─────
+  # The lockfile install is required: the runs import @noble/curves from
+  # artifacts/api-server. tsx is the catalog pin, not an npx fetch.
   organism:
-    name: Site organism (canonical G)
+    name: Site constitution scripts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: pnpm
 
       - name: Install Rust toolchain (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -45,7 +52,10 @@ jobs:
         with:
           workspaces: equilibrium -> target
 
-      - name: Run the site constitution
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run the site constitution scripts
         run: bash scripts/organism-check.sh
 
   # ── TypeScript workspace ────────────────────────────────────────────────────
