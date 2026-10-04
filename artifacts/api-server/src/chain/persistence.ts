@@ -4,6 +4,7 @@ import { and, asc, desc, eq, gte, isNull, lt } from "drizzle-orm";
 import { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zkmlProofsTable } from "@workspace/db/schema";
 import type { BlockRecord, TxRecord, DexPool, ValidatorRecord, StakeRecord, UnbondingEntry } from "./types.js";
 import type { ContractRecord } from "./wasm.js";
+import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
 import { logger } from "../lib/logger.js";
 
 // ── Self-contained persistence layer ─────────────────────────────────────────
@@ -140,6 +141,15 @@ async function ensureCommittedPressure(): Promise<void> {
         ADD COLUMN IF NOT EXISTS evidence_root text,
         ADD COLUMN IF NOT EXISTS omega_root text,
         ADD COLUMN IF NOT EXISTS evidence jsonb`)
+      .then(() => pool.query(`DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'blocks' AND column_name = 'nonce' AND data_type = 'bigint'
+          ) THEN
+            ALTER TABLE blocks ALTER COLUMN nonce TYPE numeric(20,0);
+          END IF;
+        END $$`))
       .then(() => undefined)
       .catch((err) => {
         _pressureColumn = null;
@@ -306,7 +316,7 @@ export async function persistBlock(block: BlockRecord): Promise<void> {
             prevHash:       block.prevHash,
             merkleRoot:     block.merkleRoot,
             timestamp:      block.timestamp,
-            nonce:          block.nonce,
+            nonce:          asBlockNonce(block.nonce),
             difficulty:     block.difficulty,
             residual:       block.residual,
             residualFp:     block.residualFp ?? Math.floor(block.residual * 1e18),

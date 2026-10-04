@@ -55,7 +55,7 @@ import {
   syncCommittee,
   verifySelectedHeader,
 } from "./eth-light";
-import { asBlockNonce, participationBytes, popcount } from "./domain";
+import { asBlockNonce, foreignNonce, participationBytes, popcount } from "./domain";
 import { onPlaneMessage } from "./network-plane";
 import { stationarityRelation } from "./relation";
 import { hexToBytes } from "./bytes";
@@ -163,7 +163,7 @@ export class OrganismNode {
 
   static restore(network: NetworkId, body: PersistedBody, opts?: { audit?: boolean }): OrganismNode {
     const n = new OrganismNode(network, { skipBootstrap: true });
-    n.blocks = body.blocks ?? [];
+    n.blocks = (body.blocks ?? []).map((block) => ({ ...block, nonce: foreignNonce(block.nonce) }));
     n.ledger = new Map(body.accounts ?? []);
     n.validators = new Map((body.validators ?? []).map((v) => [v.address, v]));
     n.mempool = new Map((body.mempool ?? []).map((t) => [t.hash, t]));

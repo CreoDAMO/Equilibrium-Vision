@@ -1,5 +1,6 @@
 import { dbSource, getSql } from "@/lib/db";
 import { OrganismNode } from "@/protocol/chain";
+import { stringifyCanonical } from "@/protocol/domain";
 import type { NetworkId, PersistedBody } from "@/protocol/types";
 
 export async function persistNode(node: OrganismNode): Promise<boolean> {
@@ -24,7 +25,7 @@ export async function persistNode(node: OrganismNode): Promise<boolean> {
         JSON.stringify(node.couplings),
         node.height,
         node.lastMineAt,
-        JSON.stringify(body),
+        stringifyCanonical(body),
       ],
     );
     if (tip) {
@@ -44,7 +45,7 @@ export async function persistNode(node: OrganismNode): Promise<boolean> {
           tip.residual,
           tip.committedPressure,
           tip.finalized,
-          JSON.stringify(tip),
+          stringifyCanonical(tip),
         ],
       );
     }

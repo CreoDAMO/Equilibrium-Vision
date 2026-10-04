@@ -3,6 +3,7 @@ import {
   text,
   integer,
   bigint,
+  numeric,
   real,
   boolean,
   jsonb,
@@ -21,7 +22,8 @@ export const blocksTable = pgTable(
     prevHash:      text("prev_hash").notNull(),
     merkleRoot:    text("merkle_root").notNull(),
     timestamp:     bigint("timestamp", { mode: "number" }).notNull(),
-    nonce:         bigint("nonce", { mode: "number" }).notNull(),
+    // Signed BIGINT stops at 2^63−1. The constitutional nonce is a u64.
+    nonce:         numeric("nonce", { precision: 20, scale: 0, mode: "bigint" }).notNull(),
     difficulty:    real("difficulty").notNull(),
     residual:      real("residual").notNull(),
     /** Fixed-point residual: floor(residual × 1e18). Stored for deterministic fork-choice

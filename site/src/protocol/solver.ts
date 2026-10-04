@@ -37,7 +37,8 @@ export interface SolveInput {
 }
 
 export interface SolveResult {
-  nonce: number;
+  /** The uint32 the search found, as an exact u64. Not a JavaScript number. */
+  nonce: bigint;
   residual: number;
   residualFp: number;
   breakdown: ResidualBreakdown;
@@ -162,7 +163,14 @@ export function solveStationary(input: SolveInput): SolveResult {
   const target = input.target ?? 1e-4;
 
   let header: SolverHeader = { ...input.header };
-  if (typeof header.nonce !== "number") throw new Error("solver search nonce is a uint32");
+  if (
+    typeof header.nonce !== "number" ||
+    !Number.isInteger(header.nonce) ||
+    header.nonce < 0 ||
+    header.nonce > 0xffffffff
+  ) {
+    throw new Error("solver search nonce is a uint32");
+  }
   let best = evaluateResidual(header, input.txs, input.state, lambda);
   let bestNonce = header.nonce;
   let iterations = 0;
@@ -185,7 +193,7 @@ export function solveStationary(input: SolveInput): SolveResult {
   }
 
   return {
-    nonce: bestNonce,
+    nonce: BigInt(bestNonce),
     residual: best.canonical,
     residualFp: best.canonicalFp,
     breakdown: best,

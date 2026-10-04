@@ -34,7 +34,7 @@ import { allocationsMatchKernel, kernelNetworkOf, kernelParty, KERNEL_POOLS, KER
 import { CanonicalBody } from "./canonical-body.js";
 import { selectSuccessorTxs } from "../../../../site/src/protocol/tx-select.js";
 import { poolAddress } from "../../../../site/src/protocol/dex.js";
-import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
+import { asBlockNonce, foreignNonce } from "../../../../site/src/protocol/domain.js";
 import { applySuccessor, openedCouplings, cloneOmega, type CanonicalInputs, type Omega } from "../../../../site/src/protocol/constitution.js";
 import { sealFromSuccessor, omegaRecord } from "../../../../site/src/protocol/seal.js";
 import type { BtcHeaderRecord, EthHeaderRecord, ModelClaim, Proposal, Settlement } from "../../../../site/src/protocol/types.js";
@@ -2160,7 +2160,7 @@ export async function mineNextBlockAsync(
   //
   // Escape hatches: NODE_ENV=test | ALLOW_RANDOM_MINING=true | REQUIRE_REAL_SOLVER=false
   const committedPressure = state.mempool.pressure;
-  let nonce    = 0;
+  let nonce: number | bigint = 0;
   let residual = 0;
   let usedSolver = false;
   let solverAdmitted: boolean | undefined;
@@ -2177,7 +2177,7 @@ export async function mineNextBlockAsync(
       txs:             selected.map((t) => ({ hash: t.hash, fee: t.fee })),
     }, 20_000);
     if (solution?.ok) {
-      nonce      = solution.nonce;
+      nonce      = foreignNonce(solution.nonce);
       solverResidual = solution.residual;
       usedSolver = true;
       solverAdmitted = solution.admitted;
@@ -2188,7 +2188,7 @@ export async function mineNextBlockAsync(
         const { contributionTracker } = await import('./contribution.js');
         contributionTracker.reportLocalThermal(margin);
       } catch { /* non-fatal if module not yet loaded */ }
-      logger.debug({ height, nonce, residual, thermalMargin: margin }, "PoS solver found solution");
+      logger.debug({ height, nonce: String(nonce), residual, thermalMargin: margin }, "PoS solver found solution");
     }
   } catch (err) {
     logger.warn({ err }, "PoS solver call failed");

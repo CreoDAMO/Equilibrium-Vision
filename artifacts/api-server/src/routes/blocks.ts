@@ -10,6 +10,7 @@ import { RateLimiter, ReplaySet } from "../lib/submission-guard.js";
 import { canonicalCoinbase } from "@workspace/coinomics";
 import { admitResidual, canonicalResidual, pressureEvidence } from "../chain/canonical-residual.js";
 import { openedCouplings } from "../../../../site/src/protocol/constitution.js";
+import { foreignNonce, wireNonce } from "../../../../site/src/protocol/domain.js";
 import type { TransitionEvidence } from "../../../../site/src/protocol/types.js";
 
 const router = Router();
@@ -37,7 +38,10 @@ router.get("/blocks", (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query["limit"]) || 20));
   const all = [...chainState.blocks].reverse();
   const total = all.length;
-  const blocks = all.slice((page - 1) * limit, page * limit);
+  const blocks = all.slice((page - 1) * limit, page * limit).map((block) => ({
+    ...block,
+    nonce: wireNonce(block.nonce),
+  }));
   res.json({ blocks, total, page, limit });
 });
 
@@ -53,7 +57,7 @@ router.get("/blocks/:hashOrHeight", (req, res) => {
     res.status(404).json({ error: "Block not found" });
     return;
   }
-  res.json(block);
+  res.json({ ...block, nonce: wireNonce(block.nonce) });
 });
 
 // ── Fee breakdown ────────────────────────────────────────────────────────────
@@ -114,7 +118,7 @@ router.get("/blocks/:hashOrHeight/fees", (req, res) => {
 // Request body:
 //   {
 //     miner:    string,   // 40-char hex miner address (required)
-//     nonce:    number,   // solver nonce result (required)
+//     nonce:    string | number, // exact u64: decimal text, or a safe integer
 //     residual: number,   // Lagrangian residual — must be < RESIDUAL_THRESHOLD
 //     prevHash: string,   // expected chain-tip hash (optional; rejects stale work)
 //     timestamp: number   // unix seconds (optional; defaults to server time)
@@ -152,8 +156,11 @@ router.post("/blocks/submit", async (req, res) => {
     res.status(400).json({ error: "miner must be a 40-character hex address" });
     return;
   }
-  if (typeof nonce !== "number" || !Number.isFinite(nonce)) {
-    res.status(400).json({ error: "Missing required field: nonce (number)" });
+  let submittedNonce: bigint;
+  try {
+    submittedNonce = foreignNonce(nonce);
+  } catch {
+    res.status(400).json({ error: "nonce is not a u64" });
     return;
   }
   if (!chainState) {
@@ -170,7 +177,7 @@ router.post("/blocks/submit", async (req, res) => {
       transactions: [],
       evidence: evidence as TransitionEvidence,
       timestamp: now,
-      nonce: Math.floor(nonce),
+      nonce: submittedNonce,
       miner: miner.toLowerCase(),
       committedPressure: 0,
       couplings: openedCouplings(chainState.canonicalBody.omega),
@@ -187,7 +194,7 @@ router.post("/blocks/submit", async (req, res) => {
       merkleRoot: committed.merkleRoot,
       stateRoot: committed.stateRoot,
       timestamp: now,
-      nonce: Math.floor(nonce),
+      nonce: submittedNonce,
       difficulty: committed.difficulty,
       residual: committed.residual,
       residualFp: committed.residualFp,
@@ -280,9 +287,9 @@ router.post("/blocks/submit", async (req, res) => {
   // ── Replay detection — reject duplicate (prevHash, nonce) pairs ─────────────
   // A valid PoS solution is unique to a given chain tip; the same (tip, nonce)
   // cannot produce two distinct valid blocks, so a duplicate is always spam.
-  const replayKey = `${tipHash}:${nonce}`;
+  const replayKey = `${tipHash}:${submittedNonce.toString()}`;
   if (!submitReplay.tryAdd(replayKey)) {
-    logger.warn({ ip, miner, nonce, prevHash: tipHash }, "Block submission replay rejected");
+    logger.warn({ ip, miner, nonce: submittedNonce.toString(), prevHash: tipHash }, "Block submission replay rejected");
     res.status(409).json({ error: "Duplicate submission — this (prevHash, nonce) pair has already been processed" });
     return;
   }
@@ -304,7 +311,7 @@ router.post("/blocks/submit", async (req, res) => {
       prevHash: tipHash,
       merkleRoot: mr,
       timestamp: now,
-      nonce: Math.floor(nonce),
+      nonce: submittedNonce,
       difficulty,
     },
     selected.map((t) => ({ hash: t.hash, fee: t.fee })),
@@ -339,7 +346,7 @@ router.post("/blocks/submit", async (req, res) => {
     prevHash:      tipHash,
     merkleRoot:    mr,
     timestamp:     now,
-    nonce:         Math.floor(nonce),
+    nonce:         submittedNonce,
     difficulty:    difficulty,
     residual:      admission.residual,
     recursionDepth: 2,

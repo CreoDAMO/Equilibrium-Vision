@@ -11,6 +11,7 @@ import { contributionTracker } from "./chain/contribution.js";
 import { smtKey } from "./chain/smt.js";
 import { getVerifiedStateRoot } from "./chain/state-root.js";
 import { admitResidual, canonicalResidual, pressureEvidence } from "./chain/canonical-residual.js";
+import { foreignNonce } from "../../../site/src/protocol/domain.js";
 
 const rawPort = process.env["PORT"];
 
@@ -76,6 +77,15 @@ if (Number.isNaN(port) || port <= 0) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const remote = res.data as any;
 
+            let remoteNonce: bigint;
+            try {
+              remoteNonce = foreignNonce(remote.nonce);
+            } catch (err) {
+              logger.warn({ err, blockHash, peerId }, "P2P sync: nonce is not a u64");
+              return;
+            }
+            remote.nonce = remoteNonce;
+
             if (remote.evidence && chainState) {
               const err = await chainState.adoptReplay({
                 hash: typeof remote.hash === "string" ? remote.hash : blockHash,
@@ -83,7 +93,7 @@ if (Number.isNaN(port) || port <= 0) {
                 prevHash: typeof remote.prevHash === "string" ? remote.prevHash : "",
                 merkleRoot: typeof remote.merkleRoot === "string" ? remote.merkleRoot : "0".repeat(64),
                 timestamp: Number(remote.timestamp) || 0,
-                nonce: Number(remote.nonce) || 0,
+                nonce: remoteNonce,
                 difficulty: Number(remote.difficulty) || 0,
                 residual: Number(remote.residual) || 0,
                 residualFp: typeof remote.residualFp === "number" ? remote.residualFp : undefined,
@@ -156,7 +166,7 @@ if (Number.isNaN(port) || port <= 0) {
                 prevHash: String(remote.prevHash ?? ""),
                 merkleRoot: String(remote.merkleRoot ?? "0".repeat(64)),
                 timestamp: Number(remote.timestamp),
-                nonce: Number(remote.nonce),
+                nonce: remoteNonce,
                 difficulty: canonicalDifficulty,
               },
               remoteTxs.map((t) => ({ hash: String(t.hash ?? ""), fee: Number(t.fee ?? 0) })),

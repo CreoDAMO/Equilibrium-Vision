@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { BTC_GENESIS_HEADER_HEX } from "./btc";
 import { OrganismNode } from "./chain";
+import { foreignNonce, stringifyCanonical } from "./domain";
 import { NETWORKS } from "./networks";
 
 function foreignNext(difficulty: number, blockTime: number, hash: string): number {
@@ -37,7 +38,10 @@ const armed = a.difficulty;
 const expectedArmed = foreignNext(before, step, btcTip);
 assert.equal(armed, expectedArmed, `foreign difficulty ${armed} is not ${expectedArmed}`);
 
-const blocks = JSON.parse(JSON.stringify(a.blocks)) as typeof a.blocks;
+const blocks = (JSON.parse(stringifyCanonical(a.blocks)) as Array<typeof a.blocks[number]>).map((block) => ({
+  ...block,
+  nonce: foreignNonce(block.nonce),
+}));
 const tipHash = a.tip!.hash;
 const tipHeight = a.tip!.height;
 const report = await OrganismNode.takeover("testnet", blocks);

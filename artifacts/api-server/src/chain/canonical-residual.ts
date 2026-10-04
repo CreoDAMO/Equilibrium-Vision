@@ -15,7 +15,8 @@ export interface CanonicalHeader {
   prevHash: string;
   merkleRoot: string;
   timestamp: number;
-  nonce: number;
+  /** Exact u64. An unsafe number is refused. */
+  nonce: number | bigint;
   difficulty: number;
 }
 
@@ -56,11 +57,25 @@ function hex32(hex: string): Uint8Array {
   return out;
 }
 
-function u64ToLe(n: number): Uint8Array {
-  const v = BigInt(Math.floor(n)) & 0xffffffffffffffffn;
+function u64Bytes(v: bigint): Uint8Array {
   const out = new Uint8Array(8);
   new DataView(out.buffer).setBigUint64(0, v, true);
   return out;
+}
+
+/** Timestamp bytes. Floor, then the low 64 bits. This is not the nonce path. */
+function u64Masked(n: number): Uint8Array {
+  return u64Bytes(BigInt(Math.floor(n)) & 0xffffffffffffffffn);
+}
+
+/** Nonce bytes. Exact. An unsafe number is refused, not rounded. */
+function u64Exact(n: number | bigint): Uint8Array {
+  let v: bigint;
+  if (typeof n === "bigint") v = n;
+  else if (Number.isSafeInteger(n) && n >= 0) v = BigInt(n);
+  else throw new Error("u64 refused");
+  if (v < 0n || v > 0xffffffffffffffffn) throw new Error("u64 refused");
+  return u64Bytes(v);
 }
 
 function concatBytes(...parts: Uint8Array[]): Uint8Array {
@@ -79,8 +94,8 @@ function headerDigest(header: CanonicalHeader, txs: CanonicalTx[]): Uint8Array {
   const parts: Uint8Array[] = [
     hex32(header.prevHash),
     hex32(header.merkleRoot),
-    u64ToLe(header.timestamp),
-    u64ToLe(header.nonce),
+    u64Masked(header.timestamp),
+    u64Exact(header.nonce),
   ];
   for (const tx of txs) parts.push(hex32(tx.hash));
   return sha256(concatBytes(...parts));

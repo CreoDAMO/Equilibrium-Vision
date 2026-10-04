@@ -54,7 +54,8 @@ export interface BlockRecord {
   prevHash: string;
   merkleRoot: string;
   timestamp: number;
-  nonce: number;
+  /** Exact u64. A safe integer may still arrive as a number. Above 2^53 it is a bigint. */
+  nonce: number | bigint;
   difficulty: number;
   residual: number;
   /** Fixed-point integer: floor(residual × 1e18). Used for deterministic fork-choice
@@ -124,7 +125,8 @@ export interface LightBlockHeader {
   merkleRoot: string;
   stateRoot: string;
   timestamp: number;
-  nonce: number;
+  /** Wire form. A safe u64 is a number. A larger u64 is decimal text. */
+  nonce: number | string;
   difficulty: number;
   residual: number;
   residualFp: number;

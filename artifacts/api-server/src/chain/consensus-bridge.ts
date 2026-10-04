@@ -3,6 +3,7 @@ import { createInterface } from "readline";
 import path from "path";
 import { fileURLToPath } from "url";
 import { logger } from "../lib/logger.js";
+import { foreignNonce } from "../../../../site/src/protocol/domain.js";
 import { generateZkProof, verifyZkProof, type ZkProof } from "./zkproof.js";
 import { fpEncode, blockHashToFields } from "./zk-encoding.js";
 
@@ -195,11 +196,11 @@ class ConsensusBridge {
     maxIter?:        number;
     mempoolPressure?: number;
     cumulativeWork?: number;
-  }): Promise<{ nonce: number; residual: number } | null> {
+  }): Promise<{ nonce: bigint; residual: number } | null> {
     if (!this.isAvailable) return null;
     try {
       const res = await this.sendRaw({ method: "solve", ...params }, 60_000) as Record<string, unknown>;
-      return { nonce: Number(res["nonce"]), residual: Number(res["residual"]) };
+      return { nonce: foreignNonce(res["nonce"]), residual: Number(res["residual"]) };
     } catch {
       return null;
     }

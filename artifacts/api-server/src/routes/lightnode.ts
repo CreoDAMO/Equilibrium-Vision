@@ -26,6 +26,7 @@ import { getVerifiedStateRoot } from "../chain/state-root.js";
 import { contributionTracker } from "../chain/contribution.js";
 import { epidemicBroadcaster } from "../chain/epidemic.js";
 import type { BlockRecord, LightBlockHeader } from "../chain/types.js";
+import { wireNonce } from "../../../../site/src/protocol/domain.js";
 
 const router = Router();
 
@@ -39,7 +40,7 @@ function toLightHeader(b: BlockRecord): LightBlockHeader {
     merkleRoot:     b.merkleRoot,
     stateRoot:      b.stateRoot ?? "0".repeat(64),
     timestamp:      b.timestamp,
-    nonce:          b.nonce,
+    nonce:          wireNonce(b.nonce),
     difficulty:     b.difficulty,
     residual:       b.residual,
     residualFp:     b.residualFp ?? Math.floor(b.residual * 1e18),

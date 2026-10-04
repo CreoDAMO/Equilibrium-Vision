@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { EMBEDDED_WASM } from "@/protocol/deployment";
+import { stringifyCanonical } from "@/protocol/domain";
 
 export const Route = createFileRoute("/api/light")({
   server: {
@@ -59,7 +60,7 @@ export const Route = createFileRoute("/api/light")({
             ...(url.searchParams.get("manifest") === "1" ? { manifest: artifact?.lines ?? null } : {}),
           },
         };
-        return new Response(JSON.stringify(body), {
+        return new Response(stringifyCanonical(body), {
           headers: {
             "content-type": "application/json",
             "access-control-allow-origin": "*",

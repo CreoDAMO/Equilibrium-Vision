@@ -45,7 +45,7 @@ export function participation(resources: DeviceResources): "solve" | "verify" | 
 export function mobileCandidate(
   input: SolveInput,
   resources: DeviceResources,
-): { mode: "defer" | "verify" } | { mode: "solve"; nonce: number; residualFp: number } {
+): { mode: "defer" | "verify" } | { mode: "solve"; nonce: bigint; residualFp: number } {
   const mode = participation(resources);
   if (mode !== "solve") return { mode };
   const solved = solveStationary(input);
@@ -62,7 +62,7 @@ export function bindMobileCandidate(
   state: SolverState,
   couplings: Couplings | undefined,
   resources: DeviceResources,
-): { mode: "defer" | "verify" } | { mode: "solve"; nonce: number; residualFp: number; merkleRoot: string } {
+): { mode: "defer" | "verify" } | { mode: "solve"; nonce: bigint; residualFp: number; merkleRoot: string } {
   const merkleRootHex = merkleRoot(txs.length ? txs.map((t) => t.hash) : ["0".repeat(64)]);
   const solved = mobileCandidate(
     { header: { ...header, merkleRoot: merkleRootHex }, txs, state, couplings },

@@ -206,7 +206,8 @@ export interface BlockRecord {
   merkleRoot: string;
   stateRoot: string;
   timestamp: number;
-  nonce: number;
+  /** Exact u64. A safe integer may still arrive as a number. Above 2^53 it is a bigint. */
+  nonce: number | bigint;
   difficulty: number;
   residual: number;
   residualFp: number;
@@ -395,7 +396,7 @@ export interface Wholes {
 export interface ExperimentArm {
   residual: number;
   iterations: number;
-  nonce: number;
+  nonce: number | bigint;
   reward: number;
   pressure: number;
   couplings: Couplings;
@@ -425,8 +426,8 @@ export interface CouplingEffect {
   discoveryEffect: boolean;
   rewardEffect: boolean;
   deltaR: number;
-  nonceWith: number;
-  nonceWithout: number;
+  nonceWith: number | bigint;
+  nonceWithout: number | bigint;
 }
 
 /** One closed transition: solver, verify, mempool, governance, stake, finality, restore. */
@@ -435,7 +436,7 @@ export interface WholeReport {
   primedTxs: number;
   pressure: number;
   baseline: {
-    nonce: number;
+    nonce: number | bigint;
     residual: number;
     reward: number;
     liquid: number;
@@ -445,15 +446,15 @@ export interface WholeReport {
   mempool: {
     txs: number;
     discoveryEffect: boolean;
-    nonceWithTxs: number;
-    nonceEmpty: number;
+    nonceWithTxs: number | bigint;
+    nonceEmpty: number | bigint;
   };
   governance: {
     applied: boolean;
     key: keyof Couplings;
     discoveryEffect: boolean;
     formulaEffect: boolean;
-    nonceAfter: number;
+    nonceAfter: number | bigint;
   };
   stake: {
     minerBonded: boolean;

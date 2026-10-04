@@ -14,6 +14,7 @@ import type { GenesisDocument } from "@workspace/coinomics";
 import { addressFromSeed } from "./crypto.js";
 import { canonicalCoinbase } from "@workspace/coinomics";
 import { admitResidual, canonicalResidual } from "./canonical-residual.js";
+import { foreignNonce } from "../../../../site/src/protocol/domain.js";
 import { logger } from "../lib/logger.js";
 import { broadcast } from "../lib/ws-server.js";
 import { deployAdminMultisigIfConfigured } from "./multisig.js";
@@ -485,7 +486,13 @@ export async function initChain(): Promise<void> {
     const hash       = typeof body['hash']       === 'string' ? body['hash']       : '';
     const height     = typeof body['height']     === 'number' ? body['height']     : -1;
     const prevHash   = typeof body['prevHash']   === 'string' ? body['prevHash']   : '';
-    const nonce      = typeof body['nonce']      === 'number' ? body['nonce']      : 0;
+    let nonce: bigint;
+    try {
+      nonce = foreignNonce(body['nonce']);
+    } catch (err) {
+      logger.warn({ err, hash: hash.slice(0, 16) }, "p2p: nonce is not a u64");
+      return;
+    }
     const residual   = typeof body['residual']   === 'number' ? body['residual']   : 1;
     const timestamp  = typeof body['timestamp']  === 'number' ? body['timestamp']  : 0;
     const miner      = typeof body['miner']      === 'string' ? body['miner']      : '';

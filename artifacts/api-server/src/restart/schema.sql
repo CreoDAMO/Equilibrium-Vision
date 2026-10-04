@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS blocks (
   prev_hash text NOT NULL,
   merkle_root text NOT NULL,
   timestamp bigint NOT NULL,
-  nonce bigint NOT NULL,
+  nonce numeric(20,0) NOT NULL,
   difficulty real NOT NULL,
   residual real NOT NULL,
   residual_fp bigint,

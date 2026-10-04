@@ -49,6 +49,43 @@ export function asBlockNonce(value: number | bigint): bigint {
   return blockNonce(BigInt(value));
 }
 
+const SAFE_U64 = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * A foreign consensus nonce. An in-range bigint, strict decimal text, or a safe integer.
+ * Missing, malformed, fractional, and unsafe values are refused. Never a default of 0.
+ */
+export function foreignNonce(value: unknown): bigint {
+  if (typeof value === "bigint") return blockNonce(value);
+  if (typeof value === "number") return asBlockNonce(value);
+  if (typeof value === "string") {
+    try {
+      return blockNonce(decodeU64Decimal(value));
+    } catch {
+      throw new Error("nonce is not a u64");
+    }
+  }
+  throw new Error("nonce is not a u64");
+}
+
+/**
+ * JSON wire. A safe u64 stays a number so a miner sending nonce 6 still works.
+ * A larger u64 is decimal text. JSON.parse of that text does not collapse it.
+ */
+export function wireNonce(value: number | bigint): number | string {
+  const n = asBlockNonce(value);
+  return n <= SAFE_U64 ? Number(n) : n.toString();
+}
+
+/** JSON text for a value that may carry a block nonce. A u64 above 2^53 is a string, not a raw integer. */
+export function stringifyCanonical(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => {
+    if (typeof item !== "bigint") return item;
+    if (item < 0n || item > U64_MAX) throw new Error("nonce is not a u64");
+    return item <= SAFE_U64 ? Number(item) : item.toString();
+  });
+}
+
 /** JSON text that keeps a u64 bigint as a decimal integer, not a string and not a JS number. */
 export function jsonText(value: unknown): string {
   return JSON.stringify(value, (_key, item) => (typeof item === "bigint" ? `__U64__${item.toString()}` : item)).replaceAll(

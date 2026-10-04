@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import type { OrganismNode } from "@/protocol/chain";
+import { foreignNonce, stringifyCanonical } from "@/protocol/domain";
 import type { BlockRecord, NetworkId } from "@/protocol/types";
 
 /**
@@ -104,7 +105,12 @@ function asBlock(value: unknown): BlockRecord | null {
   if (!value || typeof value !== "object") return null;
   const hash = (value as { hash?: unknown }).hash;
   if (typeof hash !== "string" || !/^[0-9a-f]{64}$/i.test(hash)) return null;
-  return value as BlockRecord;
+  try {
+    const block = value as BlockRecord;
+    return { ...block, nonce: foreignNonce((value as { nonce?: unknown }).nonce) };
+  } catch {
+    return null;
+  }
 }
 
 type SidecarLine = {
@@ -121,5 +127,5 @@ type SidecarLine = {
 };
 
 function write(child: ChildProcess, body: unknown) {
-  child.stdin?.write(`${JSON.stringify(body)}\n`);
+  child.stdin?.write(`${stringifyCanonical(body)}\n`);
 }
