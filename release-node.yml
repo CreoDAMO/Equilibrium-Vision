@@ -1,6 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # release-node.yml — Build & publish Rust testnet-node / wallet binaries.
 #
+# These binaries are the subordinate Rust stack (testnet-node, wallet).
+# They are not site G and they are not the Render organism.
+# A release is published only after those binaries agree with
+# site/src/protocol/native-contract.json on residual, header, and coinbase.
+#
 # This file lives at the repo root because it was authored from Replit, where
 # pushing directly into `.github/workflows/` isn't available. Copy this file
 # to `.github/workflows/release-node.yml` in your GitHub repo to activate it.
@@ -60,6 +65,9 @@ jobs:
           workspaces: equilibrium -> target
           key: ${{ matrix.target }}
 
+      - name: Shared contract must match the site file
+        run: cargo test --lib -- canonical_residual_grid_matches_the_public_kernel canonical_residual_matches_the_public_kernel_vector canonical_header_hash_matches_the_public_kernel_vector canonical_header_hash_evidence_matches_the_kernel_block canonical_coinbase_matches_the_public_kernel_vectors
+
       - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }} --bin testnet-node --bin wallet
 
@@ -69,6 +77,8 @@ jobs:
           mkdir -p "$STAGE"
           cp target/${{ matrix.target }}/release/testnet-node "$STAGE/"
           cp target/${{ matrix.target }}/release/wallet "$STAGE/"
+          cp ../site/src/protocol/native-contract.json "$STAGE/native-contract.json"
+          printf '%s\n' 'These binaries implement the shared residual, header, and coinbase contract. They are not site G and they are not the Render organism.' > "$STAGE/NOT-G.txt"
           cp ../README.md ../LIMITATIONS.md "$STAGE/" 2>/dev/null || true
           tar -czf "${STAGE}.tar.gz" "$STAGE"
           sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"

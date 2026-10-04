@@ -325,7 +325,7 @@ console.log(JSON.stringify({
   s3: "distinct",
   s4: executed.next.wasm.get("paused"),
   s5: sealed.transitionRoot.slice(0, 16),
-  s6: "open: TypeScript is the reference. Rust and Android do not reconstruct G. The 3-unit residual gap admits the same way.",
-  s7: "open: no demonstrated source→build→artifact→deployment identity.",
+  s6: "open: site owns the residual, header, and coinbase contract. Rust reads it and does not reconstruct G. Android was not executed.",
+  s7: "open: no APK was built, two builds were not compared, and the deployment does not name the commit.",
   sameAdmission: protocol < thresholdFp && reference < thresholdFp,
 }));

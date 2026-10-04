@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# build-jni.sh — Cross-compile the Equilibrium Rust core for Android via
-# cargo-ndk.  Run this once before opening the project in Android Studio or
-# invoking `./gradlew assembleRelease`.
+# The .so is the subordinate residual search from equilibrium/.
+# site/ is the organism. This library does not apply the successor.
+# Cross-compile with cargo-ndk. Run this once before opening the project in
+# Android Studio or invoking `./gradlew assembleRelease`.
 #
 # Prerequisites
 # ─────────────

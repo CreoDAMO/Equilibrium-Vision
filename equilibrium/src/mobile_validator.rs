@@ -427,7 +427,8 @@ pub fn canonical_header_hash(
 }
 
 /// The evidence-bearing preimage. Appends chain id, evidence root, and omega root.
-/// Same branch as TypeScript `canonicalHeaderHash` when those fields are set.
+/// Same branch as TypeScript `canonicalHeaderHash` when those three fields are set.
+/// transitionRoot is not a parameter. It is site G's header, outside this contract.
 #[allow(clippy::too_many_arguments)]
 pub fn canonical_header_hash_evidence(
     prev_hash: &str,
@@ -1010,33 +1011,32 @@ mod tests {
 
     #[test]
     fn canonical_header_hash_matches_the_public_kernel_vector() {
+        let contract = crate::site_contract::site_contract();
+        let ten = &contract["headers"]["ten"];
         let hash = canonical_header_hash(
-            &"11".repeat(32),
-            &"22".repeat(32),
-            &"33".repeat(32),
-            1_700_000_000,
-            7,
-            1_000_000,
-            201_100_202_523_998,
-            &"ab".repeat(20),
-            3,
-            0.0,
+            ten["prevHash"].as_str().unwrap(),
+            ten["merkleRoot"].as_str().unwrap(),
+            ten["stateRoot"].as_str().unwrap(),
+            ten["timestamp"].as_u64().unwrap(),
+            ten["nonce"].as_u64().unwrap(),
+            ten["difficulty"].as_u64().unwrap(),
+            ten["residualFp"].as_i64().unwrap(),
+            ten["miner"].as_str().unwrap(),
+            ten["height"].as_u64().unwrap(),
+            crate::site_contract::f64_of(&ten["committedPressure"]),
         );
-        assert_eq!(
-            hash,
-            "836ce07ec08403bf07acc120a50163b48c5910b4bfa7c1de1c08200f1f09f306"
-        );
+        assert_eq!(hash, ten["hash"].as_str().unwrap());
         let other = canonical_header_hash(
-            &"11".repeat(32),
-            &"22".repeat(32),
-            &"33".repeat(32),
-            1_700_000_000,
-            8,
-            1_000_000,
-            201_100_202_523_998,
-            &"ab".repeat(20),
-            3,
-            0.0,
+            ten["prevHash"].as_str().unwrap(),
+            ten["merkleRoot"].as_str().unwrap(),
+            ten["stateRoot"].as_str().unwrap(),
+            ten["timestamp"].as_u64().unwrap(),
+            ten["nonce"].as_u64().unwrap() + 1,
+            ten["difficulty"].as_u64().unwrap(),
+            ten["residualFp"].as_i64().unwrap(),
+            ten["miner"].as_str().unwrap(),
+            ten["height"].as_u64().unwrap(),
+            crate::site_contract::f64_of(&ten["committedPressure"]),
         );
         assert_ne!(hash, other);
     }
@@ -1062,7 +1062,7 @@ mod tests {
         };
         assert_eq!(
             hex::encode(canonical_identity(&block)),
-            "836ce07ec08403bf07acc120a50163b48c5910b4bfa7c1de1c08200f1f09f306",
+            crate::site_contract::site_contract()["headers"]["ten"]["hash"].as_str().unwrap(),
         );
         assert_ne!(canonical_identity(&block), block_hash(&block.header));
     }
@@ -1138,41 +1138,47 @@ mod tests {
 
     #[test]
     fn canonical_header_hash_evidence_matches_the_kernel_block() {
-        let prev = "0".repeat(64);
+        let contract = crate::site_contract::site_contract();
+        let block = &contract["headers"]["thirteen"];
         let hash = canonical_header_hash_evidence(
-            &prev,
-            &prev,
-            "89c80f5eddc60e39b03437f5a46e9e81fb03d24fe10d1b35892e8beebe977884",
-            1_700_000_000,
-            6,
-            1_000_000,
-            201_100_202_523_998,
-            &"a".repeat(40),
-            1,
-            0.0,
+            block["prevHash"].as_str().unwrap(),
+            block["merkleRoot"].as_str().unwrap(),
+            block["stateRoot"].as_str().unwrap(),
+            block["timestamp"].as_u64().unwrap(),
+            block["nonce"].as_u64().unwrap(),
+            block["difficulty"].as_u64().unwrap(),
+            block["residualFp"].as_i64().unwrap(),
+            block["miner"].as_str().unwrap(),
+            block["height"].as_u64().unwrap(),
+            crate::site_contract::f64_of(&block["committedPressure"]),
             Some((
-                1,
-                "b425e880a379ede65d894a3470544f23a1a5076e690e78968e3072d2f2ca7994",
-                "2777b2548cd75d2d9712b3d0983bc38420c0306b132d458083bcb5c844a59fbd",
+                block["chainId"].as_u64().unwrap(),
+                block["evidenceRoot"].as_str().unwrap(),
+                block["omegaRoot"].as_str().unwrap(),
             )),
         );
-        assert_eq!(
-            hash,
-            "795d67b1ed75cd450c86f6dd4569c0b7b33f194ce6d38e3441f1c6ad5b4fc5b2"
-        );
+        assert_eq!(hash, block["hash"].as_str().unwrap());
         let ten = canonical_header_hash(
-            &prev,
-            &prev,
-            "89c80f5eddc60e39b03437f5a46e9e81fb03d24fe10d1b35892e8beebe977884",
-            1_700_000_000,
-            6,
-            1_000_000,
-            201_100_202_523_998,
-            &"a".repeat(40),
-            1,
-            0.0,
+            block["prevHash"].as_str().unwrap(),
+            block["merkleRoot"].as_str().unwrap(),
+            block["stateRoot"].as_str().unwrap(),
+            block["timestamp"].as_u64().unwrap(),
+            block["nonce"].as_u64().unwrap(),
+            block["difficulty"].as_u64().unwrap(),
+            block["residualFp"].as_i64().unwrap(),
+            block["miner"].as_str().unwrap(),
+            block["height"].as_u64().unwrap(),
+            crate::site_contract::f64_of(&block["committedPressure"]),
         );
-        assert_ne!(hash, ten);
+        assert_ne!(hash, ten, "thirteen fields are not the ten-field header");
+        assert!(
+            contract["notSurface"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item.as_str() == Some("transitionRoot")),
+            "transitionRoot is outside this preimage"
+        );
     }
 
     #[test]

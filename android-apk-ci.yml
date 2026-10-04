@@ -1,9 +1,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # android-apk-ci.yml — Build & sign the Equilibrium mobile miner APK.
 #
-# This file lives at the repo root because it was authored from Replit, where
-# pushing directly into `.github/workflows/` isn't available. Copy this file
-# to `.github/workflows/android-apk.yml` in your GitHub repo to activate it.
+# INACTIVE COPY. Do not copy this file over .github/workflows/android-apk.yml.
+# The active workflow runs the site constitution before it builds an APK.
+# site/ is the organism. The APK is the subordinate residual search, not G.
+# This root file is kept so the old Replit instructions are not a second pipeline.
 #
 # What it does:
 #   1. Cross-compiles the Rust core (equilibrium/) for Android via cargo-ndk

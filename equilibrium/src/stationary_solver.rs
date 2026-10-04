@@ -324,42 +324,76 @@ mod tests {
 
     #[test]
     fn canonical_residual_matches_the_public_kernel_vector() {
+        let contract = crate::site_contract::site_contract();
         let prev = [0u8; 32];
         let merkle = [0u8; 32];
-        let zero = canonical_residual(&prev, &merkle, 1_700_000_000, 0, 1_000_000, &[], 1, 0.0);
-        let admitted = canonical_residual(&prev, &merkle, 1_700_000_000, 6, 1_000_000, &[], 1, 0.0);
-        assert!((zero - 0.02519000125198503).abs() < 1e-12, "nonce 0 residual {zero}");
-        assert!((admitted - 0.0002011002025239986).abs() < 1e-12, "nonce 6 residual {admitted}");
+        let rows = contract["residual"]["rows"].as_array().expect("rows");
+        let nonce0 = rows.iter().find(|row| row["name"] == "nonce0").expect("nonce0");
+        let nonce6 = rows.iter().find(|row| row["name"] == "nonce6").expect("nonce6");
+        let zero = canonical_residual(
+            &prev,
+            &merkle,
+            nonce0["timestamp"].as_u64().unwrap(),
+            nonce0["nonce"].as_u64().unwrap(),
+            nonce0["difficulty"].as_u64().unwrap(),
+            &[],
+            nonce0["work"].as_u64().unwrap(),
+            crate::site_contract::f64_of(&nonce0["pressure"]),
+        );
+        let admitted = canonical_residual(
+            &prev,
+            &merkle,
+            nonce6["timestamp"].as_u64().unwrap(),
+            nonce6["nonce"].as_u64().unwrap(),
+            nonce6["difficulty"].as_u64().unwrap(),
+            &[],
+            nonce6["work"].as_u64().unwrap(),
+            crate::site_contract::f64_of(&nonce6["pressure"]),
+        );
+        let expect0 = crate::site_contract::f64_of(&nonce0["canonical"]);
+        let expect6 = crate::site_contract::f64_of(&nonce6["canonical"]);
+        assert!((zero - expect0).abs() < 1e-12, "nonce 0 residual {zero}");
+        assert!((admitted - expect6).abs() < 1e-12, "nonce 6 residual {admitted}");
         assert!(admitted < 2e-3);
         assert_eq!(
             residual_to_fixed(admitted),
-            201_100_202_523_998,
-            "residualFp is the binary64 floor, not the real-number residual"
+            contract["nonce6Fp"].as_i64().unwrap(),
+            "residualFp is the binary64 floor the site contract publishes"
         );
     }
 
     #[test]
-    #[allow(clippy::type_complexity, clippy::excessive_precision)]
     fn canonical_residual_grid_matches_the_public_kernel() {
+        let contract = crate::site_contract::site_contract();
         let prev = [0u8; 32];
         let merkle = [0u8; 32];
-        let tx_hash = [0xabu8; 32];
-        let tx = [TxCandidate { hash: tx_hash, fee: 1000 }];
-        let rows: &[(&str, u64, u64, u64, u64, f64, &[TxCandidate], f64)] = &[
-            ("nonce0", 1_700_000_000, 0, 1_000_000, 1, 0.0, &[], 0.025190001251985030),
-            ("nonce1", 1_700_000_000, 1, 1_000_000, 1, 0.0, &[], 0.090769559826382740),
-            ("nonce1-100k", 1_700_000_000, 1, 100_000, 1, 0.0, &[], 0.086836478057786756),
-            ("nonce6", 1_700_000_000, 6, 1_000_000, 1, 0.0, &[], 0.00020110020252399861),
-            ("nonce7", 1_700_000_000, 7, 1_000_000, 1, 0.0, &[], 0.043329506709598564),
-            ("work0", 1_700_000_000, 6, 1_000_000, 0, 0.0, &[], 1.0002011002025240),
-            ("pressure", 1_700_000_000, 6, 1_000_000, 1, 1.0, &[], 2.0002011002025242),
-            ("ts0", 0, 6, 1_000_000, 1, 0.0, &[], 0.16225219837223626),
-            ("nonceHi", 1_700_000_000, 9_007_199_254_740_991, 1_000_000, 1, 0.0, &[], 0.098695867101580084),
-            ("tx", 1_700_000_000, 6, 1_000_000, 1, 0.5, &tx, 0.51911162420167312),
-        ];
-        for (name, ts, nonce, difficulty, work, pressure, txs, expected) in rows {
-            let got = canonical_residual(&prev, &merkle, *ts, *nonce, *difficulty, txs, *work, *pressure);
-            assert!((got - expected).abs() < 1e-12, "{name}: rust {got} expected {expected}");
+        let rows = contract["residual"]["rows"].as_array().expect("rows");
+        assert_eq!(rows.len(), 10, "the site contract publishes ten residual rows");
+        for row in rows {
+            let name = row["name"].as_str().unwrap();
+            let txs: Vec<TxCandidate> = row["txs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tx| {
+                    let bytes = hex::decode(tx["hash"].as_str().unwrap()).unwrap();
+                    let mut hash = [0u8; 32];
+                    hash.copy_from_slice(&bytes);
+                    TxCandidate { hash, fee: tx["fee"].as_u64().unwrap() }
+                })
+                .collect();
+            let got = canonical_residual(
+                &prev,
+                &merkle,
+                row["timestamp"].as_u64().unwrap(),
+                row["nonce"].as_u64().unwrap(),
+                row["difficulty"].as_u64().unwrap(),
+                &txs,
+                row["work"].as_u64().unwrap(),
+                crate::site_contract::f64_of(&row["pressure"]),
+            );
+            let expected = crate::site_contract::f64_of(&row["canonical"]);
+            assert!((got - expected).abs() < 1e-12, "{name}: rust {got} site {expected}");
         }
     }
 

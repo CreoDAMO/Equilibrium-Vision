@@ -2,10 +2,15 @@
 # android-apk.yml — Build, sign, and (optionally) release the Equilibrium
 # mobile miner APK.
 #
+# The APK is not the organism and it is not a second successor.
+# site/ is G. This workflow runs the site constitution first. The native
+# layer then builds the subordinate residual search (search_canonical).
+# It does not applySuccessor, and it does not install Ω.
+#
 # HOW TO INSTALL
 # ──────────────
-# Copy this file to .github/workflows/android-apk.yml in the repo.
-# It replaces the previous version of the same name.
+# This file is the active workflow at .github/workflows/android-apk.yml.
+# Do not replace it with the inactive root copy android-apk-ci.yml.
 #
 # WHAT CHANGED FROM THE PREVIOUS VERSION
 # ───────────────────────────────────────
@@ -55,13 +60,38 @@ on:
       - "mobile-v*"
 
 jobs:
+  site-contract:
+    name: Site constitution before any APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: equilibrium -> target
+
+      - name: Run the site constitution
+        run: bash scripts/organism-check.sh
+
   build-apk:
     name: Build signed release APK
+    needs: site-contract
     runs-on: ubuntu-latest
     permissions:
       contents: write    # needed to create / update GitHub Releases
       actions: read
       packages: read
+    # equilibrium/ is the subordinate native layer. site/ is the organism.
+    # The job above already required native-contract.json to agree with G's
+    # shared surface. This compile does not become G by changing directory.
     defaults:
       run:
         working-directory: equilibrium

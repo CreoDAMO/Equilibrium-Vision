@@ -22,8 +22,12 @@ pub mod mobile_validator;
 
 // Android JNI bridge — compiled only when targeting Android.
 // Host builds (consensus-api, testnet-node, wallet) are unaffected.
+// solveBlock searches the shared residual. It does not apply the successor.
 #[cfg(target_os = "android")]
 pub mod jni_bridge;
+
+#[cfg(test)]
+mod site_contract;
 
 // ── zkML / ERC-7992 DeepProve ─────────────────────────────────────────────────
 // Host prover for quantized MLP inference via RISC Zero.

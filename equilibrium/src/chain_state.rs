@@ -203,12 +203,19 @@ mod tests {
 
     #[test]
     fn canonical_coinbase_matches_the_public_kernel_vectors() {
-        assert_eq!(canonical_coinbase(0, 0.0, 2e-3), 100);
-        assert_eq!(canonical_coinbase(1, 0.0, 2e-3), 99);
-        assert_eq!(canonical_coinbase(1, 1.0, 2e-3), 0);
-        assert_eq!(canonical_coinbase(1, 0.00024711927978383826, 2e-3), 99);
-        assert_eq!(canonical_coinbase(1, 0.0002011002025239986, 2e-3), 99);
-        assert_eq!(canonical_coinbase(0, 0.0002011002025239986, 2e-3), 100);
+        let contract = crate::site_contract::site_contract();
+        let rows = contract["coinbase"].as_array().expect("coinbase");
+        assert!(!rows.is_empty());
+        for row in rows {
+            let height = row["height"].as_u64().unwrap();
+            let residual = crate::site_contract::f64_of(&row["residual"]);
+            let target = crate::site_contract::f64_of(&row["target"]);
+            assert_eq!(
+                canonical_coinbase(height, residual, target),
+                row["reward"].as_u64().unwrap(),
+                "coinbase {height} {residual} {target}"
+            );
+        }
     }
 
     #[test]
