@@ -19,6 +19,11 @@ else
   run_tsx() { pnpm --filter @workspace/coinomics exec tsx "$@"; }
 fi
 
+if [[ ! -f "$ROOT/site/node_modules/@noble/hashes/package.json" || ! -f "$ROOT/site/node_modules/@scure/bip39/package.json" ]]; then
+  echo "site/node_modules is not the site lockfile install. The protocol imports @noble and @scure from site/, which is outside the pnpm workspace." >&2
+  exit 1
+fi
+
 for f in site/src/protocol/*.run.ts; do
   echo "== $f =="
   # pnpm --filter exec runs inside that package. The path has to be absolute.

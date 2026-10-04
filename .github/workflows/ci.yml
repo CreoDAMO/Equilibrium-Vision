@@ -27,8 +27,9 @@ concurrency:
 
 jobs:
   # ── Site constitution scripts. Not the Render process, not deployed G. ─────
-  # The lockfile install is required: the runs import @noble/curves from
-  # artifacts/api-server. tsx is the catalog pin, not an npx fetch.
+  # pnpm installs the workspace so artifacts/api-server can import @noble/curves.
+  # site/ is outside that workspace, so its own package-lock.json is installed
+  # too. tsx is the catalog pin, not an npx fetch.
   organism:
     name: Site constitution scripts
     runs-on: ubuntu-latest
@@ -54,6 +55,10 @@ jobs:
 
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install site dependencies from site/package-lock.json
+        working-directory: site
+        run: npm ci --ignore-scripts
 
       - name: Run the site constitution scripts
         run: bash scripts/organism-check.sh
