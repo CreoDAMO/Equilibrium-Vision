@@ -325,5 +325,5 @@ console.log(JSON.stringify({
   nonce6Fp: fp6,
   notMainnetKeys: true,
   android: "not run",
-  s7: "not rebuilt",
+  s7: "4743ee74f910f0f34d94457956aebcc8288a0bde3e531a4a7798f43f223a6a8f",
 }));

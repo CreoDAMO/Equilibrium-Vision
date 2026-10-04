@@ -56,7 +56,7 @@ try {
 }
 
 const commitBound = live.commit === commit;
-const artifactBound = live.artifact === "39ce2966c7e3f13a1f85980635fdc3f6f979860a08c1a6e6caf5fa52e90a8d1a";
+const artifactBound = live.artifact === "4743ee74f910f0f34d94457956aebcc8288a0bde3e531a4a7798f43f223a6a8f";
 const wasmBound = live.wasm === wasmFile;
 
 console.log(JSON.stringify({
