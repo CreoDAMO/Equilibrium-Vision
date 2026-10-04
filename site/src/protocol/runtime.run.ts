@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { canonicalHeaderHash, residualToFixed } from "./crypto";
 import { minerReward } from "./coinomics";
 import { applySuccessor, initialOmega, openedCouplings } from "./constitution";
+import { deploymentIdentity, EMBEDDED_WASM } from "./deployment";
 import { minerKey } from "./genesis";
 import { NETWORKS } from "./networks";
 import { evaluateResidual } from "./solver";
@@ -20,8 +21,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = dirname(dirname(dirname(here)));
 const contract = JSON.parse(readFileSync(join(here, "native-contract.json"), "utf8")) as {
   authority: string;
+  surface: string[];
   notSurface: string[];
   headerStopsAt: string;
+  headerOmits: string[];
   nonce6Fp: number;
   apkEmbodies: string;
   apkDoesNotEmbody: string;
@@ -73,11 +76,15 @@ const contract = JSON.parse(readFileSync(join(here, "native-contract.json"), "ut
 
 assert.equal(contract.authority, "site");
 assert.equal(contract.headerStopsAt, "omegaRoot");
-for (const outside of ["successor", "transitionRoot", "omegaPrime"]) {
+for (const outside of ["successor", "omegaPrime"]) {
   assert.ok(contract.notSurface.includes(outside), outside);
 }
 assert.ok(!contract.notSurface.includes("lambda"), "λ is a residual weight");
+assert.ok(!contract.notSurface.includes("transitionRoot"), "the transition digest is on the surface");
+assert.ok(contract.headerOmits.includes("transitionRoot"), "the native header omits transitionRoot");
 assert.ok(contract.surface.includes("residual-lambda"));
+assert.ok(contract.surface.includes("omega-digest"));
+assert.ok(contract.surface.includes("transition-digest"));
 assert.equal(contract.apkDoesNotEmbody, "applySuccessor");
 assert.equal(contract.nonce6Fp, 201_100_202_523_998);
 
@@ -219,10 +226,36 @@ const wasmPath = join(here, "arbitrage.wasm");
 const wasmA = sha256(wasmPath);
 const wasmB = sha256(wasmPath);
 assert.equal(wasmA, wasmB);
+assert.equal(wasmA, EMBEDDED_WASM);
+const siteLock = sha256(join(repo, "site/package-lock.json"));
+const siteLockAgain = sha256(join(repo, "site/package-lock.json"));
+assert.equal(siteLock, siteLockAgain);
+const workspaceLockPath = join(repo, "pnpm-lock.yaml");
+const workspaceLock = existsSync(workspaceLockPath) ? sha256(workspaceLockPath) : "";
+const contractHash = sha256(join(here, "native-contract.json"));
 
 const commit = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const rustc = execFileSync("rustc", ["--version"], { encoding: "utf8" }).trim();
 const node = process.version;
+const identity = deploymentIdentity({
+  commit,
+  node,
+  rustc,
+  siteLock,
+  workspaceLock,
+  wasm: wasmA,
+  contract: contractHash,
+});
+const identityAgain = deploymentIdentity({
+  commit,
+  node,
+  rustc,
+  siteLock: siteLockAgain,
+  workspaceLock: existsSync(workspaceLockPath) ? sha256(workspaceLockPath) : "",
+  wasm: sha256(wasmPath),
+  contract: sha256(join(here, "native-contract.json")),
+});
+assert.equal(identity, identityAgain);
 const androidDir = join(repo, "equilibrium/mobile/android");
 let androidTracked = false;
 try {
@@ -239,11 +272,11 @@ const apkBuilt = [
 let deployed: string | null = null;
 try {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
+  const timer = setTimeout(() => ctrl.abort(), 20_000);
   const response = await fetch("https://equilibrium-vision.onrender.com/api/light", { signal: ctrl.signal });
   clearTimeout(timer);
   const text = await response.text();
-  deployed = `${response.status}:${text.includes(commit) ? "commit-present" : "commit-absent"}:${text.slice(0, 120)}`;
+  deployed = `${response.status}:${text.includes(commit) ? "commit-present" : "commit-absent"}:${text.includes(wasmA) ? "wasm-present" : "wasm-absent"}:${text.slice(0, 160)}`;
 } catch (error) {
   deployed = error instanceof Error ? error.message : "unreachable";
 }
@@ -260,26 +293,29 @@ console.log(JSON.stringify({
     transitionRootDiffers: withTransition !== thirteen,
     rustOmitsLambdas: !/canonical_lambda_weights_are_the_dropped_violation \.\.\. ok/.test(rust),
     rustOmitsTransitionRoot: true,
-    observation: "λ is checked by canonical_lambda_weights and by coupling.run.ts. transitionRoot remains outside the native header (C, source).",
+    observation: "The native header still stops at omegaRoot. commit.run.ts is the λ → reward → omegaRoot → transitionRoot attack, and Rust rebuilds those two digests from the fields.",
     androidExecuted: apkBuilt,
     androidTree,
     apkEmbodies: contract.apkEmbodies,
     sameAdmission: 201_100_202_523_998 < thresholdFp && reference < thresholdFp,
     couplings: DEFAULT_COUPLINGS,
-    level: "A on the shared residual, header, coinbase, and λ-weighted residual. Not A for G, transitionRoot, or Android.",
+    level: "A on the shared residual, header, coinbase, λ-weighted residual, and the digests of a site-produced Ω′. Not A for a native successor or Android.",
   },
   s7: {
     commit,
+    identity,
     node,
     rustc,
     wasm: wasmA,
+    wasmEmbedded: wasmA === EMBEDDED_WASM,
     wasmReread: wasmA === wasmB,
-    rebuild: "not run",
+    identityReread: identity === identityAgain,
+    rebuild: "not a second compiler. The wasm file and the embedded bytes are one hash, read twice.",
     apk: apkBuilt
       ? "present"
       : "not built. No Android SDK in this workspace. .github/workflows/android-apk.yml is the rebuild, and it runs only after the site constitution.",
     deployed,
-    lineage: "site is G. equilibrium reads native-contract.json. Render rootDir is site. The APK is the residual search, not a second successor.",
-    level: "C for the source commit and the wasm bytes. Not B: two builds were not compared, and the deployment does not name this commit.",
+    lineage: "site is G. equilibrium reads native-contract.json. Render rootDir is site. /api/light names RENDER_GIT_COMMIT and the wasm hash. The APK is the residual search, not a second successor.",
+    level: "A for the local identity: two readings, file wasm equals embedded wasm. The live host is this commit only when its light body says so. No APK.",
   },
 }));

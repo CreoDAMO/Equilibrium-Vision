@@ -4,7 +4,10 @@
 use serde_json::Value;
 
 pub fn site_contract() -> Value {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../site/src/protocol/native-contract.json");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../site/src/protocol/native-contract.json"
+    );
     let text = std::fs::read_to_string(path)
         .unwrap_or_else(|err| panic!("site contract missing at {path}: {err}"));
     let value: Value = serde_json::from_str(&text).expect("site contract json");
@@ -15,20 +18,35 @@ pub fn site_contract() -> Value {
     );
     assert_eq!(value["headerStopsAt"].as_str(), Some("omegaRoot"));
     let outside = value["notSurface"].as_array().expect("notSurface");
-    for required in ["successor", "transitionRoot", "omegaPrime"] {
+    for required in ["successor", "omegaPrime"] {
         assert!(
             outside.iter().any(|item| item.as_str() == Some(required)),
             "{required} stays outside the native contract"
         );
     }
     assert!(
+        !outside
+            .iter()
+            .any(|item| item.as_str() == Some("transitionRoot")),
+        "the transition digest is a commitment, not an unnamed extra"
+    );
+    assert!(
         !outside.iter().any(|item| item.as_str() == Some("lambda")),
         "λ is a weight of the canonical residual, not an unnamed extra"
     );
     let surface = value["surface"].as_array().expect("surface");
+    for required in ["residual-lambda", "omega-digest", "transition-digest"] {
+        assert!(
+            surface.iter().any(|item| item.as_str() == Some(required)),
+            "the shared surface includes {required}"
+        );
+    }
+    let omitted = value["headerOmits"].as_array().expect("headerOmits");
     assert!(
-        surface.iter().any(|item| item.as_str() == Some("residual-lambda")),
-        "the shared surface includes the λ-weighted residual"
+        omitted
+            .iter()
+            .any(|item| item.as_str() == Some("transitionRoot")),
+        "the native header still stops before transitionRoot"
     );
     value
 }
@@ -36,7 +54,9 @@ pub fn site_contract() -> Value {
 pub fn f64_of(value: &Value) -> f64 {
     match value {
         Value::String(text) => text.parse().unwrap_or_else(|_| panic!("bad f64 {text}")),
-        Value::Number(number) => number.as_f64().unwrap_or_else(|| panic!("bad number {number}")),
+        Value::Number(number) => number
+            .as_f64()
+            .unwrap_or_else(|| panic!("bad number {number}")),
         other => panic!("expected number, got {other}"),
     }
 }

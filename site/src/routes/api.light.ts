@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { EMBEDDED_WASM } from "@/protocol/deployment";
 
 export const Route = createFileRoute("/api/light")({
   server: {
@@ -46,7 +47,12 @@ export const Route = createFileRoute("/api/light")({
               }
             : null,
           checks: report?.checks ?? [],
-          note: "Cheap path. This body does not search for a nonce. Rust libp2p is not this endpoint.",
+          note: "This body names the commit the host was given and the wasm this process executes. It does not search for a nonce. It is not an APK.",
+          deployment: {
+            commit: process.env.RENDER_GIT_COMMIT || process.env.EQUILIBRIUM_COMMIT || null,
+            node: process.version,
+            wasm: EMBEDDED_WASM,
+          },
         };
         return new Response(JSON.stringify(body), {
           headers: {

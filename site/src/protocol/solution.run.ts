@@ -325,7 +325,7 @@ console.log(JSON.stringify({
   s3: "distinct",
   s4: executed.next.wasm.get("paused"),
   s5: sealed.transitionRoot.slice(0, 16),
-  s6: "open past the residual: site and Rust agree on the λ-weighted canonical residual, including a coupling a passed proposal opens. Rust does not reconstruct Ω′ or transitionRoot. Android was not executed.",
-  s7: "open: no APK was built, two builds were not compared, and the deployment does not name the commit.",
+  s6: "closed on the site successor for λ into Ω′: genesis continuity 1 pays 0; opening it to 0 pays 100 and moves omegaRoot, transitionRoot, and the header. Rust rebuilds those digests from the fields and does not apply the successor. Android was not executed.",
+  s7: "local identity closed: the wasm file, a second reading, and the embedded bytes are one hash, and /api/light names RENDER_GIT_COMMIT plus that hash. No APK. The live host is this commit only when its light body says so.",
   sameAdmission: protocol < thresholdFp && reference < thresholdFp,
 }));

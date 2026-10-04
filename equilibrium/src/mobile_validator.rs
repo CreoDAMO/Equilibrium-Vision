@@ -1196,8 +1196,13 @@ mod tests {
             crate::site_contract::f64_of(&block["committedPressure"]),
         );
         assert_ne!(hash, ten, "thirteen fields are not the ten-field header");
+        assert_eq!(
+            contract["headerStopsAt"].as_str(),
+            Some("omegaRoot"),
+            "this preimage stops at the omega root"
+        );
         assert!(
-            contract["notSurface"]
+            contract["headerOmits"]
                 .as_array()
                 .unwrap()
                 .iter()

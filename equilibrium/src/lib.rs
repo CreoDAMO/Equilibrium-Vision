@@ -29,6 +29,11 @@ pub mod jni_bridge;
 #[cfg(test)]
 mod site_contract;
 
+// omegaDigest and transitionDigest of a state the site already produced.
+// Not the successor.
+#[cfg(test)]
+mod commitment;
+
 // ── zkML / ERC-7992 DeepProve ─────────────────────────────────────────────────
 // Host prover for quantized MLP inference via RISC Zero.
 // Quantization utilities (quantize_weights, quantize_features, dequantize_output)
