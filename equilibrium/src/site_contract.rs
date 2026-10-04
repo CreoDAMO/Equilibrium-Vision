@@ -15,12 +15,21 @@ pub fn site_contract() -> Value {
     );
     assert_eq!(value["headerStopsAt"].as_str(), Some("omegaRoot"));
     let outside = value["notSurface"].as_array().expect("notSurface");
-    for required in ["successor", "transitionRoot", "omegaPrime", "lambda"] {
+    for required in ["successor", "transitionRoot", "omegaPrime"] {
         assert!(
             outside.iter().any(|item| item.as_str() == Some(required)),
             "{required} stays outside the native contract"
         );
     }
+    assert!(
+        !outside.iter().any(|item| item.as_str() == Some("lambda")),
+        "λ is a weight of the canonical residual, not an unnamed extra"
+    );
+    let surface = value["surface"].as_array().expect("surface");
+    assert!(
+        surface.iter().any(|item| item.as_str() == Some("residual-lambda")),
+        "the shared surface includes the λ-weighted residual"
+    );
     value
 }
 

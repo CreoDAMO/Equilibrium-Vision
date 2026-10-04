@@ -4,7 +4,7 @@
 //! Validation pipeline:
 //!   1. Chain continuity (prev_hash matches the canonical header of the tip)
 //!   2. Timestamp sanity (±2 hours)
-//!   3. Residual re-verification via canonical_residual (no search).
+//!   3. Residual re-verification via canonical_residual_lambda (no search).
 //!      Pressure is the committed value the header binds, which is 0.
 //!      The territory residual is not admission.
 //!   4. Merkle root recomputation from tx hashes
@@ -25,7 +25,6 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::chain_state::{residual_to_fixed, BlockHeader, TxCandidate};
-use crate::stationary_solver::canonical_residual;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -311,10 +310,13 @@ impl ValidationEngine {
     }
 
     /// Recompute the canonical residual at the claimed nonce. No search.
-    /// Pressure and fees come from the body. The territory residual is not this check.
+    /// Pressure and fees come from the body. Couplings come from the body when
+    /// the body carries them; an absent coupling is the default (1,1,1,1,1),
+    /// and a partial coupling is refused. The territory residual is not this check.
     fn verify_residual(&self, block: &GossipedBlock) -> Result<(), String> {
         let (pressure, txs) = pressure_and_txs(block);
-        let recomputed_fp = admitted_residual_fp(&block.header, &txs, pressure);
+        let lambda = opened_lambda(&block.block_json)?;
+        let recomputed_fp = admitted_residual_fp(&block.header, &txs, pressure, &lambda);
         let claimed_fp = block.header.residual;
         let delta = (recomputed_fp - claimed_fp).abs();
 
@@ -366,11 +368,10 @@ fn pressure_and_txs(block: &GossipedBlock) -> (f64, Vec<TxCandidate>) {
     (pressure, txs)
 }
 
-/// Fixed-point canonical residual. Same relation as `canonical_residual` and
-/// the TypeScript kernel. Cumulative work is the block height. Pressure and
-/// fees are the committed block inputs, not zeroes invented by the phone.
-fn admitted_residual_fp(header: &BlockHeader, txs: &[TxCandidate], pressure: f64) -> i64 {
-    residual_to_fixed(canonical_residual(
+/// Fixed-point canonical residual at the coupling the body opened.
+/// Absent couplings are the default. This is not the territory residual.
+fn admitted_residual_fp(header: &BlockHeader, txs: &[TxCandidate], pressure: f64, lambda: &[f64; 5]) -> i64 {
+    residual_to_fixed(crate::stationary_solver::canonical_residual_lambda(
         &header.prev_hash,
         &header.merkle_root,
         header.timestamp,
@@ -379,7 +380,31 @@ fn admitted_residual_fp(header: &BlockHeader, txs: &[TxCandidate], pressure: f64
         txs,
         header.recursion_depth as u64,
         pressure,
+        lambda,
     ))
+}
+
+/// Default coupling when the body does not name one. A body that names a
+/// coupling must name all five. A missing axis is not silently filled with 1.
+fn opened_lambda(json: &str) -> Result<[f64; 5], String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Ok([1.0; 5]);
+    };
+    let Some(couplings) = value.get("couplings") else {
+        return Ok([1.0; 5]);
+    };
+    let keys = ["hash", "structural", "continuity", "mempool", "fees"];
+    let mut lambda = [0.0; 5];
+    for (i, key) in keys.iter().enumerate() {
+        let Some(weight) = couplings.get(*key).and_then(|item| item.as_f64()) else {
+            return Err(format!("couplings are not the opened couplings: missing {key}"));
+        };
+        if !weight.is_finite() || weight < 0.0 {
+            return Err(format!("couplings are not the opened couplings: {key}"));
+        }
+        lambda[i] = weight;
+    }
+    Ok(lambda)
 }
 
 // ── Block identity hash (matches MiningWorker.computeBlockHash) ───────────────
@@ -1182,6 +1207,32 @@ mod tests {
     }
 
     #[test]
+    fn a_partial_coupling_is_not_filled_with_ones() {
+        let missing = super::opened_lambda(r#"{"couplings":{"hash":0}}"#).unwrap_err();
+        assert!(missing.contains("missing structural"), "{missing}");
+        assert_eq!(super::opened_lambda("{}").unwrap(), [1.0; 5]);
+        let dropped = super::opened_lambda(
+            r#"{"couplings":{"hash":0,"structural":1,"continuity":1,"mempool":1,"fees":1}}"#,
+        )
+        .unwrap();
+        assert_eq!(dropped, [0.0, 1.0, 1.0, 1.0, 1.0]);
+        let header = BlockHeader {
+            prev_hash: [0u8; 32],
+            merkle_root: [0u8; 32],
+            state_root: [0u8; 32],
+            timestamp: 1_700_000_000,
+            nonce: 6,
+            difficulty: 1_000_000,
+            recursion_depth: 1,
+            residual: 0,
+        };
+        let at_default = super::admitted_residual_fp(&header, &[], 0.0, &[1.0; 5]);
+        let at_zero = super::admitted_residual_fp(&header, &[], 0.0, &[0.0; 5]);
+        assert_ne!(at_default, at_zero);
+        assert_eq!(at_zero, 0);
+    }
+
+    #[test]
     fn parse_flat_mining_worker_body() {
         let json = r#"{
             "hash": "aabbccdd00112233445566778899aabbccddeeff00112233445566778899aabb",
@@ -1258,7 +1309,7 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let genesis_residual = admitted_residual_fp(&genesis_base, &[], 0.0);
+        let genesis_residual = admitted_residual_fp(&genesis_base, &[], 0.0, &[1.0; 5]);
         let genesis_header = BlockHeader {
             residual: genesis_residual,
             ..genesis_base
@@ -1317,7 +1368,7 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let good_residual = admitted_residual_fp(&good_base, &[], 0.0);
+        let good_residual = admitted_residual_fp(&good_base, &[], 0.0, &[1.0; 5]);
         let good_block = GossipedBlock {
             header: BlockHeader {
                 residual: good_residual,
@@ -1367,7 +1418,7 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let res0 = admitted_residual_fp(&genesis_base, &[], 0.0);
+        let res0 = admitted_residual_fp(&genesis_base, &[], 0.0, &[1.0; 5]);
         let genesis_header = BlockHeader {
             residual: res0,
             ..genesis_base
@@ -1405,7 +1456,7 @@ mod tests {
             residual: 0,
             state_root: [0u8; 32],
         };
-        let res1 = admitted_residual_fp(&block1_base, &[], 0.0);
+        let res1 = admitted_residual_fp(&block1_base, &[], 0.0, &[1.0; 5]);
         let block1_header = BlockHeader {
             residual: res1,
             ..block1_base

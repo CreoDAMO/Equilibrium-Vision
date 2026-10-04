@@ -169,9 +169,10 @@ impl StationarySolver {
     }
 }
 
-/// Dimensionless residual the public kernel admits.
-/// Same function as `canonicalResidual` in the TypeScript node and
-/// `evaluateResidual` in `site/src/protocol/solver.ts`.
+/// Dimensionless residual at the default coupling λ = (1,1,1,1,1).
+/// That vector is Ω's coupling only when no passed proposal has opened another.
+/// A changed λ is [`canonical_residual_lambda`], not this wrapper.
+/// Same function as `evaluateResidual` in `site/src/protocol/solver.ts`.
 /// The territory residual in `joint_residual_and_gradient` is not this number.
 #[allow(clippy::too_many_arguments)]
 pub fn canonical_residual(
@@ -183,6 +184,34 @@ pub fn canonical_residual(
     txs: &[TxCandidate],
     cumulative_work: u64,
     mempool_pressure: f64,
+) -> f64 {
+    canonical_residual_lambda(
+        prev_hash,
+        merkle_root,
+        timestamp,
+        nonce,
+        difficulty,
+        txs,
+        cumulative_work,
+        mempool_pressure,
+        &[1.0; 5],
+    )
+}
+
+/// Canonical residual at an explicit coupling.
+/// Order is hash, structural, continuity, mempool, fees. Same weights as site.
+/// `joint_residual_and_gradient` is the territory residual and is not admission.
+#[allow(clippy::too_many_arguments)]
+pub fn canonical_residual_lambda(
+    prev_hash: &[u8; 32],
+    merkle_root: &[u8; 32],
+    timestamp: u64,
+    nonce: u64,
+    difficulty: u64,
+    txs: &[TxCandidate],
+    cumulative_work: u64,
+    mempool_pressure: f64,
+    lambda: &[f64; 5],
 ) -> f64 {
     let mut hasher = Sha256::new();
     hasher.update(prev_hash);
@@ -203,12 +232,16 @@ pub fn canonical_residual(
     let v_mem = mempool_pressure.clamp(0.0, 1.0);
     let total_fees: u64 = txs.iter().map(|tx| tx.fee).sum();
     let v_fee = (v_mem - (total_fees as f64 / 1_000_000.0).min(1.0)).max(0.0);
-    v_hash.powi(2) + v_struct.powi(2) + v_chain.powi(2) + v_mem.powi(2) + v_fee.powi(2)
+    let v = [v_hash, v_struct, v_chain, v_mem, v_fee];
+    let mut residual = 0.0;
+    for i in 0..5 {
+        residual += lambda[i] * v[i] * v[i];
+    }
+    residual
 }
 
-/// Search nonces for the canonical residual. Returns the best candidate.
-/// A candidate under `target` is the first one found. A candidate above
-/// `target` is best-effort and must not be admitted by the caller.
+/// Search at the default coupling. The phone JNI entry uses this.
+/// It does not read Ω. A coupling other than (1,1,1,1,1) is [`search_canonical_lambda`].
 pub fn search_canonical(
     header: &BlockHeader,
     txs: &[TxCandidate],
@@ -216,12 +249,24 @@ pub fn search_canonical(
     max_iter: u64,
     target: f64,
 ) -> (u64, f64) {
+    search_canonical_lambda(header, txs, state, max_iter, target, &[1.0; 5])
+}
+
+/// Search nonces at the coupling Ω opened. The optimizer's local λ is not an argument.
+pub fn search_canonical_lambda(
+    header: &BlockHeader,
+    txs: &[TxCandidate],
+    state: &ChainState,
+    max_iter: u64,
+    target: f64,
+    lambda: &[f64; 5],
+) -> (u64, f64) {
     let mut best_nonce = header.nonce;
     let mut best = f64::INFINITY;
     let steps = max_iter.max(1);
     for i in 0..steps {
         let nonce = header.nonce.wrapping_add(i);
-        let residual = canonical_residual(
+        let residual = canonical_residual_lambda(
             &header.prev_hash,
             &header.merkle_root,
             header.timestamp,
@@ -230,6 +275,7 @@ pub fn search_canonical(
             txs,
             state.cumulative_work,
             state.mempool_pressure,
+            lambda,
         );
         if residual < best {
             best = residual;
@@ -395,6 +441,161 @@ mod tests {
             let expected = crate::site_contract::f64_of(&row["canonical"]);
             assert!((got - expected).abs() < 1e-12, "{name}: rust {got} site {expected}");
         }
+    }
+
+    fn spec_violations(
+        prev: &[u8; 32],
+        merkle: &[u8; 32],
+        timestamp: u64,
+        nonce: u64,
+        difficulty: u64,
+        work: u64,
+        pressure: f64,
+    ) -> [f64; 5] {
+        let mut hasher = Sha256::new();
+        hasher.update(prev);
+        hasher.update(merkle);
+        hasher.update(timestamp.to_le_bytes());
+        hasher.update(nonce.to_le_bytes());
+        let hash_val = u64::from_le_bytes(hasher.finalize()[0..8].try_into().unwrap());
+        let h_frac = (hash_val as f64) / 2f64.powi(64);
+        let phi = (1.0 + 5.0f64.sqrt()) / 2.0;
+        let tau = (1_000_000.0 / (difficulty as f64 + 1_000_000.0) + 0.35).clamp(0.05, 0.95);
+        let v_hash = (h_frac - tau).max(0.0);
+        let v_struct = (h_frac - 1.0 / phi).abs();
+        let v_chain = if work > 0 { 0.0 } else { 1.0 };
+        let v_mem = pressure.clamp(0.0, 1.0);
+        let v_fee = v_mem;
+        [v_hash, v_struct, v_chain, v_mem, v_fee]
+    }
+
+    #[test]
+    fn canonical_lambda_weights_are_the_dropped_violation() {
+        let prev = [0u8; 32];
+        let merkle = [0u8; 32];
+        let timestamp = 1_700_000_000u64;
+        let difficulty = 1_000_000u64;
+        let mut hash_nonce = None;
+        for nonce in 0..20_000u64 {
+            let v = spec_violations(&prev, &merkle, timestamp, nonce, difficulty, 1, 0.0);
+            if v[0] > 0.0 && v[1] > 0.0 {
+                hash_nonce = Some(nonce);
+                break;
+            }
+        }
+        let nonce = hash_nonce.expect("a nonce with a live hash violation");
+        let full = [1.0; 5];
+        let base = canonical_residual_lambda(&prev, &merkle, timestamp, nonce, difficulty, &[], 1, 0.0, &full);
+        let wrapped = canonical_residual(&prev, &merkle, timestamp, nonce, difficulty, &[], 1, 0.0);
+        assert_eq!(base.to_bits(), wrapped.to_bits(), "omitted λ is the default coupling, not a second formula");
+        let v = spec_violations(&prev, &merkle, timestamp, nonce, difficulty, 1, 0.0);
+        for i in 0..5 {
+            let mut dropped = full;
+            dropped[i] = 0.0;
+            let got = canonical_residual_lambda(&prev, &merkle, timestamp, nonce, difficulty, &[], 1, 0.0, &dropped);
+            let delta = base - got;
+            assert!((delta - v[i] * v[i]).abs() < 1e-12, "axis {i}: delta {delta} v^2 {}", v[i] * v[i]);
+        }
+        let quiet = canonical_residual_lambda(&prev, &merkle, timestamp, 6, difficulty, &[], 1, 0.0, &[0.0; 5]);
+        assert_eq!(quiet, 0.0, "λ = 0 is not the nonce-6 default residual");
+        assert!(canonical_residual(&prev, &merkle, timestamp, 6, difficulty, &[], 1, 0.0) > 0.0);
+        let heavy = canonical_residual_lambda(&prev, &merkle, timestamp, nonce, difficulty, &[], 1, 0.0, &[0.7, 1.0, 1.0, 1.0, 1.0]);
+        let wrong = canonical_residual_lambda(&prev, &merkle, timestamp, nonce, difficulty, &[], 1, 0.0, &[0.8, 1.0, 1.0, 1.0, 1.0]);
+        assert_ne!(heavy.to_bits(), wrong.to_bits(), "a substituted λ must not agree");
+        let continuity = canonical_residual_lambda(&prev, &merkle, timestamp, nonce, difficulty, &[], 0, 0.0, &full)
+            - canonical_residual_lambda(&prev, &merkle, timestamp, nonce, difficulty, &[], 0, 0.0, &[1.0, 1.0, 0.0, 1.0, 1.0]);
+        assert!((continuity - 1.0).abs() < 1e-12, "work 0 drops by v_c^2 = 1, got {continuity}");
+        let tx = [TxCandidate { hash: [0xab; 32], fee: 0 }];
+        let mem = canonical_residual_lambda(&prev, &merkle, timestamp, nonce, difficulty, &tx, 1, 0.5, &full)
+            - canonical_residual_lambda(&prev, &merkle, timestamp, nonce, difficulty, &tx, 1, 0.5, &[1.0, 1.0, 1.0, 0.0, 1.0]);
+        assert!((mem - 0.25).abs() < 1e-12, "pressure 0.5 drops by v_m^2, got {mem}");
+        let fee = canonical_residual_lambda(&prev, &merkle, timestamp, nonce, difficulty, &tx, 1, 0.5, &full)
+            - canonical_residual_lambda(&prev, &merkle, timestamp, nonce, difficulty, &tx, 1, 0.5, &[1.0, 1.0, 1.0, 1.0, 0.0]);
+        assert!((fee - 0.25).abs() < 1e-12, "uncovered fee drops by v_f^2, got {fee}");
+    }
+
+    #[test]
+    fn canonical_residual_matches_the_site_lambda_oracle() {
+        let Ok(path) = std::env::var("EQ_LAMBDA_ORACLE") else {
+            println!("lambda-oracle: not supplied");
+            return;
+        };
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("oracle {path}: {err}"));
+        let value: serde_json::Value = serde_json::from_str(&text).expect("oracle json");
+        let rows = value["rows"].as_array().expect("rows");
+        assert!(rows.len() >= 5, "site did not emit the five coupling attacks");
+        let prev = [0u8; 32];
+        let merkle = [0u8; 32];
+        for row in rows {
+            let name = row["name"].as_str().unwrap();
+            let lambda_vals = row["lambda"].as_array().unwrap();
+            assert_eq!(lambda_vals.len(), 5, "{name}");
+            let mut lambda = [0.0; 5];
+            for (i, item) in lambda_vals.iter().enumerate() {
+                lambda[i] = crate::site_contract::f64_of(item);
+            }
+            let fee = row["fee"].as_u64().unwrap_or(0);
+            let txs: Vec<TxCandidate> = if fee == 0 && row["txs"].as_array().map(|a| a.is_empty()).unwrap_or(true) {
+                Vec::new()
+            } else {
+                row["txs"].as_array().unwrap().iter().map(|tx| {
+                    let bytes = hex::decode(tx["hash"].as_str().unwrap()).unwrap();
+                    let mut hash = [0u8; 32];
+                    hash.copy_from_slice(&bytes);
+                    TxCandidate { hash, fee: tx["fee"].as_u64().unwrap() }
+                }).collect()
+            };
+            let got = canonical_residual_lambda(
+                &prev,
+                &merkle,
+                row["timestamp"].as_u64().unwrap(),
+                row["nonce"].as_u64().unwrap(),
+                row["difficulty"].as_u64().unwrap(),
+                &txs,
+                row["work"].as_u64().unwrap(),
+                crate::site_contract::f64_of(&row["pressure"]),
+                &lambda,
+            );
+            let expected = crate::site_contract::f64_of(&row["canonical"]);
+            assert!((got - expected).abs() < 1e-12, "{name}: rust {got} site {expected}");
+            if name == "default" {
+                let wrapped = canonical_residual(
+                    &prev,
+                    &merkle,
+                    row["timestamp"].as_u64().unwrap(),
+                    row["nonce"].as_u64().unwrap(),
+                    row["difficulty"].as_u64().unwrap(),
+                    &txs,
+                    row["work"].as_u64().unwrap(),
+                    crate::site_contract::f64_of(&row["pressure"]),
+                );
+                assert_eq!(wrapped.to_bits(), got.to_bits());
+            }
+        }
+        println!("lambda-oracle: rows {}", rows.len());
+    }
+
+    #[test]
+    fn optimizer_lambda_is_not_canonical_admission() {
+        let prev = [0u8; 32];
+        let solver = StationarySolver::new(20, 1e-8, 0.01, 1);
+        let state = default_state();
+        let (solved, solved_txs) = solver.optimize_full(default_header(), vec![], &state).expect("best effort");
+        let canonical = canonical_residual_lambda(
+            &prev,
+            &prev,
+            solved.timestamp,
+            solved.nonce,
+            solved.difficulty,
+            &solved_txs,
+            state.cumulative_work,
+            state.mempool_pressure,
+            &[0.0; 5],
+        );
+        assert_eq!(canonical, 0.0);
+        assert_ne!(solved.residual, residual_to_fixed(canonical), "the optimizer's λ must not be admitted as Ω's coupling");
+        let (territory, _) = StationarySolver::joint_residual_and_gradient(&solved, &solved_txs, &state, &[1.0; 5]);
+        assert_eq!(solved.residual, territory, "optimize_full still stores the territory residual, not the canonical one");
     }
 
     #[test]

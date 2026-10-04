@@ -325,7 +325,7 @@ console.log(JSON.stringify({
   s3: "distinct",
   s4: executed.next.wasm.get("paused"),
   s5: sealed.transitionRoot.slice(0, 16),
-  s6: "open: site owns the residual, header, and coinbase contract. Rust reads it and does not reconstruct G. Android was not executed.",
+  s6: "open past the residual: site and Rust agree on the λ-weighted canonical residual, including a coupling a passed proposal opens. Rust does not reconstruct Ω′ or transitionRoot. Android was not executed.",
   s7: "open: no APK was built, two builds were not compared, and the deployment does not name the commit.",
   sameAdmission: protocol < thresholdFp && reference < thresholdFp,
 }));

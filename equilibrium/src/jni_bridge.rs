@@ -107,8 +107,9 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
         height:           0,
     };
 
-    // Shared residual search from the site contract. Admission at 2e-3.
-    // This is not applySuccessor. The phone does not install Ω.
+    // Default coupling (1,1,1,1,1). This call does not receive Ω.λ.
+    // It does not apply the successor, and the phone does not install Ω.
+    // The boolean is admission, not "a candidate exists".
     let (nonce, residual) = search_canonical(&header, &[], &state, (max_attempts as u64).max(1), 2e-3);
     if env.set_long_array_region(&out_nonce, 0, &[nonce as i64]).is_err() {
         return JNI_FALSE;

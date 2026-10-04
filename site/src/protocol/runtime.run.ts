@@ -73,9 +73,11 @@ const contract = JSON.parse(readFileSync(join(here, "native-contract.json"), "ut
 
 assert.equal(contract.authority, "site");
 assert.equal(contract.headerStopsAt, "omegaRoot");
-for (const outside of ["successor", "transitionRoot", "omegaPrime", "lambda"]) {
+for (const outside of ["successor", "transitionRoot", "omegaPrime"]) {
   assert.ok(contract.notSurface.includes(outside), outside);
 }
+assert.ok(!contract.notSurface.includes("lambda"), "λ is a residual weight");
+assert.ok(contract.surface.includes("residual-lambda"));
 assert.equal(contract.apkDoesNotEmbody, "applySuccessor");
 assert.equal(contract.nonce6Fp, 201_100_202_523_998);
 
@@ -200,6 +202,8 @@ const rust = execFileSync(
     "canonical_header_hash_matches_the_public_kernel_vector",
     "canonical_header_hash_evidence_matches_the_kernel_block",
     "canonical_coinbase_matches_the_public_kernel_vectors",
+    "canonical_lambda_weights_are_the_dropped_violation",
+    "optimizer_lambda_is_not_canonical_admission",
     "--test-threads",
     "8",
   ],
@@ -254,15 +258,15 @@ console.log(JSON.stringify({
     tenField: ten,
     thirteenField: thirteen,
     transitionRootDiffers: withTransition !== thirteen,
-    rustOmitsLambdas: quiet.canonical !== decisions.find((row) => row.name === "nonce6")!.fp,
+    rustOmitsLambdas: !/canonical_lambda_weights_are_the_dropped_violation \.\.\. ok/.test(rust),
     rustOmitsTransitionRoot: true,
-    observation: "rustOmitsLambdas and rustOmitsTransitionRoot are C (source). They are not A cross-runtime measurements.",
+    observation: "λ is checked by canonical_lambda_weights and by coupling.run.ts. transitionRoot remains outside the native header (C, source).",
     androidExecuted: apkBuilt,
     androidTree,
     apkEmbodies: contract.apkEmbodies,
     sameAdmission: 201_100_202_523_998 < thresholdFp && reference < thresholdFp,
     couplings: DEFAULT_COUPLINGS,
-    level: "A on the shared residual, header, and coinbase vectors in native-contract.json. Not A for G, transitionRoot, lambda, or Android.",
+    level: "A on the shared residual, header, coinbase, and λ-weighted residual. Not A for G, transitionRoot, or Android.",
   },
   s7: {
     commit,
