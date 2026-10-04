@@ -56,6 +56,7 @@ export const Route = createFileRoute("/api/light")({
             wasm: EMBEDDED_WASM,
             artifact: artifact?.digest ?? null,
             artifactFiles: artifact?.files ?? null,
+            ...(url.searchParams.get("manifest") === "1" ? { manifest: artifact?.lines ?? null } : {}),
           },
         };
         return new Response(JSON.stringify(body), {

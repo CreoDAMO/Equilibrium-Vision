@@ -56,7 +56,7 @@ function filesOf(root: string): string[] {
 }
 
 /** sha256 of the sorted `hash  path` lines. Null when the directory is absent. */
-export function normalizedArtifactDigest(root: string): { digest: string; files: number } | null {
+export function normalizedArtifactDigest(root: string): { digest: string; files: number; lines: string[] } | null {
   if (!existsSync(join(root, "nitro.json"))) return null;
   const lines: string[] = [];
   for (const path of filesOf(root)) {
@@ -69,6 +69,7 @@ export function normalizedArtifactDigest(root: string): { digest: string; files:
   return {
     digest: createHash("sha256").update(lines.join("\n")).digest("hex"),
     files: lines.length,
+    lines,
   };
 }
 
@@ -90,10 +91,10 @@ export function findArtifactRoot(start = process.cwd()): string | null {
   return null;
 }
 
-let cached: { digest: string; files: number } | null | undefined;
+let cached: { digest: string; files: number; lines: string[] } | null | undefined;
 
 /** One digest per process. A missing output is reported as null, not as a failure. */
-export function artifactIdentity(): { digest: string; files: number } | null {
+export function artifactIdentity(): { digest: string; files: number; lines: string[] } | null {
   if (cached !== undefined) return cached;
   try {
     const root = findArtifactRoot();
