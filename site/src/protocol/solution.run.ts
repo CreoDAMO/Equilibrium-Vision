@@ -327,6 +327,6 @@ console.log(JSON.stringify({
   s4: executed.next.wasm.get("paused"),
   s5: sealed.transitionRoot.slice(0, 16),
   s6: "closed on the mainnet surface membrane.run.ts enumerates. Native derives Ω′ from Ω and I for those cases, including one composed transition, and the refusals match. Ethereum participants are the popcount of the signed 64-byte bitset. The same signature over a different bitset is refused. A valid second Bitcoin header was not available. Other networks were not run. Android was not executed. This is not every byte string. Admission is still the named binary64 fingerprint, not a fixed-point model.",
-  s7: "the normalized Render artifact is measured again after the participation boundary. The independent build reports 39ce2966c7e3f13a1f85980635fdc3f6f979860a08c1a6e6caf5fa52e90a8d1a for 140 files. It matches the live process only when /api/light says that digest. Android is separate.",
+  s7: "closed again on the normalized Render artifact after the participation boundary. An independent build and the live process both report 39ce2966c7e3f13a1f85980635fdc3f6f979860a08c1a6e6caf5fa52e90a8d1a for 140 files. Android is separate.",
   sameAdmission: protocol < thresholdFp && reference < thresholdFp,
 }));
