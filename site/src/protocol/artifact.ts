@@ -1,7 +1,9 @@
 /**
  * Digest of the production output the process can see on disk.
- * `nitro.json`'s build date is removed. Every other byte is included.
- * The digest is not written back into the output, so it does not name itself.
+ * The Nitro build date is removed. Absolute route paths and the content
+ * hash in the TanStack start manifest are removed, because those name the
+ * build machine rather than the program. The digest is not written back
+ * into the output.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -12,6 +14,28 @@ function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((item) => canonical(item)).join(",")}]`;
   const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
   return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
+}
+
+const MANIFEST = /_tanstack-start-manifest_v-[A-Za-z0-9_-]+\.mjs$/;
+
+function normalize(rel: string, bytes: Buffer): { rel: string; bytes: Buffer } {
+  if (rel === "nitro.json") {
+    const parsed = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
+    delete parsed.date;
+    return { rel, bytes: Buffer.from(canonical(parsed)) };
+  }
+  if (MANIFEST.test(rel) || rel.endsWith("/_ssr/ssr.mjs")) {
+    const text = bytes
+      .toString("utf8")
+      .replace(/filePath: "(?:[^"]*\/)?(src\/routes\/[^"]+)"/g, 'filePath: "$1"')
+      .replace(/_tanstack-start-manifest_v-[A-Za-z0-9_-]+/g, "_tanstack-start-manifest");
+    const next = Buffer.from(text);
+    if (MANIFEST.test(rel)) {
+      return { rel: rel.replace(MANIFEST, "_tanstack-start-manifest.mjs"), bytes: next };
+    }
+    return { rel, bytes: next };
+  }
+  return { rel, bytes };
 }
 
 function filesOf(root: string): string[] {
@@ -36,16 +60,12 @@ export function normalizedArtifactDigest(root: string): { digest: string; files:
   if (!existsSync(join(root, "nitro.json"))) return null;
   const lines: string[] = [];
   for (const path of filesOf(root)) {
-    const rel = relative(root, path).split("\\").join("/");
-    let bytes = readFileSync(path);
-    if (rel === "nitro.json") {
-      const parsed = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
-      delete parsed.date;
-      bytes = Buffer.from(canonical(parsed));
-    }
+    const raw = relative(root, path).split("\\").join("/");
+    const { rel, bytes } = normalize(raw, readFileSync(path));
     const hash = createHash("sha256").update(bytes).digest("hex");
     lines.push(`${hash}  ${rel}`);
   }
+  lines.sort();
   return {
     digest: createHash("sha256").update(lines.join("\n")).digest("hex"),
     files: lines.length,
