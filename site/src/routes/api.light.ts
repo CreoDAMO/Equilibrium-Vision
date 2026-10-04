@@ -13,8 +13,9 @@ export const Route = createFileRoute("/api/light")({
         const prev = tip && tip.height > 0 ? node.getBlock(String(tip.height - 1)) ?? null : null;
         const { independentVerify } = await import("@/protocol/light");
         const report = tip ? independentVerify(tip, prev, node.params) : null;
-        const { artifactIdentity } = await import("@/protocol/artifact");
+        const { artifactIdentity, artifactFile } = await import("@/protocol/artifact");
         const artifact = artifactIdentity();
+        const wanted = url.searchParams.get("file");
         const body = {
           network,
           chainId: node.params.chainId,
@@ -57,6 +58,7 @@ export const Route = createFileRoute("/api/light")({
             artifact: artifact?.digest ?? null,
             artifactFiles: artifact?.files ?? null,
             ...(url.searchParams.get("manifest") === "1" ? { manifest: artifact?.lines ?? null } : {}),
+            ...(wanted ? { file: wanted, fileText: artifactFile(wanted) } : {}),
           },
         };
         return new Response(JSON.stringify(body), {

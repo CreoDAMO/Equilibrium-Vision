@@ -104,3 +104,21 @@ export function artifactIdentity(): { digest: string; files: number; lines: stri
   }
   return cached;
 }
+
+const READABLE = new Set([
+  "nitro.json",
+  "functions/__server.func/.vc-config.json",
+  "functions/__server.func/index.mjs",
+]);
+
+/** Raw text of one output file. Only the three files that disagreed are readable. */
+export function artifactFile(rel: string): string | null {
+  if (!READABLE.has(rel)) return null;
+  try {
+    const root = findArtifactRoot();
+    if (!root) return null;
+    return readFileSync(join(root, rel), "utf8");
+  } catch {
+    return null;
+  }
+}
