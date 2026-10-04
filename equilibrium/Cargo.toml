@@ -65,6 +65,8 @@ tracing-subscriber = { version = ">=0.3.19", optional = true }
 risc0 = ["dep:risc0-zkvm", "dep:methods", "dep:reqwest"]
 
 [dev-dependencies]
+bls12_381 = { version = "0.8", features = ["experimental"] }
+sha2_09 = { package = "sha2", version = "0.9" }
 wasmi = "0.40"
 
 # ── Android JNI bridge ────────────────────────────────────────────────────────

@@ -325,7 +325,7 @@ console.log(JSON.stringify({
   s3: "distinct",
   s4: executed.next.wasm.get("paused"),
   s5: sealed.transitionRoot.slice(0, 16),
-  s6: "open past one class: native derives the continuity transition, a signed transfer, stake, canonical wasm init, a bitcoin header, a model, a bind, a challenge, and a settlement from the pre-state and I. An altered signature is refused. A caller-supplied wasm map is not installed. An Ethereum signature, the remaining inputs, and Android were not executed.",
+  s6: "open. Native derives the tested classes from the pre-state and I: continuity, a signed transfer, stake, canonical wasm init, bitcoin, an Ethereum header under the site BLS check, a model, a bind, a challenge, and a settlement. One transition carries a transfer, a delegation, the opened coupling, wasm, bitcoin, ethereum, and a settlement, and the roots match. An altered signature is refused. A caller-supplied wasm map is not installed. A participant count above quorum is not inside the signature. Android was not executed. This is not every input.",
   s7: "local identity closed: the wasm file, a second reading, and the embedded bytes are one hash, and /api/light names RENDER_GIT_COMMIT plus that hash. No APK. The live host is this commit only when its light body says so.",
   sameAdmission: protocol < thresholdFp && reference < thresholdFp,
 }));

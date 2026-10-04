@@ -30,7 +30,8 @@ pub mod jni_bridge;
 mod site_contract;
 
 // Digests of a site-produced state, and the native successor for the
-// transitions membrane.run.ts executes. Not a second chain, and not the phone.
+// transitions membrane.run.ts executes, including one composed input.
+// Not a second chain, and not the phone.
 #[cfg(test)]
 mod commitment;
 

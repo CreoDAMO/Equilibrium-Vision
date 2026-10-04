@@ -1,7 +1,7 @@
 //! `apply_opened_successor` derives Ω′ from the pre-state and I.
 //! The genesis continuity transition, a signed transfer, stake evidence,
-//! canonical wasm, a bitcoin header, a model, and a settlement are that
-//! execution. An Ethereum signature is not. It does not install a chain.
+//! canonical wasm, a bitcoin header, an ethereum header, a model, and a
+//! settlement are that execution. It does not install a chain.
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -487,7 +487,10 @@ struct OpenedSuccessor {
 
 /// One transition. Pre-state and I only. Ω′ is not an argument.
 /// Ethereum header signatures are not this execution.
-fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<OpenedSuccessor, String> {
+fn apply_opened_successor(
+    pre: &OmegaSnap,
+    input: &TransitionSnap,
+) -> Result<OpenedSuccessor, String> {
     if !input.pressure.is_finite() || !(0.0..=1.0).contains(&input.pressure) {
         return Err("pressure is not in [0,1]".into());
     }
@@ -556,8 +559,8 @@ fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<Ope
     }
     let commission = producer.commission;
     if let Some(body) = &input.body {
-        apply::apply_material(&mut next, body)?;
         apply::execute_wasm(&mut next, &body.wasm, pre.height)?;
+        apply::apply_material(&mut next, body)?;
     }
 
     let height = pre.height + 1;
@@ -566,7 +569,13 @@ fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<Ope
     let merkle_hex_root = if input.txs.is_empty() {
         "0".repeat(64)
     } else {
-        merkle_hex(&input.txs.iter().map(|tx| tx.hash.clone()).collect::<Vec<_>>())
+        merkle_hex(
+            &input
+                .txs
+                .iter()
+                .map(|tx| tx.hash.clone())
+                .collect::<Vec<_>>(),
+        )
     };
     let merkle = decode_hash32(&merkle_hex_root)?;
     let lambda = [
@@ -641,7 +650,13 @@ fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<Ope
     } else {
         input.timestamp as f64 - pre.tip_timestamp as f64
     };
-    next.difficulty = adjust_difficulty(pre.difficulty, block_time, block_target, foreign_num, foreign_den);
+    next.difficulty = adjust_difficulty(
+        pre.difficulty,
+        block_time,
+        block_target,
+        foreign_num,
+        foreign_den,
+    );
     let mut bonded = 0.0;
     let mut voting = 0.0;
     for validator in &next.validators {
@@ -662,7 +677,10 @@ fn apply_opened_successor(pre: &OmegaSnap, input: &TransitionSnap) -> Result<Ope
     let mut sealed = input.clone();
     sealed.evidence = evidence;
     let omega_root = sha256_hex(&format!("eq-omega|{}", omega_preimage(&next)));
-    let transition_root = sha256_hex(&format!("eq-transition|{}", transition_preimage(pre, &sealed)));
+    let transition_root = sha256_hex(&format!(
+        "eq-transition|{}",
+        transition_preimage(pre, &sealed)
+    ));
     let state_root = state_root_of(&next);
     if let Some(body) = &input.body {
         apply::admit_binding(body, &js_residual_fp(residual).1, &state_root)?;
@@ -757,7 +775,9 @@ fn adjust_difficulty(difficulty: f64, block_time: f64, target: f64, num: f64, de
     if factor == 0.8 || factor == 1.2 {
         return (difficulty * factor).floor().max(100_000.0);
     }
-    ((difficulty * target * num) / (block_time * den)).floor().max(100_000.0)
+    ((difficulty * target * num) / (block_time * den))
+        .floor()
+        .max(100_000.0)
 }
 
 fn state_root_of(omega: &OmegaSnap) -> String {
@@ -968,13 +988,25 @@ mod tests {
             let got = got.unwrap_or_else(|err| panic!("{}: {err}", case.name));
             let site = case.site.as_ref().expect("site result");
             assert_eq!(got.omega_root, site.omega_root, "{} omega", case.name);
-            assert_eq!(got.transition_root, site.transition_root, "{} transition", case.name);
+            assert_eq!(
+                got.transition_root, site.transition_root,
+                "{} transition",
+                case.name
+            );
             assert_eq!(got.state_root, site.state_root, "{} state", case.name);
             assert_eq!(got.reward, site.reward, "{} reward", case.name);
             assert_eq!(got.liquid, site.liquid, "{} liquid", case.name);
-            assert_eq!(got.miner_balance, site.miner_balance, "{} balance", case.name);
+            assert_eq!(
+                got.miner_balance, site.miner_balance,
+                "{} balance",
+                case.name
+            );
             assert_eq!(got.continuity, site.continuity, "{} continuity", case.name);
-            assert_eq!(got.proposal_status, site.proposal_status, "{} proposal", case.name);
+            assert_eq!(
+                got.proposal_status, site.proposal_status,
+                "{} proposal",
+                case.name
+            );
             let expected: f64 = site.residual.parse().expect("residual");
             assert!(
                 (got.residual - expected).abs() < 1e-12,
@@ -997,7 +1029,10 @@ mod tests {
                 assert_eq!(got.continuity, 1.0);
             }
         }
-        assert_ne!(off_header, on_header, "the opened coupling must move the header");
+        assert_ne!(
+            off_header, on_header,
+            "the opened coupling must move the header"
+        );
         println!("native-successor: rows {}", oracle.cases.len());
         println!("native-successor: substituted refused");
         println!("native-successor: continuity-off reward 100");
@@ -1042,9 +1077,13 @@ mod tests {
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("oracle {}: {err}", path.to_string_lossy()));
         let oracle: MembraneOracle = serde_json::from_str(&text).expect("membrane oracle json");
-        assert_eq!(oracle.cases.len(), 18, "oracle rows");
+        assert_eq!(oracle.cases.len(), 26, "oracle rows");
         let mut pay = String::new();
         let mut other = String::new();
+        let mut eth_honest = String::new();
+        let mut eth_swapped = String::new();
+        let mut composed = String::new();
+        let mut composed_loud = String::new();
         for case in &oracle.cases {
             let got = super::apply_opened_successor(&case.pre, &case.transition);
             if let Some(reason) = &case.refuse {
@@ -1055,11 +1094,19 @@ mod tests {
             let got = got.unwrap_or_else(|err| panic!("{}: {err}", case.name));
             let site = case.site.as_ref().expect("site");
             assert_eq!(got.omega_root, site.omega_root, "{} omega", case.name);
-            assert_eq!(got.transition_root, site.transition_root, "{} transition", case.name);
+            assert_eq!(
+                got.transition_root, site.transition_root,
+                "{} transition",
+                case.name
+            );
             assert_eq!(got.state_root, site.state_root, "{} state", case.name);
             assert_eq!(got.header, site.header, "{} header", case.name);
             if let Some(decoy) = case.decoy_balance {
-                assert_ne!(got.miner_balance, decoy, "{} accepted a caller balance", case.name);
+                assert_ne!(
+                    got.miner_balance, decoy,
+                    "{} accepted a caller balance",
+                    case.name
+                );
             }
             if case.name == "tx-pay" {
                 pay = got.omega_root.clone();
@@ -1067,12 +1114,35 @@ mod tests {
             if case.name == "tx-other" {
                 other = got.omega_root.clone();
             }
+            if case.name == "eth-header" {
+                eth_honest = got.omega_root.clone();
+            }
+            if case.name == "eth-participants" {
+                eth_swapped = got.omega_root.clone();
+            }
+            if case.name == "compose" {
+                composed = got.omega_root.clone();
+            }
+            if case.name == "compose-loud" {
+                composed_loud = got.omega_root.clone();
+            }
         }
         assert_ne!(pay, other, "an altered signed transaction must move Ω′");
+        assert_ne!(
+            eth_honest, eth_swapped,
+            "a participant count above quorum is stored, and it moves Ω′"
+        );
+        assert_ne!(
+            composed, composed_loud,
+            "the opened coupling must move the composed transition"
+        );
         println!("membrane: rows {}", oracle.cases.len());
         println!("membrane: signature refused");
         println!("membrane: wasm executed");
         println!("membrane: btc admitted");
+        println!("membrane: eth admitted");
+        println!("membrane: eth signature refused");
+        println!("membrane: composed");
     }
 
     #[derive(serde::Deserialize)]

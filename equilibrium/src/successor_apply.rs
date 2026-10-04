@@ -1,6 +1,6 @@
-//! Transaction, stake, wasm, bitcoin, model, and settlement steps.
-//! Ethereum header signatures are not executed here.
-//! A caller-supplied wasm map is not an argument.
+//! Transaction, stake, wasm, bitcoin, ethereum, model, and settlement steps.
+//! The ethereum check is the site's BLS12-381 long signature over the header
+//! hash. A caller-supplied wasm map is not an argument.
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
@@ -16,7 +16,7 @@ pub(super) struct EvidenceBody {
     #[serde(default)]
     pub btc: Vec<BtcEv>,
     #[serde(default)]
-    pub eth: Vec<serde_json::Value>,
+    pub eth: Vec<EthOp>,
     #[serde(default)]
     pub wasm: Vec<WasmEv>,
     #[serde(default)]
@@ -32,6 +32,27 @@ pub(super) struct EvidenceBody {
 pub(super) struct BtcEv {
     pub header_hex: String,
     pub height: i64,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(tag = "op")]
+pub(super) enum EthOp {
+    #[serde(rename = "bootstrap")]
+    Bootstrap { pubkey: String },
+    #[serde(rename = "header")]
+    Header {
+        slot: i64,
+        #[serde(rename = "proposerIndex")]
+        proposer_index: i64,
+        #[serde(rename = "parentRoot")]
+        parent_root: String,
+        #[serde(rename = "stateRoot")]
+        state_root: String,
+        #[serde(rename = "bodyRoot")]
+        body_root: String,
+        participants: i64,
+        signature: String,
+    },
 }
 
 #[derive(Clone, Deserialize)]
@@ -67,7 +88,11 @@ pub(super) enum StakeOp {
         coupling_value: Option<f64>,
     },
     #[serde(rename = "vote")]
-    Vote { voter: String, id: i64, option: String },
+    Vote {
+        voter: String,
+        id: i64,
+        option: String,
+    },
 }
 
 #[derive(Clone, Deserialize)]
@@ -146,9 +171,7 @@ fn wasm_bytes() -> Result<Vec<u8>, String> {
 
 pub(super) fn blank_code(chain_id: i64, evidence: &str) -> Result<(), String> {
     let prefix = format!("v1|{chain_id}|");
-    let rest = evidence
-        .strip_prefix(&prefix)
-        .ok_or("not this surface")?;
+    let rest = evidence.strip_prefix(&prefix).ok_or("not this surface")?;
     let code = rest.strip_suffix("||||").ok_or("not this surface")?;
     if code != wasm_code()? {
         return Err("not this surface".into());
@@ -157,9 +180,6 @@ pub(super) fn blank_code(chain_id: i64, evidence: &str) -> Result<(), String> {
 }
 
 pub(super) fn canonical_evidence(body: &EvidenceBody) -> Result<String, String> {
-    if !body.eth.is_empty() {
-        return Err("eth signature is not this execution".into());
-    }
     if body.wasm_code != wasm_code()? {
         return Err("wasm code is not this constitution".into());
     }
@@ -169,6 +189,7 @@ pub(super) fn canonical_evidence(body: &EvidenceBody) -> Result<String, String> 
         .map(|b| format!("{}:{}", b.height, b.header_hex))
         .collect::<Vec<_>>()
         .join(";");
+    let eth = body.eth.iter().map(eth_line).collect::<Vec<_>>().join(";");
     let wasm = body
         .wasm
         .iter()
@@ -194,13 +215,30 @@ pub(super) fn canonical_evidence(body: &EvidenceBody) -> Result<String, String> 
         .collect::<Vec<_>>()
         .join(";");
     let encoded = format!(
-        "v1|{}|{}|{btc}||{wasm}|{stake}",
+        "v1|{}|{}|{btc}|{eth}|{wasm}|{stake}",
         body.chain_id, body.wasm_code
     );
     if cognition.is_empty() && settle.is_empty() {
         return Ok(encoded);
     }
     Ok(format!("{encoded}|{cognition}|{settle}"))
+}
+
+fn eth_line(op: &EthOp) -> String {
+    match op {
+        EthOp::Bootstrap { pubkey } => format!("b:{pubkey}"),
+        EthOp::Header {
+            slot,
+            proposer_index,
+            parent_root,
+            state_root,
+            body_root,
+            participants,
+            signature,
+        } => format!(
+            "h:{slot}:{proposer_index}:{parent_root}:{state_root}:{body_root}:{participants}:{signature}"
+        ),
+    }
 }
 
 fn stake_line(op: &StakeOp) -> String {
@@ -362,9 +400,7 @@ fn select(pre: &OmegaSnap, txs: &[TxSnap]) -> Vec<usize> {
             }
             let take = match best {
                 None => true,
-                Some(b) => {
-                    tx.fee > txs[b].fee || (tx.fee == txs[b].fee && tx.hash < txs[b].hash)
-                }
+                Some(b) => tx.fee > txs[b].fee || (tx.fee == txs[b].fee && tx.hash < txs[b].hash),
             };
             if take {
                 best = Some(i);
@@ -419,6 +455,9 @@ pub(super) fn apply_material(omega: &mut OmegaSnap, body: &EvidenceBody) -> Resu
     for item in &body.btc {
         apply_btc(omega, item)?;
     }
+    for item in &body.eth {
+        apply_eth(omega, item)?;
+    }
     for op in &body.settle {
         apply_settle(omega, op)?;
     }
@@ -459,7 +498,11 @@ fn apply_stake(omega: &mut OmegaSnap, op: &StakeOp, auth: &Auth) -> Result<(), S
             validator,
             amount,
         } => {
-            let Some(index) = omega.validators.iter().position(|v| v.address == *validator) else {
+            let Some(index) = omega
+                .validators
+                .iter()
+                .position(|v| v.address == *validator)
+            else {
                 return Err("delegate refused".into());
             };
             if omega.validators[index].jailed || omega.validators[index].slashed {
@@ -495,7 +538,11 @@ fn apply_stake(omega: &mut OmegaSnap, op: &StakeOp, auth: &Auth) -> Result<(), S
             Ok(())
         }
         StakeOp::Slash { validator, reason } => {
-            let Some(v) = omega.validators.iter_mut().find(|v| v.address == *validator) else {
+            let Some(v) = omega
+                .validators
+                .iter_mut()
+                .find(|v| v.address == *validator)
+            else {
                 return Err("slash refused".into());
             };
             if v.slashed || v.jailed || !safe_positive(v.bonded_stake) {
@@ -649,6 +696,135 @@ fn apply_btc(omega: &mut OmegaSnap, item: &BtcEv) -> Result<(), String> {
     Ok(())
 }
 
+const ETH_MIN_PARTICIPANTS: i64 = 342;
+const ETH_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+
+fn apply_eth(omega: &mut OmegaSnap, item: &EthOp) -> Result<(), String> {
+    match item {
+        EthOp::Bootstrap { pubkey } => {
+            if !omega.eth_pubkey.is_empty() {
+                return Err("eth committee already installed".into());
+            }
+            let raw = decode_hex(pubkey).map_err(|_| "eth pubkey is not hex")?;
+            if raw.len() != 48 {
+                return Err("eth pubkey must be 48 bytes".into());
+            }
+            omega.eth_pubkey = hex::encode(raw);
+            Ok(())
+        }
+        EthOp::Header {
+            slot,
+            proposer_index,
+            parent_root,
+            state_root,
+            body_root,
+            participants,
+            signature,
+        } => {
+            if omega.eth_pubkey.is_empty() {
+                return Err("eth header before committee".into());
+            }
+            if *participants < ETH_MIN_PARTICIPANTS {
+                return Err("eth quorum not met".into());
+            }
+            if let Some(tip) = omega.eth.last() {
+                if *slot != tip.slot + 1 {
+                    return Err("eth slot does not extend the tip".into());
+                }
+                if parent_root != &tip.hash {
+                    return Err("eth parent does not match the tip".into());
+                }
+            }
+            let sig = match decode_hex(signature) {
+                Ok(bytes) => bytes,
+                Err(()) => return Err("eth signature is not hex".into()),
+            };
+            let hash = hash_eth_header(*slot, *proposer_index, parent_root, state_root, body_root)
+                .ok_or("eth signature refused")?;
+            let pubkey = decode_hex(&omega.eth_pubkey).map_err(|_| "eth signature refused")?;
+            if !verify_eth_signature(&pubkey, &hash, &sig) {
+                return Err("eth signature refused".into());
+            }
+            omega.eth.push(super::EthSnap {
+                slot: *slot,
+                hash: hex::encode(hash),
+                participants: *participants,
+                parent_root: parent_root.clone(),
+                state_root: state_root.clone(),
+                body_root: body_root.clone(),
+            });
+            Ok(())
+        }
+    }
+}
+
+fn decode_hex(text: &str) -> Result<Vec<u8>, ()> {
+    let clean = text
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    if clean.len() % 2 != 0 || !clean.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(());
+    }
+    hex::decode(clean).map_err(|_| ())
+}
+
+fn hash_eth_header(
+    slot: i64,
+    proposer: i64,
+    parent: &str,
+    state: &str,
+    body: &str,
+) -> Option<[u8; 32]> {
+    if slot < 0 || proposer < 0 {
+        return None;
+    }
+    let parent = decode_hex(parent).ok()?;
+    let state = decode_hex(state).ok()?;
+    let body = decode_hex(body).ok()?;
+    if parent.len() != 32 || state.len() != 32 || body.len() != 32 {
+        return None;
+    }
+    let mut pre = Vec::with_capacity(24 + 8 + 8 + 96);
+    pre.extend_from_slice(b"equilibrium-eth-lc-v1");
+    pre.extend_from_slice(&(slot as u64).to_le_bytes());
+    pre.extend_from_slice(&(proposer as u64).to_le_bytes());
+    pre.extend_from_slice(&parent);
+    pre.extend_from_slice(&state);
+    pre.extend_from_slice(&body);
+    let digest = Sha256::digest(&pre);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    Some(out)
+}
+
+/// e(pk, H(m)) == e(G1, sig), with H the site's G2 hash-to-curve.
+fn verify_eth_signature(pubkey: &[u8], message: &[u8], signature: &[u8]) -> bool {
+    use bls12_381::hash_to_curve::{ExpandMsgXmd, HashToCurve};
+    use bls12_381::{pairing, G1Affine, G2Affine, G2Projective, Gt};
+
+    if pubkey.len() != 48 || signature.len() != 96 {
+        return false;
+    }
+    let mut pk_bytes = [0u8; 48];
+    let mut sig_bytes = [0u8; 96];
+    pk_bytes.copy_from_slice(pubkey);
+    sig_bytes.copy_from_slice(signature);
+    let Some(pk) = Option::<G1Affine>::from(G1Affine::from_compressed(&pk_bytes)) else {
+        return false;
+    };
+    let Some(sig) = Option::<G2Affine>::from(G2Affine::from_compressed(&sig_bytes)) else {
+        return false;
+    };
+    let hashed = <G2Projective as HashToCurve<ExpandMsgXmd<sha2_09::Sha256>>>::hash_to_curve(
+        message, ETH_DST,
+    );
+    let hm = G2Affine::from(hashed);
+    let left = pairing(&-pk, &hm);
+    let right = pairing(&G1Affine::generator(), &sig);
+    left + right == Gt::identity()
+}
+
 struct Parsed {
     prev: String,
     merkle: String,
@@ -764,7 +940,11 @@ fn apply_settle(omega: &mut OmegaSnap, op: &SettleOp) -> Result<(), String> {
     }
 }
 
-pub(super) fn execute_wasm(omega: &mut OmegaSnap, calls: &[WasmEv], height: i64) -> Result<(), String> {
+pub(super) fn execute_wasm(
+    omega: &mut OmegaSnap,
+    calls: &[WasmEv],
+    height: i64,
+) -> Result<(), String> {
     if calls.is_empty() {
         return Ok(());
     }
@@ -855,7 +1035,9 @@ fn run_contract(
                 let key = read_mem(&caller, kp, kl);
                 let val = read_mem(&caller, vp, vl);
                 let storage = &mut caller.data_mut().storage;
-                if let Some(pair) = storage.iter_mut().find(|pair| pair.first().map(String::as_str) == Some(key.as_str()))
+                if let Some(pair) = storage
+                    .iter_mut()
+                    .find(|pair| pair.first().map(String::as_str) == Some(key.as_str()))
                 {
                     if pair.len() == 1 {
                         pair.push(val);
@@ -934,7 +1116,10 @@ fn read_mem(caller: &wasmi::Caller<'_, Host>, ptr: i32, len: i32) -> String {
     if len <= 0 {
         return String::new();
     }
-    let Some(memory) = caller.get_export("memory").and_then(|item| item.into_memory()) else {
+    let Some(memory) = caller
+        .get_export("memory")
+        .and_then(|item| item.into_memory())
+    else {
         return String::new();
     };
     let mut buf = vec![0u8; len as usize];
@@ -945,7 +1130,10 @@ fn read_mem(caller: &wasmi::Caller<'_, Host>, ptr: i32, len: i32) -> String {
 }
 
 fn write_mem(caller: &mut wasmi::Caller<'_, Host>, ptr: i32, bytes: &[u8]) -> usize {
-    let Some(memory) = caller.get_export("memory").and_then(|item| item.into_memory()) else {
+    let Some(memory) = caller
+        .get_export("memory")
+        .and_then(|item| item.into_memory())
+    else {
         return 0;
     };
     if memory.write(caller, ptr as usize, bytes).is_err() {
@@ -1080,7 +1268,8 @@ pub(super) fn admit_models(
                 if row.status == "slashed" {
                     return Err("model is not bound".into());
                 }
-                if support_hash.len() != 64 || !support_hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+                if support_hash.len() != 64 || !support_hash.bytes().all(|b| b.is_ascii_hexdigit())
+                {
                     return Err("challenge support refused".into());
                 }
                 if support_hash == &row.support_hash {
@@ -1121,7 +1310,8 @@ pub(super) fn admit_models(
                     return Err("model commitment refused".into());
                 }
                 if let Some(existing) = omega.models.iter().find(|m| m.id == *id) {
-                    if existing.support_hash != *support_hash || existing.residual_fp != *residual_fp
+                    if existing.support_hash != *support_hash
+                        || existing.residual_fp != *residual_fp
                     {
                         return Err("model claim does not match the registry".into());
                     }
