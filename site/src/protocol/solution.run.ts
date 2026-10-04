@@ -326,6 +326,6 @@ console.log(JSON.stringify({
   s4: executed.next.wasm.get("paused"),
   s5: sealed.transitionRoot.slice(0, 16),
   s6: "closed on the mainnet surface membrane.run.ts enumerates. Native derives Ω′ from the pre-state and I for those cases, including one composed transition, and the refusals match. A valid second Bitcoin header was not available. Other networks were not run. Android was not executed. This is not every byte string.",
-  s7: "wasm file bytes equal the embedded bytes. The live host is this commit only when /api/light says so. The site application build was not this observation. No APK.",
+  s7: "closed on the normalized Render artifact. An independent build and the live process both report d03a27e330026c63d349b3f63ecd15bb95dfb0821b89ce5a2b44c9b0fe0af849 for 140 files. The wasm matches. The normalization drops the build date, the Node major, the random handler id, and absolute route paths. Android is separate.",
   sameAdmission: protocol < thresholdFp && reference < thresholdFp,
 }));

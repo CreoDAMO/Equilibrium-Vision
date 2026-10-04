@@ -56,6 +56,7 @@ try {
 }
 
 const commitBound = live.commit === commit;
+const artifactBound = live.artifact === "d03a27e330026c63d349b3f63ecd15bb95dfb0821b89ce5a2b44c9b0fe0af849";
 const wasmBound = live.wasm === wasmFile;
 
 console.log(JSON.stringify({
@@ -72,9 +73,10 @@ console.log(JSON.stringify({
     live,
     commitBound,
     wasmBound,
-    bound: commitBound && wasmBound,
-    level: commitBound && wasmBound
-      ? "The live host names this commit and this wasm. The artifact digest is whatever deployment.artifact says."
-      : "Local file bytes equal the embedded bytes. The live host does not name this candidate, so source is not bound to deployment.",
+    artifactBound,
+    bound: commitBound && wasmBound && artifactBound,
+    level: artifactBound
+      ? "The live output digest matches the independent build. The build date, the Node major, the random handler id, and absolute route paths are not part of that digest."
+      : "Local file bytes equal the embedded bytes. The live output digest does not match the independent build.",
   },
 }));
