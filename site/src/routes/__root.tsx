@@ -21,7 +21,7 @@ export const Route = createRootRoute({
       {
         name: "description",
         content:
-          "Equilibrium — a living Layer-1 with Proof of Stationarity. Testnet and mainnet at equilibrium.site.",
+          "Equilibrium — a living Layer-1 with Proof of Stationarity. Testnet and mainnet at equilibriums.site.",
       },
     ],
     links: [

@@ -23,7 +23,7 @@ function Home() {
       <section className="relative overflow-hidden rounded-xl bg-surface px-5 py-10 shadow-[var(--shadow-border)] sm:px-10 sm:py-14">
         <div className="eq-grid pointer-events-none absolute inset-0" />
         <div className="relative max-w-2xl">
-          <Badge tone="muted">equilibrium.site · {network}</Badge>
+          <Badge tone="muted">equilibriums.site · {network}</Badge>
           <h1 className="mt-4 font-display text-4xl leading-[1.1] tracking-tight sm:text-5xl">
             A closed system that has to keep proving it is still itself.
           </h1>

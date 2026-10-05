@@ -104,7 +104,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <main className="mx-auto w-full max-w-6xl px-4 py-8">{children}</main>
       <footer className="border-t border-border">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-8 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
-          <p>equilibrium.site · the theory is the map · the implementation is the territory</p>
+          <p>equilibriums.site · the theory is the map · the implementation is the territory</p>
           <div className="flex flex-wrap gap-3">
             {MORE.map((m) => (
               <Link key={m.to} to={m.to} className="hover:text-fg">

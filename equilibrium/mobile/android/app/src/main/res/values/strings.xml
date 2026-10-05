@@ -65,7 +65,7 @@
 
     <!-- Same cheap-verify packet as the public site (/api/light) -->
     <string name="light_section">Light verifier</string>
-    <string name="site_url_hint">https://equilibrium.site</string>
+    <string name="site_url_hint">https://equilibriums.site</string>
     <string name="verify_site_button">Verify like the site</string>
     <string name="light_need_url">Enter the site origin. The app calls /api/light — it does not re-solve.</string>
     <string name="light_result">Height %1$d · %2$s · checks %3$d/%4$d\nDiscovery stays on the node. This body only recomputes.</string>

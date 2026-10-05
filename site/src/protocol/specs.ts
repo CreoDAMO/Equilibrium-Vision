@@ -218,7 +218,7 @@ export const SPECS: SpecDoc[] = [
     title: "Runtime bodies",
     summary: "Rust core, TypeScript node, P2P, Android, light, this site.",
     body: [
-      "This site is the public entry at equilibrium.site: observable projection + live testnet/mainnet kernels.",
+      "This site is the public entry at equilibriums.site: observable projection + live testnet/mainnet kernels.",
       "Mobile is an independent verification body, not a smaller copy of discovery.",
     ],
   },
