@@ -239,7 +239,7 @@ export function dependencyFindings(): DependencyRow[] {
     bits: 0x170d5d26,
   });
   const atTarget = {
-    ...inputsFor(plain, nonce),
+    ...inputsFor(plain, inputs.nonce),
     timestamp: plain.tipTimestamp + params.targetBlockTimeMs / 1000,
   };
   const withoutForeign = applySuccessor(plain, atTarget);

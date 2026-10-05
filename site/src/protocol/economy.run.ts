@@ -5,6 +5,7 @@
  * No ledger credit after the organism is born.
  */
 import { OrganismNode } from "./chain";
+import { stringifyCanonical } from "./domain";
 import { independentVerify, forgeResidual } from "./light";
 import { NETWORKS } from "./networks";
 import type { PersistedBody } from "./types";
@@ -89,7 +90,7 @@ if (process.argv.includes("--resume")) {
   const b0 = balance(node, b.address);
   assert.equal(a0, endowed - sent - fee);
   assert.equal(b0, sent);
-  console.log(JSON.stringify({
+  console.log(stringifyCanonical({
     body: node.toBody(),
     a: a.address,
     b,
