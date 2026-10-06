@@ -37,6 +37,7 @@ import {
   buildAttestationMessage,
 } from "../chain/crossChainRelay.js";
 import { logger } from "../lib/logger.js";
+import { authorizeCaller } from "../lib/signed-caller.js";
 
 const router = Router();
 
@@ -53,12 +54,12 @@ function requireAdmin(req: import("express").Request, res: import("express").Res
 }
 
 function requireCaller(req: import("express").Request, res: import("express").Response): string | null {
-  const caller = typeof req.body?.caller === "string" ? req.body.caller.trim().toLowerCase() : "";
-  if (!/^[0-9a-f]{40}$/.test(caller)) {
-    res.status(400).json({ error: "caller (40-hex-char address) is required" });
+  const auth = authorizeCaller(req.body, `${req.method} ${req.originalUrl.split("?")[0]}`);
+  if (!auth.ok) {
+    res.status(auth.status).json({ error: auth.error });
     return null;
   }
-  return caller;
+  return auth.caller;
 }
 
 function parseSeq(raw: string): bigint | null {
@@ -110,7 +111,8 @@ router.delete("/relay/register/:addr", async (req, res) => {
     res.status(400).json({ error: "addr must be a 40-hex-char address" });
     return;
   }
-  const adminAddr = req.body?.caller ?? addr;
+  const adminAddr = requireCaller(req, res);
+  if (!adminAddr) return;
   const result = await revokeRelayer(chainState.wasmVM, adminAddr, addr);
   if (!result.success) {
     res.status(400).json({ error: result.error });
@@ -130,7 +132,8 @@ router.patch("/relay/threshold", async (req, res) => {
     res.status(400).json({ error: "threshold must be a positive integer" });
     return;
   }
-  const caller = req.body?.caller ?? "";
+  const caller = requireCaller(req, res);
+  if (!caller) return;
   const result = await setThreshold(chainState.wasmVM, caller, m);
   if (!result.success) {
     res.status(400).json({ error: result.error });
@@ -203,7 +206,8 @@ router.post("/relay/attest/inbound/:chainId/:seq/challenge", async (req, res) =>
     res.status(400).json({ error: "Invalid chainId or seq" });
     return;
   }
-  const caller = req.body?.caller ?? "";
+  const caller = requireCaller(req, res);
+  if (!caller) return;
   const result = await challengeInbound(chainState.wasmVM, caller, chainId, seq);
   if (!result.success) {
     res.status(400).json({ error: result.error });
@@ -223,7 +227,8 @@ router.post("/relay/attest/inbound/:chainId/:seq/finalize", async (req, res) => 
     res.status(400).json({ error: "Invalid chainId or seq" });
     return;
   }
-  const caller = req.body?.caller ?? "";
+  const caller = requireCaller(req, res);
+  if (!caller) return;
   const result = await finalizeInbound(chainState.wasmVM, caller, chainId, seq);
   if (!result.success) {
     res.status(400).json({ error: result.error });

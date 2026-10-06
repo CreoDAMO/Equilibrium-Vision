@@ -28,16 +28,17 @@ import {
   getVoteFromContract,
 } from "../chain/governanceContract.js";
 import { logger } from "../lib/logger.js";
+import { authorizeCaller } from "../lib/signed-caller.js";
 
 const router = Router();
 
 function requireCaller(req: import("express").Request, res: import("express").Response): string | null {
-  const caller = typeof req.body?.caller === "string" ? req.body.caller.trim().toLowerCase() : "";
-  if (!/^[0-9a-f]{40}$/.test(caller)) {
-    res.status(400).json({ error: "caller (40-hex-char address) is required" });
+  const auth = authorizeCaller(req.body, `${req.method} ${req.originalUrl.split("?")[0]}`);
+  if (!auth.ok) {
+    res.status(auth.status).json({ error: auth.error });
     return null;
   }
-  return caller;
+  return auth.caller;
 }
 
 // GET /api/governance/contract/proposals

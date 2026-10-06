@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { gateStakeAction, gateWasmCaller } from "@/protocol/authority";
 import type { BlockRecord, Couplings, NetworkId } from "@/protocol/types";
 
 const Network = z.object({
@@ -151,13 +152,23 @@ export const executeContract = createServerFn({ method: "POST" })
   .validator(
     Network.extend({
       method: z.enum(["init", "pause", "unpause"]),
-      caller: z.string(),
+      caller: z.string().optional(),
+      publicKey: z.string().optional(),
+      signature: z.string().optional(),
     }),
   )
   .handler(async ({ data }) => {
     const { getNode, persist } = await import("./node.server");
     const node = await getNode(data.network);
-    const res = await node.executeContract(data.method, data.caller);
+    const gate = gateWasmCaller({
+      method: data.method,
+      chainId: node.params.chainId,
+      caller: data.caller,
+      publicKey: data.publicKey,
+      signature: data.signature,
+    });
+    if (!gate.ok) return { ok: false, error: gate.error, code: 0, logs: [] };
+    const res = await node.executeContract(data.method, gate.address);
     if (res.ok) await persist(data.network);
     return res;
   });
@@ -233,7 +244,9 @@ export const stakeAction = createServerFn({ method: "POST" })
   .validator(
     Network.extend({
       op: z.enum(["delegate", "slash", "claim", "propose", "vote", "model"]),
-      address: z.string(),
+      address: z.string().optional(),
+      publicKey: z.string().optional(),
+      signature: z.string().optional(),
       validator: z.string().optional(),
       amount: z.number().optional(),
       title: z.string().optional(),
@@ -245,12 +258,26 @@ export const stakeAction = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { getNode, persist } = await import("./node.server");
     const node = await getNode(data.network);
+    const gate = gateStakeAction({
+      op: data.op,
+      chainId: node.params.chainId,
+      address: data.address,
+      publicKey: data.publicKey,
+      signature: data.signature,
+      validator: data.validator,
+      amount: data.amount,
+      title: data.title,
+      id: data.id,
+      option: data.option,
+      uri: data.uri,
+    });
+    if (!gate.ok) return { ok: false, error: gate.error };
+    const address = gate.address;
     let res: { ok: boolean; error?: string; [k: string]: unknown } = { ok: false, error: "unknown op" };
-    if (data.op === "delegate" && data.validator) res = node.delegate(data.address, data.validator, data.amount ?? 0);
-    else if (data.op === "slash" && data.validator) res = node.slash(data.validator, "downtime");
-    else if (data.op === "claim") res = node.claimRewards(data.address);
-    else if (data.op === "propose") res = node.propose(data.address, data.title ?? "untitled", data.amount ?? 1);
-    else if (data.op === "vote" && data.id && data.option) res = node.vote(data.address, data.id, data.option);
+    if (data.op === "delegate" && data.validator) res = node.delegate(address, data.validator, data.amount ?? 0);
+    else if (data.op === "claim") res = node.claimRewards(address);
+    else if (data.op === "propose") res = node.propose(address, data.title ?? "untitled", data.amount ?? 1);
+    else if (data.op === "vote" && data.id && data.option) res = node.vote(address, data.id, data.option);
     else if (data.op === "model") {
       const m = node.proposeModel(data.uri ?? "ipfs://model", 0, "0".repeat(64));
       res = m.ok ? { ok: true, id: m.id } : { ok: false, error: m.error };

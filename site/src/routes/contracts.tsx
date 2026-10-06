@@ -6,7 +6,7 @@ import { stakeAction, submitBtcHeader, executeContract, bootstrapEth, admitEthHe
 import { BTC_GENESIS_HEADER_HEX } from "@/protocol/btc";
 import { useNetwork } from "@/lib/network-context";
 import { useWallet } from "@/lib/wallet-context";
-import { CONTRACT_ORGANS } from "@/protocol/organs";
+import { signAuthority, signWasm } from "@/protocol/authority";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,10 +34,14 @@ function ContractsPage() {
     },
   });
   const wasm = useMutation({
-    mutationFn: () =>
-      executeContract({
-        data: { network, method: "init", caller: wallet?.address ?? "0".repeat(40) },
-      }),
+    mutationFn: () => {
+      if (!wallet) return Promise.resolve({ ok: false as const, error: "no wallet", code: 0, logs: [] as string[] });
+      const chainId = snap?.params.chainId ?? (network === "mainnet" ? 1 : 2);
+      const proof = signWasm(wallet, chainId, "init");
+      return executeContract({
+        data: { network, method: "init", caller: proof.address, publicKey: proof.publicKey, signature: proof.signature },
+      });
+    },
     onSuccess: (r) => {
       if (r.ok) {
         toast.success(`wasm init returned ${r.code} · the call rides in the next block`);
@@ -66,17 +70,28 @@ function ContractsPage() {
   const [title, setTitle] = useState("Adjust λ₃");
   const [validator, setValidator] = useState("");
   const act = useMutation({
-    mutationFn: (input: { op: "delegate" | "propose" | "model"; validator?: string; amount?: number; title?: string }) =>
-      stakeAction({
+    mutationFn: (input: { op: "delegate" | "propose" | "model"; validator?: string; amount?: number; title?: string }) => {
+      if (!wallet) return Promise.resolve({ ok: false as const, error: "no wallet" });
+      const chainId = snap?.params.chainId ?? (network === "mainnet" ? 1 : 2);
+      const claim = {
+        op: input.op,
+        chainId,
+        validator: input.validator,
+        amount: input.amount,
+        title: input.title,
+        uri: input.op === "model" ? "ipfs://model" : undefined,
+      };
+      const proof = signAuthority(wallet, claim);
+      return stakeAction({
         data: {
           network,
-          op: input.op,
-          address: wallet?.address ?? "",
-          validator: input.validator,
-          amount: input.amount,
-          title: input.title,
+          ...claim,
+          address: proof.address,
+          publicKey: proof.publicKey,
+          signature: proof.signature,
         },
-      }),
+      });
+    },
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Queued into the next block");

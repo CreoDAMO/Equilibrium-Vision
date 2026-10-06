@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { chainState } from "../chain/index.js";
+import { authorizeCaller } from "../lib/signed-caller.js";
 
 const router = Router();
 
@@ -25,11 +26,13 @@ router.get("/stake/:address", (req, res) => {
 });
 
 router.post("/stake", (req, res) => {
-  const { delegator, validator, amount } = req.body as {
-    delegator?: string;
-    validator?: string;
-    amount?: number;
-  };
+  const auth = authorizeCaller(req.body, `${req.method} ${req.originalUrl.split("?")[0]}`, "delegator");
+  if (!auth.ok) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+  const delegator = auth.caller;
+  const { validator, amount } = req.body as { validator?: string; amount?: number };
 
   if (!delegator || !validator || amount == null) {
     res.status(400).json({ error: "delegator, validator, amount are required" });
@@ -63,13 +66,15 @@ router.post("/stake", (req, res) => {
 });
 
 router.post("/unstake", (req, res) => {
-  const { delegator, validator, amount } = req.body as {
-    delegator?: string;
-    validator?: string;
-    amount?: number;
-  };
+  const auth = authorizeCaller(req.body, `${req.method} ${req.originalUrl.split("?")[0]}`, "delegator");
+  if (!auth.ok) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+  const delegator = auth.caller;
+  const { validator, amount } = req.body as { validator?: string; amount?: number };
 
-  if (!delegator || !validator || amount == null) {
+  if (!validator || amount == null) {
     res.status(400).json({ error: "delegator, validator, amount are required" });
     return;
   }
