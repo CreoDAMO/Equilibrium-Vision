@@ -1,8 +1,11 @@
 package com.equilibrium
 
+import android.Manifest
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,6 +15,7 @@ import android.widget.ProgressBar
 import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import com.google.android.material.button.MaterialButton
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -41,12 +45,23 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusPeers: TextView
     private lateinit var statusTipSource: TextView
     private lateinit var statusLastGossip: TextView
+    private lateinit var statusMining: TextView
+    private lateinit var statusSolver: TextView
+    private lateinit var statusSearches: TextView
+    private lateinit var statusSolutions: TextView
+    private lateinit var statusLastSolution: TextView
+    private lateinit var statusLastSubmission: TextView
+    private lateinit var statusMiningNote: TextView
+    private lateinit var mineButton: MaterialButton
 
     private val handler = Handler(Looper.getMainLooper())
+    private var lightPoll = false
     private companion object {
         const val POLL_INTERVAL_MS = 3_000L
         const val PREFS_NAME       = "equ_prefs"
         const val KEY_P2P_MODE     = "p2p_mode"
+        const val KEY_NODE_URL     = "node_url"
+        const val KEY_MINER        = "miner_address"
         const val MODE_HTTP        = "http"
         const val MODE_HYBRID      = "hybrid"
         const val MODE_P2P         = "p2p"
@@ -65,10 +80,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // UpdateChecker now queries the GitHub Releases API directly —
-        // no dependency on the mining node URL (which defaults to the
-        // Android-emulator-only 10.0.2.2 address and is useless on real phones).
+        // Update checks use GitHub Releases, not the mining node.
         updateChecker = UpdateChecker()
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
         // Version label
         findViewById<TextView>(R.id.versionLabel).text = getString(
@@ -86,9 +100,48 @@ class MainActivity : AppCompatActivity() {
         statusPeers      = findViewById(R.id.statusPeers)
         statusTipSource  = findViewById(R.id.statusTipSource)
         statusLastGossip = findViewById(R.id.statusLastGossip)
+        statusMining     = findViewById(R.id.statusMining)
+        statusSolver     = findViewById(R.id.statusSolver)
+        statusSearches   = findViewById(R.id.statusSearches)
+        statusSolutions  = findViewById(R.id.statusSolutions)
+        statusLastSolution = findViewById(R.id.statusLastSolution)
+        statusLastSubmission = findViewById(R.id.statusLastSubmission)
+        statusMiningNote = findViewById(R.id.statusMiningNote)
+        mineButton       = findViewById(R.id.mineButton)
+
+        val siteInput = findViewById<EditText>(R.id.siteUrlInput)
+        val minerInput = findViewById<EditText>(R.id.minerAddressInput)
+        siteInput.setText(prefs.getString(KEY_NODE_URL, null) ?: getString(R.string.site_url_hint))
+        prefs.getString(KEY_MINER, null)?.let { minerInput.setText(it) }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+        }
+        mineButton.setOnClickListener {
+            if (MiningState.mining == "active") {
+                MiningService.stop(this)
+                return@setOnClickListener
+            }
+            val miner = MiningWorker.normalizeMinerAddress(minerInput.text.toString())
+            val node = siteInput.text.toString().trim().trimEnd('/').ifEmpty { MiningWorker.DEFAULT_NODE_URL }
+            siteInput.setText(node)
+            if (miner == null) {
+                MiningState.mining = "stopped"
+                MiningState.solver = "miner address required"
+                MiningState.note = getString(R.string.miner_address_required)
+                refreshNetworkStatus()
+                return@setOnClickListener
+            }
+            prefs.edit().putString(KEY_MINER, miner).putString(KEY_NODE_URL, node).apply()
+            val mode = prefs.getString(KEY_P2P_MODE, MODE_HYBRID)
+            if (mode != MODE_HTTP && !P2PNode.isRunning()) {
+                P2PNode.startDefaultWithContext(this)
+            }
+            MiningService.start(this, node, miner)
+        }
 
         // ── P2P mode toggle ───────────────────────────────────────────────────
-        val prefs    = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val savedMode = prefs.getString(KEY_P2P_MODE, MODE_HYBRID) ?: MODE_HYBRID
         val modeGroup = findViewById<RadioGroup>(R.id.p2pModeGroup)
         when (savedMode) {
@@ -209,38 +262,68 @@ class MainActivity : AppCompatActivity() {
     // ── Network status polling ────────────────────────────────────────────────
 
     private fun refreshNetworkStatus() {
-        if (!P2PNode.isRunning()) {
-            statusHeight.text     = getString(R.string.status_height_default)
-            statusPeers.text      = getString(R.string.status_peers_default)
-            statusTipSource.text  = getString(R.string.status_tip_source_default)
-            return
-        }
-
-        val tipJson   = P2PNode.fetchTip()
-        val peerCount = P2PNode.getConnectedPeerCount()
-        val gossip    = P2PNode.pollGossip()
-
-        if (tipJson.isNotEmpty()) {
-            runCatching {
-                val obj    = JSONObject(tipJson)
-                val height = obj.optLong("height", 0)
-                val hash   = obj.optString("hash", "").take(16)
-                statusHeight.text    = "Height: $height  (${hash}…)"
-                statusTipSource.text = "Tip source: P2P cache"
-            }.onFailure {
-                statusHeight.text    = "Height: —"
-                statusTipSource.text = "Tip source: unknown"
+        val p2p = P2PNode.isRunning()
+        val tipJson = if (p2p) P2PNode.fetchTip() else ""
+        val showedP2p = tipJson.isNotEmpty() && runCatching {
+            val obj = JSONObject(tipJson)
+            val height = obj.optLong("height", 0)
+            val hash = obj.optString("hash", "").take(16)
+            statusHeight.text = "Height: $height  (${hash}…)"
+            statusTipSource.text = "Tip source: P2P cache"
+            true
+        }.getOrElse { false }
+        if (!showedP2p) {
+            if (MiningState.httpHeight != "—") {
+                statusHeight.text = "Height: ${MiningState.httpHeight}"
+                statusTipSource.text = "Tip source: ${MiningState.httpTipSource}"
+            } else {
+                statusHeight.text = getString(R.string.status_height_default)
+                statusTipSource.text = getString(R.string.status_tip_source_default)
             }
-        } else {
-            statusHeight.text    = getString(R.string.status_height_default)
-            statusTipSource.text = "Tip source: HTTP fallback"
+            refreshLightHeight()
         }
-
-        statusPeers.text = "Peers: $peerCount"
-
-        if (gossip.isNotEmpty()) {
-            statusLastGossip.text = "Last gossip: ${gossip.take(16)}…"
+        statusPeers.text = if (p2p) "Peers: ${P2PNode.getConnectedPeerCount()}" else getString(R.string.status_peers_default)
+        if (p2p) {
+            val gossip = P2PNode.pollGossip()
+            if (gossip.isNotEmpty()) statusLastGossip.text = "Last gossip: ${gossip.take(16)}…"
         }
+        statusMining.text = "Mining: ${MiningState.mining}"
+        statusSolver.text = "Solver: ${MiningState.solver}"
+        statusSearches.text = "Searches: ${MiningState.searches}"
+        statusSolutions.text = "Solutions: ${MiningState.solutions}"
+        statusLastSolution.text = "Last solution: ${MiningState.lastSolution}"
+        statusLastSubmission.text = "Last submission: ${MiningState.lastSubmission}"
+        statusMiningNote.text = MiningState.note
+        mineButton.text = getString(
+            if (MiningState.mining == "active") R.string.stop_mining else R.string.start_mining,
+        )
+    }
+
+    private fun refreshLightHeight() {
+        if (lightPoll) return
+        val base = findViewById<EditText>(R.id.siteUrlInput).text.toString().trim().trimEnd('/')
+        if (base.isEmpty()) return
+        lightPoll = true
+        Thread {
+            try {
+                val conn = (URL("$base/api/light?network=testnet").openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    requestMethod = "GET"
+                }
+                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                val height = JSONObject(text).optInt("height", -1)
+                if (height >= 0) {
+                    MiningState.httpHeight = height.toString()
+                    if (MiningState.httpTipSource == "—" || MiningState.httpTipSource == "none") {
+                        MiningState.httpTipSource = "HTTP"
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                lightPoll = false
+            }
+        }.start()
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

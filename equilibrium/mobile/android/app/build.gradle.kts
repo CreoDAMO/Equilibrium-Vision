@@ -11,8 +11,8 @@ android {
         applicationId = "com.equilibrium.miner"
         minSdk = 26          // Android 8 — required for WorkManager foreground service
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
 
         // Used by UpdateChecker to build the GitHub Releases API URL.
         // Format: "owner/repo" — no trailing slash, no https:// prefix.

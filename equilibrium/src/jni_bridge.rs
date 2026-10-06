@@ -125,6 +125,40 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
     if (0.0..2e-3).contains(&residual) { JNI_TRUE } else { JNI_FALSE }
 }
 
+/// Same search as `Java_com_equilibrium_MiningWorker_solveBlock`.
+/// `com.equilibrium.CoreSolver` is the object the foreground service calls.
+/// The solver body is not duplicated.
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_CoreSolver_solveBlock(
+    env: JNIEnv,
+    obj: JObject,
+    prev_hash: JByteArray,
+    merkle_root: JByteArray,
+    timestamp: jlong,
+    difficulty: jlong,
+    recursion_depth: jint,
+    mempool_pressure: jdouble,
+    cum_work: jlong,
+    max_attempts: jlong,
+    out_nonce: JObjectArray,
+    out_residual: JLongArray,
+) -> jboolean {
+    Java_com_equilibrium_MiningWorker_solveBlock(
+        env,
+        obj,
+        prev_hash,
+        merkle_root,
+        timestamp,
+        difficulty,
+        recursion_depth,
+        mempool_pressure,
+        cum_work,
+        max_attempts,
+        out_nonce,
+        out_residual,
+    )
+}
+
 /// Start the in-process mobile swarm. The Android UI supplies the TCP and QUIC
 /// listener ports; a zero QUIC port disables QUIC for constrained networks.
 #[no_mangle]

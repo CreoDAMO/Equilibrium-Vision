@@ -38,6 +38,17 @@
     <string name="status_peers_default">Peers: 0</string>
     <string name="status_tip_source_default">Tip source: —</string>
     <string name="status_last_gossip_default">Last gossip: none</string>
+    <string name="status_mining_default">Mining: stopped</string>
+    <string name="status_solver_default">Solver: idle</string>
+    <string name="status_searches_default">Searches: 0</string>
+    <string name="status_solutions_default">Solutions: 0</string>
+    <string name="status_last_solution_default">Last solution: —</string>
+    <string name="status_last_submission_default">Last submission: —</string>
+    <string name="miner_address_hint">Miner address (40 hex). Rewards are not assigned for you.</string>
+    <string name="miner_section">Miner</string>
+    <string name="start_mining">Start mining</string>
+    <string name="stop_mining">Stop mining</string>
+    <string name="miner_address_required">Miner address required. Enter 40 hex characters. No reward address was invented.</string>
 
     <!-- BootstrapQrActivity -->
     <string name="qr_title">Connect to Peer Network</string>

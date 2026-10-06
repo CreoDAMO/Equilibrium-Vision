@@ -70,6 +70,32 @@
 
         </RadioGroup>
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/miner_section"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/minerAddressInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/miner_address_hint"
+            android:importantForAutofill="no"
+            android:inputType="textNoSuggestions"
+            android:maxLines="1"
+            android:typeface="monospace" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/mineButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/start_mining" />
+
         <!-- ── Network status ────────────────────────────────────────────── -->
 
         <TextView
@@ -96,6 +122,22 @@
                 android:textSize="14sp" />
 
             <TextView
+                android:id="@+id/statusMining"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/status_mining_default"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/statusSolver"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/status_solver_default"
+                android:textSize="14sp" />
+
+            <TextView
                 android:id="@+id/statusPeers"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -117,6 +159,45 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="@string/status_last_gossip_default"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/statusSearches"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/status_searches_default"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/statusSolutions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/status_solutions_default"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/statusLastSolution"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/status_last_solution_default"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/statusLastSubmission"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/status_last_submission_default"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/statusMiningNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
                 android:textSize="14sp" />
 
         </LinearLayout>

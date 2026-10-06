@@ -5,6 +5,9 @@
 -keepclasseswithmembernames class com.equilibrium.MiningWorker {
     native <methods>;
 }
+-keepclasseswithmembernames class com.equilibrium.CoreSolver {
+    native <methods>;
+}
 
 # org.json is part of the Android platform API, not a library to shrink.
 -dontwarn org.json.**
