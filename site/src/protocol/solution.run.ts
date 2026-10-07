@@ -78,6 +78,22 @@ assert.equal(delegateHuge.ok, false);
 const minted = run(omega, [{ op: "propose", proposer: miner, title: "mint", deposit: -10, id: 1 }]);
 assert.equal(minted.ok, false);
 if (minted.ok) throw new Error("negative deposit");
+
+const before = omega.ledger.get(v1.address)?.balance;
+const notStake = run(cloneOmega(omega), [{
+  op: "unstake",
+  proposer: v1.address,
+  title: "not a proposal",
+  deposit: 1,
+  id: 99,
+  delegator: payer.address,
+  validator: v1.address,
+  amount: 1,
+} as StakeEvidence]);
+assert.equal(notStake.ok, false);
+if (notStake.ok) throw new Error("unstake was applied");
+assert.match(notStake.error, /stake evidence refused/);
+assert.equal(omega.ledger.get(v1.address)?.balance, before);
 assert.match(minted.error, /proposal deposit/);
 
 const poisoned = cloneOmega(omega);

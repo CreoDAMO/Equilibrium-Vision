@@ -520,7 +520,7 @@ Admin routes (`set-model`, `pause`, `unpause`) additionally require the `X-Admin
 
 ## Staking
 
-Any address can bond EQU to a validator via `POST /api/stake`. Unbonding has a **10-block waiting period** before funds are returned. Delegators share in block rewards proportionally to their bonded stake.
+`POST /api/stake` and `POST /api/unstake` require the delegator's Ed25519 signature over that exact request. A 40-hex address is not enough. Neither route writes the ledger or the bonded set. Both return that the action is evidence inside the successor, not a local write. The canonical stake evidence is `delegate`, `claim`, `slash`, `propose`, and `vote`. It has no unbond edge, so the old 10-block return is not a successor transition.
 
 ---
 

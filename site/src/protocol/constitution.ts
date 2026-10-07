@@ -532,34 +532,37 @@ function applyStake(
     }
     return null;
   }
-  if (!authority.power.has(op.proposer)) return "proposal proposer unauthorized";
-  if (!isSafeNonNegative(op.deposit)) return "proposal deposit refused";
-  if (!Number.isSafeInteger(op.id) || op.id < 0) return "proposal deposit refused";
-  if (typeof op.title !== "string" || op.title.length > 80) return "proposal deposit refused";
-  if (omega.proposals.some((p) => p.id === op.id)) return "proposal already exists";
-  if (!debit(omega.ledger, op.proposer, op.deposit)) return "proposal deposit refused";
-  const couplingKeys = ["hash", "structural", "continuity", "mempool", "fees"] as const;
-  let couplingKey: (typeof couplingKeys)[number] | undefined;
-  let couplingValue: number | undefined;
-  if (op.couplingKey !== undefined || op.couplingValue !== undefined) {
-    if (!op.couplingKey || !(couplingKeys as readonly string[]).includes(op.couplingKey)) return "coupling is not a coupling";
-    if (typeof op.couplingValue !== "number" || !Number.isFinite(op.couplingValue)) return "coupling is not a coupling";
-    couplingKey = op.couplingKey;
-    couplingValue = op.couplingValue;
+  if (op.op === "propose") {
+    if (!authority.power.has(op.proposer)) return "proposal proposer unauthorized";
+    if (!isSafeNonNegative(op.deposit)) return "proposal deposit refused";
+    if (!Number.isSafeInteger(op.id) || op.id < 0) return "proposal deposit refused";
+    if (typeof op.title !== "string" || op.title.length > 80) return "proposal deposit refused";
+    if (omega.proposals.some((p) => p.id === op.id)) return "proposal already exists";
+    if (!debit(omega.ledger, op.proposer, op.deposit)) return "proposal deposit refused";
+    const couplingKeys = ["hash", "structural", "continuity", "mempool", "fees"] as const;
+    let couplingKey: (typeof couplingKeys)[number] | undefined;
+    let couplingValue: number | undefined;
+    if (op.couplingKey !== undefined || op.couplingValue !== undefined) {
+      if (!op.couplingKey || !(couplingKeys as readonly string[]).includes(op.couplingKey)) return "coupling is not a coupling";
+      if (typeof op.couplingValue !== "number" || !Number.isFinite(op.couplingValue)) return "coupling is not a coupling";
+      couplingKey = op.couplingKey;
+      couplingValue = op.couplingValue;
+    }
+    omega.proposals.unshift({
+      id: op.id,
+      title: op.title,
+      proposer: op.proposer,
+      deposit: op.deposit,
+      yes: 0,
+      no: 0,
+      abstain: 0,
+      status: "open",
+      ballots: [],
+      ...(couplingKey ? { couplingKey, couplingValue } : {}),
+    });
+    return null;
   }
-  omega.proposals.unshift({
-    id: op.id,
-    title: op.title,
-    proposer: op.proposer,
-    deposit: op.deposit,
-    yes: 0,
-    no: 0,
-    abstain: 0,
-    status: "open",
-    ballots: [],
-    ...(couplingKey ? { couplingKey, couplingValue } : {}),
-  });
-  return null;
+  return "stake evidence refused";
 }
 
 function installCommittee(omega: Omega, committeeHex: string, claimed: string): string | null {
