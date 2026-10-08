@@ -329,7 +329,19 @@ class MainActivity : AppCompatActivity() {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun handleIncomingIntent(intent: Intent) {
-        val invite = intent.data?.toString() ?: return
+        val data = intent.data ?: return
+        if (data.scheme == "equilibrium" && data.host == "wallet") {
+            val miner = MiningWorker.normalizeMinerAddress(data.getQueryParameter("address"))
+            if (miner == null) {
+                updateStatus.text = getString(R.string.wallet_address_refused)
+                return
+            }
+            findViewById<EditText>(R.id.minerAddressInput).setText(miner)
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(KEY_MINER, miner).apply()
+            updateStatus.text = getString(R.string.wallet_address_linked)
+            return
+        }
+        val invite = data.toString()
         if (invite.startsWith("equilibrium://") || invite.startsWith("/")) {
             val connected = P2PNode.connectInvite(invite)
             updateStatus.text = if (connected) getString(R.string.bootstrap_connecting)

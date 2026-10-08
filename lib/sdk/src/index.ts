@@ -234,7 +234,11 @@ class TransactionsClient {
   /** Get a transaction by hash. */
   get(hash: string): Promise<Transaction> { return this.http.get(`/tx/${hash}`); }
 
-  /** Broadcast a signed transaction. */
+  /**
+   * Broadcast a canonical signed transfer.
+   * The hash and the signature are over the successor's signing bytes, including chainId.
+   * A concatenation of the decimal fields is not a signature this door accepts.
+   */
   broadcast(signedTx: {
     from: string;
     to: string;
@@ -243,6 +247,8 @@ class TransactionsClient {
     nonce: number;
     signature: string;
     publicKey: string;
+    chainId: number;
+    hash: string;
   }): Promise<BroadcastResult> {
     return this.http.post("/tx/broadcast", signedTx);
   }

@@ -89,6 +89,13 @@
             android:maxLines="1"
             android:typeface="monospace" />
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/miner_wallet_note"
+            android:textSize="13sp" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/mineButton"
             android:layout_width="wrap_content"

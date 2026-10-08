@@ -1,10 +1,13 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { useNetwork } from "@/lib/network-context";
+import { useWallet } from "@/lib/wallet-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Stat } from "@/components/stat";
-import { formatSci, truncateHash } from "@/lib/format";
+import { formatAmount, formatSci, truncateHash } from "@/lib/format";
 import { independentVerify, type IndependentReport } from "@/protocol/light";
 import { participation, type DeviceResources } from "@/protocol/membranes";
 import type { BlockRecord } from "@/protocol/types";
@@ -24,7 +27,13 @@ const PIPELINE = [
 ] as const;
 
 function MobilePage() {
-  const { snap } = useNetwork();
+  const { network, snap } = useNetwork();
+  const { wallet, create, importMnemonic, send, balance, nonce } = useWallet();
+  const [phrase, setPhrase] = useState<string | null>(null);
+  const [mnemonic, setMnemonic] = useState("");
+  const [to, setTo] = useState("");
+  const [amount, setAmount] = useState("1000");
+  const [fee, setFee] = useState("100");
   const [selected, setSelected] = useState<string | null>(null);
   const [hot, setHot] = useState(false);
   const resources = hot ? HOT : COOL;
@@ -35,6 +44,11 @@ function MobilePage() {
   const idx = blocks.findIndex((b) => b.hash === hash);
   const block: BlockRecord | undefined = idx >= 0 ? blocks[idx] : undefined;
   const prev = idx >= 0 ? (blocks[idx + 1] ?? null) : null;
+  const mine = wallet ? `equilibrium://wallet?address=${wallet.address}` : "";
+  const pending = (snap?.mempool ?? []).filter((t) => t.from === wallet?.address || t.to === wallet?.address);
+  const confirmed = (snap?.recentTxs ?? []).filter(
+    (t) => (t.from === wallet?.address || t.to === wallet?.address) && t.blockHeight != null,
+  );
 
   const report: IndependentReport | null = useMemo(() => {
     if (!snap || !block) return null;
@@ -47,19 +61,115 @@ function MobilePage() {
       <header>
         <h1 className="font-display text-4xl tracking-tight">Mobile body</h1>
         <p className="mt-2 max-w-2xl text-muted">
-          Mobile verifies this organism. It does not keep another one. Heat and battery
-          decide whether this device solves, only verifies, or waits. That decision is
-          not canonical state. A nonce found here is a candidate. The kernel admits it.
+          This phone holds the wallet. The miner address is that address. The key is not
+          sent to the solver. A transfer moves EQU to another EQU address. It does not
+          pay Ethereum, Bitcoin, or a bank.
         </p>
       </header>
 
+      {!wallet ? (
+        <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-3">
+          <h2 className="font-display text-xl">Wallet on this device</h2>
+          <p className="text-sm text-muted">Same phrase as the wallet page. Path m/44'/600'/0'/0'/0'.</p>
+          <Button
+            onClick={() => {
+              const created = create();
+              setPhrase(created.mnemonic);
+              toast.success("Phrase created. It stays in this browser.");
+            }}
+          >
+            Create wallet
+          </Button>
+          {phrase ? <pre className="whitespace-pre-wrap rounded-lg bg-bg-elevated p-4 font-mono text-sm">{phrase}</pre> : null}
+          <Input placeholder="Import phrase" value={mnemonic} onChange={(e) => setMnemonic(e.target.value)} />
+          <Button
+            variant="secondary"
+            onClick={() => {
+              try {
+                importMnemonic(mnemonic);
+                toast.success("Wallet restored");
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : "Invalid phrase");
+              }
+            }}
+          >
+            Import phrase
+          </Button>
+        </section>
+      ) : (
+        <section className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <Stat label="Balance" value={formatAmount(balance)} hint="canonical account" />
+            <Stat label="Nonce" value={nonce} hint={network} />
+          </div>
+          <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-3">
+            <p className="text-xs uppercase tracking-[0.2em] text-subtle">Address · miner</p>
+            <p className="break-all font-mono text-sm">{wallet.address}</p>
+            <p className="break-all font-mono text-xs text-muted">{mine}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  void navigator.clipboard.writeText(mine);
+                  toast.success("Solver link copied. The key is not in it.");
+                }}
+              >
+                Copy solver link
+              </Button>
+              <Link className="inline-flex min-h-11 items-center text-sm text-accent" to="/wallet">
+                Wallet page
+              </Link>
+            </div>
+          </div>
+          <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-3">
+            <h2 className="font-display text-xl">Send EQU</h2>
+            <p className="text-sm text-muted">
+              Signed here, checked as a canonical transfer, then queued. Another chain does not receive it.
+            </p>
+            <Input placeholder="Recipient address" value={to} onChange={(e) => setTo(e.target.value)} />
+            <Input value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <Input value={fee} onChange={(e) => setFee(e.target.value)} />
+            <Button
+              onClick={async () => {
+                const res = await send(to, Number(amount), Number(fee));
+                if (res.ok) toast.success("Signed and queued");
+                else toast.error(res.error ?? "Refused");
+              }}
+            >
+              Sign and send
+            </Button>
+          </div>
+          <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-2">
+            <h2 className="font-display text-xl">This address</h2>
+            {pending.length === 0 && confirmed.length === 0 ? (
+              <p className="text-sm text-muted">No pending or recent transfer for this address.</p>
+            ) : null}
+            {pending.map((t) => (
+              <p key={t.hash} className="font-mono text-xs text-muted">
+                pending {truncateHash(t.hash, 8)} · {formatAmount(t.amount)}
+              </p>
+            ))}
+            {confirmed.slice(0, 5).map((t) => (
+              <p key={t.hash} className="font-mono text-xs text-muted">
+                confirmed #{t.blockHeight} · {formatAmount(t.amount)}
+              </p>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">
+        <Badge tone="warn">not settled outside</Badge>
+        <p className="mt-3 text-sm text-muted">
+          EQU can move from this key to another EQU address. Nothing in that transition
+          pays Ethereum, Bitcoin, an exchange, or a bank. A settlement locked to an ETH
+          header hash still moves only this ledger. That is not an external payment.
+        </p>
+      </section>
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Light tip" value={block ? `#${block.height}` : "—"} hint={block ? truncateHash(block.hash, 6) : ""} />
-        <Stat
-          label="Discovery cost"
-          value={block?.solverIterations ?? "—"}
-          hint="kernel nonce iters"
-        />
+        <Stat label="Discovery cost" value={block?.solverIterations ?? "—"} hint="kernel nonce iters" />
         <Stat label="Verify cost" value={policy === "defer" ? "deferred" : 1} hint="evals in this body" />
         <Stat
           label="Agreement"
@@ -74,10 +184,7 @@ function MobilePage() {
             <p className="text-xs uppercase tracking-[0.2em] text-subtle">Light header packet</p>
             <h2 className="mt-1 font-display text-xl">What this body actually receives</h2>
           </div>
-          <Button
-            variant={policy === "defer" ? "secondary" : "ghost"}
-            onClick={() => setHot((v) => !v)}
-          >
+          <Button variant={policy === "defer" ? "secondary" : "ghost"} onClick={() => setHot((v) => !v)}>
             {policy === "defer" ? "Device hot — waiting" : `${policy} · ${resources.thermalC}°C`}
           </Button>
         </div>
@@ -114,9 +221,7 @@ function MobilePage() {
           <Badge tone="warn">deferred</Badge>
           <p className="mt-3 max-w-xl text-sm text-muted">
             This device is too hot or too low to verify. Deferral is not acceptance.
-            The header stays unchecked. Temperature is not written into Ω. A peer
-            introduced by QR or NFC is a bootstrap string in the local book, and a
-            peer hello is not a block.
+            The header stays unchecked. Temperature is not written into Ω.
           </p>
         </div>
       ) : (
@@ -124,10 +229,7 @@ function MobilePage() {
           {PIPELINE.map((step) => {
             const check = report?.checks.find((c) => c.name === step.name);
             return (
-              <div
-                key={step.name}
-                className="flex items-start justify-between gap-4 rounded-lg bg-surface px-4 py-3 shadow-[var(--shadow-border)]"
-              >
+              <div key={step.name} className="flex items-start justify-between gap-4 rounded-lg bg-surface px-4 py-3 shadow-[var(--shadow-border)]">
                 <div>
                   <div className="text-sm">{step.label}</div>
                   <div className="text-xs text-muted">{check?.detail ?? step.why}</div>
@@ -140,11 +242,6 @@ function MobilePage() {
           })}
         </div>
       )}
-
-      <p className="max-w-2xl text-sm leading-relaxed text-muted">
-        Full nodes perform discovery. This body tests evidence. If they disagree, the
-        disagreement is the result — not a vote, not a retry of the expensive solve.
-      </p>
     </div>
   );
 }

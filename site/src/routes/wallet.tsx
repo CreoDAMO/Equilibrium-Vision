@@ -25,8 +25,10 @@ function WalletPage() {
       <header>
         <h1 className="font-display text-4xl tracking-tight">Wallet</h1>
         <p className="mt-2 max-w-xl text-muted">
-          Self-custody Ed25519 keys. Addresses are SHA-256(pubkey)[..20] — the same
-          derivation as the Rust and TypeScript stacks. Keys never leave this browser.
+          Self-custody Ed25519 keys. Addresses are SHA-256(pubkey)[..20], path m/44'/600'/0'/0'/0'
+          when the phrase is used. The mobile page and the Android solver use this address.
+          The private key stays in this browser. A send is a transfer to another EQU address.
+          It does not withdraw onto Ethereum or Bitcoin.
         </p>
       </header>
 

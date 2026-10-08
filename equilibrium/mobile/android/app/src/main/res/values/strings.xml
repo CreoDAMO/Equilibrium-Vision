@@ -44,8 +44,11 @@
     <string name="status_solutions_default">Solutions: 0</string>
     <string name="status_last_solution_default">Last solution: —</string>
     <string name="status_last_submission_default">Last submission: —</string>
-    <string name="miner_address_hint">Miner address (40 hex). Rewards are not assigned for you.</string>
+    <string name="miner_address_hint">Wallet address (40 hex). Paste the solver link, not a key.</string>
     <string name="miner_section">Miner</string>
+    <string name="miner_wallet_note">The reward address is the wallet address. This screen does not take the private key. equilibrium://wallet?address=… fills it. A transfer still has to be signed by that wallet. EQU does not leave this chain from here.</string>
+    <string name="wallet_address_linked">Wallet address linked. The key was not in the link.</string>
+    <string name="wallet_address_refused">Wallet link refused. The address must be 40 hex characters.</string>
     <string name="start_mining">Start mining</string>
     <string name="stop_mining">Stop mining</string>
     <string name="miner_address_required">Miner address required. Enter 40 hex characters. No reward address was invented.</string>
