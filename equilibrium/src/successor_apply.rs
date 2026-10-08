@@ -76,6 +76,11 @@ pub(super) enum StakeOp {
         delegator: String,
         validator: String,
         amount: f64,
+        #[serde(default)]
+        #[serde(rename = "publicKey")]
+        public_key: Option<String>,
+        #[serde(default)]
+        signature: Option<String>,
     },
     #[serde(rename = "claim")]
     Claim { address: String },
@@ -260,7 +265,20 @@ fn stake_line(op: &StakeOp) -> String {
             delegator,
             validator,
             amount,
-        } => format!("d:{delegator}:{validator}:{}", super::js_num(*amount)),
+            public_key,
+            signature,
+        } => {
+            let pk = public_key.as_deref().unwrap_or("");
+            let sig = signature.as_deref().unwrap_or("");
+            if !pk.is_empty() || !sig.is_empty() {
+                format!(
+                    "a:{delegator}:{validator}:{}:{pk}:{sig}",
+                    super::js_num(*amount)
+                )
+            } else {
+                format!("d:{delegator}:{validator}:{}", super::js_num(*amount))
+            }
+        }
         StakeOp::Claim { address } => format!("c:{address}"),
         StakeOp::Slash { validator, reason } => format!("s:{validator}:{reason}"),
         StakeOp::Vote { voter, id, option } => format!("v:{voter}:{id}:{option}"),
@@ -504,13 +522,62 @@ fn authority(omega: &OmegaSnap) -> Result<Auth, String> {
     })
 }
 
+fn delegate_preimage(chain_id: i64, delegator: &str, validator: &str, amount: f64) -> String {
+    format!(
+        "eq-authority|v1|{chain_id}|delegate|{delegator}|{validator}|{}||||",
+        super::js_num(amount)
+    )
+}
+
+fn hex_lower(text: &str, n: usize) -> bool {
+    text.len() == n && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn verify_delegate(
+    chain_id: i64,
+    delegator: &str,
+    validator: &str,
+    amount: f64,
+    public_key: &str,
+    signature: &str,
+) -> Result<(), String> {
+    let refused = "delegate authority refused";
+    if !hex_lower(delegator, 40)
+        || !hex_lower(validator, 40)
+        || !hex_lower(public_key, 64)
+        || !hex_lower(signature, 128)
+        || !safe_positive(amount)
+    {
+        return Err(refused.into());
+    }
+    let pk = hex::decode(public_key).map_err(|_| refused)?;
+    let sig = hex::decode(signature).map_err(|_| refused)?;
+    let addr = &hex::encode(Sha256::digest(&pk))[..40];
+    if addr != delegator {
+        return Err(refused.into());
+    }
+    let key = VerifyingKey::from_bytes(pk.as_slice().try_into().unwrap()).map_err(|_| refused)?;
+    let signature = Signature::from_slice(&sig).map_err(|_| refused)?;
+    let message = delegate_preimage(chain_id, delegator, validator, amount);
+    key.verify(message.as_bytes(), &signature)
+        .map_err(|_| refused)?;
+    Ok(())
+}
+
 fn apply_stake(omega: &mut OmegaSnap, op: &StakeOp, auth: &Auth) -> Result<(), String> {
     match op {
         StakeOp::Delegate {
             delegator,
             validator,
             amount,
+            public_key,
+            signature,
         } => {
+            let pk = public_key.as_deref().unwrap_or("");
+            let sig = signature.as_deref().unwrap_or("");
+            if !pk.is_empty() || !sig.is_empty() {
+                verify_delegate(omega.chain_id, delegator, validator, *amount, pk, sig)?;
+            }
             let Some(index) = omega
                 .validators
                 .iter()
@@ -1514,4 +1581,161 @@ pub(super) fn admit_binding(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod delegate_authority_tests {
+    use super::super::{AccountSnap, Couplings, OmegaSnap, ValidatorSnap};
+    use super::{apply_stake, delegate_preimage, stake_line, verify_delegate, Auth, StakeOp};
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct DelegateOracle {
+        rows: Vec<DelegateRow>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct DelegateRow {
+        name: String,
+        chain_id: i64,
+        delegator: String,
+        validator: String,
+        amount: f64,
+        public_key: String,
+        signature: String,
+        preimage: String,
+        line: String,
+        admits: bool,
+    }
+
+    fn omega(chain_id: i64, delegator: &str, validator: &str) -> OmegaSnap {
+        OmegaSnap {
+            tip_hash: String::new(),
+            chain_id,
+            height: 0,
+            tip_timestamp: 0,
+            difficulty: 1.0,
+            finalized_height: -1,
+            couplings: Couplings {
+                hash: 1.0,
+                structural: 1.0,
+                continuity: 1.0,
+                mempool: 1.0,
+                fees: 1.0,
+            },
+            ledger: vec![AccountSnap {
+                address: delegator.to_string(),
+                balance: 1000.0,
+                nonce: 0.0,
+            }],
+            pools: Vec::new(),
+            btc: Vec::new(),
+            eth_pubkey: String::new(),
+            eth_committee: String::new(),
+            eth: Vec::new(),
+            wasm: Vec::new(),
+            validators: vec![ValidatorSnap {
+                address: validator.to_string(),
+                moniker: "v".into(),
+                uptime: 1.0,
+                bonded_stake: 1_500_000.0,
+                accumulated_rewards: 0.0,
+                slashed: false,
+                jailed: false,
+                blocks_proposed: 0,
+                commission: 0.0,
+            }],
+            delegations: Vec::new(),
+            proposals: Vec::new(),
+            models: Vec::new(),
+            settlements: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn authoritative_delegate_matches_the_site_oracle() {
+        let Some(path) = std::env::var_os("EQ_DELEGATE_ORACLE") else {
+            println!("delegate-oracle: not supplied");
+            return;
+        };
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("oracle {}: {err}", path.to_string_lossy()));
+        let oracle: DelegateOracle = serde_json::from_str(&text).expect("delegate oracle json");
+        assert!(!oracle.rows.is_empty(), "oracle has no rows");
+        let auth = Auth {
+            power: Vec::new(),
+            total: 0.0,
+            quorum: 0.0,
+        };
+        for row in &oracle.rows {
+            let op = StakeOp::Delegate {
+                delegator: row.delegator.clone(),
+                validator: row.validator.clone(),
+                amount: row.amount,
+                public_key: Some(row.public_key.clone()),
+                signature: Some(row.signature.clone()),
+            };
+            assert_eq!(stake_line(&op), row.line, "{}", row.name);
+            assert_eq!(
+                delegate_preimage(row.chain_id, &row.delegator, &row.validator, row.amount),
+                row.preimage,
+                "{}",
+                row.name
+            );
+            let proved = !row.public_key.is_empty() || !row.signature.is_empty();
+            if proved {
+                let verified = verify_delegate(
+                    row.chain_id,
+                    &row.delegator,
+                    &row.validator,
+                    row.amount,
+                    &row.public_key,
+                    &row.signature,
+                );
+                assert_eq!(verified.is_ok(), row.admits, "{}", row.name);
+            } else {
+                assert!(row.admits, "{}", row.name);
+                assert!(row.line.starts_with("d:"), "{}", row.name);
+            }
+            if proved && row.admits {
+                assert!(row.line.starts_with("a:"), "{}", row.name);
+                assert_ne!(
+                    row.line,
+                    format!(
+                        "d:{}:{}:{}",
+                        row.delegator,
+                        row.validator,
+                        super::super::js_num(row.amount)
+                    ),
+                    "{}",
+                    row.name
+                );
+            }
+            let mut state = omega(row.chain_id, &row.delegator, &row.validator);
+            let applied = apply_stake(&mut state, &op, &auth);
+            let balance = state
+                .ledger
+                .iter()
+                .find(|a| a.address == row.delegator)
+                .map(|a| a.balance);
+            if row.admits {
+                assert!(applied.is_ok(), "{} {:?}", row.name, applied);
+                assert_eq!(balance, Some(1000.0 - row.amount), "{}", row.name);
+                assert_eq!(
+                    state.validators[0].bonded_stake,
+                    1_500_000.0 + row.amount,
+                    "{}",
+                    row.name
+                );
+            } else {
+                assert_eq!(applied.unwrap_err(), "delegate authority refused", "{}", row.name);
+                assert_eq!(balance, Some(1000.0), "{}", row.name);
+                assert_eq!(state.validators[0].bonded_stake, 1_500_000.0, "{}", row.name);
+                assert!(state.delegations.is_empty(), "{}", row.name);
+            }
+        }
+        println!("delegate-oracle: rows {}", oracle.rows.len());
+    }
 }

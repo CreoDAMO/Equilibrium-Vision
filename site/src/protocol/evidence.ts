@@ -23,7 +23,14 @@ export function canonicalEvidence(ev: TransitionEvidence): string {
   const wasm = ev.wasm.map((w) => `${w.method}:${w.caller}`).join(";");
   const stake = ev.stake
     .map((s) => {
-      if (s.op === "delegate") return `d:${s.delegator}:${s.validator}:${s.amount}`;
+      if (s.op === "delegate") {
+        const publicKey = s.publicKey ?? "";
+        const signature = s.signature ?? "";
+        if (publicKey !== "" || signature !== "") {
+          return `a:${s.delegator}:${s.validator}:${s.amount}:${publicKey}:${signature}`;
+        }
+        return `d:${s.delegator}:${s.validator}:${s.amount}`;
+      }
       if (s.op === "claim") return `c:${s.address}`;
       if (s.op === "slash") return `s:${s.validator}:${s.reason}`;
       if (s.op === "vote") return `v:${s.voter}:${s.id}:${s.option}`;

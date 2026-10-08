@@ -1238,7 +1238,12 @@ export class OrganismNode {
     return report;
   }
 
-  delegate(delegator: string, validator: string, amount: number): { ok: boolean; error?: string } {
+  delegate(
+    delegator: string,
+    validator: string,
+    amount: number,
+    proof?: { publicKey: string; signature: string },
+  ): { ok: boolean; error?: string } {
     const v = this.validators.get(validator);
     const jailed =
       Boolean(v?.jailed) ||
@@ -1246,7 +1251,13 @@ export class OrganismNode {
     if (!v || jailed) return { ok: false, error: "unknown or jailed validator" };
     if (amount <= 0) return { ok: false, error: "amount" };
     if (this.account(delegator).balance - this.held(delegator) < amount) return { ok: false, error: "insufficient EQU" };
-    this.pending.stake.push({ op: "delegate", delegator, validator, amount });
+    this.pending.stake.push({
+      op: "delegate",
+      delegator,
+      validator,
+      amount,
+      ...(proof ? { publicKey: proof.publicKey, signature: proof.signature } : {}),
+    });
     this.emit("in", "governance", `delegate ${amount} → ${v.moniker} · queued`);
     return { ok: true };
   }

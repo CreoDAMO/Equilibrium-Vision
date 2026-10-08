@@ -94,6 +94,30 @@ export function gateStakeAction(input: StakeClaim & {
   return { ok: true, address };
 }
 
+/** Proof-carrying delegate. A failure here is before any debit. */
+export function verifyDelegateEvidence(
+  chainId: number,
+  op: { delegator: string; validator: string; amount: number; publicKey?: string; signature?: string },
+): string | null {
+  const publicKey = op.publicKey ?? "";
+  const signature = op.signature ?? "";
+  if (!/^[0-9a-f]{40}$/.test(op.delegator)) return "delegate authority refused";
+  if (!/^[0-9a-f]{40}$/.test(op.validator)) return "delegate authority refused";
+  if (!/^[0-9a-f]{64}$/.test(publicKey)) return "delegate authority refused";
+  if (!/^[0-9a-f]{128}$/.test(signature)) return "delegate authority refused";
+  if (!Number.isSafeInteger(op.amount) || op.amount <= 0) return "delegate authority refused";
+  const claim: StakeClaim = {
+    op: "delegate",
+    chainId,
+    validator: op.validator,
+    amount: op.amount,
+  };
+  if (!verified(publicKey, signature, authorityPreimage(op.delegator, claim), op.delegator)) {
+    return "delegate authority refused";
+  }
+  return null;
+}
+
 export function gateWasmCaller(input: {
   method: "init" | "pause" | "unpause";
   chainId: number;

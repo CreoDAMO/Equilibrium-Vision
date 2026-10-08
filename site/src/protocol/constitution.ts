@@ -19,6 +19,7 @@ import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { challengeBinding, modelBinding, residualBinding } from "./membranes";
 import { verifyTx } from "./wallet";
+import { verifyDelegateEvidence } from "./authority";
 import { NETWORKS } from "./networks";
 import {
   activityKeys,
@@ -484,6 +485,12 @@ function applyStake(
   authority: { power: Map<string, number>; total: number; quorum: number },
 ): string | null {
   if (op.op === "delegate") {
+    const publicKey = op.publicKey ?? "";
+    const signature = op.signature ?? "";
+    if (publicKey !== "" || signature !== "") {
+      const refused = verifyDelegateEvidence(omega.chainId, op);
+      if (refused) return refused;
+    }
     const v = omega.validators.get(op.validator);
     if (!v || v.jailed || v.slashed) return "delegate refused";
     if (!isSafePositive(op.amount)) return "delegate amount refused";

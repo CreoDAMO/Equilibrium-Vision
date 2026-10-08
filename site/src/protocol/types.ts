@@ -120,7 +120,15 @@ export interface WasmEvidence {
 }
 
 export type StakeEvidence =
-  | { op: "delegate"; delegator: string; validator: string; amount: number }
+  | {
+      op: "delegate";
+      delegator: string;
+      validator: string;
+      amount: number;
+      /** Absent on synthetic `d:` evidence. Present together on authoritative `a:` evidence. */
+      publicKey?: string;
+      signature?: string;
+    }
   | { op: "claim"; address: string }
   | { op: "slash"; validator: string; reason: "double_sign" | "downtime" }
   | {

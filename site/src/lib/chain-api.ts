@@ -274,7 +274,12 @@ export const stakeAction = createServerFn({ method: "POST" })
     if (!gate.ok) return { ok: false, error: gate.error };
     const address = gate.address;
     let res: { ok: boolean; error?: string; [k: string]: unknown } = { ok: false, error: "unknown op" };
-    if (data.op === "delegate" && data.validator) res = node.delegate(address, data.validator, data.amount ?? 0);
+    if (data.op === "delegate" && data.validator && data.publicKey && data.signature) {
+      res = node.delegate(address, data.validator, data.amount ?? 0, {
+        publicKey: data.publicKey,
+        signature: data.signature,
+      });
+    }
     else if (data.op === "claim") res = node.claimRewards(address);
     else if (data.op === "propose") res = node.propose(address, data.title ?? "untitled", data.amount ?? 1);
     else if (data.op === "vote" && data.id && data.option) res = node.vote(address, data.id, data.option);
