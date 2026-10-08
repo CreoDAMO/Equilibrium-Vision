@@ -21,6 +21,7 @@ import { ARBITRAGE_CODE } from "./evidence";
 import { activityKeys, GENESIS_ALLOCATIONS, minerKey } from "./genesis";
 import { sealFromSuccessor } from "./seal";
 import type { StakeEvidence } from "./types";
+import { signAuthority } from "./authority";
 import { signTx } from "./wallet";
 
 const omega = initialOmega("mainnet");
@@ -62,10 +63,12 @@ function run(current: Omega, stake: StakeEvidence[], transactions: Omega extends
 const delegateNeg = run(omega, [{ op: "delegate", delegator: payer.address, validator: v1.address, amount: -1 }]);
 assert.equal(delegateNeg.ok, false);
 if (delegateNeg.ok) throw new Error("negative delegation");
-assert.match(delegateNeg.error, /delegate amount/);
+assert.match(delegateNeg.error, /delegate authority refused/);
 
 const delegateZero = run(omega, [{ op: "delegate", delegator: payer.address, validator: v1.address, amount: 0 }]);
 assert.equal(delegateZero.ok, false);
+if (delegateZero.ok) throw new Error("zero delegation");
+assert.match(delegateZero.error, /delegate authority refused/);
 
 const delegateHuge = run(omega, [{
   op: "delegate",
@@ -74,6 +77,8 @@ const delegateHuge = run(omega, [{
   amount: Number.MAX_SAFE_INTEGER + 1,
 }]);
 assert.equal(delegateHuge.ok, false);
+if (delegateHuge.ok) throw new Error("huge delegation");
+assert.match(delegateHuge.error, /delegate authority refused/);
 
 const minted = run(omega, [{ op: "propose", proposer: miner, title: "mint", deposit: -10, id: 1 }]);
 assert.equal(minted.ok, false);
@@ -116,7 +121,25 @@ assert.equal(unsafe.ok, false);
 if (unsafe.ok) throw new Error("unsafe sum");
 assert.match(unsafe.error, /amount refused/);
 
-const delegated = run(omega, [{ op: "delegate", delegator: payer.address, validator: v1.address, amount: 10 }]);
+function signedDelegate(who: typeof payer, validator: string, amount: number): StakeEvidence {
+  const proof = signAuthority(who, { op: "delegate", chainId: omega.chainId, validator, amount });
+  return {
+    op: "delegate",
+    delegator: who.address,
+    validator,
+    amount,
+    publicKey: proof.publicKey,
+    signature: proof.signature,
+  };
+}
+
+const bare = run(omega, [{ op: "delegate", delegator: payer.address, validator: v1.address, amount: 10 }]);
+assert.equal(bare.ok, false);
+if (bare.ok) throw new Error("bare delegate debited");
+assert.match(bare.error, /delegate authority refused/);
+assert.equal(omega.ledger.get(payer.address)!.balance, 1_500_000);
+
+const delegated = run(omega, [signedDelegate(payer, v1.address, 10)]);
 assert.equal(delegated.ok, true);
 if (!delegated.ok) throw new Error(delegated.error);
 assert.equal(delegated.next.validators.get(v1.address)!.bondedStake, v1.bondedStake + 10);
@@ -153,14 +176,14 @@ assert.match(repeated.error, /vote already cast/);
 
 const amplified = run(omega, [
   propose,
-  { op: "delegate", delegator: community, validator: v1.address, amount: 10_000_000 },
+  signedDelegate(payer, v1.address, 10),
   { op: "vote", voter: v1.address, id: 1, option: "yes" },
 ]);
 assert.equal(amplified.ok, true);
 if (!amplified.ok) throw new Error(amplified.error);
 const amplifiedProposal = amplified.next.proposals.find((p) => p.id === 1)!;
 assert.equal(amplifiedProposal.yes, v1.bondedStake);
-assert.equal(amplified.next.validators.get(v1.address)!.bondedStake, v1.bondedStake + 10_000_000);
+assert.equal(amplified.next.validators.get(v1.address)!.bondedStake, v1.bondedStake + 10);
 assert.notEqual(amplifiedProposal.status, "passed");
 
 const slashedThenVoted = run(omega, [
@@ -194,7 +217,7 @@ const rewarded = cloneOmega(omega);
 rewarded.validators.get(miner)!.accumulatedRewards = 10_000_000;
 const claimed = run(rewarded, [
   { op: "claim", address: miner },
-  { op: "delegate", delegator: miner, validator: miner, amount: 10_000_000 },
+  signedDelegate(minerKey("mainnet"), miner, 10_000_000),
   { op: "propose", proposer: miner, title: "after claim", deposit: 0, id: 3 },
   { op: "vote", voter: miner, id: 3, option: "yes" },
 ]);

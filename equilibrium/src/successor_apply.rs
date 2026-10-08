@@ -577,6 +577,8 @@ fn apply_stake(omega: &mut OmegaSnap, op: &StakeOp, auth: &Auth) -> Result<(), S
             let sig = signature.as_deref().unwrap_or("");
             if !pk.is_empty() || !sig.is_empty() {
                 verify_delegate(omega.chain_id, delegator, validator, *amount, pk, sig)?;
+            } else {
+                return Err("delegate authority refused".into());
             }
             let Some(index) = omega
                 .validators
@@ -1696,7 +1698,7 @@ mod delegate_authority_tests {
                 );
                 assert_eq!(verified.is_ok(), row.admits, "{}", row.name);
             } else {
-                assert!(row.admits, "{}", row.name);
+                assert!(!row.admits, "{}", row.name);
                 assert!(row.line.starts_with("d:"), "{}", row.name);
             }
             if proved && row.admits {

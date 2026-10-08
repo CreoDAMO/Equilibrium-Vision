@@ -28,6 +28,7 @@ import { activityKeys, minerKey } from "./genesis";
 import { challengeBinding, modelBinding, residualBinding } from "./membranes";
 import { blankEvidence, sealFromSuccessor } from "./seal";
 import type { TransitionEvidence, TxRecord } from "./types";
+import { signAuthority } from "./authority";
 import { signTx } from "./wallet";
 
 const repo = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
@@ -52,6 +53,18 @@ function spec(current: Omega, evidence: TransitionEvidence = blankEvidence(curre
 
 function pay(nonce: number, amount: number, fee: number, to: string): TxRecord {
   return signTx(payer, { to, amount, fee, nonce, chainId: 1, timestamp: 1_700_000_000 });
+}
+
+function provedDelegate(amount = 10) {
+  const proof = signAuthority(payer, { op: "delegate", chainId: 1, validator: miner, amount });
+  return {
+    op: "delegate" as const,
+    delegator: payer.address,
+    validator: miner,
+    amount,
+    publicKey: proof.publicKey,
+    signature: proof.signature,
+  };
 }
 
 function snap(current: Omega) {
@@ -228,7 +241,9 @@ const delegateIn = spec(born, {
   stake: [{ op: "delegate", delegator: payer.address, validator: miner, amount: 10 }],
 });
 const delegateSite = run(born, delegateIn);
-assert.equal(delegateSite.ok, true);
+assert.equal(delegateSite.ok, false);
+if (delegateSite.ok) throw new Error("bare delegate");
+assert.equal(delegateSite.error, "delegate authority refused");
 
 const slashIn = spec(born, {
   ...blankEvidence(1),
@@ -459,7 +474,7 @@ function composedEvidence(headerHex: string): TransitionEvidence {
       { op: "header", ...ethFields, participation: hexOf(bits342), signature: ethSig },
     ],
     wasm: [{ method: "init", caller: miner }],
-    stake: [{ op: "delegate", delegator: payer.address, validator: miner, amount: 10 }],
+    stake: [provedDelegate()],
     settle: [{
       op: "lock",
       id: 4,

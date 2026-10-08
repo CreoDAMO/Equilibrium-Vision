@@ -490,6 +490,8 @@ function applyStake(
     if (publicKey !== "" || signature !== "") {
       const refused = verifyDelegateEvidence(omega.chainId, op);
       if (refused) return refused;
+    } else {
+      return "delegate authority refused";
     }
     const v = omega.validators.get(op.validator);
     if (!v || v.jailed || v.slashed) return "delegate refused";

@@ -37,6 +37,7 @@ import { merkleRoot, residualsMatch, sha256Hex } from "./crypto";
 import { evaluateResidual, solveStationary } from "./solver";
 import { verifyStationaryEvidence } from "./verify";
 import { signTx, verifyTx, type Keypair } from "./wallet";
+import { verifyDelegateEvidence } from "./authority";
 import { slashAmount } from "./coinomics";
 import { challengeBinding, modelBinding } from "./membranes";
 import { applySwap, poolAddress, quoteSwap } from "./dex";
@@ -1250,13 +1251,23 @@ export class OrganismNode {
       this.pending.stake.some((s) => s.op === "slash" && s.validator === validator && s.reason === "double_sign");
     if (!v || jailed) return { ok: false, error: "unknown or jailed validator" };
     if (amount <= 0) return { ok: false, error: "amount" };
+    if (!proof) return { ok: false, error: "delegate authority refused" };
+    const refused = verifyDelegateEvidence(this.params.chainId, {
+      delegator,
+      validator,
+      amount,
+      publicKey: proof.publicKey,
+      signature: proof.signature,
+    });
+    if (refused) return { ok: false, error: refused };
     if (this.account(delegator).balance - this.held(delegator) < amount) return { ok: false, error: "insufficient EQU" };
     this.pending.stake.push({
       op: "delegate",
       delegator,
       validator,
       amount,
-      ...(proof ? { publicKey: proof.publicKey, signature: proof.signature } : {}),
+      publicKey: proof.publicKey,
+      signature: proof.signature,
     });
     this.emit("in", "governance", `delegate ${amount} → ${v.moniker} · queued`);
     return { ok: true };

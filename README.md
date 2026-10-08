@@ -520,7 +520,7 @@ Admin routes (`set-model`, `pause`, `unpause`) additionally require the `X-Admin
 
 ## Staking
 
-`POST /api/stake` and `POST /api/unstake` require the delegator's Ed25519 signature over that exact request. A 40-hex address is not enough. Neither route writes the ledger or the bonded set. Both return that the action is evidence inside the successor, not a local write. The canonical stake evidence is `delegate`, `claim`, `slash`, `propose`, and `vote`. It has no unbond edge, so the old 10-block return is not a successor transition.
+`POST /api/stake` and `POST /api/unstake` require the delegator's Ed25519 signature over that exact request. A 40-hex address is not enough. Neither route writes the ledger or the bonded set. Both return that the action is evidence inside the successor, not a local write. The canonical stake evidence is `delegate`, `claim`, `slash`, `propose`, and `vote`. A delegate debits only when the evidence is `a:D:V:X:PK:SIG` and that signature checks. The bare `d:D:V:X` line still hashes the same way and does not move funds. There is no unbond edge, so the old 10-block return is not a successor transition.
 
 ---
 

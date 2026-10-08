@@ -1,6 +1,6 @@
 /**
- * Authoritative delegate. `d:` stays the synthetic line.
- * `a:D:V:X:PK:SIG` is the proof-carrying line. An invalid proof does not debit.
+ * Authoritative delegate. `d:` stays the synthetic line and does not debit.
+ * `a:D:V:X:PK:SIG` is the only delegate that can move funds.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -124,9 +124,9 @@ const syntheticLine = line(syntheticOp);
 assert.equal(syntheticLine, `d:${payer.address}:${validator.address}:10`);
 assert.equal(canonicalEvidence(evidence(syntheticOp)).endsWith(`|||${syntheticLine}`), true);
 const synthetic = step(fund(), syntheticOp);
-assert.equal(synthetic.ok, true);
-if (!synthetic.ok) throw new Error(synthetic.error);
-assert.equal(synthetic.next.ledger.get(payer.address)?.balance, 990);
+assert.equal(synthetic.ok, false);
+if (synthetic.ok) throw new Error("bare delegate debited");
+assert.match(synthetic.error, /delegate authority refused/);
 
 function row(name: string, op: StakeEvidence & { op: "delegate" }, admits: boolean) {
   return {
@@ -153,7 +153,7 @@ const rows = [
   row("amount", transplanted, false),
   row("signature", flipped, false),
   row("key", wrongKey, false),
-  row("synthetic", syntheticOp, true),
+  row("synthetic", syntheticOp, false),
 ];
 const oracle = join(tmpdir(), "eq-delegate-oracle.json");
 writeFileSync(oracle, JSON.stringify({ rows }));
