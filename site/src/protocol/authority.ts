@@ -1,7 +1,7 @@
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "./bytes";
-import { addressFromPubkeyHex } from "./crypto";
+import { addressFromPubkeyHex, sha256Hex } from "./crypto";
 import type { Keypair } from "./wallet";
 
 ed.hashes.sha512 = sha512;
@@ -162,4 +162,100 @@ export function gateWasmCaller(input: {
     return { ok: false, error: "signature refused" };
   }
   return { ok: true, address };
+}
+
+export interface WithdrawClaim {
+  chainId: number;
+  sender: string;
+  amount: number;
+  network: "btc" | "eth";
+  asset: string;
+  destination: string;
+  nonce: number;
+}
+
+/** Not a transfer, and not a stake signature. Every field of the obligation is bound. */
+export function withdrawPreimage(claim: WithdrawClaim): string {
+  return [
+    "eq-authority",
+    "v1",
+    String(claim.chainId),
+    "withdraw",
+    claim.sender,
+    String(claim.amount),
+    claim.network,
+    claim.asset,
+    claim.destination,
+    String(claim.nonce),
+  ].join("|");
+}
+
+/** Identity of the obligation. The external transaction is not this hash. */
+export function withdrawalCommitment(claim: WithdrawClaim): string {
+  return [
+    "eq-withdrawal",
+    "v1",
+    String(claim.chainId),
+    claim.sender,
+    String(claim.amount),
+    claim.network,
+    claim.asset,
+    claim.destination,
+    String(claim.nonce),
+  ].join("|");
+}
+
+export function withdrawalId(claim: WithdrawClaim): string {
+  return sha256Hex(withdrawalCommitment(claim));
+}
+
+/** Nobody holds this key. Locked EQU sits here until settle destroys it or refund returns it. */
+export const WITHDRAWAL_ESCROW = sha256Hex("eq-withdrawal-escrow|v1").slice(0, 40);
+
+export function signWithdraw(kp: Keypair, claim: Omit<WithdrawClaim, "sender">): {
+  address: string;
+  publicKey: string;
+  signature: string;
+  id: string;
+} {
+  const full: WithdrawClaim = { ...claim, sender: kp.address };
+  const signature = bytesToHex(ed.sign(new TextEncoder().encode(withdrawPreimage(full)), hexToBytes(kp.privateKey)));
+  return { address: kp.address, publicKey: kp.publicKey, signature, id: withdrawalId(full) };
+}
+
+/** Proof-carrying withdrawal. A failure here is before any debit. */
+export function verifyWithdrawEvidence(
+  chainId: number,
+  op: {
+    sender: string;
+    amount: number;
+    network: string;
+    asset: string;
+    destination: string;
+    nonce: number;
+    publicKey?: string;
+    signature?: string;
+  },
+): string | null {
+  const publicKey = op.publicKey ?? "";
+  const signature = op.signature ?? "";
+  if (!/^[0-9a-f]{40}$/.test(op.sender)) return "withdraw authority refused";
+  if (!/^[0-9a-f]{64}$/.test(publicKey)) return "withdraw authority refused";
+  if (!/^[0-9a-f]{128}$/.test(signature)) return "withdraw authority refused";
+  if (!Number.isSafeInteger(op.amount) || op.amount <= 0) return "withdraw authority refused";
+  if (!Number.isSafeInteger(op.nonce) || op.nonce < 0) return "withdraw authority refused";
+  if (op.network !== "btc" && op.network !== "eth") return "withdraw authority refused";
+  if (typeof op.asset !== "string" || op.asset.length === 0 || op.asset.length > 32) return "withdraw authority refused";
+  if (typeof op.destination !== "string" || op.destination.length === 0 || op.destination.length > 80) return "withdraw authority refused";
+  const claim: WithdrawClaim = {
+    chainId,
+    sender: op.sender,
+    amount: op.amount,
+    network: op.network,
+    asset: op.asset,
+    destination: op.destination,
+    nonce: op.nonce,
+  };
+  if (!verified(publicKey, signature, withdrawPreimage(claim), op.sender)) return "withdraw authority refused";
+  return null;
 }

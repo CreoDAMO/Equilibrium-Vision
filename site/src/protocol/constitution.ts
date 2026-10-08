@@ -2,7 +2,7 @@ import { merkleRoot, sha256Hex } from "./crypto";
 import { evaluateResidual, type SolverHeader } from "./solver";
 import { minerReward, slashAmount } from "./coinomics";
 import { applySwap, poolAddress } from "./dex";
-import { decodeHeaderHex, parseBtcHeader, verifyBtcPow } from "./btc";
+import { decodeHeaderHex, decodeTxHex, isBtcDestination, parseBtcHeader, proveBtcOutput, verifyBtcPow } from "./btc";
 import { callArbitrage } from "./wasm-host";
 import {
   ETH_MIN_PARTICIPANTS,
@@ -19,7 +19,7 @@ import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { challengeBinding, modelBinding, residualBinding } from "./membranes";
 import { verifyTx } from "./wallet";
-import { verifyDelegateEvidence, verifyUnbondEvidence } from "./authority";
+import { verifyDelegateEvidence, verifyUnbondEvidence, verifyWithdrawEvidence, withdrawalId, WITHDRAWAL_ESCROW } from "./authority";
 import { NETWORKS } from "./networks";
 import {
   activityKeys,
@@ -35,6 +35,8 @@ import type {
   Couplings,
   Delegation,
   Unbonding,
+  Withdrawal,
+  WithdrawalEvidence,
   DexPool,
   EthHeaderRecord,
   ModelClaim,
@@ -75,6 +77,7 @@ export interface Omega {
   validators: Map<string, ValidatorRecord>;
   delegations: Delegation[];
   unbonding: Unbonding[];
+  withdrawals: Withdrawal[];
   proposals: Proposal[];
   models: ModelClaim[];
   settlements: Settlement[];
@@ -158,6 +161,7 @@ export function cloneOmega(omega: Omega): Omega {
     validators: new Map([...omega.validators.entries()].map(([k, v]) => [k, { ...v }])),
     delegations: omega.delegations.map((d) => ({ ...d })),
     unbonding: omega.unbonding.map((u) => ({ ...u })),
+    withdrawals: omega.withdrawals.map((w) => ({ ...w })),
     proposals: omega.proposals.map((p) => ({ ...p, ballots: [...(p.ballots ?? [])] })),
     models: omega.models.map((m) => ({ ...m })),
     settlements: omega.settlements.map((s) => ({ ...s })),
@@ -230,6 +234,11 @@ export function monetaryError(omega: Omega): string | null {
   }
   for (const u of omega.unbonding) {
     if (!isSafePositive(u.amount) || !Number.isSafeInteger(u.matureAt)) return "unbond refused";
+  }
+  for (const w of omega.withdrawals) {
+    if (!isSafePositive(w.amount) || !Number.isSafeInteger(w.nonce) || w.nonce < 0) return "withdrawal refused";
+    if (!Number.isSafeInteger(w.createdHeight) || !Number.isSafeInteger(w.expiryHeight)) return "withdrawal refused";
+    if (w.status !== "locked" && w.status !== "settled" && w.status !== "refunded") return "withdrawal refused";
   }
   for (const p of omega.proposals) {
     if (!isSafeNonNegative(p.deposit) || !isSafeNonNegative(p.yes) || !isSafeNonNegative(p.no) || !isSafeNonNegative(p.abstain)) {
@@ -343,6 +352,9 @@ export function omegaDigest(omega: Omega): string {
     );
   const delegations = omega.delegations.map((d) => `${d.delegator}>${d.validator}:${num(d.amount)}`).join(";");
   const unbonding = omega.unbonding.map((u) => `${u.delegator}:${u.validator}:${num(u.amount)}:${u.matureAt}`).join(";");
+  const withdrawals = omega.withdrawals
+    .map((w) => `${w.id}:${w.sender}:${num(w.amount)}:${w.network}:${w.asset}:${w.destination}:${w.nonce}:${w.createdHeight}:${w.expiryHeight}:${w.status}:${w.effectLocator ?? ""}`)
+    .join(";");
   const proposals = omega.proposals
     .map((p) => {
       const ballots = (p.ballots ?? []).map((b) => `${b.voter}:${b.option}`).join(",");
@@ -369,7 +381,9 @@ export function omegaDigest(omega: Omega): string {
     modelLeaf(omega.models),
     settlementLeaf(omega.settlements),
   ].join("|");
-  const full = unbonding ? `${body}|${unbonding}` : body;
+  let full = body;
+  if (unbonding) full = `${full}|${unbonding}`;
+  if (withdrawals) full = `${full}|${withdrawals}`;
   return sha256Hex(`eq-omega|${full}`);
 }
 
@@ -745,6 +759,10 @@ function applyMaterial(omega: Omega, ev: TransitionEvidence | undefined, params:
     const refused = applySettlement(omega, item);
     if (refused) return refused;
   }
+  for (const item of ev.withdraw ?? []) {
+    const refused = applyWithdrawal(omega, item, params);
+    if (refused) return refused;
+  }
   return null;
 }
 
@@ -778,6 +796,63 @@ function applySettlement(omega: Omega, item: SettlementEvidence): string | null 
   if (!foreignKnown(omega, row.asset, row.foreignRef)) return "foreign observation left the window";
   if (!credit(omega.ledger, row.to, row.amount)) return "settlement amount refused";
   row.status = "settled";
+  return null;
+}
+
+function applyWithdrawal(omega: Omega, item: WithdrawalEvidence, params: NetworkParams): string | null {
+  if (item.op === "open") {
+    const refused = verifyWithdrawEvidence(omega.chainId, item);
+    if (refused) return refused;
+    if (item.network === "eth") return "eth execution proof refused";
+    if (item.network !== "btc") return "withdrawal network refused";
+    if (item.asset !== "btc") return "withdrawal asset refused";
+    if (!isBtcDestination(item.destination)) return "withdrawal destination refused";
+    const id = withdrawalId({
+      chainId: omega.chainId,
+      sender: item.sender,
+      amount: item.amount,
+      network: item.network,
+      asset: item.asset,
+      destination: item.destination,
+      nonce: item.nonce,
+    });
+    if (omega.withdrawals.some((w) => w.id === id)) return "withdrawal exists";
+    const expiryHeight = omega.height + params.withdrawalTimeout;
+    if (!Number.isSafeInteger(expiryHeight)) return "withdrawal refused";
+    if (!debit(omega.ledger, item.sender, item.amount)) return "withdrawal funds refused";
+    if (!credit(omega.ledger, WITHDRAWAL_ESCROW, item.amount)) return "withdrawal funds refused";
+    omega.withdrawals.push({
+      id,
+      sender: item.sender,
+      amount: item.amount,
+      network: item.network,
+      asset: item.asset,
+      destination: item.destination,
+      nonce: item.nonce,
+      createdHeight: omega.height,
+      expiryHeight,
+      status: "locked",
+      effectLocator: null,
+    });
+    return null;
+  }
+  const row = omega.withdrawals.find((w) => w.id === item.id);
+  if (!row || row.status !== "locked") return "withdrawal is not locked";
+  if (omega.height + 1 >= row.expiryHeight) return "withdrawal expired";
+  if (row.network === "eth") return "eth execution proof refused";
+  if (row.network !== "btc" || row.asset !== "btc") return "withdrawal binding refused";
+  const raw = decodeTxHex(item.rawTx);
+  if (!raw) return "btc transaction refused";
+  if (!/^[0-9a-f]{64}$/.test(item.headerHash)) return "btc header is not in Ω";
+  const header = omega.btc.find((h) => h.hash === item.headerHash);
+  if (!header) return "btc header is not in Ω";
+  const proved = proveBtcOutput(raw, item.vout, item.merkle, header.merkleRoot);
+  if (!proved.ok) return proved.error;
+  if (proved.destination !== row.destination || proved.amount !== row.amount) return "withdrawal binding refused";
+  if (omega.withdrawals.some((w) => w.effectLocator === proved.locator)) return "effect already settled";
+  if (!debit(omega.ledger, WITHDRAWAL_ESCROW, row.amount)) return "withdrawal settle refused";
+  row.status = "settled";
+  row.effectLocator = proved.locator;
   return null;
 }
 
@@ -884,6 +959,17 @@ function settleMaturedUnbondings(omega: Omega, height: number): string | null {
   return null;
 }
 
+/** A locked withdrawal past expiry pays the sender stored on it. The amount is not an input. */
+function refundMaturedWithdrawals(omega: Omega, height: number): string | null {
+  for (const w of omega.withdrawals) {
+    if (w.status !== "locked" || w.expiryHeight > height) continue;
+    if (!debit(omega.ledger, WITHDRAWAL_ESCROW, w.amount)) return "withdrawal refund refused";
+    if (!credit(omega.ledger, w.sender, w.amount)) return "withdrawal refund refused";
+    w.status = "refunded";
+  }
+  return null;
+}
+
 class DerivedWasm {
   constructor(readonly storage: Map<string, string>) {}
 }
@@ -971,6 +1057,8 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs, derived?: 
   if (modelError) return { ok: false, error: modelError };
   const settled = settleMaturedUnbondings(next, height);
   if (settled) return { ok: false, error: settled };
+  const refunded = refundMaturedWithdrawals(next, height);
+  if (refunded) return { ok: false, error: refunded };
   const stateRoot = stateRootOf(next);
   const bindError = admitBinding(inputs.evidence, breakdown.canonicalFp, stateRoot);
   if (bindError) return { ok: false, error: bindError };
@@ -1074,6 +1162,7 @@ export function initialOmega(network: NetworkId): Omega {
     validators: new Map(),
     delegations: [],
     unbonding: [],
+    withdrawals: [],
     proposals: [],
     models: [],
     settlements: [],

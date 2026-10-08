@@ -58,9 +58,17 @@ export function canonicalEvidence(ev: TransitionEvidence): string {
         : `r:${s.id}`,
     )
     .join(";");
+  const withdraw = (ev.withdraw ?? [])
+    .map((w) =>
+      w.op === "open"
+        ? `o:${w.sender}:${w.amount}:${w.network}:${w.asset}:${w.destination}:${w.nonce}:${w.publicKey ?? ""}:${w.signature ?? ""}`
+        : `s:${w.id}:${w.headerHash}:${w.vout}:${w.rawTx}:${w.merkle.join(",")}`,
+    )
+    .join(";");
   const body = ["v1", String(ev.chainId), ev.wasmCode, btc, eth, wasm, stake].join("|");
-  if (!cognition && !settle) return body;
-  return `${body}|${cognition}|${settle}`;
+  if (!cognition && !settle && !withdraw) return body;
+  if (!withdraw) return `${body}|${cognition}|${settle}`;
+  return `${body}|${cognition}|${settle}|${withdraw}`;
 }
 
 export function evidenceRoot(ev: TransitionEvidence): string {

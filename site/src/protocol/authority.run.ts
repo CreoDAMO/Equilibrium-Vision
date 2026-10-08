@@ -67,6 +67,7 @@ function omega(height: number): Omega {
     validators: new Map(names.map((address) => [address, validator(address)])),
     delegations: [],
     unbonding: [],
+    withdrawals: [],
     proposals: [],
     models: [],
     settlements: [],

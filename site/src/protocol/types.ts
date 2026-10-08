@@ -33,6 +33,8 @@ export interface NetworkParams {
   finalityLag: number;
   /** Blocks from the pre-state height until a canonical unbond may pay. */
   unbondingPeriod: number;
+  /** Blocks from the pre-state height until a locked withdrawal refunds. */
+  withdrawalTimeout: number;
   allowFaucet: boolean;
   faucetAmount: number;
 }
@@ -169,6 +171,8 @@ export interface TransitionEvidence {
   cognition?: CognitionEvidence[];
   /** Absent on evidence minted before foreign settlement. */
   settle?: SettlementEvidence[];
+  /** Absent on evidence minted before a withdrawal. Empty is not encoded. */
+  withdraw?: WithdrawalEvidence[];
 }
 
 /** Measured answer of the transition relation. Produced by running it, not by describing it. */
@@ -278,6 +282,45 @@ export interface Unbonding {
   /** Successor height at which this position may pay. Not recomputed if the period changes. */
   matureAt: number;
 }
+
+/** EQU locked against an external payment. Settled means the foreign output was verified. */
+export interface Withdrawal {
+  id: string;
+  sender: string;
+  amount: number;
+  network: "btc" | "eth";
+  asset: string;
+  destination: string;
+  nonce: number;
+  /** Pre-state height when this obligation was opened. */
+  createdHeight: number;
+  /** Successor height at which a still-locked obligation refunds. Not recomputed if the timeout changes. */
+  expiryHeight: number;
+  status: "locked" | "settled" | "refunded";
+  /** txid:vout once settled. Null until then. */
+  effectLocator: string | null;
+}
+
+export type WithdrawalEvidence =
+  | {
+      op: "open";
+      sender: string;
+      amount: number;
+      network: "btc" | "eth";
+      asset: string;
+      destination: string;
+      nonce: number;
+      publicKey?: string;
+      signature?: string;
+    }
+  | {
+      op: "settle";
+      id: string;
+      rawTx: string;
+      vout: number;
+      headerHash: string;
+      merkle: string[];
+    };
 
 export interface Proposal {
   id: number;
@@ -523,6 +566,7 @@ export interface PersistedBody {
   pools: DexPool[];
   delegations: Delegation[];
   unbonding?: Unbonding[];
+  withdrawals?: Withdrawal[];
   proposals: Proposal[];
   models: ModelClaim[];
   settlements?: Settlement[];
@@ -576,6 +620,7 @@ export interface ChainSnapshot {
   persisted: boolean;
   delegations: Delegation[];
   unbonding: Unbonding[];
+  withdrawals: Withdrawal[];
   proposals: Proposal[];
   models: ModelClaim[];
   lastPaired: PairedResult | null;

@@ -91,6 +91,7 @@ export function omegaRecord(omega: Omega) {
     validators,
     delegations: omega.delegations.map((d) => ({ ...d })),
     unbonding: omega.unbonding.map((u) => ({ ...u })),
+    withdrawals: omega.withdrawals.map((w) => ({ ...w })),
     proposals: omega.proposals.map((p) => ({ ...p })),
     models: omega.models.map((m) => ({ ...m })),
     settlements: omega.settlements.map((s) => ({ ...s })),

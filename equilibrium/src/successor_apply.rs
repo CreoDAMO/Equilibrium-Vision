@@ -25,6 +25,8 @@ pub(super) struct EvidenceBody {
     pub cognition: Vec<Cognition>,
     #[serde(default)]
     pub settle: Vec<SettleOp>,
+    #[serde(default)]
+    pub withdraw: Vec<WithdrawOp>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -163,6 +165,33 @@ pub(super) enum SettleOp {
     Release { id: i64 },
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(tag = "op")]
+pub(super) enum WithdrawOp {
+    #[serde(rename = "open")]
+    Open {
+        sender: String,
+        amount: f64,
+        network: String,
+        asset: String,
+        destination: String,
+        nonce: f64,
+        #[serde(rename = "publicKey")]
+        public_key: String,
+        signature: String,
+    },
+    #[serde(rename = "settle")]
+    Settle {
+        id: String,
+        #[serde(rename = "rawTx")]
+        raw_tx: String,
+        vout: i64,
+        #[serde(rename = "headerHash")]
+        header_hash: String,
+        merkle: Vec<String>,
+    },
+}
+
 use serde::Deserialize;
 
 const SAFE: f64 = 9_007_199_254_740_991.0;
@@ -237,14 +266,23 @@ pub(super) fn canonical_evidence(body: &EvidenceBody) -> Result<String, String> 
         .map(settle_line)
         .collect::<Vec<_>>()
         .join(";");
+    let withdraw = body
+        .withdraw
+        .iter()
+        .map(withdraw_line)
+        .collect::<Vec<_>>()
+        .join(";");
     let encoded = format!(
         "v1|{}|{}|{btc}|{eth}|{wasm}|{stake}",
         body.chain_id, body.wasm_code
     );
-    if cognition.is_empty() && settle.is_empty() {
+    if cognition.is_empty() && settle.is_empty() && withdraw.is_empty() {
         return Ok(encoded);
     }
-    Ok(format!("{encoded}|{cognition}|{settle}"))
+    if withdraw.is_empty() {
+        return Ok(format!("{encoded}|{cognition}|{settle}"));
+    }
+    Ok(format!("{encoded}|{cognition}|{settle}|{withdraw}"))
 }
 
 fn eth_line(op: &EthOp) -> String {
@@ -368,6 +406,35 @@ fn settle_line(op: &SettleOp) -> String {
             super::js_num(*amount)
         ),
         SettleOp::Release { id } => format!("r:{id}"),
+    }
+}
+
+fn withdraw_line(op: &WithdrawOp) -> String {
+    match op {
+        WithdrawOp::Open {
+            sender,
+            amount,
+            network,
+            asset,
+            destination,
+            nonce,
+            public_key,
+            signature,
+        } => format!(
+            "o:{sender}:{}:{network}:{asset}:{destination}:{}:{public_key}:{signature}",
+            super::js_num(*amount),
+            super::js_num(*nonce)
+        ),
+        WithdrawOp::Settle {
+            id,
+            header_hash,
+            vout,
+            raw_tx,
+            merkle,
+        } => format!(
+            "s:{id}:{header_hash}:{vout}:{raw_tx}:{}",
+            merkle.join(",")
+        ),
     }
 }
 
@@ -516,6 +583,9 @@ pub(super) fn apply_material(omega: &mut OmegaSnap, body: &EvidenceBody) -> Resu
     }
     for op in &body.settle {
         apply_settle(omega, op)?;
+    }
+    for op in &body.withdraw {
+        apply_withdraw(omega, op)?;
     }
     Ok(())
 }
@@ -696,6 +766,7 @@ pub(super) fn settle_matured(omega: &mut OmegaSnap, height: i64) -> Result<(), S
         credit(&mut omega.ledger, &row.delegator, row.amount).map_err(|_| "unbond payout refused")?;
     }
     omega.unbonding = keep;
+    refund_withdrawals(omega, height)?;
     Ok(())
 }
 
@@ -1318,6 +1389,426 @@ fn apply_settle(omega: &mut OmegaSnap, op: &SettleOp) -> Result<(), String> {
     }
 }
 
+const WITHDRAWAL_TIMEOUT: i64 = 10;
+
+fn withdrawal_escrow() -> String {
+    hex::encode(Sha256::digest(b"eq-withdrawal-escrow|v1"))[..40].to_string()
+}
+
+fn withdrawal_commitment(
+    chain_id: i64,
+    sender: &str,
+    amount: f64,
+    network: &str,
+    asset: &str,
+    destination: &str,
+    nonce: f64,
+) -> String {
+    format!(
+        "eq-withdrawal|v1|{chain_id}|{sender}|{}|{network}|{asset}|{destination}|{}",
+        super::js_num(amount),
+        super::js_num(nonce)
+    )
+}
+
+fn withdrawal_id(
+    chain_id: i64,
+    sender: &str,
+    amount: f64,
+    network: &str,
+    asset: &str,
+    destination: &str,
+    nonce: f64,
+) -> String {
+    super::sha256_hex(&withdrawal_commitment(
+        chain_id, sender, amount, network, asset, destination, nonce,
+    ))
+}
+
+fn is_btc_destination(destination: &str) -> bool {
+    let Some((kind, rest)) = destination.split_once(':') else {
+        return false;
+    };
+    let width = match kind {
+        "p2pkh" | "p2wpkh" => 40,
+        "p2wsh" | "p2tr" => 64,
+        _ => return false,
+    };
+    rest.len() == width && hex_lower(rest, width)
+}
+
+fn verify_withdraw(
+    chain_id: i64,
+    sender: &str,
+    amount: f64,
+    network: &str,
+    asset: &str,
+    destination: &str,
+    nonce: f64,
+    public_key: &str,
+    signature: &str,
+) -> Result<(), String> {
+    let refused = "withdraw authority refused";
+    if !hex_lower(sender, 40)
+        || !hex_lower(public_key, 64)
+        || !hex_lower(signature, 128)
+        || !safe_positive(amount)
+        || !safe_int(nonce)
+        || nonce < 0.0
+        || network != "btc" && network != "eth"
+        || asset.is_empty()
+        || asset.len() > 32
+        || destination.is_empty()
+        || destination.len() > 80
+    {
+        return Err(refused.into());
+    }
+    let pk = hex::decode(public_key).map_err(|_| refused)?;
+    let sig = hex::decode(signature).map_err(|_| refused)?;
+    let addr = &hex::encode(Sha256::digest(&pk))[..40];
+    if addr != sender {
+        return Err(refused.into());
+    }
+    let key = VerifyingKey::from_bytes(pk.as_slice().try_into().unwrap()).map_err(|_| refused)?;
+    let parsed = Signature::from_slice(&sig).map_err(|_| refused)?;
+    let message = format!(
+        "eq-authority|v1|{chain_id}|withdraw|{sender}|{}|{network}|{asset}|{destination}|{}",
+        super::js_num(amount),
+        super::js_num(nonce)
+    );
+    key.verify(message.as_bytes(), &parsed).map_err(|_| refused)?;
+    Ok(())
+}
+
+fn read_compact(raw: &[u8], i: &mut usize) -> Option<usize> {
+    let first = *raw.get(*i)?;
+    *i += 1;
+    if first < 0xfd {
+        return Some(first as usize);
+    }
+    if first == 0xfd {
+        if *i + 2 > raw.len() {
+            return None;
+        }
+        let n = u16::from_le_bytes(raw[*i..*i + 2].try_into().ok()?) as usize;
+        *i += 2;
+        return Some(n);
+    }
+    if first == 0xfe {
+        if *i + 4 > raw.len() {
+            return None;
+        }
+        let n = u32::from_le_bytes(raw[*i..*i + 4].try_into().ok()?) as usize;
+        *i += 4;
+        return Some(n);
+    }
+    None
+}
+
+fn read_safe_u64(raw: &[u8], i: usize) -> Option<u64> {
+    if i + 8 > raw.len() {
+        return None;
+    }
+    let n = u64::from_le_bytes(raw[i..i + 8].try_into().ok()?);
+    if n > 9_007_199_254_740_991 {
+        None
+    } else {
+        Some(n)
+    }
+}
+
+fn script_destination(script: &[u8]) -> Option<String> {
+    if script.len() == 25
+        && script[0] == 0x76
+        && script[1] == 0xa9
+        && script[2] == 0x14
+        && script[23] == 0x88
+        && script[24] == 0xac
+    {
+        return Some(format!("p2pkh:{}", hex::encode(&script[3..23])));
+    }
+    if script.len() == 22 && script[0] == 0x00 && script[1] == 0x14 {
+        return Some(format!("p2wpkh:{}", hex::encode(&script[2..])));
+    }
+    if script.len() == 34 && script[0] == 0x00 && script[1] == 0x20 {
+        return Some(format!("p2wsh:{}", hex::encode(&script[2..])));
+    }
+    if script.len() == 34 && script[0] == 0x51 && script[1] == 0x20 {
+        return Some(format!("p2tr:{}", hex::encode(&script[2..])));
+    }
+    None
+}
+
+fn sha256d_bytes(data: &[u8]) -> Vec<u8> {
+    Sha256::digest(Sha256::digest(data)).to_vec()
+}
+
+struct ParsedOutput {
+    value: Option<u64>,
+    destination: Option<String>,
+}
+
+struct ParsedTx {
+    txid: String,
+    outputs: Vec<ParsedOutput>,
+}
+
+fn parse_btc_tx(raw: &[u8]) -> Option<ParsedTx> {
+    if raw.len() < 10 {
+        return None;
+    }
+    let version = &raw[..4];
+    let mut i = 4usize;
+    let mut segwit = false;
+    if raw[4] == 0x00 && raw[5] == 0x01 {
+        segwit = true;
+        i = 6;
+    }
+    let body_start = i;
+    let vin = read_compact(raw, &mut i)?;
+    if vin > 10_000 {
+        return None;
+    }
+    for _ in 0..vin {
+        if i + 36 > raw.len() {
+            return None;
+        }
+        i += 36;
+        let script = read_compact(raw, &mut i)?;
+        if script > raw.len() - i {
+            return None;
+        }
+        i += script;
+        if i + 4 > raw.len() {
+            return None;
+        }
+        i += 4;
+    }
+    let vout = read_compact(raw, &mut i)?;
+    if vout > 10_000 {
+        return None;
+    }
+    let mut outputs = Vec::new();
+    for _ in 0..vout {
+        let value = read_safe_u64(raw, i);
+        if i + 8 > raw.len() {
+            return None;
+        }
+        i += 8;
+        let script_len = read_compact(raw, &mut i)?;
+        if script_len > raw.len() - i {
+            return None;
+        }
+        let script = &raw[i..i + script_len];
+        i += script_len;
+        outputs.push(ParsedOutput {
+            value,
+            destination: script_destination(script),
+        });
+    }
+    let body_end = i;
+    if segwit {
+        for _ in 0..vin {
+            let count = read_compact(raw, &mut i)?;
+            if count > 10_000 {
+                return None;
+            }
+            for _ in 0..count {
+                let item = read_compact(raw, &mut i)?;
+                if item > raw.len() - i {
+                    return None;
+                }
+                i += item;
+            }
+        }
+    }
+    if i + 4 != raw.len() {
+        return None;
+    }
+    let legacy = if segwit {
+        let mut bytes = Vec::with_capacity(version.len() + (body_end - body_start) + 4);
+        bytes.extend_from_slice(version);
+        bytes.extend_from_slice(&raw[body_start..body_end]);
+        bytes.extend_from_slice(&raw[i..]);
+        bytes
+    } else {
+        raw.to_vec()
+    };
+    Some(ParsedTx {
+        txid: hex::encode(sha256d_bytes(&legacy)),
+        outputs,
+    })
+}
+
+fn btc_merkle(txid: &[u8], siblings: &[Vec<u8>], root: &[u8]) -> bool {
+    if txid.len() != 32 || root.len() != 32 {
+        return false;
+    }
+    let mut current = txid.to_vec();
+    for sibling in siblings {
+        if sibling.len() != 32 {
+            return false;
+        }
+        let mut combined = Vec::with_capacity(64);
+        combined.extend_from_slice(&current);
+        combined.extend_from_slice(sibling);
+        current = sha256d_bytes(&combined);
+    }
+    current == root
+}
+
+fn prove_btc_output(raw: &[u8], vout: i64, merkle: &[String], root_hex: &str) -> Result<(String, String, u64, String), String> {
+    let parsed = parse_btc_tx(raw).ok_or("btc transaction refused")?;
+    if vout < 0 || vout as usize >= parsed.outputs.len() {
+        return Err("btc output refused".into());
+    }
+    let output = &parsed.outputs[vout as usize];
+    let amount = output.value.ok_or("btc output refused")?;
+    let destination = output.destination.clone().ok_or("btc script refused")?;
+    if !hex_lower(&parsed.txid, 64) || !hex_lower(root_hex, 64) {
+        return Err("btc merkle refused".into());
+    }
+    let tx_bytes = hex::decode(&parsed.txid).map_err(|_| "btc merkle refused")?;
+    let root = hex::decode(root_hex).map_err(|_| "btc merkle refused")?;
+    let mut siblings = Vec::new();
+    for entry in merkle {
+        if !hex_lower(entry, 64) {
+            return Err("btc merkle refused".into());
+        }
+        siblings.push(hex::decode(entry).map_err(|_| "btc merkle refused")?);
+    }
+    if !btc_merkle(&tx_bytes, &siblings, &root) {
+        return Err("btc merkle refused".into());
+    }
+    let locator = format!("{}:{vout}", parsed.txid);
+    Ok((parsed.txid, destination, amount, locator))
+}
+
+fn apply_withdraw(omega: &mut OmegaSnap, op: &WithdrawOp) -> Result<(), String> {
+    match op {
+        WithdrawOp::Open {
+            sender,
+            amount,
+            network,
+            asset,
+            destination,
+            nonce,
+            public_key,
+            signature,
+        } => {
+            verify_withdraw(
+                omega.chain_id,
+                sender,
+                *amount,
+                network,
+                asset,
+                destination,
+                *nonce,
+                public_key,
+                signature,
+            )?;
+            if network == "eth" {
+                return Err("eth execution proof refused".into());
+            }
+            if network != "btc" {
+                return Err("withdrawal network refused".into());
+            }
+            if asset != "btc" {
+                return Err("withdrawal asset refused".into());
+            }
+            if !is_btc_destination(destination) {
+                return Err("withdrawal destination refused".into());
+            }
+            let id = withdrawal_id(omega.chain_id, sender, *amount, network, asset, destination, *nonce);
+            if omega.withdrawals.iter().any(|w| w.id == id) {
+                return Err("withdrawal exists".into());
+            }
+            let expiry = omega.height + WITHDRAWAL_TIMEOUT;
+            debit(&mut omega.ledger, sender, *amount).map_err(|_| "withdrawal funds refused")?;
+            credit(&mut omega.ledger, &withdrawal_escrow(), *amount).map_err(|_| "withdrawal funds refused")?;
+            omega.withdrawals.push(super::WithdrawalSnap {
+                id,
+                sender: sender.clone(),
+                amount: *amount,
+                network: network.clone(),
+                asset: asset.clone(),
+                destination: destination.clone(),
+                nonce: *nonce as i64,
+                created_height: omega.height,
+                expiry_height: expiry,
+                status: "locked".into(),
+                effect_locator: None,
+            });
+            Ok(())
+        }
+        WithdrawOp::Settle {
+            id,
+            raw_tx,
+            vout,
+            header_hash,
+            merkle,
+        } => {
+            let Some(index) = omega.withdrawals.iter().position(|w| w.id == *id) else {
+                return Err("withdrawal is not locked".into());
+            };
+            if omega.withdrawals[index].status != "locked" {
+                return Err("withdrawal is not locked".into());
+            }
+            if omega.height + 1 >= omega.withdrawals[index].expiry_height {
+                return Err("withdrawal expired".into());
+            }
+            if omega.withdrawals[index].network == "eth" {
+                return Err("eth execution proof refused".into());
+            }
+            if omega.withdrawals[index].network != "btc" || omega.withdrawals[index].asset != "btc" {
+                return Err("withdrawal binding refused".into());
+            }
+            let raw = hex::decode(raw_tx.trim().trim_start_matches("0x")).map_err(|_| "btc transaction refused")?;
+            if !hex_lower(header_hash, 64) {
+                return Err("btc header is not in Ω".into());
+            }
+            let Some(header) = omega.btc.iter().find(|h| h.hash == *header_hash) else {
+                return Err("btc header is not in Ω".into());
+            };
+            let root = header.merkle_root.clone();
+            let (destination, amount, locator) = {
+                let (_txid, destination, amount, locator) = prove_btc_output(&raw, *vout, merkle, &root)?;
+                (destination, amount, locator)
+            };
+            if destination != omega.withdrawals[index].destination || amount as f64 != omega.withdrawals[index].amount {
+                return Err("withdrawal binding refused".into());
+            }
+            if omega.withdrawals.iter().any(|w| w.effect_locator.as_deref() == Some(locator.as_str())) {
+                return Err("effect already settled".into());
+            }
+            let locked = omega.withdrawals[index].amount;
+            debit(&mut omega.ledger, &withdrawal_escrow(), locked).map_err(|_| "withdrawal settle refused")?;
+            omega.withdrawals[index].status = "settled".into();
+            omega.withdrawals[index].effect_locator = Some(locator);
+            Ok(())
+        }
+    }
+}
+
+fn refund_withdrawals(omega: &mut OmegaSnap, height: i64) -> Result<(), String> {
+    let escrow = withdrawal_escrow();
+    let due: Vec<usize> = omega
+        .withdrawals
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.status == "locked" && row.expiry_height <= height)
+        .map(|(index, _)| index)
+        .collect();
+    for index in due {
+        let amount = omega.withdrawals[index].amount;
+        let sender = omega.withdrawals[index].sender.clone();
+        debit(&mut omega.ledger, &escrow, amount).map_err(|_| "withdrawal refund refused")?;
+        credit(&mut omega.ledger, &sender, amount).map_err(|_| "withdrawal refund refused")?;
+        omega.withdrawals[index].status = "refunded".into();
+    }
+    Ok(())
+}
+
 pub(super) fn execute_wasm(
     omega: &mut OmegaSnap,
     calls: &[WasmEv],
@@ -1798,6 +2289,7 @@ mod delegate_authority_tests {
             }],
             delegations: Vec::new(),
             unbonding: Vec::new(),
+            withdrawals: Vec::new(),
             proposals: Vec::new(),
             models: Vec::new(),
             settlements: Vec::new(),
@@ -1949,6 +2441,7 @@ mod unbond_lifecycle_tests {
                 })
                 .collect(),
             unbonding: Vec::new(),
+            withdrawals: Vec::new(),
             proposals: Vec::new(),
             models: Vec::new(),
             settlements: Vec::new(),
@@ -2138,6 +2631,7 @@ mod unbond_lifecycle_tests {
                 })
                 .collect(),
             unbonding: Vec::new(),
+            withdrawals: Vec::new(),
             proposals: Vec::new(),
             models: Vec::new(),
             settlements: Vec::new(),
@@ -2183,6 +2677,7 @@ mod unbond_lifecycle_tests {
             }],
             delegations: Vec::new(),
             unbonding: row.unbonding.clone(),
+            withdrawals: Vec::new(),
             proposals: Vec::new(),
             models: Vec::new(),
             settlements: Vec::new(),
@@ -2287,3 +2782,196 @@ mod unbond_lifecycle_tests {
         println!("unbond-oracle: rows {}", oracle.rows.len());
     }
 }
+
+#[cfg(test)]
+mod withdraw_lifecycle_tests {
+    use super::super::{AccountSnap, BtcSnap, Couplings, OmegaSnap};
+    use super::{apply_material, canonical_evidence, settle_matured, EvidenceBody, WithdrawOp};
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Oracle {
+        wasm_code: String,
+        chain_id: i64,
+        sender: String,
+        public_key: String,
+        signature: String,
+        delegate_signature: String,
+        transfer_signature: String,
+        eth_signature: String,
+        amount: f64,
+        destination: String,
+        nonce: f64,
+        id: String,
+        preimage: String,
+        evidence: String,
+        raw_tx: String,
+        txid: String,
+        header_hash: String,
+        locator: String,
+        opreturn: String,
+    }
+
+    fn omega(sender: &str, header: &str, root: &str) -> OmegaSnap {
+        OmegaSnap {
+            tip_hash: "0".repeat(64),
+            chain_id: 1,
+            height: 0,
+            tip_timestamp: 0,
+            difficulty: 1.0,
+            finalized_height: -1,
+            couplings: Couplings {
+                hash: 1.0,
+                structural: 1.0,
+                continuity: 1.0,
+                mempool: 1.0,
+                fees: 1.0,
+            },
+            ledger: vec![AccountSnap {
+                address: sender.to_string(),
+                balance: 5000.0,
+                nonce: 0.0,
+            }],
+            pools: Vec::new(),
+            btc: vec![BtcSnap {
+                height: 1,
+                hash: header.to_string(),
+                prev_hash: "0".repeat(64),
+                merkle_root: root.to_string(),
+                bits: 1.0,
+            }],
+            eth_pubkey: String::new(),
+            eth_committee: String::new(),
+            eth: Vec::new(),
+            wasm: Vec::new(),
+            validators: Vec::new(),
+            delegations: Vec::new(),
+            unbonding: Vec::new(),
+            withdrawals: Vec::new(),
+            proposals: Vec::new(),
+            models: Vec::new(),
+            settlements: Vec::new(),
+        }
+    }
+
+    fn body(oracle: &Oracle, withdraw: Vec<WithdrawOp>) -> EvidenceBody {
+        EvidenceBody {
+            v: 1,
+            chain_id: oracle.chain_id,
+            wasm_code: oracle.wasm_code.clone(),
+            btc: Vec::new(),
+            eth: Vec::new(),
+            wasm: Vec::new(),
+            stake: Vec::new(),
+            cognition: Vec::new(),
+            settle: Vec::new(),
+            withdraw,
+        }
+    }
+
+    fn open(oracle: &Oracle, amount: f64, nonce: f64, network: &str, asset: &str, signature: &str) -> WithdrawOp {
+        WithdrawOp::Open {
+            sender: oracle.sender.clone(),
+            amount,
+            network: network.into(),
+            asset: asset.into(),
+            destination: oracle.destination.clone(),
+            nonce,
+            public_key: oracle.public_key.clone(),
+            signature: signature.into(),
+        }
+    }
+
+    fn settle<'a>(oracle: &'a Oracle, id: &str, raw: &str, merkle: Vec<String>) -> WithdrawOp {
+        WithdrawOp::Settle {
+            id: id.into(),
+            raw_tx: raw.into(),
+            vout: 0,
+            header_hash: oracle.header_hash.clone(),
+            merkle,
+        }
+    }
+
+    fn balance(omega: &OmegaSnap, addr: &str) -> f64 {
+        omega.ledger.iter().find(|a| a.address == addr).map(|a| a.balance).unwrap_or(0.0)
+    }
+
+    #[test]
+    fn withdraw_settles_a_bitcoin_output_and_refunds_the_lock() {
+        let Some(path) = std::env::var_os("EQ_WITHDRAW_ORACLE") else {
+            println!("withdraw-oracle: not supplied");
+            return;
+        };
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("oracle {}: {err}", path.to_string_lossy()));
+        let oracle: Oracle = serde_json::from_str(&text).expect("withdraw oracle json");
+        let escrow = super::withdrawal_escrow();
+        assert_eq!(
+            super::withdrawal_id(oracle.chain_id, &oracle.sender, oracle.amount, "btc", "btc", &oracle.destination, oracle.nonce),
+            oracle.id
+        );
+        assert_eq!(oracle.preimage.contains("|withdraw|"), true);
+        let encoded = canonical_evidence(&body(&oracle, vec![open(&oracle, oracle.amount, 0.0, "btc", "btc", &oracle.signature)])).unwrap();
+        assert_eq!(encoded, oracle.evidence);
+        assert!(super::verify_withdraw(oracle.chain_id, &oracle.sender, oracle.amount, "btc", "btc", &oracle.destination, 0.0, &oracle.public_key, &oracle.delegate_signature).is_err());
+        assert!(super::verify_withdraw(oracle.chain_id, &oracle.sender, oracle.amount, "btc", "btc", &oracle.destination, 0.0, &oracle.public_key, &oracle.transfer_signature).is_err());
+
+        let mut locked = omega(&oracle.sender, &oracle.header_hash, &oracle.txid);
+        apply_material(&mut locked, &body(&oracle, vec![open(&oracle, 1000.0, 0.0, "btc", "btc", &oracle.signature)])).unwrap();
+        assert_eq!(locked.withdrawals.len(), 1);
+        assert_eq!(locked.withdrawals[0].status, "locked");
+        assert_eq!(locked.withdrawals[0].created_height, 0);
+        assert_eq!(locked.withdrawals[0].expiry_height, 10);
+        assert_eq!(balance(&locked, &oracle.sender), 4000.0);
+        assert_eq!(balance(&locked, &escrow), 1000.0);
+        assert!(apply_material(&mut locked, &body(&oracle, vec![open(&oracle, 1000.0, 0.0, "btc", "btc", &oracle.signature)])).unwrap_err() == "withdrawal exists");
+
+        let mut settled = locked.clone();
+        apply_material(&mut settled, &body(&oracle, vec![settle(&oracle, &oracle.id, &oracle.raw_tx, Vec::new())])).unwrap();
+        assert_eq!(settled.withdrawals[0].status, "settled");
+        assert_eq!(settled.withdrawals[0].effect_locator.as_deref(), Some(oracle.locator.as_str()));
+        assert_eq!(balance(&settled, &escrow), 0.0);
+        assert_eq!(balance(&settled, &oracle.sender), 4000.0);
+        assert_eq!(
+            apply_material(&mut settled, &body(&oracle, vec![settle(&oracle, &oracle.id, &oracle.raw_tx, Vec::new())])).unwrap_err(),
+            "withdrawal is not locked"
+        );
+
+        let mut script = locked.clone();
+        assert_eq!(
+            apply_material(&mut script, &body(&oracle, vec![settle(&oracle, &oracle.id, &oracle.opreturn, Vec::new())])).unwrap_err(),
+            "btc script refused"
+        );
+        assert_eq!(script.withdrawals[0].status, "locked");
+        assert_eq!(
+            apply_material(&mut script, &body(&oracle, vec![settle(&oracle, &oracle.id, &oracle.raw_tx, vec!["11".repeat(32)])])).unwrap_err(),
+            "btc merkle refused"
+        );
+
+        let mut eth = omega(&oracle.sender, &oracle.header_hash, &oracle.txid);
+        assert_eq!(
+            apply_material(&mut eth, &body(&oracle, vec![open(&oracle, 1000.0, 1.0, "eth", "eth", &oracle.eth_signature)])).unwrap_err(),
+            "eth execution proof refused"
+        );
+        assert_eq!(balance(&eth, &oracle.sender), 5000.0);
+        assert!(eth.withdrawals.is_empty());
+
+        let mut late = locked.clone();
+        late.height = 9;
+        assert_eq!(
+            apply_material(&mut late, &body(&oracle, vec![settle(&oracle, &oracle.id, &oracle.raw_tx, Vec::new())])).unwrap_err(),
+            "withdrawal expired"
+        );
+        assert_eq!(late.withdrawals[0].status, "locked");
+        settle_matured(&mut late, 9).unwrap();
+        assert_eq!(late.withdrawals[0].status, "locked");
+        assert_eq!(balance(&late, &oracle.sender), 4000.0);
+        settle_matured(&mut late, 10).unwrap();
+        assert_eq!(late.withdrawals[0].status, "refunded");
+        assert_eq!(balance(&late, &oracle.sender), 5000.0);
+        assert_eq!(balance(&late, &escrow), 0.0);
+        settle_matured(&mut late, 10).unwrap();
+        assert_eq!(balance(&late, &oracle.sender), 5000.0);
+        println!("withdraw-oracle: settled");
+    }
+}
+

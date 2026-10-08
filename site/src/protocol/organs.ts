@@ -90,7 +90,7 @@ export const CONTRACT_ORGANS: ContractOrgan[] = [
     title: "BTC SPV bridge",
     layer: "whole",
     live: true,
-    summary: "Proof of work, then prev-hash continuity. The header bytes ride in the block that commits the new Bitcoin leaf. No EQU is minted. A transfer proof checks merkle and 6 confirmations and still does not credit.",
+    summary: "Proof of work, then prev-hash continuity. The header bytes ride in the block that commits the new Bitcoin leaf. No EQU is minted. A signed withdrawal settles only when an output inside that merkle root matches the locked destination and amount. Inclusion alone does not.",
     methods: [
       { id: 0, name: "submit_header", note: "PoW + continuity, no credit" },
       { id: 1, name: "verify_transfer", note: "merkle + 6 confirmations, still no credit" },

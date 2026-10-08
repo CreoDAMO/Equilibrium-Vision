@@ -296,6 +296,58 @@ export const stakeAction = createServerFn({ method: "POST" })
     return { ok: Boolean(res.ok), error: typeof res.error === "string" ? res.error : undefined };
   });
 
+export const openWithdrawal = createServerFn({ method: "POST" })
+  .validator(
+    Network.extend({
+      amount: z.number(),
+      foreignNetwork: z.enum(["btc", "eth"]),
+      asset: z.string(),
+      destination: z.string(),
+      nonce: z.number(),
+      publicKey: z.string(),
+      signature: z.string(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const { getNode, persist } = await import("./node.server");
+    const node = await getNode(data.network);
+    const res = node.openWithdrawal({
+      amount: data.amount,
+      network: data.foreignNetwork,
+      asset: data.asset,
+      destination: data.destination.trim().toLowerCase(),
+      nonce: data.nonce,
+      publicKey: data.publicKey.trim().toLowerCase(),
+      signature: data.signature.trim().toLowerCase(),
+    });
+    if (res.ok) await persist(data.network);
+    return res;
+  });
+
+export const settleWithdrawal = createServerFn({ method: "POST" })
+  .validator(
+    Network.extend({
+      id: z.string(),
+      rawTx: z.string(),
+      vout: z.number(),
+      headerHash: z.string(),
+      merkle: z.array(z.string()),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const { getNode, persist } = await import("./node.server");
+    const node = await getNode(data.network);
+    const res = node.settleWithdrawal({
+      id: data.id.trim().toLowerCase(),
+      rawTx: data.rawTx,
+      vout: data.vout,
+      headerHash: data.headerHash.trim().toLowerCase(),
+      merkle: data.merkle.map((item) => item.trim().toLowerCase()),
+    });
+    if (res.ok) await persist(data.network);
+    return res;
+  });
+
 export const listBidirectionalLog = createServerFn({ method: "POST" })
   .validator(Network)
   .handler(async ({ data }) => {

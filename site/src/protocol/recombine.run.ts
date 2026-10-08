@@ -53,6 +53,7 @@ function omega(): Omega {
     ]),
     delegations: [],
     unbonding: [],
+    withdrawals: [],
     proposals: [],
     models: [],
     settlements: [],

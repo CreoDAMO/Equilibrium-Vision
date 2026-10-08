@@ -1,8 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useNetwork } from "@/lib/network-context";
 import { useWallet } from "@/lib/wallet-context";
+import { openWithdrawal, settleWithdrawal } from "@/lib/chain-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +12,7 @@ import { Stat } from "@/components/stat";
 import { formatAmount, formatSci, truncateHash } from "@/lib/format";
 import { independentVerify, type IndependentReport } from "@/protocol/light";
 import { participation, type DeviceResources } from "@/protocol/membranes";
+import { signWithdraw } from "@/protocol/authority";
 import type { BlockRecord } from "@/protocol/types";
 
 export const Route = createFileRoute("/mobile")({ component: MobilePage });
@@ -29,11 +32,19 @@ const PIPELINE = [
 function MobilePage() {
   const { network, snap } = useNetwork();
   const { wallet, create, importMnemonic, send, balance, nonce } = useWallet();
+  const qc = useQueryClient();
   const [phrase, setPhrase] = useState<string | null>(null);
   const [mnemonic, setMnemonic] = useState("");
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("1000");
   const [fee, setFee] = useState("100");
+  const [destination, setDestination] = useState("p2pkh:" + "cd".repeat(20));
+  const [withdrawAmount, setWithdrawAmount] = useState("1000");
+  const [withdrawNonce, setWithdrawNonce] = useState("0");
+  const [rawTx, setRawTx] = useState("");
+  const [vout, setVout] = useState("0");
+  const [headerHash, setHeaderHash] = useState("");
+  const [merkle, setMerkle] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [hot, setHot] = useState(false);
   const resources = hot ? HOT : COOL;
@@ -49,6 +60,42 @@ function MobilePage() {
   const confirmed = (snap?.recentTxs ?? []).filter(
     (t) => (t.from === wallet?.address || t.to === wallet?.address) && t.blockHeight != null,
   );
+  const mineWithdrawals = (snap?.withdrawals ?? []).filter((w) => w.sender === wallet?.address);
+  const chainId = snap?.params.chainId ?? (network === "mainnet" ? 1 : 2);
+
+  async function stageWithdrawal(foreignNetwork: "btc" | "eth", asset: string) {
+    if (!wallet) return;
+    const value = Number(withdrawAmount);
+    const n = Number(withdrawNonce);
+    if (!Number.isSafeInteger(value) || value <= 0 || !Number.isSafeInteger(n) || n < 0) {
+      toast.error("Amount and nonce must be whole numbers");
+      return;
+    }
+    const proof = signWithdraw(wallet, {
+      chainId,
+      amount: value,
+      network: foreignNetwork,
+      asset,
+      destination: destination.trim().toLowerCase(),
+      nonce: n,
+    });
+    const res = await openWithdrawal({
+      data: {
+        network,
+        amount: value,
+        foreignNetwork,
+        asset,
+        destination: destination.trim().toLowerCase(),
+        nonce: n,
+        publicKey: proof.publicKey,
+        signature: proof.signature,
+      },
+    });
+    if (res.ok) {
+      toast.success(foreignNetwork === "btc" ? "Lock queued. The next block debits this address." : "Queued");
+      await qc.invalidateQueries({ queryKey: ["snapshot", network] });
+    } else toast.error(res.error ?? "Refused");
+  }
 
   const report: IndependentReport | null = useMemo(() => {
     if (!snap || !block) return null;
@@ -62,8 +109,8 @@ function MobilePage() {
         <h1 className="font-display text-4xl tracking-tight">Mobile body</h1>
         <p className="mt-2 max-w-2xl text-muted">
           This phone holds the wallet. The miner address is that address. The key is not
-          sent to the solver. A transfer moves EQU to another EQU address. It does not
-          pay Ethereum, Bitcoin, or a bank.
+          sent to the solver. A transfer moves EQU to another EQU address. A withdrawal
+          is a different signature: it leaves only when a Bitcoin output matches the lock.
         </p>
       </header>
 
@@ -158,13 +205,80 @@ function MobilePage() {
         </section>
       )}
 
-      <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)]">
-        <Badge tone="warn">not settled outside</Badge>
-        <p className="mt-3 text-sm text-muted">
-          EQU can move from this key to another EQU address. Nothing in that transition
-          pays Ethereum, Bitcoin, an exchange, or a bank. A settlement locked to an ETH
-          header hash still moves only this ledger. That is not an external payment.
+      <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-3">
+        <Badge tone={mineWithdrawals.some((w) => w.status === "settled") ? "ok" : "warn"}>
+          {mineWithdrawals.some((w) => w.status === "settled") ? "bitcoin output settled" : "leaves only on a bitcoin output"}
+        </Badge>
+        <p className="text-sm text-muted">
+          A transfer pays another EQU address. A withdrawal locks EQU in an escrow this key cannot spend.
+          It settles only when a Bitcoin output's destination and amount match the lock and that transaction
+          sits in an admitted header. Settled EQU is not credited on this ledger. Ethereum execution is refused.
+          If the output is not proven within {snap?.params.withdrawalTimeout ?? 10} blocks, the same amount returns
+          to this address. A lock against a header hash is not this withdrawal.
         </p>
+        {wallet ? (
+          <>
+            <Input value={destination} onChange={(e) => setDestination(e.target.value)} />
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} />
+              <Input value={withdrawNonce} onChange={(e) => setWithdrawNonce(e.target.value)} />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => void stageWithdrawal("btc", "btc")}>Sign and lock</Button>
+              <Button variant="secondary" onClick={() => void stageWithdrawal("eth", "eth")}>Try Ethereum</Button>
+            </div>
+            {mineWithdrawals.length === 0 ? <p className="text-sm text-muted">No withdrawal for this address.</p> : null}
+            {mineWithdrawals.map((w) => (
+              <p key={w.id} className="break-all font-mono text-xs text-muted">
+                {w.status} · {formatAmount(w.amount)} · {w.destination} · expiry {w.expiryHeight}
+                {w.effectLocator ? ` · ${truncateHash(w.effectLocator, 8)}` : ""}
+              </p>
+            ))}
+            <h2 className="font-display text-xl">Settle a Bitcoin output</h2>
+            <p className="text-sm text-muted">
+              Paste the raw transaction. The chain reads the output. It does not trust a destination typed here.
+              The header must already be in this chain.
+            </p>
+            <Input placeholder="Withdrawal id" value={mineWithdrawals.find((w) => w.status === "locked")?.id ?? ""} readOnly />
+            <textarea
+              className="min-h-24 w-full rounded-md bg-bg-elevated p-3 font-mono text-xs"
+              placeholder="Raw transaction hex"
+              value={rawTx}
+              onChange={(e) => setRawTx(e.target.value)}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={vout} onChange={(e) => setVout(e.target.value)} />
+              <Input placeholder="Header hash" value={headerHash} onChange={(e) => setHeaderHash(e.target.value)} />
+            </div>
+            <Input placeholder="Merkle siblings, comma separated" value={merkle} onChange={(e) => setMerkle(e.target.value)} />
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                const id = mineWithdrawals.find((w) => w.status === "locked")?.id;
+                if (!id) {
+                  toast.error("No locked withdrawal");
+                  return;
+                }
+                const res = await settleWithdrawal({
+                  data: {
+                    network,
+                    id,
+                    rawTx,
+                    vout: Number(vout),
+                    headerHash,
+                    merkle: merkle.split(",").map((item) => item.trim()).filter(Boolean),
+                  },
+                });
+                if (res.ok) {
+                  toast.success("Settle queued. The next block checks the output.");
+                  await qc.invalidateQueries({ queryKey: ["snapshot", network] });
+                } else toast.error(res.error ?? "Refused");
+              }}
+            >
+              Submit Bitcoin proof
+            </Button>
+          </>
+        ) : null}
       </section>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

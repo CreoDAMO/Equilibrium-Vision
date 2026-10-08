@@ -28,7 +28,7 @@ function WalletPage() {
           Self-custody Ed25519 keys. Addresses are SHA-256(pubkey)[..20], path m/44'/600'/0'/0'/0'
           when the phrase is used. The mobile page and the Android solver use this address.
           The private key stays in this browser. A send is a transfer to another EQU address.
-          It does not withdraw onto Ethereum or Bitcoin.
+          It does not leave the ledger. A withdrawal is a separate signature on the mobile page.
         </p>
       </header>
 

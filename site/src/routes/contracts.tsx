@@ -118,6 +118,7 @@ function ContractsPage() {
         <p className="text-sm text-muted">
           The box starts with Bitcoin genesis. Proof of work is checked. After the first header,
           the next one must extend the tip. Nothing is credited. The header is queued until the next block.
+          A withdrawal is a different signature, on the mobile page. It does not settle because this header was admitted.
           Committed tip:{" "}
           {snap?.btc.tipHeight ?? "none"}
           {snap?.btc.tipHash ? ` · ${snap.btc.tipHash.slice(0, 16)}…` : ""}.

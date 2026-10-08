@@ -48,6 +48,8 @@ struct OmegaSnap {
     delegations: Vec<DelegationSnap>,
     #[serde(default)]
     unbonding: Vec<UnbondingSnap>,
+    #[serde(default)]
+    withdrawals: Vec<WithdrawalSnap>,
     proposals: Vec<ProposalSnap>,
     models: Vec<ModelSnap>,
     settlements: Vec<SettlementSnap>,
@@ -132,6 +134,23 @@ struct UnbondingSnap {
     validator: String,
     amount: f64,
     mature_at: i64,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WithdrawalSnap {
+    id: String,
+    sender: String,
+    amount: f64,
+    network: String,
+    asset: String,
+    destination: String,
+    nonce: i64,
+    created_height: i64,
+    expiry_height: i64,
+    status: String,
+    #[serde(default)]
+    effect_locator: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -383,6 +402,28 @@ fn omega_preimage(omega: &OmegaSnap) -> String {
         .collect::<Vec<_>>()
         .join(";");
 
+    let withdrawals = omega
+        .withdrawals
+        .iter()
+        .map(|w| {
+            format!(
+                "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                w.id,
+                w.sender,
+                js_num(w.amount),
+                w.network,
+                w.asset,
+                w.destination,
+                w.nonce,
+                w.created_height,
+                w.expiry_height,
+                w.status,
+                w.effect_locator.clone().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+
     let proposals = omega
         .proposals
         .iter()
@@ -461,11 +502,14 @@ fn omega_preimage(omega: &OmegaSnap) -> String {
         &settlements,
     ]
     .join("|");
-    if unbonding.is_empty() {
-        body
-    } else {
-        format!("{body}|{unbonding}")
+    let mut full = body;
+    if !unbonding.is_empty() {
+        full = format!("{full}|{unbonding}");
     }
+    if !withdrawals.is_empty() {
+        full = format!("{full}|{withdrawals}");
+    }
+    full
 }
 
 fn transition_preimage(omega: &OmegaSnap, inputs: &TransitionSnap) -> String {

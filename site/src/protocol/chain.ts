@@ -6,6 +6,7 @@ import type {
   Couplings,
   Delegation,
   Unbonding,
+  Withdrawal,
   DexPool,
   FinalityRound,
   ModelClaim,
@@ -34,15 +35,15 @@ import type {
 } from "./types";
 import { DEFAULT_COUPLINGS } from "./types";
 import { NETWORKS } from "./networks";
-import { merkleRoot, residualsMatch, sha256Hex } from "./crypto";
+import { addressFromPubkeyHex, merkleRoot, residualsMatch, sha256Hex } from "./crypto";
 import { evaluateResidual, solveStationary } from "./solver";
 import { verifyStationaryEvidence } from "./verify";
 import { signTx, verifyTx, type Keypair } from "./wallet";
-import { verifyDelegateEvidence, verifyUnbondEvidence } from "./authority";
+import { signWithdraw, verifyDelegateEvidence, verifyUnbondEvidence, verifyWithdrawEvidence, withdrawalId, WITHDRAWAL_ESCROW } from "./authority";
 import { slashAmount } from "./coinomics";
 import { challengeBinding, modelBinding } from "./membranes";
 import { applySwap, poolAddress, quoteSwap } from "./dex";
-import { decodeHeaderHex, parseBtcHeader, verifyBtcMerkle, verifyBtcPow } from "./btc";
+import { buildP2pkhTx, decodeHeaderHex, decodeTxHex, isBtcDestination, parseBtcHeader, parseBtcTx, proveBtcOutput, verifyBtcMerkle, verifyBtcPow } from "./btc";
 import { callArbitrage } from "./wasm-host";
 import {
   ETH_MIN_PARTICIPANTS,
@@ -60,7 +61,7 @@ import {
 import { asBlockNonce, foreignNonce, participationBytes, popcount } from "./domain";
 import { onPlaneMessage } from "./network-plane";
 import { stationarityRelation } from "./relation";
-import { hexToBytes } from "./bytes";
+import { bytesToHex, hexToBytes } from "./bytes";
 import { ARBITRAGE_CODE } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { chainWeight, preferChain } from "./frontier";
@@ -121,6 +122,7 @@ export class OrganismNode {
   persisted = false;
   delegations: Delegation[] = [];
   unbonding: Unbonding[] = [];
+  withdrawals: Withdrawal[] = [];
   proposals: Proposal[] = [];
   models: ModelClaim[] = [];
   settlements: Settlement[] = [];
@@ -144,6 +146,9 @@ export class OrganismNode {
     eth: [],
     wasm: [],
     stake: [],
+    cognition: [],
+    settle: [],
+    withdraw: [],
   };
   private pendingWasm: Map<string, string> | null = null;
   private kin: OrganismNode | null = null;
@@ -179,6 +184,7 @@ export class OrganismNode {
     n.wasmStorage = new Map(body.wasmStorage ?? []);
     n.delegations = body.delegations ?? [];
     n.unbonding = body.unbonding ?? [];
+    n.withdrawals = body.withdrawals ?? [];
     n.proposals = body.proposals ?? [];
     n.models = body.models ?? [];
     n.settlements = body.settlements ?? [];
@@ -220,6 +226,7 @@ export class OrganismNode {
     n.clock = this.clock;
     n.delegations = this.delegations.map((d) => ({ ...d }));
     n.unbonding = this.unbonding.map((u) => ({ ...u }));
+    n.withdrawals = this.withdrawals.map((w) => ({ ...w }));
     n.proposals = this.proposals.map((p) => ({ ...p }));
     n.models = this.models.map((m) => ({ ...m }));
     n.settlements = this.settlements.map((s) => ({ ...s }));
@@ -252,6 +259,7 @@ export class OrganismNode {
       validators: new Map([...this.validators.entries()].map(([k, v]) => [k, { ...v }])),
       delegations: this.delegations.map((d) => ({ ...d })),
       unbonding: this.unbonding.map((u) => ({ ...u })),
+      withdrawals: this.withdrawals.map((w) => ({ ...w })),
       proposals: this.proposals.map((p) => ({ ...p })),
       models: this.models.map((m) => ({ ...m })),
       settlements: this.settlements.map((s) => ({ ...s })),
@@ -270,6 +278,7 @@ export class OrganismNode {
     this.validators = next.validators;
     this.delegations = next.delegations;
     this.unbonding = next.unbonding;
+    this.withdrawals = next.withdrawals;
     this.proposals = next.proposals;
     this.models = next.models;
     this.settlements = next.settlements;
@@ -334,6 +343,7 @@ export class OrganismNode {
       stake: [],
       cognition: [],
       settle: [],
+      withdraw: [],
     };
   }
 
@@ -348,6 +358,7 @@ export class OrganismNode {
       stake: ev.stake.map((s) => ({ ...s })),
       cognition: (ev.cognition ?? []).map((c) => ({ ...c })),
       settle: (ev.settle ?? []).map((s) => ({ ...s })),
+      withdraw: (ev.withdraw ?? []).map((w) => ({ ...w, ...(w.op === "settle" ? { merkle: [...w.merkle] } : {}) })),
     };
   }
 
@@ -358,6 +369,9 @@ export class OrganismNode {
       return sum;
     }, 0) + (this.pending.settle ?? []).reduce((sum, op) => {
       if (op.op === "lock" && op.from === addr) return sum + op.amount;
+      return sum;
+    }, 0) + (this.pending.withdraw ?? []).reduce((sum, op) => {
+      if (op.op === "open" && op.sender === addr) return sum + op.amount;
       return sum;
     }, 0);
   }
@@ -1108,6 +1122,7 @@ export class OrganismNode {
       ethHeaders: this.ethHeaders,
       delegations: this.delegations,
       unbonding: this.unbonding,
+      withdrawals: this.withdrawals,
       proposals: this.proposals,
       models: this.models,
       settlements: this.settlements,
@@ -1465,6 +1480,102 @@ export class OrganismNode {
     return { ok: true };
   }
 
+  /**
+   * Stage a signed withdrawal. The debit happens in the successor, not here.
+   * Ethereum is refused before it is queued. This is not lockForeign.
+   */
+  openWithdrawal(input: {
+    amount: number;
+    network: "btc" | "eth";
+    asset: string;
+    destination: string;
+    nonce: number;
+    publicKey: string;
+    signature: string;
+  }): { ok: true; id: string } | { ok: false; error: string } {
+    let sender = "";
+    try {
+      sender = addressFromPubkeyHex(input.publicKey);
+    } catch {
+      return { ok: false, error: "withdraw authority refused" };
+    }
+    const refused = verifyWithdrawEvidence(this.params.chainId, { ...input, sender });
+    if (refused) return { ok: false, error: refused };
+    if (input.network === "eth") return { ok: false, error: "eth execution proof refused" };
+    if (input.network !== "btc") return { ok: false, error: "withdrawal network refused" };
+    if (input.asset !== "btc") return { ok: false, error: "withdrawal asset refused" };
+    if (!isBtcDestination(input.destination)) return { ok: false, error: "withdrawal destination refused" };
+    const id = withdrawalId({
+      chainId: this.params.chainId,
+      sender,
+      amount: input.amount,
+      network: input.network,
+      asset: input.asset,
+      destination: input.destination,
+      nonce: input.nonce,
+    });
+    const staged = (this.pending.withdraw ?? []).some((w) => w.op === "open" && w.sender === sender && w.nonce === input.nonce && w.destination === input.destination && w.amount === input.amount);
+    if (this.withdrawals.some((w) => w.id === id) || staged) return { ok: false, error: "withdrawal exists" };
+    if (this.account(sender).balance - this.held(sender) < input.amount) return { ok: false, error: "withdrawal funds refused" };
+    this.pending.withdraw = [
+      ...(this.pending.withdraw ?? []),
+      {
+        op: "open",
+        sender,
+        amount: input.amount,
+        network: input.network,
+        asset: input.asset,
+        destination: input.destination,
+        nonce: input.nonce,
+        publicKey: input.publicKey,
+        signature: input.signature,
+      },
+    ];
+    this.emit("in", "bridge", `withdraw ${input.amount} EQU → ${input.network} ${input.destination} · staged`);
+    return { ok: true, id };
+  }
+
+  settleWithdrawal(input: {
+    id: string;
+    rawTx: string;
+    vout: number;
+    headerHash: string;
+    merkle: string[];
+  }): { ok: true } | { ok: false; error: string } {
+    const row = this.withdrawals.find((w) => w.id === input.id);
+    if (!row || row.status !== "locked") return { ok: false, error: "withdrawal is not locked" };
+    if (this.height + 1 >= row.expiryHeight) return { ok: false, error: "withdrawal expired" };
+    if (row.network === "eth") return { ok: false, error: "eth execution proof refused" };
+    const raw = decodeTxHex(input.rawTx);
+    if (!raw) return { ok: false, error: "btc transaction refused" };
+    const header = this.btcHeaders.find((h) => h.hash === input.headerHash);
+    if (!header) return { ok: false, error: "btc header is not in Ω" };
+    const proved = proveBtcOutput(raw, input.vout, input.merkle, header.merkleRoot);
+    if (!proved.ok) return proved;
+    if (proved.destination !== row.destination || proved.amount !== row.amount || row.asset !== "btc") {
+      return { ok: false, error: "withdrawal binding refused" };
+    }
+    if (this.withdrawals.some((w) => w.effectLocator === proved.locator)) {
+      return { ok: false, error: "effect already settled" };
+    }
+    if ((this.pending.withdraw ?? []).some((w) => w.op === "settle" && w.id === input.id)) {
+      return { ok: false, error: "withdrawal is not locked" };
+    }
+    this.pending.withdraw = [
+      ...(this.pending.withdraw ?? []),
+      {
+        op: "settle",
+        id: input.id,
+        rawTx: input.rawTx.trim().toLowerCase().replace(/^0x/, ""),
+        vout: input.vout,
+        headerHash: input.headerHash,
+        merkle: input.merkle,
+      },
+    ];
+    this.emit("in", "bridge", `settle withdrawal ${input.id.slice(0, 12)} · staged`);
+    return { ok: true };
+  }
+
   ingestGossip(claimed: BlockRecord): Promise<{ ok: boolean; error?: string; report?: VerificationReport }> {
     this.emit("in", "mesh", `gossip header ${claimed.hash.slice(0, 12)}… h=${claimed.height}`);
     return this.submitExternal(claimed);
@@ -1678,6 +1789,7 @@ export class OrganismNode {
     this.difficulty = kin.difficulty;
     this.delegations = kin.delegations;
     this.unbonding = kin.unbonding;
+    this.withdrawals = kin.withdrawals;
     this.proposals = kin.proposals;
     this.finalizedThrough = kin.finalizedThrough;
     if (this.kinStarted) {
@@ -1995,10 +2107,108 @@ export class OrganismNode {
           : `An unfunded transfer was accepted. ${admitted.error ?? ("error" in stepped ? stepped.error : "transition applied")}`,
     });
 
+    const outside = this.fork();
+    const withdrawPayer = outside.actors[0]!;
+    const hash160 = "cd".repeat(20);
+    const destination = `p2pkh:${hash160}`;
+    const raw = buildP2pkhTx(1_000, hash160);
+    const txid = raw ? parseBtcTx(raw)?.txid ?? null : null;
+    const opened = signWithdraw(withdrawPayer, {
+      chainId: outside.params.chainId,
+      amount: 1_000,
+      network: "btc",
+      asset: "btc",
+      destination,
+      nonce: 0,
+    });
+    const ethSigned = signWithdraw(withdrawPayer, {
+      chainId: outside.params.chainId,
+      amount: 1_000,
+      network: "eth",
+      asset: "eth",
+      destination,
+      nonce: 1,
+    });
+    const omega = outside.toOmega();
+    const headerHash = "22".repeat(32);
+    if (txid) omega.btc.push({ hash: headerHash, height: 0, prevHash: "00".repeat(32), merkleRoot: txid, bits: 1 });
+    const outsideEvidence = {
+      v: 1 as const,
+      chainId: outside.params.chainId,
+      wasmCode: ARBITRAGE_CODE,
+      btc: [] as [],
+      eth: [] as [],
+      wasm: [] as [],
+      stake: [] as [],
+      withdraw: [
+        {
+          op: "open" as const,
+          sender: withdrawPayer.address,
+          amount: 1_000,
+          network: "btc" as const,
+          asset: "btc",
+          destination,
+          nonce: 0,
+          publicKey: opened.publicKey,
+          signature: opened.signature,
+        },
+        {
+          op: "settle" as const,
+          id: opened.id,
+          rawTx: raw ? bytesToHex(raw) : "",
+          vout: 0,
+          headerHash,
+          merkle: [] as string[],
+        },
+      ],
+    };
+    const outsideStep = applySuccessor(omega, {
+      transactions: [],
+      evidence: outsideEvidence,
+      timestamp: (outside.tip?.timestamp ?? 0) + 15,
+      nonce: asBlockNonce(outside.tip?.nonce ?? 0),
+      miner: outside.miner.address,
+      committedPressure: 0,
+      couplings: outside.couplings,
+      difficulty: outside.difficulty,
+      wasmAfter: null,
+    });
+    const ethStep = applySuccessor(outside.toOmega(), {
+      transactions: [],
+      evidence: {
+        ...outsideEvidence,
+        withdraw: [{
+          op: "open" as const,
+          sender: withdrawPayer.address,
+          amount: 1_000,
+          network: "eth" as const,
+          asset: "eth",
+          destination,
+          nonce: 1,
+          publicKey: ethSigned.publicKey,
+          signature: ethSigned.signature,
+        }],
+      },
+      timestamp: (outside.tip?.timestamp ?? 0) + 15,
+      nonce: asBlockNonce(outside.tip?.nonce ?? 0),
+      miner: outside.miner.address,
+      committedPressure: 0,
+      couplings: outside.couplings,
+      difficulty: outside.difficulty,
+      wasmAfter: null,
+    });
+    const row = outsideStep.ok ? outsideStep.next.withdrawals.find((w) => w.id === opened.id) : undefined;
+    const escrow = outsideStep.ok ? (outsideStep.next.ledger.get(WITHDRAWAL_ESCROW)?.balance ?? 0) : -1;
+    const senderLeft = outsideStep.ok ? (outsideStep.next.ledger.get(withdrawPayer.address)?.balance ?? 0) : -1;
+    const senderWas = outside.getAccount(withdrawPayer.address).balance;
+    const paidOutside = outsideStep.ok && row?.status === "settled" && row.effectLocator !== null && escrow === 0 && senderLeft === senderWas - 1_000;
+    const ethRefused = !ethStep.ok && ethStep.error === "eth execution proof refused";
     rows.push({
       id: "withdraw",
-      status: "absent",
-      detail: "Nothing in the transition pays an exchange, a bank, or another chain. EQU issued here cannot be withdrawn.",
+      status: paidOutside && ethRefused ? "works" : "absent",
+      detail: paidOutside && ethRefused
+        ? "A signed withdrawal locked 1,000 EQU and settled when the Bitcoin output matched. The escrow was debited and no EQU address was credited. Ethereum execution is refused. A header lock is not this path."
+        : `Withdrawal did not settle outside. ${outsideStep.ok ? "settle missed" : outsideStep.error}; eth ${ethStep.ok ? "accepted" : ethStep.error}`,
     });
     rows.push({
       id: "other-miners",
@@ -2091,6 +2301,7 @@ export class OrganismNode {
       persisted: this.persisted,
       delegations: this.delegations.slice(-20),
       unbonding: this.unbonding.slice(),
+      withdrawals: this.withdrawals.slice(),
       proposals: this.proposals.slice(0, 8),
       models: this.models.slice(0, 8),
       lastPaired: this.lastPaired,
