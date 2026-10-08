@@ -6,7 +6,7 @@ import type { Keypair } from "./wallet";
 
 ed.hashes.sha512 = sha512;
 
-export type StakeOp = "delegate" | "claim" | "propose" | "vote" | "model";
+export type StakeOp = "delegate" | "claim" | "propose" | "vote" | "model" | "unbond";
 
 export interface StakeClaim {
   op: StakeOp;
@@ -66,7 +66,7 @@ export function gateStakeAction(input: StakeClaim & {
   signature?: string;
 }): { ok: true; address: string } | { ok: false; error: string } {
   if (input.op === "slash") return { ok: false, error: "slash is not a public caller action" };
-  if (input.op !== "delegate" && input.op !== "claim" && input.op !== "propose" && input.op !== "vote" && input.op !== "model") {
+  if (input.op !== "delegate" && input.op !== "claim" && input.op !== "propose" && input.op !== "vote" && input.op !== "model" && input.op !== "unbond") {
     return { ok: false, error: "unknown op" };
   }
   if (!input.publicKey || !input.signature) return { ok: false, error: "signature required" };
@@ -114,6 +114,30 @@ export function verifyDelegateEvidence(
   };
   if (!verified(publicKey, signature, authorityPreimage(op.delegator, claim), op.delegator)) {
     return "delegate authority refused";
+  }
+  return null;
+}
+
+/** Proof-carrying unbond. A delegate signature is not this signature. A failure here is before any release. */
+export function verifyUnbondEvidence(
+  chainId: number,
+  op: { delegator: string; validator: string; amount: number; publicKey?: string; signature?: string },
+): string | null {
+  const publicKey = op.publicKey ?? "";
+  const signature = op.signature ?? "";
+  if (!/^[0-9a-f]{40}$/.test(op.delegator)) return "unbond authority refused";
+  if (!/^[0-9a-f]{40}$/.test(op.validator)) return "unbond authority refused";
+  if (!/^[0-9a-f]{64}$/.test(publicKey)) return "unbond authority refused";
+  if (!/^[0-9a-f]{128}$/.test(signature)) return "unbond authority refused";
+  if (!Number.isSafeInteger(op.amount) || op.amount <= 0) return "unbond authority refused";
+  const claim: StakeClaim = {
+    op: "unbond",
+    chainId,
+    validator: op.validator,
+    amount: op.amount,
+  };
+  if (!verified(publicKey, signature, authorityPreimage(op.delegator, claim), op.delegator)) {
+    return "unbond authority refused";
   }
   return null;
 }

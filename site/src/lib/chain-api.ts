@@ -243,7 +243,7 @@ export const ingestGossip = createServerFn({ method: "POST" })
 export const stakeAction = createServerFn({ method: "POST" })
   .validator(
     Network.extend({
-      op: z.enum(["delegate", "slash", "claim", "propose", "vote", "model"]),
+      op: z.enum(["delegate", "slash", "claim", "propose", "vote", "model", "unbond"]),
       address: z.string().optional(),
       publicKey: z.string().optional(),
       signature: z.string().optional(),
@@ -276,6 +276,11 @@ export const stakeAction = createServerFn({ method: "POST" })
     let res: { ok: boolean; error?: string; [k: string]: unknown } = { ok: false, error: "unknown op" };
     if (data.op === "delegate" && data.validator && data.publicKey && data.signature) {
       res = node.delegate(address, data.validator, data.amount ?? 0, {
+        publicKey: data.publicKey,
+        signature: data.signature,
+      });
+    } else if (data.op === "unbond" && data.validator && data.publicKey && data.signature) {
+      res = node.unbond(address, data.validator, data.amount ?? 0, {
         publicKey: data.publicKey,
         signature: data.signature,
       });

@@ -90,6 +90,7 @@ export function omegaRecord(omega: Omega) {
     wasm: [...omega.wasm.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
     validators,
     delegations: omega.delegations.map((d) => ({ ...d })),
+    unbonding: omega.unbonding.map((u) => ({ ...u })),
     proposals: omega.proposals.map((p) => ({ ...p })),
     models: omega.models.map((m) => ({ ...m })),
     settlements: omega.settlements.map((s) => ({ ...s })),

@@ -52,6 +52,7 @@ function omega(): Omega {
       [other, validator(other)],
     ]),
     delegations: [],
+    unbonding: [],
     proposals: [],
     models: [],
     settlements: [],

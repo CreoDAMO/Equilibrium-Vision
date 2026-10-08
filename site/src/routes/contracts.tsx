@@ -70,7 +70,7 @@ function ContractsPage() {
   const [title, setTitle] = useState("Adjust λ₃");
   const [validator, setValidator] = useState("");
   const act = useMutation({
-    mutationFn: (input: { op: "delegate" | "propose" | "model"; validator?: string; amount?: number; title?: string }) => {
+    mutationFn: (input: { op: "delegate" | "unbond" | "propose" | "model"; validator?: string; amount?: number; title?: string }) => {
       if (!wallet) return Promise.resolve({ ok: false as const, error: "no wallet" });
       const chainId = snap?.params.chainId ?? (network === "mainnet" ? 1 : 2);
       const claim = {
@@ -194,30 +194,56 @@ function ContractsPage() {
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-3">
           <h2 className="font-display text-xl">Delegate</h2>
-          <p className="text-sm text-muted">Debits your balance. Raises bonded stake. Not a slash button.</p>
+          <p className="text-sm text-muted">
+            A delegate is signed as a: and debits this wallet in the next block. A bare address does not debit.
+            An unbond is a different signature, u:. It waits {snap?.params.unbondingPeriod ?? 10} blocks from the
+            pre-state height, then that successor credits this address once. The contract queue does not pay.
+          </p>
           <Input
             placeholder="Validator address"
             value={validator || snap?.validators[0]?.address || ""}
             onChange={(e) => setValidator(e.target.value)}
           />
           <Input value={amount} onChange={(e) => setAmount(e.target.value)} />
-          <Button
-            disabled={!wallet || act.isPending}
-            onClick={() =>
-              act.mutate({
-                op: "delegate",
-                validator: (validator || snap?.validators[0]?.address || "").toLowerCase(),
-                amount: Number(amount),
-              })
-            }
-          >
-            Delegate
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              disabled={!wallet || act.isPending}
+              onClick={() =>
+                act.mutate({
+                  op: "delegate",
+                  validator: (validator || snap?.validators[0]?.address || "").toLowerCase(),
+                  amount: Number(amount),
+                })
+              }
+            >
+              Delegate
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={!wallet || act.isPending}
+              onClick={() =>
+                act.mutate({
+                  op: "unbond",
+                  validator: (validator || snap?.validators[0]?.address || "").toLowerCase(),
+                  amount: Number(amount),
+                })
+              }
+            >
+              Unbond
+            </Button>
+          </div>
           {!wallet ? <p className="text-xs text-subtle">Create a wallet first. Faucet on testnet.</p> : null}
           <ul className="space-y-2 text-sm text-muted">
             {(snap?.delegations ?? []).slice(0, 5).map((d, i) => (
               <li key={`${d.delegator}-${i}`}>
                 {truncateHash(d.delegator, 6)} → {truncateHash(d.validator, 6)} · {formatAmount(d.amount)}
+              </li>
+            ))}
+          </ul>
+          <ul className="space-y-2 text-sm text-muted">
+            {(snap?.unbonding ?? []).map((u, i) => (
+              <li key={`${u.delegator}-${u.matureAt}-${i}`}>
+                unbonding {truncateHash(u.delegator, 6)} · {formatAmount(u.amount)} · pays at {u.matureAt}
               </li>
             ))}
           </ul>

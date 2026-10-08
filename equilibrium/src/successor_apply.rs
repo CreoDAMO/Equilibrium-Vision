@@ -82,6 +82,17 @@ pub(super) enum StakeOp {
         #[serde(default)]
         signature: Option<String>,
     },
+    #[serde(rename = "unbond")]
+    Unbond {
+        delegator: String,
+        validator: String,
+        amount: f64,
+        #[serde(default)]
+        #[serde(rename = "publicKey")]
+        public_key: Option<String>,
+        #[serde(default)]
+        signature: Option<String>,
+    },
     #[serde(rename = "claim")]
     Claim { address: String },
     #[serde(rename = "slash")]
@@ -278,6 +289,20 @@ fn stake_line(op: &StakeOp) -> String {
             } else {
                 format!("d:{delegator}:{validator}:{}", super::js_num(*amount))
             }
+        }
+        StakeOp::Unbond {
+            delegator,
+            validator,
+            amount,
+            public_key,
+            signature,
+        } => {
+            let pk = public_key.as_deref().unwrap_or("");
+            let sig = signature.as_deref().unwrap_or("");
+            format!(
+                "u:{delegator}:{validator}:{}:{pk}:{sig}",
+                super::js_num(*amount)
+            )
         }
         StakeOp::Claim { address } => format!("c:{address}"),
         StakeOp::Slash { validator, reason } => format!("s:{validator}:{reason}"),
@@ -564,6 +589,116 @@ fn verify_delegate(
     Ok(())
 }
 
+/// Both networks fix this at 10. `mature_at` stores the sum and is not recomputed.
+const UNBONDING_PERIOD: i64 = 10;
+
+fn verify_unbond(
+    chain_id: i64,
+    delegator: &str,
+    validator: &str,
+    amount: f64,
+    public_key: &str,
+    signature: &str,
+) -> Result<(), String> {
+    let refused = "unbond authority refused";
+    if !hex_lower(delegator, 40)
+        || !hex_lower(validator, 40)
+        || !hex_lower(public_key, 64)
+        || !hex_lower(signature, 128)
+        || !safe_positive(amount)
+    {
+        return Err(refused.into());
+    }
+    let pk = hex::decode(public_key).map_err(|_| refused)?;
+    let sig = hex::decode(signature).map_err(|_| refused)?;
+    let addr = &hex::encode(Sha256::digest(&pk))[..40];
+    if addr != delegator {
+        return Err(refused.into());
+    }
+    let key = VerifyingKey::from_bytes(pk.as_slice().try_into().unwrap()).map_err(|_| refused)?;
+    let parsed = Signature::from_slice(&sig).map_err(|_| refused)?;
+    let message = format!(
+        "eq-authority|v1|{chain_id}|unbond|{delegator}|{validator}|{}||||",
+        super::js_num(amount)
+    );
+    key.verify(message.as_bytes(), &parsed).map_err(|_| refused)?;
+    Ok(())
+}
+
+fn apply_unbond_release(
+    omega: &mut OmegaSnap,
+    delegator: &str,
+    validator: &str,
+    amount: f64,
+) -> Result<(), String> {
+    let Some(index) = omega.validators.iter().position(|v| v.address == validator) else {
+        return Err("unbond refused".into());
+    };
+    if omega.validators[index].jailed || omega.validators[index].slashed {
+        return Err("unbond refused".into());
+    }
+    let mut available = 0.0;
+    for row in &omega.delegations {
+        if row.delegator == delegator && row.validator == validator {
+            available += row.amount;
+            if !safe_int(available) {
+                return Err("unbond funds refused".into());
+            }
+        }
+    }
+    if !safe_positive(amount) || available < amount {
+        return Err("unbond funds refused".into());
+    }
+    let current = omega.validators[index].bonded_stake;
+    let next = current - amount;
+    if !safe_int(current) || !safe_int(next) || next < 0.0 {
+        return Err("unbond refused".into());
+    }
+    let mature_at = omega.height + UNBONDING_PERIOD;
+    let mut left = amount;
+    let mut kept = Vec::new();
+    for row in &omega.delegations {
+        if left == 0.0 || row.delegator != delegator || row.validator != validator {
+            kept.push(row.clone());
+            continue;
+        }
+        if row.amount > left {
+            let mut reduced = row.clone();
+            reduced.amount -= left;
+            left = 0.0;
+            kept.push(reduced);
+        } else {
+            left -= row.amount;
+        }
+    }
+    if left != 0.0 {
+        return Err("unbond funds refused".into());
+    }
+    omega.delegations = kept;
+    omega.validators[index].bonded_stake = next;
+    omega.unbonding.push(super::UnbondingSnap {
+        delegator: delegator.to_string(),
+        validator: validator.to_string(),
+        amount,
+        mature_at,
+    });
+    Ok(())
+}
+
+pub(super) fn settle_matured(omega: &mut OmegaSnap, height: i64) -> Result<(), String> {
+    let pending = std::mem::take(&mut omega.unbonding);
+    let mut keep = Vec::new();
+    for row in pending {
+        if row.mature_at > height {
+            keep.push(row);
+            continue;
+        }
+        credit(&mut omega.ledger, &row.delegator, row.amount).map_err(|_| "unbond payout refused")?;
+    }
+    omega.unbonding = keep;
+    Ok(())
+}
+
 fn apply_stake(omega: &mut OmegaSnap, op: &StakeOp, auth: &Auth) -> Result<(), String> {
     match op {
         StakeOp::Delegate {
@@ -606,6 +741,18 @@ fn apply_stake(omega: &mut OmegaSnap, op: &StakeOp, auth: &Auth) -> Result<(), S
                 amount: *amount,
             });
             Ok(())
+        }
+        StakeOp::Unbond {
+            delegator,
+            validator,
+            amount,
+            public_key,
+            signature,
+        } => {
+            let pk = public_key.as_deref().unwrap_or("");
+            let sig = signature.as_deref().unwrap_or("");
+            verify_unbond(omega.chain_id, delegator, validator, *amount, pk, sig)?;
+            apply_unbond_release(omega, delegator, validator, *amount)
         }
         StakeOp::Claim { address } => {
             let Some(index) = omega.validators.iter().position(|v| v.address == *address) else {
@@ -1650,6 +1797,7 @@ mod delegate_authority_tests {
                 commission: 0.0,
             }],
             delegations: Vec::new(),
+            unbonding: Vec::new(),
             proposals: Vec::new(),
             models: Vec::new(),
             settlements: Vec::new(),
@@ -1739,5 +1887,403 @@ mod delegate_authority_tests {
             }
         }
         println!("delegate-oracle: rows {}", oracle.rows.len());
+    }
+}
+
+#[cfg(test)]
+mod unbond_lifecycle_tests {
+    use super::super::{
+        js_num, omega_preimage, sha256_hex, state_root_of, AccountSnap, Couplings, DelegationSnap, OmegaSnap,
+        UnbondingSnap, ValidatorSnap,
+    };
+    use super::{apply_stake, apply_unbond_release, settle_matured, stake_line, verify_unbond, Auth, StakeOp};
+    use serde::Deserialize;
+
+    fn account_balance(omega: &OmegaSnap, delegator: &str) -> f64 {
+        omega.ledger.iter().find(|a| a.address == delegator).map(|a| a.balance).unwrap_or(0.0)
+    }
+
+    fn fixture(height: i64, delegator: &str, validator: &str, lots: &[(String, f64)]) -> OmegaSnap {
+        OmegaSnap {
+            tip_hash: "0".repeat(64),
+            chain_id: 1,
+            height,
+            tip_timestamp: 0,
+            difficulty: 1_000_000.0,
+            finalized_height: -1,
+            couplings: Couplings {
+                hash: 1.0,
+                structural: 1.0,
+                continuity: 1.0,
+                mempool: 1.0,
+                fees: 1.0,
+            },
+            ledger: vec![AccountSnap {
+                address: delegator.to_string(),
+                balance: 1000.0,
+                nonce: 0.0,
+            }],
+            pools: Vec::new(),
+            btc: Vec::new(),
+            eth_pubkey: String::new(),
+            eth_committee: String::new(),
+            eth: Vec::new(),
+            wasm: Vec::new(),
+            validators: vec![ValidatorSnap {
+                address: validator.to_string(),
+                moniker: "v".into(),
+                uptime: 1.0,
+                bonded_stake: 100.0,
+                accumulated_rewards: 0.0,
+                slashed: false,
+                jailed: false,
+                blocks_proposed: 0,
+                commission: 0.0,
+            }],
+            delegations: lots
+                .iter()
+                .map(|(who, amount)| DelegationSnap {
+                    delegator: who.clone(),
+                    validator: validator.to_string(),
+                    amount: *amount,
+                })
+                .collect(),
+            unbonding: Vec::new(),
+            proposals: Vec::new(),
+            models: Vec::new(),
+            settlements: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn unbond_consumes_lots_in_order_and_settles_once() {
+        let delegator = "11".repeat(20);
+        let validator = "22".repeat(20);
+        let other = "33".repeat(20);
+        let lots = vec![(delegator.clone(), 40.0), (other.clone(), 5.0), (delegator.clone(), 60.0)];
+
+        let mut span = fixture(4, &delegator, &validator, &lots);
+        apply_unbond_release(&mut span, &delegator, &validator, 70.0).unwrap();
+        assert_eq!(span.delegations.len(), 2);
+        assert_eq!(span.delegations[0].delegator, other);
+        assert_eq!(span.delegations[0].amount, 5.0);
+        assert_eq!(span.delegations[1].delegator, delegator);
+        assert_eq!(span.delegations[1].amount, 30.0);
+        assert!(span.delegations.iter().all(|row| row.amount > 0.0));
+        assert_eq!(span.validators[0].bonded_stake, 30.0);
+        assert_eq!(span.unbonding.len(), 1);
+        assert_eq!(span.unbonding[0].amount, 70.0);
+        assert_eq!(span.unbonding[0].mature_at, 14);
+        assert_eq!(account_balance(&span, &delegator), 1000.0);
+
+        settle_matured(&mut span, 13).unwrap();
+        assert_eq!(span.unbonding.len(), 1);
+        assert_eq!(account_balance(&span, &delegator), 1000.0);
+        settle_matured(&mut span, 14).unwrap();
+        assert!(span.unbonding.is_empty());
+        assert_eq!(account_balance(&span, &delegator), 1070.0);
+        settle_matured(&mut span, 14).unwrap();
+        assert!(span.unbonding.is_empty());
+        assert_eq!(account_balance(&span, &delegator), 1070.0);
+
+        let mut early = fixture(4, &delegator, &validator, &[(delegator.clone(), 40.0), (delegator.clone(), 60.0)]);
+        apply_unbond_release(&mut early, &delegator, &validator, 10.0).unwrap();
+        assert_eq!(early.delegations[0].amount, 30.0);
+        assert_eq!(early.delegations[1].amount, 60.0);
+
+        let mut exact = fixture(4, &delegator, &validator, &[(delegator.clone(), 40.0), (delegator.clone(), 60.0)]);
+        apply_unbond_release(&mut exact, &delegator, &validator, 100.0).unwrap();
+        assert!(exact.delegations.is_empty());
+        assert_eq!(exact.unbonding[0].amount, 100.0);
+        assert_eq!(exact.validators[0].bonded_stake, 0.0);
+
+        let mut first = fixture(4, &delegator, &validator, &[(delegator.clone(), 40.0), (delegator.clone(), 60.0)]);
+        apply_unbond_release(&mut first, &delegator, &validator, 40.0).unwrap();
+        assert_eq!(first.delegations.len(), 1);
+        assert_eq!(first.delegations[0].amount, 60.0);
+
+        let mut over = fixture(4, &delegator, &validator, &[(delegator.clone(), 40.0), (delegator.clone(), 60.0)]);
+        assert_eq!(
+            apply_unbond_release(&mut over, &delegator, &validator, 101.0).unwrap_err(),
+            "unbond funds refused"
+        );
+        assert_eq!(over.delegations.len(), 2);
+        assert_eq!(over.delegations[0].amount, 40.0);
+        assert_eq!(over.delegations[1].amount, 60.0);
+        assert_eq!(over.validators[0].bonded_stake, 100.0);
+        assert!(over.unbonding.is_empty());
+        assert_eq!(account_balance(&over, &delegator), 1000.0);
+
+        let mut late = fixture(4, &delegator, &validator, &[(delegator.clone(), 70.0)]);
+        apply_unbond_release(&mut late, &delegator, &validator, 70.0).unwrap();
+        settle_matured(&mut late, 15).unwrap();
+        assert!(late.unbonding.is_empty());
+        assert_eq!(account_balance(&late, &delegator), 1070.0);
+        settle_matured(&mut late, 16).unwrap();
+        assert_eq!(account_balance(&late, &delegator), 1070.0);
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LotSnap {
+        delegator: String,
+        validator: String,
+        amount: f64,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct UnbondRow {
+        name: String,
+        chain_id: i64,
+        height: i64,
+        delegator: String,
+        validator: String,
+        host_validator: String,
+        amount: f64,
+        public_key: String,
+        signature: String,
+        preimage: String,
+        line: String,
+        bonded: f64,
+        balance: f64,
+        jailed: bool,
+        lots: Vec<LotSnap>,
+        verified: bool,
+        error: Option<String>,
+        kept: Vec<LotSnap>,
+        mature_at: i64,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct DigestRow {
+        name: String,
+        chain_id: i64,
+        height: i64,
+        delegator: String,
+        validator: String,
+        balance: f64,
+        bonded: f64,
+        difficulty: f64,
+        unbonding: Vec<UnbondingSnap>,
+        digest: String,
+        state_root: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SettleRow {
+        delegator: String,
+        validator: String,
+        amount: f64,
+        mature_at: i64,
+        start_balance: f64,
+        hold_height: i64,
+        pay_height: i64,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct UnbondOracle {
+        rows: Vec<UnbondRow>,
+        digests: Vec<DigestRow>,
+        settle: SettleRow,
+    }
+
+    fn row_omega(row: &UnbondRow) -> OmegaSnap {
+        OmegaSnap {
+            tip_hash: "0".repeat(64),
+            chain_id: row.chain_id,
+            height: row.height,
+            tip_timestamp: 0,
+            difficulty: 1_000_000.0,
+            finalized_height: -1,
+            couplings: Couplings {
+                hash: 1.0,
+                structural: 1.0,
+                continuity: 1.0,
+                mempool: 1.0,
+                fees: 1.0,
+            },
+            ledger: vec![AccountSnap {
+                address: row.delegator.clone(),
+                balance: row.balance,
+                nonce: 0.0,
+            }],
+            pools: Vec::new(),
+            btc: Vec::new(),
+            eth_pubkey: String::new(),
+            eth_committee: String::new(),
+            eth: Vec::new(),
+            wasm: Vec::new(),
+            validators: vec![ValidatorSnap {
+                address: row.host_validator.clone(),
+                moniker: "v".into(),
+                uptime: 1.0,
+                bonded_stake: row.bonded,
+                accumulated_rewards: 0.0,
+                slashed: false,
+                jailed: row.jailed,
+                blocks_proposed: 0,
+                commission: 0.0,
+            }],
+            delegations: row
+                .lots
+                .iter()
+                .map(|lot| DelegationSnap {
+                    delegator: lot.delegator.clone(),
+                    validator: lot.validator.clone(),
+                    amount: lot.amount,
+                })
+                .collect(),
+            unbonding: Vec::new(),
+            proposals: Vec::new(),
+            models: Vec::new(),
+            settlements: Vec::new(),
+        }
+    }
+
+    fn digest_omega(row: &DigestRow) -> OmegaSnap {
+        OmegaSnap {
+            tip_hash: "0".repeat(64),
+            chain_id: row.chain_id,
+            height: row.height,
+            tip_timestamp: 0,
+            difficulty: row.difficulty,
+            finalized_height: -1,
+            couplings: Couplings {
+                hash: 1.0,
+                structural: 1.0,
+                continuity: 1.0,
+                mempool: 1.0,
+                fees: 1.0,
+            },
+            ledger: vec![AccountSnap {
+                address: row.delegator.clone(),
+                balance: row.balance,
+                nonce: 0.0,
+            }],
+            pools: Vec::new(),
+            btc: Vec::new(),
+            eth_pubkey: String::new(),
+            eth_committee: String::new(),
+            eth: Vec::new(),
+            wasm: Vec::new(),
+            validators: vec![ValidatorSnap {
+                address: row.validator.clone(),
+                moniker: "v".into(),
+                uptime: 1.0,
+                bonded_stake: row.bonded,
+                accumulated_rewards: 0.0,
+                slashed: false,
+                jailed: false,
+                blocks_proposed: 0,
+                commission: 0.0,
+            }],
+            delegations: Vec::new(),
+            unbonding: row.unbonding.clone(),
+            proposals: Vec::new(),
+            models: Vec::new(),
+            settlements: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn authoritative_unbond_matches_the_site_oracle() {
+        let Some(path) = std::env::var_os("EQ_UNBOND_ORACLE") else {
+            println!("unbond-oracle: not supplied");
+            return;
+        };
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("oracle {}: {err}", path.to_string_lossy()));
+        let oracle: UnbondOracle = serde_json::from_str(&text).expect("unbond oracle json");
+        assert!(!oracle.rows.is_empty(), "oracle has no rows");
+        assert!(!oracle.digests.is_empty(), "oracle has no digests");
+        let auth = Auth { power: Vec::new(), total: 0.0, quorum: 0.0 };
+        for row in &oracle.rows {
+            let op = StakeOp::Unbond {
+                delegator: row.delegator.clone(),
+                validator: row.validator.clone(),
+                amount: row.amount,
+                public_key: Some(row.public_key.clone()),
+                signature: Some(row.signature.clone()),
+            };
+            assert_eq!(stake_line(&op), row.line, "{}", row.name);
+            assert_eq!(
+                format!(
+                    "eq-authority|v1|{}|unbond|{}|{}|{}||||",
+                    row.chain_id,
+                    row.delegator,
+                    row.validator,
+                    js_num(row.amount)
+                ),
+                row.preimage,
+                "{}",
+                row.name
+            );
+            let verified = verify_unbond(
+                row.chain_id,
+                &row.delegator,
+                &row.validator,
+                row.amount,
+                &row.public_key,
+                &row.signature,
+            );
+            assert_eq!(verified.is_ok(), row.verified, "{} {:?}", row.name, verified);
+            let mut state = row_omega(row);
+            let applied = apply_stake(&mut state, &op, &auth);
+            match &row.error {
+                None => {
+                    assert!(applied.is_ok(), "{} {:?}", row.name, applied);
+                    assert_eq!(state.delegations.len(), row.kept.len(), "{}", row.name);
+                    for (got, expect) in state.delegations.iter().zip(row.kept.iter()) {
+                        assert_eq!(got.delegator, expect.delegator, "{}", row.name);
+                        assert_eq!(got.validator, expect.validator, "{}", row.name);
+                        assert_eq!(got.amount, expect.amount, "{}", row.name);
+                    }
+                    assert!(state.delegations.iter().all(|lot| lot.amount > 0.0), "{}", row.name);
+                    assert_eq!(state.unbonding.len(), 1, "{}", row.name);
+                    assert_eq!(state.unbonding[0].amount, row.amount, "{}", row.name);
+                    assert_eq!(state.unbonding[0].mature_at, row.mature_at, "{}", row.name);
+                    assert_eq!(state.validators[0].bonded_stake, row.bonded - row.amount, "{}", row.name);
+                    assert_eq!(account_balance(&state, &row.delegator), row.balance, "{}", row.name);
+                }
+                Some(error) => {
+                    assert_eq!(applied.unwrap_err(), error.as_str(), "{}", row.name);
+                    assert_eq!(state.delegations.len(), row.lots.len(), "{}", row.name);
+                    assert!(state.unbonding.is_empty(), "{}", row.name);
+                    assert_eq!(state.validators[0].bonded_stake, row.bonded, "{}", row.name);
+                    assert_eq!(account_balance(&state, &row.delegator), row.balance, "{}", row.name);
+                }
+            }
+        }
+        let mut roots = Vec::new();
+        for row in &oracle.digests {
+            let omega = digest_omega(row);
+            let digest = sha256_hex(&format!("eq-omega|{}", omega_preimage(&omega)));
+            assert_eq!(digest, row.digest, "{}", row.name);
+            let root = state_root_of(&omega);
+            assert_eq!(root, row.state_root, "{}", row.name);
+            roots.push(root);
+        }
+        assert!(roots.windows(2).all(|pair| pair[0] == pair[1]));
+        let settle = &oracle.settle;
+        let mut pending = fixture(0, &settle.delegator, &settle.validator, &[]);
+        pending.ledger[0].balance = settle.start_balance;
+        pending.unbonding.push(UnbondingSnap {
+            delegator: settle.delegator.clone(),
+            validator: settle.validator.clone(),
+            amount: settle.amount,
+            mature_at: settle.mature_at,
+        });
+        settle_matured(&mut pending, settle.hold_height).unwrap();
+        assert_eq!(pending.unbonding.len(), 1);
+        assert_eq!(account_balance(&pending, &settle.delegator), settle.start_balance);
+        settle_matured(&mut pending, settle.pay_height).unwrap();
+        assert!(pending.unbonding.is_empty());
+        assert_eq!(account_balance(&pending, &settle.delegator), settle.start_balance + settle.amount);
+        settle_matured(&mut pending, settle.pay_height).unwrap();
+        assert_eq!(account_balance(&pending, &settle.delegator), settle.start_balance + settle.amount);
+        println!("unbond-oracle: rows {}", oracle.rows.len());
     }
 }

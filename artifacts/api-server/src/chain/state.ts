@@ -210,6 +210,7 @@ function omegaFromRecord(record: ReturnType<typeof omegaRecord>): Omega {
     wasm: new Map(record.wasm),
     validators: new Map(record.validators.map((v) => [v.address, { ...v }])),
     delegations: record.delegations.map((d) => ({ ...d })),
+    unbonding: (record.unbonding ?? []).map((u) => ({ ...u })),
     proposals: record.proposals.map((p) => ({ ...p })),
     models: record.models.map((m) => ({ ...m })),
     settlements: record.settlements.map((s) => ({ ...s })),

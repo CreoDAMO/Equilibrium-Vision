@@ -89,6 +89,7 @@ function snap(current: Omega) {
     wasm: [...current.wasm.entries()],
     validators: [...current.validators.values()].map((v) => ({ ...v })),
     delegations: current.delegations.map((d) => ({ ...d })),
+    unbonding: current.unbonding.map((u) => ({ ...u })),
     proposals: current.proposals.map((p) => ({
       id: p.id,
       status: p.status,

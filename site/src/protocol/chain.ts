@@ -5,6 +5,7 @@ import type {
   ChainSnapshot,
   Couplings,
   Delegation,
+  Unbonding,
   DexPool,
   FinalityRound,
   ModelClaim,
@@ -37,7 +38,7 @@ import { merkleRoot, residualsMatch, sha256Hex } from "./crypto";
 import { evaluateResidual, solveStationary } from "./solver";
 import { verifyStationaryEvidence } from "./verify";
 import { signTx, verifyTx, type Keypair } from "./wallet";
-import { verifyDelegateEvidence } from "./authority";
+import { verifyDelegateEvidence, verifyUnbondEvidence } from "./authority";
 import { slashAmount } from "./coinomics";
 import { challengeBinding, modelBinding } from "./membranes";
 import { applySwap, poolAddress, quoteSwap } from "./dex";
@@ -119,6 +120,7 @@ export class OrganismNode {
   lastMineAt = 0;
   persisted = false;
   delegations: Delegation[] = [];
+  unbonding: Unbonding[] = [];
   proposals: Proposal[] = [];
   models: ModelClaim[] = [];
   settlements: Settlement[] = [];
@@ -176,6 +178,7 @@ export class OrganismNode {
     n.ethCommittee = body.ethCommittee ?? "";
     n.wasmStorage = new Map(body.wasmStorage ?? []);
     n.delegations = body.delegations ?? [];
+    n.unbonding = body.unbonding ?? [];
     n.proposals = body.proposals ?? [];
     n.models = body.models ?? [];
     n.settlements = body.settlements ?? [];
@@ -216,6 +219,7 @@ export class OrganismNode {
     n.lastMineAt = this.lastMineAt;
     n.clock = this.clock;
     n.delegations = this.delegations.map((d) => ({ ...d }));
+    n.unbonding = this.unbonding.map((u) => ({ ...u }));
     n.proposals = this.proposals.map((p) => ({ ...p }));
     n.models = this.models.map((m) => ({ ...m }));
     n.settlements = this.settlements.map((s) => ({ ...s }));
@@ -247,6 +251,7 @@ export class OrganismNode {
       wasm: new Map(this.wasmStorage),
       validators: new Map([...this.validators.entries()].map(([k, v]) => [k, { ...v }])),
       delegations: this.delegations.map((d) => ({ ...d })),
+      unbonding: this.unbonding.map((u) => ({ ...u })),
       proposals: this.proposals.map((p) => ({ ...p })),
       models: this.models.map((m) => ({ ...m })),
       settlements: this.settlements.map((s) => ({ ...s })),
@@ -264,6 +269,7 @@ export class OrganismNode {
     this.wasmStorage = next.wasm;
     this.validators = next.validators;
     this.delegations = next.delegations;
+    this.unbonding = next.unbonding;
     this.proposals = next.proposals;
     this.models = next.models;
     this.settlements = next.settlements;
@@ -1101,6 +1107,7 @@ export class OrganismNode {
       ethCommittee: this.ethCommittee,
       ethHeaders: this.ethHeaders,
       delegations: this.delegations,
+      unbonding: this.unbonding,
       proposals: this.proposals,
       models: this.models,
       settlements: this.settlements,
@@ -1270,6 +1277,44 @@ export class OrganismNode {
       signature: proof.signature,
     });
     this.emit("in", "governance", `delegate ${amount} → ${v.moniker} · queued`);
+    return { ok: true };
+  }
+
+  unbond(
+    delegator: string,
+    validator: string,
+    amount: number,
+    proof?: { publicKey: string; signature: string },
+  ): { ok: boolean; error?: string } {
+    const v = this.validators.get(validator);
+    if (!v || v.jailed || v.slashed) return { ok: false, error: "unbond refused" };
+    if (!proof) return { ok: false, error: "unbond authority refused" };
+    const refused = verifyUnbondEvidence(this.params.chainId, {
+      delegator,
+      validator,
+      amount,
+      publicKey: proof.publicKey,
+      signature: proof.signature,
+    });
+    if (refused) return { ok: false, error: refused };
+    const queued = this.pending.stake.reduce((sum, op) => {
+      if (op.op === "unbond" && op.delegator === delegator && op.validator === validator) return sum + op.amount;
+      return sum;
+    }, 0);
+    const available = this.delegations.reduce((sum, d) => {
+      if (d.delegator === delegator && d.validator === validator) return sum + d.amount;
+      return sum;
+    }, 0);
+    if (available - queued < amount) return { ok: false, error: "unbond funds refused" };
+    this.pending.stake.push({
+      op: "unbond",
+      delegator,
+      validator,
+      amount,
+      publicKey: proof.publicKey,
+      signature: proof.signature,
+    });
+    this.emit("in", "governance", `unbond ${amount} from ${v.moniker} · queued`);
     return { ok: true };
   }
 
@@ -1632,6 +1677,7 @@ export class OrganismNode {
     this.couplings = { ...kin.couplings };
     this.difficulty = kin.difficulty;
     this.delegations = kin.delegations;
+    this.unbonding = kin.unbonding;
     this.proposals = kin.proposals;
     this.finalizedThrough = kin.finalizedThrough;
     if (this.kinStarted) {
@@ -2044,6 +2090,7 @@ export class OrganismNode {
       treasury: this.treasury.address,
       persisted: this.persisted,
       delegations: this.delegations.slice(-20),
+      unbonding: this.unbonding.slice(),
       proposals: this.proposals.slice(0, 8),
       models: this.models.slice(0, 8),
       lastPaired: this.lastPaired,

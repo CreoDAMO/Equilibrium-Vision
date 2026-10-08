@@ -31,6 +31,8 @@ export interface NetworkParams {
   mempoolCap: number;
   finalityQuorum: number;
   finalityLag: number;
+  /** Blocks from the pre-state height until a canonical unbond may pay. */
+  unbondingPeriod: number;
   allowFaucet: boolean;
   faucetAmount: number;
 }
@@ -140,6 +142,14 @@ export type StakeEvidence =
       /** Named here so a passed proposal can change λ only inside the next successor. */
       couplingKey?: "hash" | "structural" | "continuity" | "mempool" | "fees";
       couplingValue?: number;
+    }
+  | {
+      op: "unbond";
+      delegator: string;
+      validator: string;
+      amount: number;
+      publicKey?: string;
+      signature?: string;
     }
   | { op: "vote"; voter: string; id: number; option: "yes" | "no" | "abstain" };
 
@@ -259,6 +269,14 @@ export interface Delegation {
   delegator: string;
   validator: string;
   amount: number;
+}
+
+export interface Unbonding {
+  delegator: string;
+  validator: string;
+  amount: number;
+  /** Successor height at which this position may pay. Not recomputed if the period changes. */
+  matureAt: number;
 }
 
 export interface Proposal {
@@ -504,6 +522,7 @@ export interface PersistedBody {
   txs: TxRecord[];
   pools: DexPool[];
   delegations: Delegation[];
+  unbonding?: Unbonding[];
   proposals: Proposal[];
   models: ModelClaim[];
   settlements?: Settlement[];
@@ -556,6 +575,7 @@ export interface ChainSnapshot {
   treasury: string;
   persisted: boolean;
   delegations: Delegation[];
+  unbonding: Unbonding[];
   proposals: Proposal[];
   models: ModelClaim[];
   lastPaired: PairedResult | null;

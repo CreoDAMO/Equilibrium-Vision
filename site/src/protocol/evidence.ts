@@ -31,6 +31,9 @@ export function canonicalEvidence(ev: TransitionEvidence): string {
         }
         return `d:${s.delegator}:${s.validator}:${s.amount}`;
       }
+      if (s.op === "unbond") {
+        return `u:${s.delegator}:${s.validator}:${s.amount}:${s.publicKey ?? ""}:${s.signature ?? ""}`;
+      }
       if (s.op === "claim") return `c:${s.address}`;
       if (s.op === "slash") return `s:${s.validator}:${s.reason}`;
       if (s.op === "vote") return `v:${s.voter}:${s.id}:${s.option}`;

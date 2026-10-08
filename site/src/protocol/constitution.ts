@@ -19,7 +19,7 @@ import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { challengeBinding, modelBinding, residualBinding } from "./membranes";
 import { verifyTx } from "./wallet";
-import { verifyDelegateEvidence } from "./authority";
+import { verifyDelegateEvidence, verifyUnbondEvidence } from "./authority";
 import { NETWORKS } from "./networks";
 import {
   activityKeys,
@@ -34,6 +34,7 @@ import type {
   ConstitutionAnswer,
   Couplings,
   Delegation,
+  Unbonding,
   DexPool,
   EthHeaderRecord,
   ModelClaim,
@@ -73,6 +74,7 @@ export interface Omega {
   wasm: Map<string, string>;
   validators: Map<string, ValidatorRecord>;
   delegations: Delegation[];
+  unbonding: Unbonding[];
   proposals: Proposal[];
   models: ModelClaim[];
   settlements: Settlement[];
@@ -155,6 +157,7 @@ export function cloneOmega(omega: Omega): Omega {
     wasm: new Map(omega.wasm),
     validators: new Map([...omega.validators.entries()].map(([k, v]) => [k, { ...v }])),
     delegations: omega.delegations.map((d) => ({ ...d })),
+    unbonding: omega.unbonding.map((u) => ({ ...u })),
     proposals: omega.proposals.map((p) => ({ ...p, ballots: [...(p.ballots ?? [])] })),
     models: omega.models.map((m) => ({ ...m })),
     settlements: omega.settlements.map((s) => ({ ...s })),
@@ -224,6 +227,9 @@ export function monetaryError(omega: Omega): string | null {
   }
   for (const d of omega.delegations) {
     if (!isSafePositive(d.amount)) return "delegate amount refused";
+  }
+  for (const u of omega.unbonding) {
+    if (!isSafePositive(u.amount) || !Number.isSafeInteger(u.matureAt)) return "unbond refused";
   }
   for (const p of omega.proposals) {
     if (!isSafeNonNegative(p.deposit) || !isSafeNonNegative(p.yes) || !isSafeNonNegative(p.no) || !isSafeNonNegative(p.abstain)) {
@@ -336,6 +342,7 @@ export function omegaDigest(omega: Omega): string {
         `${v.address}:${encodeURIComponent(v.moniker)}:${num(v.uptime)}:${num(v.bondedStake)}:${num(v.accumulatedRewards)}:${v.slashed ? 1 : 0}:${v.jailed ? 1 : 0}:${v.blocksProposed}:${num(v.commission)}`,
     );
   const delegations = omega.delegations.map((d) => `${d.delegator}>${d.validator}:${num(d.amount)}`).join(";");
+  const unbonding = omega.unbonding.map((u) => `${u.delegator}:${u.validator}:${num(u.amount)}:${u.matureAt}`).join(";");
   const proposals = omega.proposals
     .map((p) => {
       const ballots = (p.ballots ?? []).map((b) => `${b.voter}:${b.option}`).join(",");
@@ -362,7 +369,8 @@ export function omegaDigest(omega: Omega): string {
     modelLeaf(omega.models),
     settlementLeaf(omega.settlements),
   ].join("|");
-  return sha256Hex(`eq-omega|${body}`);
+  const full = unbonding ? `${body}|${unbonding}` : body;
+  return sha256Hex(`eq-omega|${full}`);
 }
 
 /**
@@ -484,6 +492,48 @@ function applyStake(
   params: NetworkParams,
   authority: { power: Map<string, number>; total: number; quorum: number },
 ): string | null {
+  if (op.op === "unbond") {
+    const refused = verifyUnbondEvidence(omega.chainId, op);
+    if (refused) return refused;
+    const v = omega.validators.get(op.validator);
+    if (!v || v.jailed || v.slashed) return "unbond refused";
+    let available = 0;
+    for (const d of omega.delegations) {
+      if (d.delegator !== op.delegator || d.validator !== op.validator) continue;
+      const next = safeAdd(available, d.amount);
+      if (next === null) return "unbond funds refused";
+      available = next;
+    }
+    if (available < op.amount) return "unbond funds refused";
+    const nextStake = safeSub(v.bondedStake, op.amount);
+    if (nextStake === null) return "unbond refused";
+    const matureAt = omega.height + params.unbondingPeriod;
+    if (!Number.isSafeInteger(matureAt)) return "unbond refused";
+    let left = op.amount;
+    const kept: Delegation[] = [];
+    for (const d of omega.delegations) {
+      if (left === 0 || d.delegator !== op.delegator || d.validator !== op.validator) {
+        kept.push(d);
+        continue;
+      }
+      if (d.amount > left) {
+        kept.push({ ...d, amount: d.amount - left });
+        left = 0;
+      } else {
+        left -= d.amount;
+      }
+    }
+    if (left !== 0) return "unbond funds refused";
+    omega.delegations = kept;
+    v.bondedStake = nextStake;
+    omega.unbonding.push({
+      delegator: op.delegator,
+      validator: op.validator,
+      amount: op.amount,
+      matureAt,
+    });
+    return null;
+  }
   if (op.op === "delegate") {
     const publicKey = op.publicKey ?? "";
     const signature = op.signature ?? "";
@@ -821,6 +871,19 @@ function applyEffects(
   return null;
 }
 
+function settleMaturedUnbondings(omega: Omega, height: number): string | null {
+  const keep: Unbonding[] = [];
+  for (const u of omega.unbonding) {
+    if (u.matureAt > height) {
+      keep.push(u);
+      continue;
+    }
+    if (!credit(omega.ledger, u.delegator, u.amount)) return "unbond payout refused";
+  }
+  omega.unbonding = keep;
+  return null;
+}
+
 class DerivedWasm {
   constructor(readonly storage: Map<string, string>) {}
 }
@@ -906,6 +969,8 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs, derived?: 
   }
   const modelError = admitModels(next, inputs.evidence, inputs.timestamp);
   if (modelError) return { ok: false, error: modelError };
+  const settled = settleMaturedUnbondings(next, height);
+  if (settled) return { ok: false, error: settled };
   const stateRoot = stateRootOf(next);
   const bindError = admitBinding(inputs.evidence, breakdown.canonicalFp, stateRoot);
   if (bindError) return { ok: false, error: bindError };
@@ -1008,6 +1073,7 @@ export function initialOmega(network: NetworkId): Omega {
     wasm: new Map(),
     validators: new Map(),
     delegations: [],
+    unbonding: [],
     proposals: [],
     models: [],
     settlements: [],

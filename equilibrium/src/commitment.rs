@@ -46,6 +46,8 @@ struct OmegaSnap {
     wasm: Vec<Vec<String>>,
     validators: Vec<ValidatorSnap>,
     delegations: Vec<DelegationSnap>,
+    #[serde(default)]
+    unbonding: Vec<UnbondingSnap>,
     proposals: Vec<ProposalSnap>,
     models: Vec<ModelSnap>,
     settlements: Vec<SettlementSnap>,
@@ -121,6 +123,15 @@ struct DelegationSnap {
     delegator: String,
     validator: String,
     amount: f64,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UnbondingSnap {
+    delegator: String,
+    validator: String,
+    amount: f64,
+    mature_at: i64,
 }
 
 #[derive(Clone, Deserialize)]
@@ -365,6 +376,13 @@ fn omega_preimage(omega: &OmegaSnap) -> String {
         .collect::<Vec<_>>()
         .join(";");
 
+    let unbonding = omega
+        .unbonding
+        .iter()
+        .map(|u| format!("{}:{}:{}:{}", u.delegator, u.validator, js_num(u.amount), u.mature_at))
+        .collect::<Vec<_>>()
+        .join(";");
+
     let proposals = omega
         .proposals
         .iter()
@@ -423,7 +441,7 @@ fn omega_preimage(omega: &OmegaSnap) -> String {
         .collect::<Vec<_>>()
         .join(";");
 
-    [
+    let body = [
         "ECMA-262",
         &omega.chain_id.to_string(),
         &omega.height.to_string(),
@@ -442,7 +460,12 @@ fn omega_preimage(omega: &OmegaSnap) -> String {
         &models,
         &settlements,
     ]
-    .join("|")
+    .join("|");
+    if unbonding.is_empty() {
+        body
+    } else {
+        format!("{body}|{unbonding}")
+    }
 }
 
 fn transition_preimage(omega: &OmegaSnap, inputs: &TransitionSnap) -> String {
@@ -687,6 +710,7 @@ fn apply_opened_successor(
     }
     next.height = height;
     next.tip_timestamp = input.timestamp;
+    apply::settle_matured(&mut next, height)?;
 
     let mut sealed = input.clone();
     sealed.evidence = evidence;
