@@ -1,6 +1,8 @@
 /**
- * A signed withdrawal locks EQU, then settles only when a Bitcoin output matches it.
- * Ethereum execution is refused. lock/release still pays an internal recipient.
+ * A signed withdrawal locks EQU, then settles only when the external effect matches it.
+ * Bitcoin settles from an output under an admitted header.
+ * Ethereum settles from a receipt under an admitted execution header.
+ * An EQU beacon header is not that header. lock/release still pays an internal recipient.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -8,8 +10,19 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { bytesToHex } from "./bytes";
+import { bytesToHex, hexToBytes } from "./bytes";
 import { buildP2pkhTx, parseBtcTx, sha256d } from "./btc";
+import {
+  executionHeader,
+  keccak256Hex,
+  legacyReceipt,
+  parseExecutionHeader,
+  rlpEncode,
+  rlpUint,
+  rlpUintBytes,
+  secureLeaf,
+  TRANSFER_TOPIC,
+} from "./eth-exec";
 import {
   WITHDRAWAL_ESCROW,
   signAuthority,
@@ -38,6 +51,11 @@ assert.equal(NETWORKS.mainnet.withdrawalTimeout, 10);
 assert.equal(NETWORKS.testnet.withdrawalTimeout, 10);
 assert.equal(canonicalEvidence(blankEvidence(chainId)).split("|").length, 7);
 assert.equal(omegaDigest(born), omegaDigest(cloneOmega(born)));
+assert.equal(keccak256Hex(new Uint8Array()), "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+assert.equal(keccak256Hex("abc"), "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45");
+assert.equal(keccak256Hex(Uint8Array.of(0x80)), "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
+assert.equal(keccak256Hex(Uint8Array.of(0xc0)), "1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347");
+assert.equal(keccak256Hex("Transfer(address,address,uint256)"), TRANSFER_TOPIC);
 
 const hash160 = "cd".repeat(20);
 const destination = `p2pkh:${hash160}`;
@@ -223,7 +241,7 @@ const ethStep = step(base(), [{
 }]);
 assert.equal(ethStep.ok, false);
 if (ethStep.ok) throw new Error("eth");
-assert.equal(ethStep.error, "eth execution proof refused");
+assert.equal(ethStep.error, "withdrawal destination refused");
 assert.equal(base().ledger.get(payer.address)?.balance, 5000);
 
 let cursor = must(step(base(), [openOp])).next;
@@ -263,6 +281,341 @@ assert.equal(released.next.ledger.get(other.address)?.balance, 25);
 assert.equal(released.next.ledger.get(payer.address)?.balance, 4975);
 assert.equal(released.next.withdrawals.length, 0);
 
+function abiUint(amount: number): Uint8Array {
+  const data = new Uint8Array(32);
+  let n = amount;
+  for (let i = 31; n > 0 && i >= 0; i -= 1) {
+    data[i] = n & 0xff;
+    n = Math.floor(n / 256);
+  }
+  return data;
+}
+
+const token = "ab".repeat(20);
+const recipient = "ef".repeat(20);
+const ethDestination = `eth:${recipient}`;
+const tokenReceipt = legacyReceipt({
+  status: 1,
+  cumulativeGas: 21_000,
+  logs: [{
+    address: token,
+    topics: [TRANSFER_TOPIC, "00".repeat(32), `${"00".repeat(12)}${recipient}`],
+    data: abiUint(1000),
+  }],
+});
+const tokenLeaf = secureLeaf(rlpUint(0), tokenReceipt);
+const tokenHeader = executionHeader({
+  parentHash: new Uint8Array(32),
+  transactionsRoot: new Uint8Array(32),
+  receiptsRoot: tokenLeaf.root,
+  number: 1,
+});
+const tokenParsed = parseExecutionHeader(tokenHeader);
+if (!tokenParsed) throw new Error("execution header");
+const tokenProof = signWithdraw(payer, {
+  chainId, amount: 1000, network: "eth", asset: token, destination: ethDestination, nonce: 4,
+});
+const tokenOpen: WithdrawalEvidence = {
+  op: "open",
+  sender: payer.address,
+  amount: 1000,
+  network: "eth",
+  asset: token,
+  destination: ethDestination,
+  nonce: 4,
+  publicKey: tokenProof.publicKey,
+  signature: tokenProof.signature,
+};
+const tokenExec: WithdrawalEvidence = { op: "exec", headerRlp: bytesToHex(tokenHeader) };
+const tokenSettle: WithdrawalEvidence = {
+  op: "settleEth",
+  id: tokenProof.id,
+  blockHash: tokenParsed.hash,
+  txIndex: 0,
+  receiptRlp: bytesToHex(tokenReceipt),
+  receiptProof: tokenLeaf.proof.map((node) => bytesToHex(node)),
+  logIndex: 0,
+  txRlp: "",
+  txProof: [],
+};
+const tokenOpenLine = `o:${payer.address}:1000:eth:${token}:${ethDestination}:4:${tokenProof.publicKey}:${tokenProof.signature}`;
+const tokenSettleLine = `e:${tokenProof.id}:${tokenParsed.hash}:0:${bytesToHex(tokenReceipt)}:${tokenSettle.op === "settleEth" ? tokenSettle.receiptProof.join(",") : ""}:0::`;
+assert.equal(canonicalEvidence(evidence([tokenOpen])).endsWith(`|||${tokenOpenLine}`), true);
+assert.equal(canonicalEvidence(evidence([tokenExec, tokenSettle])).endsWith(`|||x:${bytesToHex(tokenHeader)};${tokenSettleLine}`), true);
+
+const admitted = must(step(base(), [tokenExec]));
+assert.equal(admitted.next.ethExecution[0]?.hash, tokenParsed.hash);
+assert.equal(admitted.next.ethExecution[0]?.receiptsRoot, tokenParsed.receiptsRoot);
+assert.equal(admitted.next.ledger.get(payer.address)?.balance, 5000);
+const strippedExecution = cloneOmega(admitted.next);
+strippedExecution.ethExecution = [];
+assert.equal(stateRootOf(admitted.next), stateRootOf(strippedExecution));
+assert.notEqual(omegaDigest(admitted.next), omegaDigest(strippedExecution));
+const duplicate = step(admitted.next, [tokenExec]);
+assert.equal(duplicate.ok, false);
+if (duplicate.ok) throw new Error("duplicate header");
+assert.equal(duplicate.error, "eth header exists");
+const badParent = executionHeader({
+  parentHash: new Uint8Array(32).fill(0x11),
+  transactionsRoot: tokenLeaf.root,
+  receiptsRoot: tokenLeaf.root,
+  number: tokenParsed.number + 1,
+});
+const badParentStep = step(admitted.next, [{ op: "exec", headerRlp: bytesToHex(badParent) }]);
+assert.equal(badParentStep.ok, false);
+if (badParentStep.ok) throw new Error("bad parent");
+assert.equal(badParentStep.error, "eth parent does not match the tip");
+const wrongNumber = executionHeader({
+  parentHash: hexToBytes(tokenParsed.hash),
+  transactionsRoot: tokenLeaf.root,
+  receiptsRoot: tokenLeaf.root,
+  number: tokenParsed.number + 2,
+});
+const wrongNumberStep = step(admitted.next, [{ op: "exec", headerRlp: bytesToHex(wrongNumber) }]);
+assert.equal(wrongNumberStep.ok, false);
+if (wrongNumberStep.ok) throw new Error("number");
+assert.equal(wrongNumberStep.error, "eth number does not extend the tip");
+const child = executionHeader({
+  parentHash: hexToBytes(tokenParsed.hash),
+  transactionsRoot: tokenLeaf.root,
+  receiptsRoot: tokenLeaf.root,
+  number: tokenParsed.number + 1,
+});
+const extended = must(step(admitted.next, [{ op: "exec", headerRlp: bytesToHex(child) }]));
+assert.equal(extended.next.ethExecution.length, 2);
+assert.equal(extended.next.ethExecution[1]?.parentHash, tokenParsed.hash);
+
+const decoy = "44".repeat(32);
+const beaconed = base();
+beaconed.eth.push({
+  slot: 1,
+  hash: decoy,
+  parentRoot: "00".repeat(32),
+  stateRoot: "00".repeat(32),
+  bodyRoot: tokenParsed.receiptsRoot,
+  participants: 342,
+  participation: "ff".repeat(32),
+});
+const beaconOpen = must(step(beaconed, [tokenOpen]));
+assert.equal(beaconOpen.next.ledger.get(payer.address)?.balance, 4000);
+assert.equal(beaconOpen.next.ledger.get(WITHDRAWAL_ESCROW)?.balance, 1000);
+assert.equal(beaconOpen.next.ledger.get(recipient)?.balance, undefined);
+const beaconSettle = step(beaconOpen.next, [{ ...tokenSettle, blockHash: decoy }]);
+assert.equal(beaconSettle.ok, false);
+if (beaconSettle.ok) throw new Error("beacon");
+assert.equal(beaconSettle.error, "eth header is not in Ω");
+const btcShaped = step(beaconOpen.next, [{ ...settleOp, id: tokenProof.id }]);
+assert.equal(btcShaped.ok, false);
+if (btcShaped.ok) throw new Error("btc shaped");
+assert.equal(btcShaped.error, "eth execution proof refused");
+assert.equal(beaconOpen.next.ledger.get(WITHDRAWAL_ESCROW)?.balance, 1000);
+
+const tokenLocked = must(step(must(step(base(), [tokenOpen])).next, [tokenExec]));
+const tokenSettled = must(step(tokenLocked.next, [tokenSettle]));
+assert.equal(tokenSettled.next.withdrawals[0]?.status, "settled");
+assert.equal(tokenSettled.next.withdrawals[0]?.effectLocator, `${tokenParsed.hash}:0:0`);
+assert.equal(tokenSettled.next.ledger.get(WITHDRAWAL_ESCROW)?.balance, 0);
+assert.equal(tokenSettled.next.ledger.get(payer.address)?.balance, 4000);
+assert.equal(tokenSettled.next.ledger.get(recipient)?.balance, undefined);
+assert.equal(tokenSettled.next.ledger.get(ethDestination)?.balance, undefined);
+const tokenReplay = step(tokenSettled.next, [tokenSettle]);
+assert.equal(tokenReplay.ok, false);
+if (tokenReplay.ok) throw new Error("eth replay");
+assert.equal(tokenReplay.error, "withdrawal is not locked");
+const tampered = tokenLeaf.proof.map((node) => bytesToHex(node));
+tampered[0] = `${tampered[0]!.slice(0, -2)}00`;
+const tamperStep = step(tokenLocked.next, [{ ...tokenSettle, receiptProof: tampered }]);
+assert.equal(tamperStep.ok, false);
+if (tamperStep.ok) throw new Error("tamper");
+assert.equal(tamperStep.error, "eth trie refused");
+assert.equal(tokenLocked.next.ledger.get(WITHDRAWAL_ESCROW)?.balance, 1000);
+const ethWrongAmount = signWithdraw(payer, {
+  chainId, amount: 1001, network: "eth", asset: token, destination: ethDestination, nonce: 6,
+});
+const wrongOpen = must(step(base(), [{
+  ...tokenOpen,
+  amount: 1001,
+  nonce: 6,
+  publicKey: ethWrongAmount.publicKey,
+  signature: ethWrongAmount.signature,
+}]));
+const wrongBound = step(must(step(wrongOpen.next, [tokenExec])).next, [{ ...tokenSettle, id: ethWrongAmount.id }]);
+assert.equal(wrongBound.ok, false);
+if (wrongBound.ok) throw new Error("eth binding");
+assert.equal(wrongBound.error, "withdrawal binding refused");
+const btcRow = must(step(base(), [openOp]));
+const ethOnBtc = step(btcRow.next, [{ ...tokenSettle, id: proof.id }]);
+assert.equal(ethOnBtc.ok, false);
+if (ethOnBtc.ok) throw new Error("eth on btc");
+assert.equal(ethOnBtc.error, "withdrawal binding refused");
+
+const nativeTo = "cd".repeat(20);
+const nativeTx = rlpEncode([
+  rlpUintBytes(0),
+  rlpUintBytes(1),
+  rlpUintBytes(21000),
+  hexToBytes(nativeTo),
+  rlpUintBytes(1000),
+  new Uint8Array(),
+  rlpUintBytes(27),
+  new Uint8Array(32),
+  new Uint8Array(32),
+]);
+const nativeReceipt = legacyReceipt({ status: 1, cumulativeGas: 21000, logs: [] });
+const nativeKey = rlpUint(0);
+const nativeReceiptLeaf = secureLeaf(nativeKey, nativeReceipt);
+const nativeTxLeaf = secureLeaf(nativeKey, nativeTx);
+const nativeHeader = executionHeader({
+  parentHash: new Uint8Array(32),
+  transactionsRoot: nativeTxLeaf.root,
+  receiptsRoot: nativeReceiptLeaf.root,
+  number: 4,
+});
+const nativeParsed = parseExecutionHeader(nativeHeader);
+if (!nativeParsed) throw new Error("native header");
+const nativeDestination = `eth:${nativeTo}`;
+const nativeProof = signWithdraw(payer, {
+  chainId, amount: 1000, network: "eth", asset: "eth", destination: nativeDestination, nonce: 5,
+});
+const nativeOpen: WithdrawalEvidence = {
+  op: "open",
+  sender: payer.address,
+  amount: 1000,
+  network: "eth",
+  asset: "eth",
+  destination: nativeDestination,
+  nonce: 5,
+  publicKey: nativeProof.publicKey,
+  signature: nativeProof.signature,
+};
+const nativeExec: WithdrawalEvidence = { op: "exec", headerRlp: bytesToHex(nativeHeader) };
+const nativeSettle: WithdrawalEvidence = {
+  op: "settleEth",
+  id: nativeProof.id,
+  blockHash: nativeParsed.hash,
+  txIndex: 0,
+  receiptRlp: bytesToHex(nativeReceipt),
+  receiptProof: nativeReceiptLeaf.proof.map((node) => bytesToHex(node)),
+  logIndex: 0,
+  txRlp: bytesToHex(nativeTx),
+  txProof: nativeTxLeaf.proof.map((node) => bytesToHex(node)),
+};
+const nativeLocked = must(step(must(step(base(), [nativeOpen])).next, [nativeExec]));
+const nativeSettled = must(step(nativeLocked.next, [nativeSettle]));
+assert.equal(nativeSettled.next.withdrawals[0]?.status, "settled");
+assert.equal(nativeSettled.next.withdrawals[0]?.effectLocator, `${nativeParsed.hash}:0:value`);
+assert.equal(nativeSettled.next.ledger.get(WITHDRAWAL_ESCROW)?.balance, 0);
+assert.equal(nativeSettled.next.ledger.get(payer.address)?.balance, 4000);
+assert.equal(nativeSettled.next.ledger.get(nativeTo)?.balance, undefined);
+const failedReceipt = legacyReceipt({ status: 0, cumulativeGas: 21000, logs: [] });
+const failedLeaf = secureLeaf(nativeKey, failedReceipt);
+const failedHeader = executionHeader({
+  parentHash: new Uint8Array(32),
+  transactionsRoot: nativeTxLeaf.root,
+  receiptsRoot: failedLeaf.root,
+  number: 8,
+});
+const failedParsed = parseExecutionHeader(failedHeader);
+if (!failedParsed) throw new Error("failed header");
+const failedLocked = must(step(must(step(base(), [nativeOpen])).next, [{ op: "exec", headerRlp: bytesToHex(failedHeader) }]));
+const failedSettle = step(failedLocked.next, [{
+  ...nativeSettle,
+  blockHash: failedParsed.hash,
+  receiptRlp: bytesToHex(failedReceipt),
+  receiptProof: failedLeaf.proof.map((node) => bytesToHex(node)),
+}]);
+assert.equal(failedSettle.ok, false);
+if (failedSettle.ok) throw new Error("status");
+assert.equal(failedSettle.error, "eth receipt refused");
+const hugeTx = rlpEncode([
+  rlpUintBytes(0),
+  rlpUintBytes(1),
+  rlpUintBytes(21000),
+  hexToBytes(nativeTo),
+  hexToBytes("0de0b6b3a7640000"),
+  new Uint8Array(),
+  rlpUintBytes(1),
+  new Uint8Array(32),
+  new Uint8Array(32),
+]);
+const hugeLeaf = secureLeaf(nativeKey, hugeTx);
+const hugeHeader = executionHeader({
+  parentHash: new Uint8Array(32),
+  transactionsRoot: hugeLeaf.root,
+  receiptsRoot: nativeReceiptLeaf.root,
+  number: 9,
+});
+const hugeParsed = parseExecutionHeader(hugeHeader);
+if (!hugeParsed) throw new Error("huge header");
+const hugeLocked = must(step(must(step(base(), [nativeOpen])).next, [{ op: "exec", headerRlp: bytesToHex(hugeHeader) }]));
+const hugeStep = step(hugeLocked.next, [{
+  ...nativeSettle,
+  blockHash: hugeParsed.hash,
+  txRlp: bytesToHex(hugeTx),
+  txProof: hugeLeaf.proof.map((node) => bytesToHex(node)),
+}]);
+assert.equal(hugeStep.ok, false);
+if (hugeStep.ok) throw new Error("wei");
+assert.equal(hugeStep.error, "eth transaction refused");
+
+let ethCursor = must(step(base(), [tokenOpen])).next;
+let ethRefundedAt = 0;
+for (let i = 0; i < 12 && ethCursor.withdrawals[0]?.status === "locked"; i += 1) {
+  if (ethCursor.height + 1 >= 10) {
+    const late = step(ethCursor, [tokenExec, tokenSettle]);
+    assert.equal(late.ok, false);
+    if (!late.ok) assert.equal(late.error, "withdrawal expired");
+  }
+  ethCursor = must(step(ethCursor)).next;
+  if (ethCursor.withdrawals[0]?.status === "refunded") ethRefundedAt = ethCursor.height;
+}
+assert.equal(ethRefundedAt, 10);
+assert.equal(ethCursor.ledger.get(payer.address)?.balance, 5000);
+assert.equal(ethCursor.ledger.get(WITHDRAWAL_ESCROW)?.balance, 0);
+
+const ethProof = {
+  decoy,
+  childRlp: bytesToHex(child),
+  badParentRlp: bytesToHex(badParent),
+  token: {
+    signature: tokenProof.signature,
+    id: tokenProof.id,
+    asset: token,
+    destination: ethDestination,
+    nonce: 4,
+    amount: 1000,
+    headerRlp: bytesToHex(tokenHeader),
+    blockHash: tokenParsed.hash,
+    txIndex: 0,
+    receiptRlp: bytesToHex(tokenReceipt),
+    receiptProof: tokenLeaf.proof.map((node) => bytesToHex(node)),
+    logIndex: 0,
+    txRlp: "",
+    txProof: [] as string[],
+    locator: `${tokenParsed.hash}:0:0`,
+    openEvidence: canonicalEvidence(evidence([tokenOpen])),
+    recipient,
+  },
+  native: {
+    signature: nativeProof.signature,
+    id: nativeProof.id,
+    asset: "eth",
+    destination: nativeDestination,
+    nonce: 5,
+    amount: 1000,
+    headerRlp: bytesToHex(nativeHeader),
+    blockHash: nativeParsed.hash,
+    txIndex: 0,
+    receiptRlp: bytesToHex(nativeReceipt),
+    receiptProof: nativeReceiptLeaf.proof.map((node) => bytesToHex(node)),
+    logIndex: 0,
+    txRlp: bytesToHex(nativeTx),
+    txProof: nativeTxLeaf.proof.map((node) => bytesToHex(node)),
+    locator: `${nativeParsed.hash}:0:value`,
+    recipient: nativeTo,
+  },
+};
+
 const oracle = {
   wasmCode: blankEvidence(chainId).wasmCode,
   chainId,
@@ -283,6 +636,7 @@ const oracle = {
   headerHash,
   locator: `${parsed.txid}:0`,
   opreturn: bytesToHex(opreturn),
+  ethProof,
 };
 const path = join(tmpdir(), "eq-withdraw-oracle.json");
 writeFileSync(path, JSON.stringify(oracle));
@@ -302,5 +656,7 @@ console.log(JSON.stringify({
   refundedAt,
   senderAfterSettle: 4000,
   senderAfterRefund: 5000,
-  eth: "refused",
+  eth: "settled",
+  ethLocator: tokenSettled.next.withdrawals[0]?.effectLocator,
+  nativeLocator: nativeSettled.next.withdrawals[0]?.effectLocator,
 }));

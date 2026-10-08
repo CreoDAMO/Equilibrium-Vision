@@ -212,6 +212,7 @@ function omegaFromRecord(record: ReturnType<typeof omegaRecord>): Omega {
     delegations: record.delegations.map((d) => ({ ...d })),
     unbonding: (record.unbonding ?? []).map((u) => ({ ...u })),
     withdrawals: (record.withdrawals ?? []).map((w) => ({ ...w })),
+    ethExecution: (record.ethExecution ?? []).map((h) => ({ ...h })),
     proposals: record.proposals.map((p) => ({ ...p })),
     models: record.models.map((m) => ({ ...m })),
     settlements: record.settlements.map((s) => ({ ...s })),

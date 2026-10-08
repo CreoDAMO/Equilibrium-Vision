@@ -297,8 +297,17 @@ export interface Withdrawal {
   /** Successor height at which a still-locked obligation refunds. Not recomputed if the timeout changes. */
   expiryHeight: number;
   status: "locked" | "settled" | "refunded";
-  /** txid:vout once settled. Null until then. */
+  /** txid:vout, blockHash:txIndex:logIndex, or blockHash:txIndex:value once settled. Null until then. */
   effectLocator: string | null;
+}
+
+/** An Ethereum execution header. Its hash is keccak256 of the header RLP. Not an EQU beacon header. */
+export interface EthExecutionHeader {
+  hash: string;
+  parentHash: string;
+  receiptsRoot: string;
+  transactionsRoot: string;
+  number: number;
 }
 
 export type WithdrawalEvidence =
@@ -320,6 +329,18 @@ export type WithdrawalEvidence =
       vout: number;
       headerHash: string;
       merkle: string[];
+    }
+  | { op: "exec"; headerRlp: string }
+  | {
+      op: "settleEth";
+      id: string;
+      blockHash: string;
+      txIndex: number;
+      receiptRlp: string;
+      receiptProof: string[];
+      logIndex: number;
+      txRlp: string;
+      txProof: string[];
     };
 
 export interface Proposal {
@@ -567,6 +588,8 @@ export interface PersistedBody {
   delegations: Delegation[];
   unbonding?: Unbonding[];
   withdrawals?: Withdrawal[];
+  /** Ethereum execution headers. Empty on bodies sealed before this proof. */
+  ethExecution?: EthExecutionHeader[];
   proposals: Proposal[];
   models: ModelClaim[];
   settlements?: Settlement[];
@@ -621,6 +644,7 @@ export interface ChainSnapshot {
   delegations: Delegation[];
   unbonding: Unbonding[];
   withdrawals: Withdrawal[];
+  ethExecution: EthExecutionHeader[];
   proposals: Proposal[];
   models: ModelClaim[];
   lastPaired: PairedResult | null;

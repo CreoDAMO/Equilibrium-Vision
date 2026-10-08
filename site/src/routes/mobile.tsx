@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useNetwork } from "@/lib/network-context";
 import { useWallet } from "@/lib/wallet-context";
-import { openWithdrawal, settleWithdrawal } from "@/lib/chain-api";
+import { admitExecution, openWithdrawal, settleEthWithdrawal, settleWithdrawal } from "@/lib/chain-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,16 @@ function MobilePage() {
   const [amount, setAmount] = useState("1000");
   const [fee, setFee] = useState("100");
   const [destination, setDestination] = useState("p2pkh:" + "cd".repeat(20));
+  const [ethDestination, setEthDestination] = useState("eth:" + "cd".repeat(20));
+  const [ethAsset, setEthAsset] = useState("eth");
+  const [headerRlp, setHeaderRlp] = useState("");
+  const [ethBlock, setEthBlock] = useState("");
+  const [receiptRlp, setReceiptRlp] = useState("");
+  const [receiptProof, setReceiptProof] = useState("");
+  const [txRlp, setTxRlp] = useState("");
+  const [txProof, setTxProof] = useState("");
+  const [txIndex, setTxIndex] = useState("0");
+  const [logIndex, setLogIndex] = useState("0");
   const [withdrawAmount, setWithdrawAmount] = useState("1000");
   const [withdrawNonce, setWithdrawNonce] = useState("0");
   const [rawTx, setRawTx] = useState("");
@@ -63,7 +73,7 @@ function MobilePage() {
   const mineWithdrawals = (snap?.withdrawals ?? []).filter((w) => w.sender === wallet?.address);
   const chainId = snap?.params.chainId ?? (network === "mainnet" ? 1 : 2);
 
-  async function stageWithdrawal(foreignNetwork: "btc" | "eth", asset: string) {
+  async function stageWithdrawal(foreignNetwork: "btc" | "eth", asset: string, dest = destination) {
     if (!wallet) return;
     const value = Number(withdrawAmount);
     const n = Number(withdrawNonce);
@@ -76,7 +86,7 @@ function MobilePage() {
       amount: value,
       network: foreignNetwork,
       asset,
-      destination: destination.trim().toLowerCase(),
+      destination: dest.trim().toLowerCase(),
       nonce: n,
     });
     const res = await openWithdrawal({
@@ -85,14 +95,14 @@ function MobilePage() {
         amount: value,
         foreignNetwork,
         asset,
-        destination: destination.trim().toLowerCase(),
+        destination: dest.trim().toLowerCase(),
         nonce: n,
         publicKey: proof.publicKey,
         signature: proof.signature,
       },
     });
     if (res.ok) {
-      toast.success(foreignNetwork === "btc" ? "Lock queued. The next block debits this address." : "Queued");
+      toast.success(foreignNetwork === "btc" ? "Lock queued. The next block debits this address." : "Ethereum lock queued. The receipt is still required.");
       await qc.invalidateQueries({ queryKey: ["snapshot", network] });
     } else toast.error(res.error ?? "Refused");
   }
@@ -110,7 +120,8 @@ function MobilePage() {
         <p className="mt-2 max-w-2xl text-muted">
           This phone holds the wallet. The miner address is that address. The key is not
           sent to the solver. A transfer moves EQU to another EQU address. A withdrawal
-          is a different signature: it leaves only when a Bitcoin output matches the lock.
+          is a different signature: it leaves when a Bitcoin output matches the lock, or when an
+          Ethereum receipt matches an admitted execution header.
         </p>
       </header>
 
@@ -207,13 +218,16 @@ function MobilePage() {
 
       <section className="rounded-xl bg-surface p-5 shadow-[var(--shadow-border)] space-y-3">
         <Badge tone={mineWithdrawals.some((w) => w.status === "settled") ? "ok" : "warn"}>
-          {mineWithdrawals.some((w) => w.status === "settled") ? "bitcoin output settled" : "leaves only on a bitcoin output"}
+          {mineWithdrawals.some((w) => w.status === "settled") ? "output settled" : "leaves on a proven output"}
         </Badge>
         <p className="text-sm text-muted">
           A transfer pays another EQU address. A withdrawal locks EQU in an escrow this key cannot spend.
-          It settles only when a Bitcoin output's destination and amount match the lock and that transaction
-          sits in an admitted header. Settled EQU is not credited on this ledger. Ethereum execution is refused.
-          If the output is not proven within {snap?.params.withdrawalTimeout ?? 10} blocks, the same amount returns
+          Bitcoin settles when an output's destination and amount match the lock and that transaction
+          sits in an admitted header. Ethereum settles when a receipt — and, for native ETH, the transaction —
+          is proven against an admitted execution header's trie roots. That header is not an EQU beacon,
+          and Ethereum's sync committee is not verified. The first execution header is only a structural
+          bootstrap. Settled EQU is not credited on this ledger.
+          If the proof does not arrive within {snap?.params.withdrawalTimeout ?? 10} blocks, the same amount returns
           to this address. A lock against a header hash is not this withdrawal.
         </p>
         {wallet ? (
@@ -225,7 +239,6 @@ function MobilePage() {
             </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => void stageWithdrawal("btc", "btc")}>Sign and lock</Button>
-              <Button variant="secondary" onClick={() => void stageWithdrawal("eth", "eth")}>Try Ethereum</Button>
             </div>
             {mineWithdrawals.length === 0 ? <p className="text-sm text-muted">No withdrawal for this address.</p> : null}
             {mineWithdrawals.map((w) => (
@@ -276,6 +289,92 @@ function MobilePage() {
               }}
             >
               Submit Bitcoin proof
+            </Button>
+            <h2 className="font-display text-xl">Ethereum execution proof</h2>
+            <p className="text-sm text-muted">
+              Destination is eth: plus 20 bytes. Asset is eth, or the token address on a Transfer log.
+              Paste the execution header RLP. Its hash is keccak256 of that RLP. An EQU beacon bodyRoot is not the receipts root.
+            </p>
+            <Input value={ethDestination} onChange={(e) => setEthDestination(e.target.value)} />
+            <Input value={ethAsset} onChange={(e) => setEthAsset(e.target.value)} />
+            <Button variant="secondary" onClick={() => void stageWithdrawal("eth", ethAsset.trim().toLowerCase(), ethDestination)}>
+              Sign Ethereum lock
+            </Button>
+            <textarea
+              className="min-h-24 w-full rounded-md bg-bg-elevated p-3 font-mono text-xs"
+              placeholder="Execution header RLP"
+              value={headerRlp}
+              onChange={(e) => setHeaderRlp(e.target.value)}
+            />
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                const res = await admitExecution({ data: { network, headerRlp } });
+                if (res.ok) {
+                  toast.success("Execution header queued. The sync committee is not checked.");
+                  await qc.invalidateQueries({ queryKey: ["snapshot", network] });
+                } else toast.error(res.error ?? "Refused");
+              }}
+            >
+              Admit execution header
+            </Button>
+            <Input placeholder="Execution block hash" value={ethBlock} onChange={(e) => setEthBlock(e.target.value)} />
+            <textarea
+              className="min-h-24 w-full rounded-md bg-bg-elevated p-3 font-mono text-xs"
+              placeholder="Receipt RLP"
+              value={receiptRlp}
+              onChange={(e) => setReceiptRlp(e.target.value)}
+            />
+            <textarea
+              className="min-h-20 w-full rounded-md bg-bg-elevated p-3 font-mono text-xs"
+              placeholder="Receipt proof nodes, comma separated"
+              value={receiptProof}
+              onChange={(e) => setReceiptProof(e.target.value)}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={txIndex} onChange={(e) => setTxIndex(e.target.value)} />
+              <Input value={logIndex} onChange={(e) => setLogIndex(e.target.value)} />
+            </div>
+            <textarea
+              className="min-h-20 w-full rounded-md bg-bg-elevated p-3 font-mono text-xs"
+              placeholder="Native ETH only: transaction RLP"
+              value={txRlp}
+              onChange={(e) => setTxRlp(e.target.value)}
+            />
+            <textarea
+              className="min-h-20 w-full rounded-md bg-bg-elevated p-3 font-mono text-xs"
+              placeholder="Native ETH only: transaction proof"
+              value={txProof}
+              onChange={(e) => setTxProof(e.target.value)}
+            />
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                const id = mineWithdrawals.find((w) => w.status === "locked" && w.network === "eth")?.id;
+                if (!id) {
+                  toast.error("No locked Ethereum withdrawal");
+                  return;
+                }
+                const res = await settleEthWithdrawal({
+                  data: {
+                    network,
+                    id,
+                    blockHash: ethBlock,
+                    txIndex: Number(txIndex),
+                    receiptRlp,
+                    receiptProof: receiptProof.split(",").map((item) => item.trim()).filter(Boolean),
+                    logIndex: Number(logIndex),
+                    txRlp,
+                    txProof: txProof.split(",").map((item) => item.trim()).filter(Boolean),
+                  },
+                });
+                if (res.ok) {
+                  toast.success("Ethereum settle queued. The next block checks the receipt.");
+                  await qc.invalidateQueries({ queryKey: ["snapshot", network] });
+                } else toast.error(res.error ?? "Refused");
+              }}
+            >
+              Submit Ethereum proof
             </Button>
           </>
         ) : null}

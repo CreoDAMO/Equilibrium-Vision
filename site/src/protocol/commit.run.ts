@@ -91,6 +91,7 @@ function snap(current: Omega) {
     delegations: current.delegations.map((d) => ({ ...d })),
     unbonding: current.unbonding.map((u) => ({ ...u })),
     withdrawals: current.withdrawals.map((w) => ({ ...w })),
+    ethExecution: (current.ethExecution ?? []).map((h) => ({ ...h })),
     proposals: current.proposals.map((p) => ({
       id: p.id,
       status: p.status,

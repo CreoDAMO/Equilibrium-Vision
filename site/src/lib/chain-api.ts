@@ -348,6 +348,46 @@ export const settleWithdrawal = createServerFn({ method: "POST" })
     return res;
   });
 
+export const admitExecution = createServerFn({ method: "POST" })
+  .validator(Network.extend({ headerRlp: z.string() }))
+  .handler(async ({ data }) => {
+    const { getNode, persist } = await import("./node.server");
+    const node = await getNode(data.network);
+    const res = node.admitExecution(data.headerRlp);
+    if (res.ok) await persist(data.network);
+    return res;
+  });
+
+export const settleEthWithdrawal = createServerFn({ method: "POST" })
+  .validator(
+    Network.extend({
+      id: z.string(),
+      blockHash: z.string(),
+      txIndex: z.number(),
+      receiptRlp: z.string(),
+      receiptProof: z.array(z.string()),
+      logIndex: z.number(),
+      txRlp: z.string(),
+      txProof: z.array(z.string()),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const { getNode, persist } = await import("./node.server");
+    const node = await getNode(data.network);
+    const res = node.settleEthWithdrawal({
+      id: data.id.trim().toLowerCase(),
+      blockHash: data.blockHash.trim().toLowerCase(),
+      txIndex: data.txIndex,
+      receiptRlp: data.receiptRlp,
+      receiptProof: data.receiptProof,
+      logIndex: data.logIndex,
+      txRlp: data.txRlp,
+      txProof: data.txProof,
+    });
+    if (res.ok) await persist(data.network);
+    return res;
+  });
+
 export const listBidirectionalLog = createServerFn({ method: "POST" })
   .validator(Network)
   .handler(async ({ data }) => {

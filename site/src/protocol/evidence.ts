@@ -59,11 +59,16 @@ export function canonicalEvidence(ev: TransitionEvidence): string {
     )
     .join(";");
   const withdraw = (ev.withdraw ?? [])
-    .map((w) =>
-      w.op === "open"
-        ? `o:${w.sender}:${w.amount}:${w.network}:${w.asset}:${w.destination}:${w.nonce}:${w.publicKey ?? ""}:${w.signature ?? ""}`
-        : `s:${w.id}:${w.headerHash}:${w.vout}:${w.rawTx}:${w.merkle.join(",")}`,
-    )
+    .map((w) => {
+      if (w.op === "open") {
+        return `o:${w.sender}:${w.amount}:${w.network}:${w.asset}:${w.destination}:${w.nonce}:${w.publicKey ?? ""}:${w.signature ?? ""}`;
+      }
+      if (w.op === "exec") return `x:${w.headerRlp}`;
+      if (w.op === "settleEth") {
+        return `e:${w.id}:${w.blockHash}:${w.txIndex}:${w.receiptRlp}:${w.receiptProof.join(",")}:${w.logIndex}:${w.txRlp}:${w.txProof.join(",")}`;
+      }
+      return `s:${w.id}:${w.headerHash}:${w.vout}:${w.rawTx}:${w.merkle.join(",")}`;
+    })
     .join(";");
   const body = ["v1", String(ev.chainId), ev.wasmCode, btc, eth, wasm, stake].join("|");
   if (!cognition && !settle && !withdraw) return body;

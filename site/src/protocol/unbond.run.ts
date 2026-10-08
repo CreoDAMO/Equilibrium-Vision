@@ -456,6 +456,7 @@ function digestOmega(unbonding: Unbonding[]): Omega {
     delegations: [],
     unbonding,
     withdrawals: [],
+    ethExecution: [],
     proposals: [],
     models: [],
     settlements: [],

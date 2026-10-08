@@ -245,7 +245,7 @@ export function verifyWithdrawEvidence(
   if (!Number.isSafeInteger(op.amount) || op.amount <= 0) return "withdraw authority refused";
   if (!Number.isSafeInteger(op.nonce) || op.nonce < 0) return "withdraw authority refused";
   if (op.network !== "btc" && op.network !== "eth") return "withdraw authority refused";
-  if (typeof op.asset !== "string" || op.asset.length === 0 || op.asset.length > 32) return "withdraw authority refused";
+  if (typeof op.asset !== "string" || op.asset.length === 0 || op.asset.length > 40) return "withdraw authority refused";
   if (typeof op.destination !== "string" || op.destination.length === 0 || op.destination.length > 80) return "withdraw authority refused";
   const claim: WithdrawClaim = {
     chainId,

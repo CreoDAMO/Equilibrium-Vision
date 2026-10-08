@@ -50,6 +50,8 @@ struct OmegaSnap {
     unbonding: Vec<UnbondingSnap>,
     #[serde(default)]
     withdrawals: Vec<WithdrawalSnap>,
+    #[serde(default)]
+    eth_execution: Vec<EthExecutionSnap>,
     proposals: Vec<ProposalSnap>,
     models: Vec<ModelSnap>,
     settlements: Vec<SettlementSnap>,
@@ -151,6 +153,16 @@ struct WithdrawalSnap {
     status: String,
     #[serde(default)]
     effect_locator: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EthExecutionSnap {
+    hash: String,
+    parent_hash: String,
+    receipts_root: String,
+    transactions_root: String,
+    number: i64,
 }
 
 #[derive(Clone, Deserialize)]
@@ -424,6 +436,18 @@ fn omega_preimage(omega: &OmegaSnap) -> String {
         .collect::<Vec<_>>()
         .join(";");
 
+    let execution = omega
+        .eth_execution
+        .iter()
+        .map(|h| {
+            format!(
+                "{}:{}:{}:{}:{}",
+                h.hash, h.parent_hash, h.receipts_root, h.transactions_root, h.number
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+
     let proposals = omega
         .proposals
         .iter()
@@ -508,6 +532,9 @@ fn omega_preimage(omega: &OmegaSnap) -> String {
     }
     if !withdrawals.is_empty() {
         full = format!("{full}|{withdrawals}");
+    }
+    if !execution.is_empty() {
+        full = format!("{full}|{execution}");
     }
     full
 }

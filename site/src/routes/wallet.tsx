@@ -29,6 +29,7 @@ function WalletPage() {
           when the phrase is used. The mobile page and the Android solver use this address.
           The private key stays in this browser. A send is a transfer to another EQU address.
           It does not leave the ledger. A withdrawal is a separate signature on the mobile page.
+          Bitcoin settles from an output. Ethereum settles from a receipt under an admitted execution header, not from an EQU beacon.
         </p>
       </header>
 

@@ -7,6 +7,9 @@ use sha2::{Digest, Sha256};
 
 use super::{sha256_hex, AccountSnap, OmegaSnap, PoolSnap, TxSnap};
 
+#[path = "eth_exec.rs"]
+mod eth_exec;
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct EvidenceBody {
@@ -189,6 +192,29 @@ pub(super) enum WithdrawOp {
         #[serde(rename = "headerHash")]
         header_hash: String,
         merkle: Vec<String>,
+    },
+    #[serde(rename = "exec")]
+    Exec {
+        #[serde(rename = "headerRlp")]
+        header_rlp: String,
+    },
+    #[serde(rename = "settleEth")]
+    SettleEth {
+        id: String,
+        #[serde(rename = "blockHash")]
+        block_hash: String,
+        #[serde(rename = "txIndex")]
+        tx_index: i64,
+        #[serde(rename = "receiptRlp")]
+        receipt_rlp: String,
+        #[serde(rename = "receiptProof")]
+        receipt_proof: Vec<String>,
+        #[serde(rename = "logIndex")]
+        log_index: i64,
+        #[serde(rename = "txRlp")]
+        tx_rlp: String,
+        #[serde(rename = "txProof")]
+        tx_proof: Vec<String>,
     },
 }
 
@@ -434,6 +460,21 @@ fn withdraw_line(op: &WithdrawOp) -> String {
         } => format!(
             "s:{id}:{header_hash}:{vout}:{raw_tx}:{}",
             merkle.join(",")
+        ),
+        WithdrawOp::Exec { header_rlp } => format!("x:{header_rlp}"),
+        WithdrawOp::SettleEth {
+            id,
+            block_hash,
+            tx_index,
+            receipt_rlp,
+            receipt_proof,
+            log_index,
+            tx_rlp,
+            tx_proof,
+        } => format!(
+            "e:{id}:{block_hash}:{tx_index}:{receipt_rlp}:{}:{log_index}:{tx_rlp}:{}",
+            receipt_proof.join(","),
+            tx_proof.join(",")
         ),
     }
 }
@@ -1457,7 +1498,7 @@ fn verify_withdraw(
         || nonce < 0.0
         || network != "btc" && network != "eth"
         || asset.is_empty()
-        || asset.len() > 32
+        || asset.len() > 40
         || destination.is_empty()
         || destination.len() > 80
     {
@@ -1708,16 +1749,21 @@ fn apply_withdraw(omega: &mut OmegaSnap, op: &WithdrawOp) -> Result<(), String> 
                 signature,
             )?;
             if network == "eth" {
-                return Err("eth execution proof refused".into());
-            }
-            if network != "btc" {
+                if !eth_exec::is_eth_destination(destination) {
+                    return Err("withdrawal destination refused".into());
+                }
+                if !eth_exec::is_eth_asset(asset) {
+                    return Err("withdrawal asset refused".into());
+                }
+            } else if network == "btc" {
+                if asset != "btc" {
+                    return Err("withdrawal asset refused".into());
+                }
+                if !is_btc_destination(destination) {
+                    return Err("withdrawal destination refused".into());
+                }
+            } else {
                 return Err("withdrawal network refused".into());
-            }
-            if asset != "btc" {
-                return Err("withdrawal asset refused".into());
-            }
-            if !is_btc_destination(destination) {
-                return Err("withdrawal destination refused".into());
             }
             let id = withdrawal_id(omega.chain_id, sender, *amount, network, asset, destination, *nonce);
             if omega.withdrawals.iter().any(|w| w.id == id) {
@@ -1787,7 +1833,117 @@ fn apply_withdraw(omega: &mut OmegaSnap, op: &WithdrawOp) -> Result<(), String> 
             omega.withdrawals[index].effect_locator = Some(locator);
             Ok(())
         }
+        WithdrawOp::Exec { header_rlp } => admit_execution(omega, header_rlp),
+        WithdrawOp::SettleEth {
+            id,
+            block_hash,
+            tx_index,
+            receipt_rlp,
+            receipt_proof,
+            log_index,
+            tx_rlp,
+            tx_proof,
+        } => settle_eth(
+            omega,
+            id,
+            block_hash,
+            *tx_index,
+            receipt_rlp,
+            receipt_proof,
+            *log_index,
+            tx_rlp,
+            tx_proof,
+        ),
     }
+}
+
+fn admit_execution(omega: &mut OmegaSnap, header_rlp: &str) -> Result<(), String> {
+    let clean = header_rlp.trim().trim_start_matches("0x");
+    let raw = hex::decode(clean).map_err(|_| "eth header refused")?;
+    if clean.len() != raw.len() * 2 {
+        return Err("eth header refused".into());
+    }
+    let parsed = eth_exec::parse_execution_header(&raw).ok_or("eth header refused")?;
+    if omega.eth_execution.iter().any(|h| h.hash == parsed.hash) {
+        return Err("eth header exists".into());
+    }
+    if let Some(tip) = omega.eth_execution.last() {
+        if parsed.parent_hash != tip.hash {
+            return Err("eth parent does not match the tip".into());
+        }
+        if parsed.number != tip.number + 1 {
+            return Err("eth number does not extend the tip".into());
+        }
+    }
+    omega.eth_execution.push(super::EthExecutionSnap {
+        hash: parsed.hash,
+        parent_hash: parsed.parent_hash,
+        receipts_root: parsed.receipts_root,
+        transactions_root: parsed.transactions_root,
+        number: parsed.number,
+    });
+    if omega.eth_execution.len() > 256 {
+        omega.eth_execution.remove(0);
+    }
+    Ok(())
+}
+
+fn settle_eth(
+    omega: &mut OmegaSnap,
+    id: &str,
+    block_hash: &str,
+    tx_index: i64,
+    receipt_rlp: &str,
+    receipt_proof: &[String],
+    log_index: i64,
+    tx_rlp: &str,
+    tx_proof: &[String],
+) -> Result<(), String> {
+    let Some(index) = omega.withdrawals.iter().position(|w| w.id == id) else {
+        return Err("withdrawal is not locked".into());
+    };
+    if omega.withdrawals[index].status != "locked" {
+        return Err("withdrawal is not locked".into());
+    }
+    if omega.height + 1 >= omega.withdrawals[index].expiry_height {
+        return Err("withdrawal expired".into());
+    }
+    if omega.withdrawals[index].network != "eth" || !eth_exec::is_eth_asset(&omega.withdrawals[index].asset) {
+        return Err("withdrawal binding refused".into());
+    }
+    let Some(header) = omega.eth_execution.iter().find(|h| h.hash == block_hash) else {
+        return Err("eth header is not in Ω".into());
+    };
+    let receipts_root = header.receipts_root.clone();
+    let transactions_root = header.transactions_root.clone();
+    let hash = header.hash.clone();
+    let asset = omega.withdrawals[index].asset.clone();
+    let effect = eth_exec::prove_eth_effect(
+        &receipts_root,
+        &transactions_root,
+        &hash,
+        tx_index,
+        receipt_rlp,
+        receipt_proof,
+        log_index,
+        tx_rlp,
+        tx_proof,
+        &asset,
+    )?;
+    if effect.destination != omega.withdrawals[index].destination
+        || effect.asset != omega.withdrawals[index].asset
+        || effect.amount as f64 != omega.withdrawals[index].amount
+    {
+        return Err("withdrawal binding refused".into());
+    }
+    if omega.withdrawals.iter().any(|w| w.effect_locator.as_deref() == Some(effect.locator.as_str())) {
+        return Err("effect already settled".into());
+    }
+    let locked = omega.withdrawals[index].amount;
+    debit(&mut omega.ledger, &withdrawal_escrow(), locked).map_err(|_| "withdrawal settle refused")?;
+    omega.withdrawals[index].status = "settled".into();
+    omega.withdrawals[index].effect_locator = Some(effect.locator);
+    Ok(())
 }
 
 fn refund_withdrawals(omega: &mut OmegaSnap, height: i64) -> Result<(), String> {
@@ -2290,6 +2446,7 @@ mod delegate_authority_tests {
             delegations: Vec::new(),
             unbonding: Vec::new(),
             withdrawals: Vec::new(),
+            eth_execution: Vec::new(),
             proposals: Vec::new(),
             models: Vec::new(),
             settlements: Vec::new(),
@@ -2442,6 +2599,7 @@ mod unbond_lifecycle_tests {
                 .collect(),
             unbonding: Vec::new(),
             withdrawals: Vec::new(),
+            eth_execution: Vec::new(),
             proposals: Vec::new(),
             models: Vec::new(),
             settlements: Vec::new(),
@@ -2632,6 +2790,7 @@ mod unbond_lifecycle_tests {
                 .collect(),
             unbonding: Vec::new(),
             withdrawals: Vec::new(),
+            eth_execution: Vec::new(),
             proposals: Vec::new(),
             models: Vec::new(),
             settlements: Vec::new(),
@@ -2678,6 +2837,7 @@ mod unbond_lifecycle_tests {
             delegations: Vec::new(),
             unbonding: row.unbonding.clone(),
             withdrawals: Vec::new(),
+            eth_execution: Vec::new(),
             proposals: Vec::new(),
             models: Vec::new(),
             settlements: Vec::new(),
@@ -2785,7 +2945,7 @@ mod unbond_lifecycle_tests {
 
 #[cfg(test)]
 mod withdraw_lifecycle_tests {
-    use super::super::{AccountSnap, BtcSnap, Couplings, OmegaSnap};
+    use super::super::{AccountSnap, BtcSnap, Couplings, EthSnap, OmegaSnap};
     use super::{apply_material, canonical_evidence, settle_matured, EvidenceBody, WithdrawOp};
 
     #[derive(serde::Deserialize)]
@@ -2810,6 +2970,40 @@ mod withdraw_lifecycle_tests {
         header_hash: String,
         locator: String,
         opreturn: String,
+        eth_proof: EthProofOracle,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct EthCase {
+        signature: String,
+        id: String,
+        asset: String,
+        destination: String,
+        nonce: f64,
+        amount: f64,
+        header_rlp: String,
+        block_hash: String,
+        tx_index: i64,
+        receipt_rlp: String,
+        receipt_proof: Vec<String>,
+        log_index: i64,
+        tx_rlp: String,
+        tx_proof: Vec<String>,
+        locator: String,
+        #[serde(default)]
+        open_evidence: String,
+        recipient: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct EthProofOracle {
+        decoy: String,
+        child_rlp: String,
+        bad_parent_rlp: String,
+        token: EthCase,
+        native: EthCase,
     }
 
     fn omega(sender: &str, header: &str, root: &str) -> OmegaSnap {
@@ -2848,6 +3042,7 @@ mod withdraw_lifecycle_tests {
             delegations: Vec::new(),
             unbonding: Vec::new(),
             withdrawals: Vec::new(),
+            eth_execution: Vec::new(),
             proposals: Vec::new(),
             models: Vec::new(),
             settlements: Vec::new(),
@@ -2889,6 +3084,36 @@ mod withdraw_lifecycle_tests {
             vout: 0,
             header_hash: oracle.header_hash.clone(),
             merkle,
+        }
+    }
+
+    fn eth_open(oracle: &Oracle, case: &EthCase) -> WithdrawOp {
+        WithdrawOp::Open {
+            sender: oracle.sender.clone(),
+            amount: case.amount,
+            network: "eth".into(),
+            asset: case.asset.clone(),
+            destination: case.destination.clone(),
+            nonce: case.nonce,
+            public_key: oracle.public_key.clone(),
+            signature: case.signature.clone(),
+        }
+    }
+
+    fn eth_exec_op(header_rlp: &str) -> WithdrawOp {
+        WithdrawOp::Exec { header_rlp: header_rlp.into() }
+    }
+
+    fn eth_settle(case: &EthCase) -> WithdrawOp {
+        WithdrawOp::SettleEth {
+            id: case.id.clone(),
+            block_hash: case.block_hash.clone(),
+            tx_index: case.tx_index,
+            receipt_rlp: case.receipt_rlp.clone(),
+            receipt_proof: case.receipt_proof.clone(),
+            log_index: case.log_index,
+            tx_rlp: case.tx_rlp.clone(),
+            tx_proof: case.tx_proof.clone(),
         }
     }
 
@@ -2950,10 +3175,101 @@ mod withdraw_lifecycle_tests {
         let mut eth = omega(&oracle.sender, &oracle.header_hash, &oracle.txid);
         assert_eq!(
             apply_material(&mut eth, &body(&oracle, vec![open(&oracle, 1000.0, 1.0, "eth", "eth", &oracle.eth_signature)])).unwrap_err(),
-            "eth execution proof refused"
+            "withdrawal destination refused"
         );
         assert_eq!(balance(&eth, &oracle.sender), 5000.0);
         assert!(eth.withdrawals.is_empty());
+        assert_eq!(super::eth_exec::keccak256_hex(b""), "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+        assert_eq!(super::eth_exec::keccak256_hex(b"abc"), "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45");
+        assert_eq!(super::eth_exec::keccak256_hex(&[0x80]), "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
+        assert_eq!(super::eth_exec::keccak256_hex(&[0xc0]), "1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347");
+
+        let token = &oracle.eth_proof.token;
+        let token_open = eth_open(&oracle, token);
+        assert_eq!(canonical_evidence(&body(&oracle, vec![token_open.clone()])).unwrap(), token.open_evidence);
+        let mut token_state = omega(&oracle.sender, &oracle.header_hash, &oracle.txid);
+        apply_material(&mut token_state, &body(&oracle, vec![token_open])).unwrap();
+        assert_eq!(balance(&token_state, &oracle.sender), 4000.0);
+        assert_eq!(balance(&token_state, &escrow), 1000.0);
+        token_state.eth.push(EthSnap {
+            slot: 1,
+            hash: oracle.eth_proof.decoy.clone(),
+            participants: 342,
+            participation: "ff".repeat(32),
+            parent_root: "0".repeat(64),
+            state_root: "0".repeat(64),
+            body_root: token.block_hash.clone(),
+        });
+        let mut beacon = token_state.clone();
+        let mut decoy_settle = eth_settle(token);
+        if let WithdrawOp::SettleEth { block_hash, .. } = &mut decoy_settle {
+            *block_hash = oracle.eth_proof.decoy.clone();
+        }
+        assert_eq!(
+            apply_material(&mut beacon, &body(&oracle, vec![decoy_settle])).unwrap_err(),
+            "eth header is not in Ω"
+        );
+        assert_eq!(balance(&beacon, &escrow), 1000.0);
+        let mut shaped = token_state.clone();
+        assert_eq!(
+            apply_material(&mut shaped, &body(&oracle, vec![settle(&oracle, &token.id, &oracle.raw_tx, Vec::new())])).unwrap_err(),
+            "eth execution proof refused"
+        );
+        apply_material(&mut token_state, &body(&oracle, vec![eth_exec_op(&token.header_rlp)])).unwrap();
+        assert_eq!(token_state.eth_execution[0].hash, token.block_hash);
+        assert_eq!(
+            apply_material(&mut token_state, &body(&oracle, vec![eth_exec_op(&token.header_rlp)])).unwrap_err(),
+            "eth header exists"
+        );
+        assert_eq!(
+            apply_material(&mut token_state, &body(&oracle, vec![eth_exec_op(&oracle.eth_proof.bad_parent_rlp)])).unwrap_err(),
+            "eth parent does not match the tip"
+        );
+        apply_material(&mut token_state, &body(&oracle, vec![eth_exec_op(&oracle.eth_proof.child_rlp)])).unwrap();
+        assert_eq!(token_state.eth_execution.len(), 2);
+        let mut tampered = token_state.clone();
+        let mut bad_proof = token.receipt_proof.clone();
+        if let Some(node) = bad_proof.last_mut() {
+            let replacement = if node.ends_with("00") { "ff" } else { "00" };
+            node.replace_range(node.len().saturating_sub(2).., replacement);
+        }
+        let mut tamper_settle = eth_settle(token);
+        if let WithdrawOp::SettleEth { receipt_proof, .. } = &mut tamper_settle {
+            *receipt_proof = bad_proof;
+        }
+        assert_eq!(
+            apply_material(&mut tampered, &body(&oracle, vec![tamper_settle])).unwrap_err(),
+            "eth trie refused"
+        );
+        assert_eq!(balance(&tampered, &escrow), 1000.0);
+        apply_material(&mut token_state, &body(&oracle, vec![eth_settle(token)])).unwrap();
+        assert_eq!(token_state.withdrawals[0].status, "settled");
+        assert_eq!(token_state.withdrawals[0].effect_locator.as_deref(), Some(token.locator.as_str()));
+        assert_eq!(balance(&token_state, &escrow), 0.0);
+        assert_eq!(balance(&token_state, &oracle.sender), 4000.0);
+        assert_eq!(balance(&token_state, &token.recipient), 0.0);
+        assert_eq!(
+            apply_material(&mut token_state, &body(&oracle, vec![eth_settle(token)])).unwrap_err(),
+            "withdrawal is not locked"
+        );
+        let mut cross = locked.clone();
+        let mut cross_settle = eth_settle(token);
+        if let WithdrawOp::SettleEth { id, .. } = &mut cross_settle {
+            *id = oracle.id.clone();
+        }
+        assert_eq!(
+            apply_material(&mut cross, &body(&oracle, vec![cross_settle])).unwrap_err(),
+            "withdrawal binding refused"
+        );
+
+        let native = &oracle.eth_proof.native;
+        let mut native_state = omega(&oracle.sender, &oracle.header_hash, &oracle.txid);
+        apply_material(&mut native_state, &body(&oracle, vec![eth_open(&oracle, native), eth_exec_op(&native.header_rlp), eth_settle(native)])).unwrap();
+        assert_eq!(native_state.withdrawals[0].status, "settled");
+        assert_eq!(native_state.withdrawals[0].effect_locator.as_deref(), Some(native.locator.as_str()));
+        assert_eq!(balance(&native_state, &escrow), 0.0);
+        assert_eq!(balance(&native_state, &oracle.sender), 4000.0);
+        assert_eq!(balance(&native_state, &native.recipient), 0.0);
 
         let mut late = locked.clone();
         late.height = 9;

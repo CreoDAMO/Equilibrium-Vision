@@ -68,6 +68,7 @@ function omega(height: number): Omega {
     delegations: [],
     unbonding: [],
     withdrawals: [],
+    ethExecution: [],
     proposals: [],
     models: [],
     settlements: [],

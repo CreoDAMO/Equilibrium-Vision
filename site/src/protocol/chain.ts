@@ -7,6 +7,7 @@ import type {
   Delegation,
   Unbonding,
   Withdrawal,
+  EthExecutionHeader,
   DexPool,
   FinalityRound,
   ModelClaim,
@@ -44,6 +45,7 @@ import { slashAmount } from "./coinomics";
 import { challengeBinding, modelBinding } from "./membranes";
 import { applySwap, poolAddress, quoteSwap } from "./dex";
 import { buildP2pkhTx, decodeHeaderHex, decodeTxHex, isBtcDestination, parseBtcHeader, parseBtcTx, proveBtcOutput, verifyBtcMerkle, verifyBtcPow } from "./btc";
+import { decodeEvenHex, executionHeader, isEthAsset, isEthDestination, legacyReceipt, parseExecutionHeader, proveEthEffect, rlpUint, secureLeaf, TRANSFER_TOPIC } from "./eth-exec";
 import { callArbitrage } from "./wasm-host";
 import {
   ETH_MIN_PARTICIPANTS,
@@ -123,6 +125,7 @@ export class OrganismNode {
   delegations: Delegation[] = [];
   unbonding: Unbonding[] = [];
   withdrawals: Withdrawal[] = [];
+  ethExecution: EthExecutionHeader[] = [];
   proposals: Proposal[] = [];
   models: ModelClaim[] = [];
   settlements: Settlement[] = [];
@@ -185,6 +188,7 @@ export class OrganismNode {
     n.delegations = body.delegations ?? [];
     n.unbonding = body.unbonding ?? [];
     n.withdrawals = body.withdrawals ?? [];
+    n.ethExecution = body.ethExecution ?? [];
     n.proposals = body.proposals ?? [];
     n.models = body.models ?? [];
     n.settlements = body.settlements ?? [];
@@ -227,6 +231,7 @@ export class OrganismNode {
     n.delegations = this.delegations.map((d) => ({ ...d }));
     n.unbonding = this.unbonding.map((u) => ({ ...u }));
     n.withdrawals = this.withdrawals.map((w) => ({ ...w }));
+    n.ethExecution = this.ethExecution.map((h) => ({ ...h }));
     n.proposals = this.proposals.map((p) => ({ ...p }));
     n.models = this.models.map((m) => ({ ...m }));
     n.settlements = this.settlements.map((s) => ({ ...s }));
@@ -260,6 +265,7 @@ export class OrganismNode {
       delegations: this.delegations.map((d) => ({ ...d })),
       unbonding: this.unbonding.map((u) => ({ ...u })),
       withdrawals: this.withdrawals.map((w) => ({ ...w })),
+      ethExecution: this.ethExecution.map((h) => ({ ...h })),
       proposals: this.proposals.map((p) => ({ ...p })),
       models: this.models.map((m) => ({ ...m })),
       settlements: this.settlements.map((s) => ({ ...s })),
@@ -279,6 +285,7 @@ export class OrganismNode {
     this.delegations = next.delegations;
     this.unbonding = next.unbonding;
     this.withdrawals = next.withdrawals;
+    this.ethExecution = next.ethExecution;
     this.proposals = next.proposals;
     this.models = next.models;
     this.settlements = next.settlements;
@@ -358,7 +365,11 @@ export class OrganismNode {
       stake: ev.stake.map((s) => ({ ...s })),
       cognition: (ev.cognition ?? []).map((c) => ({ ...c })),
       settle: (ev.settle ?? []).map((s) => ({ ...s })),
-      withdraw: (ev.withdraw ?? []).map((w) => ({ ...w, ...(w.op === "settle" ? { merkle: [...w.merkle] } : {}) })),
+      withdraw: (ev.withdraw ?? []).map((w) => {
+        if (w.op === "settle") return { ...w, merkle: [...w.merkle] };
+        if (w.op === "settleEth") return { ...w, receiptProof: [...w.receiptProof], txProof: [...w.txProof] };
+        return { ...w };
+      }),
     };
   }
 
@@ -1123,6 +1134,7 @@ export class OrganismNode {
       delegations: this.delegations,
       unbonding: this.unbonding,
       withdrawals: this.withdrawals,
+      ethExecution: this.ethExecution,
       proposals: this.proposals,
       models: this.models,
       settlements: this.settlements,
@@ -1482,7 +1494,8 @@ export class OrganismNode {
 
   /**
    * Stage a signed withdrawal. The debit happens in the successor, not here.
-   * Ethereum is refused before it is queued. This is not lockForeign.
+   * Ethereum locks only for an eth destination. The receipt is checked at settle.
+   * This is not lockForeign.
    */
   openWithdrawal(input: {
     amount: number;
@@ -1501,10 +1514,13 @@ export class OrganismNode {
     }
     const refused = verifyWithdrawEvidence(this.params.chainId, { ...input, sender });
     if (refused) return { ok: false, error: refused };
-    if (input.network === "eth") return { ok: false, error: "eth execution proof refused" };
-    if (input.network !== "btc") return { ok: false, error: "withdrawal network refused" };
-    if (input.asset !== "btc") return { ok: false, error: "withdrawal asset refused" };
-    if (!isBtcDestination(input.destination)) return { ok: false, error: "withdrawal destination refused" };
+    if (input.network === "eth") {
+      if (!isEthDestination(input.destination)) return { ok: false, error: "withdrawal destination refused" };
+      if (!isEthAsset(input.asset)) return { ok: false, error: "withdrawal asset refused" };
+    } else if (input.network === "btc") {
+      if (input.asset !== "btc") return { ok: false, error: "withdrawal asset refused" };
+      if (!isBtcDestination(input.destination)) return { ok: false, error: "withdrawal destination refused" };
+    } else return { ok: false, error: "withdrawal network refused" };
     const id = withdrawalId({
       chainId: this.params.chainId,
       sender,
@@ -1573,6 +1589,109 @@ export class OrganismNode {
       },
     ];
     this.emit("in", "bridge", `settle withdrawal ${input.id.slice(0, 12)} · staged`);
+    return { ok: true };
+  }
+
+  private executionWindow(): { ok: true; headers: EthExecutionHeader[] } | { ok: false; error: string } {
+    const headers = this.ethExecution.map((h) => ({ ...h }));
+    for (const item of this.pending.withdraw ?? []) {
+      if (item.op !== "exec") continue;
+      const raw = decodeEvenHex(item.headerRlp);
+      if (!raw) return { ok: false, error: "eth header refused" };
+      const parsed = parseExecutionHeader(raw);
+      if (!parsed) return { ok: false, error: "eth header refused" };
+      if (headers.some((h) => h.hash === parsed.hash)) return { ok: false, error: "eth header exists" };
+      const tip = headers[headers.length - 1];
+      if (tip) {
+        if (parsed.parentHash !== tip.hash) return { ok: false, error: "eth parent does not match the tip" };
+        if (parsed.number !== tip.number + 1) return { ok: false, error: "eth number does not extend the tip" };
+      }
+      headers.push(parsed);
+      if (headers.length > 256) headers.shift();
+    }
+    return { ok: true, headers };
+  }
+
+  /** Stage an execution header. The first one is a structural bootstrap, not a sync-committee checkpoint. */
+  admitExecution(headerRlp: string): { ok: true; hash: string } | { ok: false; error: string } {
+    const window = this.executionWindow();
+    if (!window.ok) return window;
+    const raw = decodeEvenHex(headerRlp);
+    if (!raw) return { ok: false, error: "eth header refused" };
+    const parsed = parseExecutionHeader(raw);
+    if (!parsed) return { ok: false, error: "eth header refused" };
+    if (window.headers.some((h) => h.hash === parsed.hash)) return { ok: false, error: "eth header exists" };
+    const tip = window.headers[window.headers.length - 1];
+    if (tip) {
+      if (parsed.parentHash !== tip.hash) return { ok: false, error: "eth parent does not match the tip" };
+      if (parsed.number !== tip.number + 1) return { ok: false, error: "eth number does not extend the tip" };
+    }
+    const clean = headerRlp.trim().toLowerCase().replace(/^0x/, "");
+    this.pending.withdraw = [...(this.pending.withdraw ?? []), { op: "exec", headerRlp: clean }];
+    this.emit("in", "bridge", `ethereum execution header ${parsed.hash.slice(0, 12)} · staged`);
+    return { ok: true, hash: parsed.hash };
+  }
+
+  /**
+   * Stage an Ethereum receipt proof. The roots come from the admitted header, not from the caller.
+   * A beacon bodyRoot is not that root.
+   */
+  settleEthWithdrawal(input: {
+    id: string;
+    blockHash: string;
+    txIndex: number;
+    receiptRlp: string;
+    receiptProof: string[];
+    logIndex: number;
+    txRlp: string;
+    txProof: string[];
+  }): { ok: true } | { ok: false; error: string } {
+    const row = this.withdrawals.find((w) => w.id === input.id);
+    if (!row || row.status !== "locked") return { ok: false, error: "withdrawal is not locked" };
+    if (this.height + 1 >= row.expiryHeight) return { ok: false, error: "withdrawal expired" };
+    if (row.network !== "eth" || !isEthAsset(row.asset)) return { ok: false, error: "withdrawal binding refused" };
+    const window = this.executionWindow();
+    if (!window.ok) return window;
+    const blockHash = input.blockHash.trim().toLowerCase().replace(/^0x/, "");
+    const header = window.headers.find((h) => h.hash === blockHash);
+    if (!header) return { ok: false, error: "eth header is not in Ω" };
+    const proved = proveEthEffect({
+      receiptsRoot: header.receiptsRoot,
+      transactionsRoot: header.transactionsRoot,
+      blockHash: header.hash,
+      txIndex: input.txIndex,
+      receiptRlp: input.receiptRlp,
+      receiptProof: input.receiptProof,
+      logIndex: input.logIndex,
+      txRlp: input.txRlp,
+      txProof: input.txProof,
+      asset: row.asset,
+    });
+    if (!proved.ok) return proved;
+    if (proved.effect.destination !== row.destination || proved.effect.amount !== row.amount || proved.effect.asset !== row.asset) {
+      return { ok: false, error: "withdrawal binding refused" };
+    }
+    if (this.withdrawals.some((w) => w.effectLocator === proved.effect.locator)) {
+      return { ok: false, error: "effect already settled" };
+    }
+    if ((this.pending.withdraw ?? []).some((w) => (w.op === "settle" || w.op === "settleEth") && w.id === input.id)) {
+      return { ok: false, error: "withdrawal is not locked" };
+    }
+    this.pending.withdraw = [
+      ...(this.pending.withdraw ?? []),
+      {
+        op: "settleEth",
+        id: input.id,
+        blockHash: header.hash,
+        txIndex: input.txIndex,
+        receiptRlp: input.receiptRlp.trim().toLowerCase().replace(/^0x/, ""),
+        receiptProof: input.receiptProof.map((item) => item.trim().toLowerCase().replace(/^0x/, "")),
+        logIndex: input.logIndex,
+        txRlp: input.txRlp.trim().toLowerCase().replace(/^0x/, ""),
+        txProof: input.txProof.map((item) => item.trim().toLowerCase().replace(/^0x/, "")),
+      },
+    ];
+    this.emit("in", "bridge", `settle ethereum withdrawal ${input.id.slice(0, 12)} · staged`);
     return { ok: true };
   }
 
@@ -1790,6 +1909,7 @@ export class OrganismNode {
     this.delegations = kin.delegations;
     this.unbonding = kin.unbonding;
     this.withdrawals = kin.withdrawals;
+    this.ethExecution = kin.ethExecution;
     this.proposals = kin.proposals;
     this.finalizedThrough = kin.finalizedThrough;
     if (this.kinStarted) {
@@ -2202,13 +2322,97 @@ export class OrganismNode {
     const senderLeft = outsideStep.ok ? (outsideStep.next.ledger.get(withdrawPayer.address)?.balance ?? 0) : -1;
     const senderWas = outside.getAccount(withdrawPayer.address).balance;
     const paidOutside = outsideStep.ok && row?.status === "settled" && row.effectLocator !== null && escrow === 0 && senderLeft === senderWas - 1_000;
-    const ethRefused = !ethStep.ok && ethStep.error === "eth execution proof refused";
+    const ethRefused = !ethStep.ok && ethStep.error === "withdrawal destination refused";
+    const token = "ab".repeat(20);
+    const recipient = "ef".repeat(20);
+    const logData = new Uint8Array(32);
+    logData[30] = 0x03;
+    logData[31] = 0xe8;
+    const receipt = legacyReceipt({
+      status: 1,
+      cumulativeGas: 21_000,
+      logs: [{
+        address: token,
+        topics: [TRANSFER_TOPIC, `${"00".repeat(12)}${"11".repeat(20)}`, `${"00".repeat(12)}${recipient}`],
+        data: logData,
+      }],
+    });
+    const leaf = secureLeaf(rlpUint(0), receipt);
+    const headerBytes = executionHeader({
+      parentHash: new Uint8Array(32),
+      transactionsRoot: new Uint8Array(32),
+      receiptsRoot: leaf.root,
+      number: 1,
+    });
+    const parsedHeader = parseExecutionHeader(headerBytes);
+    const ethOpen = parsedHeader
+      ? signWithdraw(withdrawPayer, {
+          chainId: outside.params.chainId,
+          amount: 1_000,
+          network: "eth",
+          asset: token,
+          destination: `eth:${recipient}`,
+          nonce: 2,
+        })
+      : null;
+    const ethPaidStep = parsedHeader && ethOpen
+      ? applySuccessor(outside.toOmega(), {
+          transactions: [],
+          evidence: {
+            ...outsideEvidence,
+            withdraw: [
+              {
+                op: "open" as const,
+                sender: withdrawPayer.address,
+                amount: 1_000,
+                network: "eth" as const,
+                asset: token,
+                destination: `eth:${recipient}`,
+                nonce: 2,
+                publicKey: ethOpen.publicKey,
+                signature: ethOpen.signature,
+              },
+              { op: "exec" as const, headerRlp: bytesToHex(headerBytes) },
+              {
+                op: "settleEth" as const,
+                id: ethOpen.id,
+                blockHash: parsedHeader.hash,
+                txIndex: 0,
+                receiptRlp: bytesToHex(receipt),
+                receiptProof: leaf.proof.map((node) => bytesToHex(node)),
+                logIndex: 0,
+                txRlp: "",
+                txProof: [] as string[],
+              },
+            ],
+          },
+          timestamp: (outside.tip?.timestamp ?? 0) + 15,
+          nonce: asBlockNonce(outside.tip?.nonce ?? 0),
+          miner: outside.miner.address,
+          committedPressure: 0,
+          couplings: outside.couplings,
+          difficulty: outside.difficulty,
+          wasmAfter: null,
+        })
+      : null;
+    const ethRow = ethPaidStep?.ok ? ethPaidStep.next.withdrawals.find((w) => w.id === ethOpen?.id) : undefined;
+    const ethEscrow = ethPaidStep?.ok ? (ethPaidStep.next.ledger.get(WITHDRAWAL_ESCROW)?.balance ?? 0) : -1;
+    const ethSender = ethPaidStep?.ok ? (ethPaidStep.next.ledger.get(withdrawPayer.address)?.balance ?? 0) : -1;
+    const ethSettled = Boolean(
+      parsedHeader
+      && ethPaidStep?.ok
+      && ethRow?.status === "settled"
+      && ethRow.effectLocator === `${parsedHeader.hash}:0:0`
+      && ethEscrow === 0
+      && ethSender === senderWas - 1_000
+      && ethPaidStep.next.ledger.get(recipient) === undefined,
+    );
     rows.push({
       id: "withdraw",
-      status: paidOutside && ethRefused ? "works" : "absent",
-      detail: paidOutside && ethRefused
-        ? "A signed withdrawal locked 1,000 EQU and settled when the Bitcoin output matched. The escrow was debited and no EQU address was credited. Ethereum execution is refused. A header lock is not this path."
-        : `Withdrawal did not settle outside. ${outsideStep.ok ? "settle missed" : outsideStep.error}; eth ${ethStep.ok ? "accepted" : ethStep.error}`,
+      status: paidOutside && ethRefused && ethSettled ? "works" : "absent",
+      detail: paidOutside && ethRefused && ethSettled
+        ? "A signed withdrawal locked 1,000 EQU and settled when the Bitcoin output matched. The escrow was debited and no EQU address was credited. An Ethereum withdrawal of 1,000 settled when a Transfer log was proven against an admitted execution header. That header is not an EQU beacon, and Ethereum's sync committee is not verified. A p2pkh destination on Ethereum is refused. A header lock is not this path."
+        : `Withdrawal did not settle outside. ${outsideStep.ok ? "settle missed" : outsideStep.error}; eth ${ethStep.ok ? "accepted" : ethStep.error}; receipt ${ethPaidStep == null ? "unbuilt" : ethPaidStep.ok ? "missed" : ethPaidStep.error}`,
     });
     rows.push({
       id: "other-miners",
@@ -2302,6 +2506,7 @@ export class OrganismNode {
       delegations: this.delegations.slice(-20),
       unbonding: this.unbonding.slice(),
       withdrawals: this.withdrawals.slice(),
+      ethExecution: this.ethExecution.slice(),
       proposals: this.proposals.slice(0, 8),
       models: this.models.slice(0, 8),
       lastPaired: this.lastPaired,
