@@ -47,6 +47,8 @@ export const blocksTable = pgTable(
     evidence:      jsonb("evidence"),
   },
   (t) => [
+    // Height is not unique. An operational row and an evidence row may share it.
+    // The snapshot anchor is the block hash, not the first row at that height.
     index("blocks_height_idx").on(t.height),
     index("blocks_miner_idx").on(t.miner),
   ],

@@ -24,6 +24,7 @@ import { deployCrossChainRelayIfNeeded } from "./crossChainRelay.js";
 import { p2pBridge } from "./p2p-bridge.js";
 import { smtKey } from "./smt.js";
 import { getVerifiedStateRoot } from "./state-root.js";
+import { selectSnapshotAnchor, chainThroughAnchor, evidenceToReplay } from "./restart-boundary.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
 // address, but overridden by initChain() to the first genesis.json validator
@@ -125,9 +126,10 @@ export async function initChain(): Promise<void> {
   // post-snapshot blocks.  Three conditions must ALL hold before we trust it;
   // any failure falls through to the full block-replay path below.
   //
-  //   (a) Blocks are present in the DB (loadAllBlocksRaw not null/empty)
-  //   (b) A block row exists at snapshot.height
-  //   (c) That block's hash matches snapshot.blockHash
+  //   (a) Block rows are present
+  //   (b) The row whose hash is snapshot.blockHash exists
+  //   (c) That row's height is snapshot.height
+  // Height is not unique, so the first row at the snapshot height is not the anchor.
   //
   // This guards against:
   //   • persistBlock failing after takeSnapshot succeeds (snapshot ahead of blocks)
@@ -152,18 +154,11 @@ export async function initChain(): Promise<void> {
         "Snapshot exists but block table is empty — falling back to full replay",
       );
     } else {
-      // (b) Block at snapshot.height must exist
-      const snapBlockInDb = allRaw.find((b) => b.height === snapshot.height);
-      if (!snapBlockInDb) {
+      const anchor = selectSnapshotAnchor(allRaw, snapshot);
+      if (!anchor.ok) {
         logger.warn(
-          { snapshotHeight: snapshot.height },
-          "Snapshot block row missing from DB (persistBlock may have lagged) — falling back to full replay",
-        );
-      } else if (snapBlockInDb.hash !== snapshot.blockHash) {
-        // (c) Hash must match — detects fork divergence or corruption
-        logger.warn(
-          { snapshotHeight: snapshot.height, snapHash: snapshot.blockHash.slice(0, 16), dbHash: snapBlockInDb.hash.slice(0, 16) },
-          "Snapshot block hash mismatch — falling back to full replay",
+          { snapshotHeight: snapshot.height, reason: anchor.reason },
+          "Snapshot anchor is not the block with that hash — falling back to full replay",
         );
       } else {
         // ── All checks passed: use snapshot fast-path ─────────────────────
@@ -196,20 +191,10 @@ export async function initChain(): Promise<void> {
           seedState.utxoSet.restoreFromSnapshot(snapshot.utxos);
         }
 
-        // ── Snapshot-era blocks ─────────────────────────────────────────────
-        // Assign blocks by height index (sparse array) so that:
-        //   • blocks.length - 1 == true tip height even after pruning
-        //   • blocks[h] is the block at height h (undefined for pruned gaps)
-        // Skip addBlock() — state is in the snapshot; rebuild only the lookup
-        // indexes (txIndex, addressTxs) for historical TX queries.
-        let highestSnapEraBlock: typeof allRaw[0] | undefined;
-        for (const block of allRaw) {
-          if (block.evidence) continue;
-          if (block.height > snapshot.height) continue;
+        // The anchor's parent walk, not whichever same-height row arrived first.
+        const lineage = chainThroughAnchor(allRaw, anchor.block);
+        for (const block of lineage) {
           seedState.blocks[block.height] = block;
-          if (!highestSnapEraBlock || block.height > highestSnapEraBlock.height) {
-            highestSnapEraBlock = block;
-          }
           for (const tx of block.transactions) {
             const confirmed = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" as const };
             seedState.txIndex.set(tx.hash, confirmed);
@@ -223,15 +208,16 @@ export async function initChain(): Promise<void> {
         // Difficulty after the snapshot block is what the next block reads.
         // That number is in the snapshot partitions. The block row stores the
         // difficulty the block was mined under, which is one adjustment behind.
-        // Writing it back here would drop the adjustment the snapshot already made.
-        if (!snapshot.partitions && highestSnapEraBlock) {
-          seedState.currentDifficulty = highestSnapEraBlock.difficulty;
+        const tipEra = lineage[lineage.length - 1];
+        if (!snapshot.partitions && tipEra) {
+          seedState.currentDifficulty = tipEra.difficulty;
         }
 
         // ── Post-snapshot replay ──────────────────────────────────────────
-        for (const block of allRaw) {
-          if (block.evidence) continue;
-          if (block.height <= snapshot.height) continue;
+        const later = allRaw
+          .filter((block) => !block.evidence && block.height > snapshot.height)
+          .sort((a, b) => a.height - b.height || (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0));
+        for (const block of later) {
           seedState.addBlock(block);
           for (const peer of seedState.peers) {
             if (peer.connected) peer.height = block.height;
@@ -240,9 +226,9 @@ export async function initChain(): Promise<void> {
 
         seedState.wasmVM.setBlockHeight(seedState.height);
         chainState = seedState;
-        evidenceReplay = allRaw.filter((b) => b.evidence);
+        evidenceReplay = evidenceToReplay(allRaw, snapshot.height);
         logger.info(
-          { height: chainState.height, snapshotHeight: snapshot.height },
+          { height: chainState.height, snapshotHeight: snapshot.height, anchor: anchor.block.hash.slice(0, 16) },
           "Chain restored from validated snapshot + post-snapshot replay",
         );
       }
@@ -268,7 +254,7 @@ export async function initChain(): Promise<void> {
         chainState = buildChainFromBlocks(dbBlocks);
       }
       logger.info({ height: chainState.height }, "Chain restored");
-      evidenceReplay = dbBlocks.filter((b) => b.evidence);
+      evidenceReplay = evidenceToReplay(dbBlocks, null);
     } else {
       const genesisDoc = loadGenesisDoc();
       if (genesisDoc) {
@@ -293,7 +279,7 @@ export async function initChain(): Promise<void> {
     }
   }
 
-  for (const block of evidenceReplay.sort((a, b) => a.height - b.height)) {
+  for (const block of evidenceReplay) {
     const err = await chainState.adoptReplay(block);
     if (err) logger.warn({ err, height: block.height, hash: block.hash }, "canonical evidence did not replay");
   }
@@ -569,11 +555,11 @@ const SNAPSHOT_INTERVAL = 100;
  * Capture the current ledger + UTXO state as a named snapshot at the tip.
  * Fire-and-forget safe — never throws.
  */
-async function takeSnapshot(): Promise<void> {
+async function takeSnapshot(): Promise<boolean> {
   const tip = chainState?.latestBlock;
-  if (!tip) return;
+  if (!tip) return false;
   const snap = chainState.exportRestartSnapshot();
-  await saveStateSnapshot({
+  return saveStateSnapshot({
     height:    tip.height,
     blockHash: tip.hash,
     stateRoot: tip.stateRoot ?? "",
@@ -593,11 +579,15 @@ async function takeSnapshot(): Promise<void> {
 
 /**
  * Save a snapshot of the current chain tip, then prune old blocks.
- * The snapshot ensures `pruneOldBlocks` can confirm coverage before deleting.
- * Returns the number of blocks pruned (0 when nothing to prune).
+ * Pruning runs only after that write returns success. An older snapshot's
+ * height is not treated as this write.
  */
 export async function safelyPruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<number> {
-  await takeSnapshot();
+  const saved = await takeSnapshot();
+  if (!saved) {
+    logger.warn("Block pruning skipped: the snapshot write did not succeed");
+    return 0;
+  }
   return pruneOldBlocks(keepBlocks);
 }
 

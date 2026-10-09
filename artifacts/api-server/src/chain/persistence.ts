@@ -6,6 +6,7 @@ import type { BlockRecord, TxRecord, DexPool, ValidatorRecord, StakeRecord, Unbo
 import type { ContractRecord } from "./wasm.js";
 import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
 import { logger } from "../lib/logger.js";
+import { snapshotCoversPrune } from "./restart-boundary.js";
 
 // ── Self-contained persistence layer ─────────────────────────────────────────
 //
@@ -509,11 +510,12 @@ export interface StateSnapshotData {
 
 /**
  * Upsert a state snapshot for the given block height.
- * Called by chain/index.ts every SNAPSHOT_INTERVAL blocks and before pruning.
+ * Returns false when Postgres is absent or the write fails. Callers that
+ * prune must not treat a swallowed error as a durable snapshot.
  */
-export async function saveStateSnapshot(data: StateSnapshotData): Promise<void> {
+export async function saveStateSnapshot(data: StateSnapshotData): Promise<boolean> {
   const db = getDb();
-  if (!db) return;
+  if (!db) return false;
   try {
     await db
       .insert(stateSnapshotsTable)
@@ -542,8 +544,10 @@ export async function saveStateSnapshot(data: StateSnapshotData): Promise<void> 
         },
       });
     logger.info({ height: data.height }, "State snapshot saved");
+    return true;
   } catch (err) {
     logger.warn({ err, height: data.height }, "Failed to save state snapshot");
+    return false;
   }
 }
 
@@ -596,7 +600,7 @@ export async function loadAllBlocksRaw(): Promise<BlockRecord[] | null> {
     const blockRows = await db
       .select()
       .from(blocksTable)
-      .orderBy(asc(blocksTable.height));
+      .orderBy(asc(blocksTable.height), asc(blocksTable.hash));
     if (blockRows.length === 0) return null;
 
     const txRows = await db
@@ -659,8 +663,10 @@ export const DEFAULT_PRUNE_KEEP = 40_320;
 
 /**
  * Prune blocks older than `keepBlocks` from Postgres.
- * Refuses (returns 0) when no snapshot covers the prune boundary — this
- * prevents a restart from being unable to reconstruct state.
+ * Refuses (returns 0) unless the snapshot's own block row would survive the
+ * delete. A snapshot one height below the cutoff does not cover it: that row
+ * is deleted. ENABLE_UNSAFE_PRUNING bypasses a failed coverage check, not an
+ * empty range.
  * Returns the number of blocks deleted.
  */
 export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<number> {
@@ -675,33 +681,43 @@ export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<n
       .limit(1);
 
     const tipHeight = tipRows[0]?.height ?? 0;
-    const pruneBelow = tipHeight - keepBlocks;
-    if (pruneBelow <= 0) return 0; // nothing to prune
 
-    // Require a snapshot at or above the prune boundary so a restart can
-    // reconstruct state from snapshot + retained blocks rather than a full
-    // block replay.
     const snapRows = await db
-      .select({ height: stateSnapshotsTable.height })
+      .select({ height: stateSnapshotsTable.height, blockHash: stateSnapshotsTable.blockHash })
       .from(stateSnapshotsTable)
       .orderBy(desc(stateSnapshotsTable.height))
       .limit(1);
+    const snap = snapRows[0];
 
-    const snapHeight = snapRows[0]?.height ?? -1;
-    if (snapHeight < pruneBelow - 1) {
-      // ENABLE_UNSAFE_PRUNING bypass for disposable/testing nodes.
+    let anchor: { hash: string; height: number } | null = null;
+    if (snap) {
+      const anchorRows = await db
+        .select({ hash: blocksTable.hash, height: blocksTable.height })
+        .from(blocksTable)
+        .where(eq(blocksTable.hash, snap.blockHash))
+        .limit(1);
+      const row = anchorRows[0];
+      if (row) anchor = { hash: row.hash, height: row.height };
+    }
+
+    const decision = snapshotCoversPrune({
+      tipHeight,
+      keepBlocks,
+      snapshot: snap ? { height: snap.height, blockHash: snap.blockHash } : null,
+      anchor,
+    });
+    if (!decision.allowed) {
+      if (decision.reason === "nothing to prune") return 0;
       if (process.env["ENABLE_UNSAFE_PRUNING"] !== "true") {
         logger.warn(
-          { pruneBelow, snapHeight },
-          "Block pruning skipped: no state snapshot covers the prune boundary. " +
-          "Call safelyPruneOldBlocks() from chain/index.ts (saves snapshot automatically), " +
-          "or set ENABLE_UNSAFE_PRUNING=true only for disposable nodes.",
+          { pruneBelow: decision.pruneBelow, reason: decision.reason },
+          "Block pruning skipped: the snapshot anchor would not survive",
         );
         return 0;
       }
       logger.warn(
-        { pruneBelow, snapHeight },
-        "ENABLE_UNSAFE_PRUNING=true — pruning without a valid snapshot (restart will lose state)",
+        { pruneBelow: decision.pruneBelow, reason: decision.reason },
+        "ENABLE_UNSAFE_PRUNING=true — pruning without a retained snapshot anchor (restart will lose state)",
       );
     }
 
@@ -711,11 +727,14 @@ export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<n
       .delete(blocksTable)
       .where(and(
         gte(blocksTable.height, 1),
-        lt(blocksTable.height, pruneBelow),
+        lt(blocksTable.height, decision.pruneBelow),
       ));
 
     const count = (result as unknown as { rowCount?: number }).rowCount ?? 0;
-    logger.info({ pruneBelow, tipHeight, keepBlocks, deleted: count }, "Block pruning complete");
+    logger.info(
+      { pruneBelow: decision.pruneBelow, tipHeight, keepBlocks, deleted: count },
+      "Block pruning complete",
+    );
     return count;
   } catch (err) {
     logger.warn({ err }, "Block pruning failed");

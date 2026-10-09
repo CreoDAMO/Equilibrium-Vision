@@ -20,7 +20,7 @@ import { solveBlock } from "../variational-ai/bridge.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "./mining-policy.js";
 import { logger } from "../lib/logger.js";
 import { GovernanceModule } from "./governance.js";
-import { drainPendingParamUpdates } from "./governanceContract.js";
+import { noteIgnoredGovernanceParams } from "./governanceContract.js";
 import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
 import { generateZkProof } from "./zkproof.js";
@@ -469,6 +469,9 @@ export class ChainState {
     },
   );
 
+  /** Last noted WASM pending params. The same name and value is not logged again. */
+  private notedGovParams = new Map<string, number>();
+
   private wireWasmHostContext(): void {
     this.wasmVM.setHostContext({
       getBalance: (addr) => this.ledger.balance(addr),
@@ -679,18 +682,12 @@ export class ChainState {
     this.distributeBlockReward(block);
     this.governance.processBlock(block.timestamp, this.totalBondedStake);
 
-    // ── gov_pending_param bridge ───────────────────────────────────────────────
-    // After each block, drain any gov_pending_param:{name} keys written by the
-    // governance WASM contract's execute_proposal() and apply them to the live
-    // ChainParameters. This is the on-chain → TS param update path.
-    //
-    // drainPendingParamUpdates() is a no-op when GOVERNANCE_CONTRACT_ADDRESS is
-    // unset, so this is safe to run unconditionally.
-    const pendingParams = drainPendingParamUpdates(this.wasmVM);
-    for (const [name, value] of Object.entries(pendingParams)) {
-      // A contract key is not a coupling and not a difficulty. It does not write.
+    // WASM gov_pending_param:* keys are contract storage, not a second writer.
+    // ChainParameters are not updated here. Couplings move only when the
+    // successor opens a kernel proposal. Unapplied keys are left in place.
+    noteIgnoredGovernanceParams(this.wasmVM, this.notedGovParams, (name, value) => {
       logger.info({ param: name, value }, "governance param ignored; it is not the successor");
-    }
+    });
 
     // Keep the WASM VM's block_number() host import in sync with the chain tip.
     this.wasmVM.setBlockHeight(block.height);

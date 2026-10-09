@@ -152,6 +152,26 @@ export class WasmVM {
     }
   }
 
+  /** Copies of every contract's storage. A top-level trap restores this set. */
+  private snapshotAllStorage(): Map<string, Record<string, string>> {
+    const snap = new Map<string, Record<string, string>>();
+    for (const [addr, contract] of this.contracts) snap.set(addr, { ...contract.storage });
+    return snap;
+  }
+
+  private restoreAllStorage(snap: Map<string, Record<string, string>>): void {
+    for (const [addr, saved] of snap) {
+      const contract = this.contracts.get(addr);
+      if (!contract) continue;
+      this.restoreOneStorage(contract.storage, saved);
+    }
+  }
+
+  private restoreOneStorage(storage: Record<string, string>, saved: Record<string, string>): void {
+    for (const key of Object.keys(storage)) delete storage[key];
+    Object.assign(storage, saved);
+  }
+
   async deploy(
     deployer: string,
     bytecodeHex: string,
@@ -349,6 +369,16 @@ export class WasmVM {
 
     const logs: string[] = [];
     const storage = contract.storage;
+    // A trap must not leave storage_set in place. Depth 0 rolls back every
+    // contract, including one a nested call already returned from. A nested
+    // frame rolls back only itself; call_contract still snapshots the caller.
+    // A negative contract return is a successful call and keeps the write.
+    const allStorage = depth === 0 ? this.snapshotAllStorage() : null;
+    const ownStorage = depth === 0 ? null : { ...storage };
+    const restoreStorage = () => {
+      if (allStorage) this.restoreAllStorage(allStorage);
+      else if (ownStorage) this.restoreOneStorage(storage, ownStorage);
+    };
     let gasUsed = 0;
     const gasPerInstruction = 1;
     // verify_residual is capped at 1 invocation per contract call.
@@ -767,6 +797,7 @@ export class WasmVM {
         (() => { throw new Error("Contract must export memory"); })();
 
       if (gasUsed > gasLimit) {
+        restoreStorage();
         return { success: false, returnValue: null, gasUsed, logs, error: "Out of gas during init" };
       }
 
@@ -811,6 +842,9 @@ export class WasmVM {
 
       return { success: true, returnValue, gasUsed, logs };
     } catch (e) {
+      // In-memory only. A nested call that already returned may have scheduled
+      // firePersist; that write is not cancelled here.
+      restoreStorage();
       return {
         success: false,
         returnValue: null,

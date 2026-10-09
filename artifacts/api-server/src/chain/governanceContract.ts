@@ -537,6 +537,25 @@ export function scanPendingGovParams(wasmVM: WasmVM): Record<string, number> {
 }
 
 /**
+ * Note pending WASM keys without deleting them and without writing
+ * ChainParameters. The same name and value is logged once.
+ * These keys are contract storage. They are not a second writer.
+ */
+export function noteIgnoredGovernanceParams(
+  wasmVM: WasmVM,
+  noted: Map<string, number>,
+  log: (name: string, value: number) => void,
+): Record<string, number> {
+  const params = scanPendingGovParams(wasmVM);
+  for (const [name, value] of Object.entries(params)) {
+    if (noted.get(name) === value) continue;
+    noted.set(name, value);
+    log(name, value);
+  }
+  return params;
+}
+
+/**
  * Clear all gov_pending_param:* keys from governance contract storage
  * after they have been applied by the TypeScript layer.
  */
@@ -553,8 +572,9 @@ export function clearPendingGovParams(wasmVM: WasmVM): void {
 }
 
 /**
- * Atomically scan + clear gov_pending_param:* entries.
- * Called by state.ts processBlock bridge. Returns a map of paramName → value.
+ * Scan and then delete gov_pending_param:* entries.
+ * Not used by the block bridge. An unapplied key stays in contract storage.
+ * Call this only after an authorized apply has already written the live value.
  */
 export function drainPendingParamUpdates(wasmVM: WasmVM): Record<string, number> {
   const params = scanPendingGovParams(wasmVM);
