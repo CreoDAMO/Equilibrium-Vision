@@ -27,6 +27,7 @@ import { generateZkProof } from "./zkproof.js";
 import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import { canonicalResidual, pressureEvidence } from "./canonical-residual.js";
 import { withDbRetry } from "./persistence.js";
+import { operationalReplaySet } from "./restart-boundary.js";
 import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import { btcHeaderHash } from "./btc-header.js";
 import { nextFinalizedHeight, stakeForFinality } from "./finality.js";
@@ -222,6 +223,8 @@ function omegaFromRecord(record: ReturnType<typeof omegaRecord>): Omega {
 
 export class ChainState {
   blocks: BlockRecord[] = [];
+  /** Non-successors kept for inspection. Not the tip, not a parent, and not a height. */
+  retainedBlocks: BlockRecord[] = [];
   txIndex = new Map<string, TxRecord>();
   addressTxs = new Map<string, Set<string>>();
   ledger = new Ledger();
@@ -513,6 +516,31 @@ export class ChainState {
     return this.blocks[this.blocks.length - 1];
   }
 
+  /**
+   * The block Ω currently names, if this process still has that row.
+   * A retained non-successor is not this tip.
+   */
+  get canonicalTip(): BlockRecord | undefined {
+    const omega = this.canonicalBody.omega;
+    if (omega.height < 0) return undefined;
+    for (let i = this.blocks.length - 1; i >= 0; i--) {
+      const block = this.blocks[i];
+      if (!block || block.canonicalSuccessor === false) continue;
+      if (block.hash === omega.tipHash) return block;
+    }
+    return undefined;
+  }
+
+  /** Parent, height, and difficulty a producer has to extend. This is Ω. */
+  canonicalWork(): { prevHash: string; height: number; difficulty: number } {
+    const omega = this.canonicalBody.omega;
+    return {
+      prevHash: omega.tipHash,
+      height: omega.height + 1,
+      difficulty: omega.difficulty,
+    };
+  }
+
   get totalTxCount(): number {
     return this.txIndex.size;
   }
@@ -574,10 +602,6 @@ export class ChainState {
   }
 
   addBlock(block: BlockRecord): void {
-    const tip = this.blocks[this.blocks.length - 1];
-    if (tip && block.timestamp < tip.timestamp) {
-      throw new Error("timestamp is not monotonic");
-    }
     const poolHit = block.transactions.some((tx) =>
       this.dexPools.has(tx.to)
       || this.canonicalBody.omega.pools.some((p) => (p.address || poolAddress(p.id)) === tx.to));
@@ -629,7 +653,8 @@ export class ChainState {
    */
   recordUnexecuted(block: BlockRecord): void {
     block.canonicalSuccessor = false;
-    this.blocks.push(block);
+    if (this.retainedBlocks.some((row) => row.hash === block.hash)) return;
+    this.retainedBlocks.push(block);
   }
 
   /**
@@ -658,6 +683,7 @@ export class ChainState {
     if (pressureEvidence(pressure) === null) return { kind: "skip" };
     if (block.difficulty !== omega.difficulty) return { kind: "skip" };
     if (block.prevHash !== omega.tipHash) return { kind: "skip" };
+    if (block.height !== omega.height + 1) return { kind: "skip" };
     if (omega.height >= 0 && block.timestamp < omega.tipTimestamp) return { kind: "skip" };
     const inputs = {
       transactions: block.transactions as Parameters<typeof applySuccessor>[1]["transactions"],
@@ -1574,6 +1600,34 @@ function seedDexPools(state: ChainState): void {
 }
 
 /**
+ * Replay only the unique parent chain from height 0.
+ * A fork is retained and not executed. An unrelated row is not applied,
+ * so its timestamp cannot abort the lineage that does connect.
+ */
+function replayOperational(state: ChainState, blocks: BlockRecord[]): void {
+  const selected = operationalReplaySet(blocks);
+  let halted = false;
+  for (const block of selected.replay) {
+    if (halted) {
+      state.recordUnexecuted(block);
+      continue;
+    }
+    try {
+      state.addBlock(block);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      if (message !== "block is not the successor") throw err;
+      state.recordUnexecuted(block);
+      halted = true;
+    }
+  }
+  for (const block of selected.retained) state.recordUnexecuted(block);
+  for (const peer of state.peers) {
+    if (peer.connected) peer.height = state.canonicalBody.omega.height;
+  }
+}
+
+/**
  * Replay a persisted block list, seeding validators and DEX pools from a
  * `GenesisDocument` rather than hardcoded dev data. Use this when the node
  * was originally started with a genesis.json so that restarts reconstruct
@@ -1631,18 +1685,7 @@ export function buildDocChainFromBlocks(doc: GenesisDocument, blocks: BlockRecor
     { peerId: "d".repeat(40), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
   ];
 
-  for (const block of blocks) {
-    if (block.evidence) continue;
-    try {
-      state.addBlock(block);
-    } catch (err) {
-      if (!(err instanceof Error) || err.message !== "block is not the successor") throw err;
-      state.recordUnexecuted(block);
-    }
-    for (const peer of state.peers) {
-      if (peer.connected) peer.height = block.height;
-    }
-  }
+  replayOperational(state, blocks);
   return state;
 }
 
@@ -1663,18 +1706,7 @@ export function buildChainFromBlocks(blocks: BlockRecord[]): ChainState {
     { peerId: "d".repeat(40), address: "203.0.113.7:30303",  latencyMs: 142, height: 0, connected: true,  syncState: "syncing" },
   ];
 
-  for (const block of blocks) {
-    if (block.evidence) continue;
-    try {
-      state.addBlock(block);
-    } catch (err) {
-      if (!(err instanceof Error) || err.message !== "block is not the successor") throw err;
-      state.recordUnexecuted(block);
-    }
-    for (const peer of state.peers) {
-      if (peer.connected) peer.height = block.height;
-    }
-  }
+  replayOperational(state, blocks);
   return state;
 }
 
@@ -1977,8 +2009,9 @@ export async function mineNextBlockAsync(
   state: ChainState,
   minerAddr: string,
 ): Promise<BlockRecord> {
-  const prev = state.latestBlock ?? { hash: "0".repeat(64) };
-  const height = state.height + 1;
+  const work = state.canonicalWork();
+  const prevHash = work.prevHash;
+  const height = work.height;
   const now = Math.floor(Date.now() / 1000);
 
   const candidates = state.selectCanonical(state.mempool.all());
@@ -2022,7 +2055,7 @@ export async function mineNextBlockAsync(
   let solverResidual = 0;
   try {
     const solution = await solveBlock({
-      prevHash:        prev.hash,
+      prevHash:        prevHash,
       merkleRoot:      mr,
       timestamp:       now,
       difficulty:      state.currentDifficulty,
@@ -2066,7 +2099,7 @@ export async function mineNextBlockAsync(
     // residual of this nonce, recomputed here. The returned number is not enough.
     residual = canonicalResidual(
       {
-        prevHash: prev.hash,
+        prevHash: prevHash,
         merkleRoot: mr,
         timestamp: now,
         nonce,
@@ -2090,7 +2123,7 @@ export async function mineNextBlockAsync(
     throw new Error(`residual ${residual} is not under the admission target ${state.admissionTarget}`);
   }
   const reward = canonicalCoinbase(height, residual, state.admissionTarget);
-  const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
+  const blockHash = hash256(`block-${height}-${prevHash}-${now}`);
 
   const txs: TxRecord[] = selected.map((t) => ({
     ...t,
@@ -2104,7 +2137,7 @@ export async function mineNextBlockAsync(
   const block: BlockRecord = {
     hash:           blockHash,
     height,
-    prevHash:       prev.hash,
+    prevHash:       prevHash,
     merkleRoot:     mr,
     timestamp:      now,
     nonce,
@@ -2141,8 +2174,9 @@ export async function mineNextBlockAsync(
 export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord {
   assertRandomMiningAllowed("mineNextBlock");
 
-  const prev = state.latestBlock ?? { hash: "0".repeat(64) };
-  const height = state.height + 1;
+  const work = state.canonicalWork();
+  const prevHash = work.prevHash;
+  const height = work.height;
   const now = Math.floor(Date.now() / 1000);
   const committedPressure = state.mempool.pressure;
 
@@ -2179,7 +2213,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   }
   const reward = canonicalCoinbase(height, residual, state.admissionTarget);
 
-  const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
+  const blockHash = hash256(`block-${height}-${prevHash}-${now}`);
 
   const txs: TxRecord[] = selected.map((t) => ({
     ...t,
@@ -2194,7 +2228,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   const block: BlockRecord = {
     hash: blockHash,
     height,
-    prevHash: prev.hash,
+    prevHash: prevHash,
     merkleRoot: mr,
     timestamp: now,
     nonce: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER),

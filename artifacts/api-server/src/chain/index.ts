@@ -24,7 +24,7 @@ import { deployCrossChainRelayIfNeeded } from "./crossChainRelay.js";
 import { p2pBridge } from "./p2p-bridge.js";
 import { smtKey } from "./smt.js";
 import { getVerifiedStateRoot } from "./state-root.js";
-import { selectSnapshotAnchor, chainThroughAnchor, evidenceToReplay } from "./restart-boundary.js";
+import { selectSnapshotAnchor, chainThroughAnchor, continuationAfterAnchor, evidenceToReplay } from "./restart-boundary.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
 // address, but overridden by initChain() to the first genesis.json validator
@@ -213,20 +213,37 @@ export async function initChain(): Promise<void> {
           seedState.currentDifficulty = tipEra.difficulty;
         }
 
-        // ── Post-snapshot replay ──────────────────────────────────────────
-        const later = allRaw
-          .filter((block) => !block.evidence && block.height > snapshot.height)
-          .sort((a, b) => a.height - b.height || (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0));
-        for (const block of later) {
+        // Descendants of the anchor only. A later height is not a lineage.
+        // A fork is retained and not chosen. An unrelated row is not executed.
+        const later = continuationAfterAnchor(allRaw, anchor.block);
+        const lineageHashes = new Set(lineage.map((block) => block.hash));
+        let halted = false;
+        for (const block of later.blocks) {
+          if (halted) {
+            seedState.recordUnexecuted(block);
+            continue;
+          }
           try {
             seedState.addBlock(block);
           } catch (err) {
             if (!(err instanceof Error) || err.message !== "block is not the successor") throw err;
             seedState.recordUnexecuted(block);
+            halted = true;
           }
-          for (const peer of seedState.peers) {
-            if (peer.connected) peer.height = block.height;
-          }
+        }
+        for (const block of later.retained) seedState.recordUnexecuted(block);
+        for (const block of later.ignored) {
+          if (lineageHashes.has(block.hash)) continue;
+          seedState.recordUnexecuted(block);
+        }
+        if (later.fork) {
+          logger.warn(
+            { children: later.fork.children.map((hash) => hash.slice(0, 16)) },
+            "Snapshot continuation forks — not choosing a branch",
+          );
+        }
+        for (const peer of seedState.peers) {
+          if (peer.connected) peer.height = seedState.canonicalBody.omega.height;
         }
 
         seedState.wasmVM.setBlockHeight(seedState.height);
@@ -369,7 +386,7 @@ export async function initChain(): Promise<void> {
 
     if (kind === "headers") {
       const from  = typeof params["from"] === "number" ? Math.max(0, params["from"]) : 0;
-      const tipH  = chainState.height;
+      const tipH  = chainState.canonicalTip?.height ?? -1;
       const to    = typeof params["to"]   === "number" ? Math.min(tipH, params["to"]) : tipH;
       const limit = Math.min(500, Math.max(0, to - from + 1));
       const headers: Record<string, unknown>[] = [];
@@ -398,7 +415,7 @@ export async function initChain(): Promise<void> {
     const params = query.params ?? {};
 
     if (kind === "tip") {
-      const tip = chainState.latestBlock;
+      const tip = chainState.canonicalTip;
       if (!tip) {
         await p2pBridge.respondToLightNodeRequest(requestId, { ok: false, error: "Chain not initialised" });
         return;
@@ -418,7 +435,7 @@ export async function initChain(): Promise<void> {
 
     if (kind === "headers") {
       const from  = typeof params["from"] === "number" ? Math.max(0, params["from"]) : 0;
-      const tipH  = chainState.latestBlock?.height ?? 0;
+      const tipH  = chainState.canonicalTip?.height ?? -1;
       const to    = typeof params["to"]   === "number" ? Math.min(tipH, params["to"]) : tipH;
       const limit = Math.min(500, Math.max(0, to - from + 1));
       const headers: Record<string, unknown>[] = [];
@@ -566,7 +583,7 @@ const SNAPSHOT_INTERVAL = 100;
  * Fire-and-forget safe — never throws.
  */
 async function takeSnapshot(): Promise<boolean> {
-  const tip = chainState?.latestBlock;
+  const tip = chainState?.canonicalTip;
   if (!tip) return false;
   const snap = chainState.exportRestartSnapshot();
   return saveStateSnapshot({

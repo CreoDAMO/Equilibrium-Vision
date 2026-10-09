@@ -129,18 +129,19 @@ if (Number.isNaN(port) || port <= 0) {
 
             // Only accept the immediate next block to avoid complex reorg logic.
             // Fork-choice across heights is deferred to the full sync protocol.
-            if (remoteHeight !== chainState.height + 1) {
+            const work = chainState.canonicalWork();
+            if (remoteHeight !== work.height) {
               logger.debug(
-                { blockHash, remoteHeight, ourHeight: chainState.height },
+                { blockHash, remoteHeight, ourHeight: work.height - 1 },
                 'P2P sync: block is not the next height — skipping',
               );
               return;
             }
 
-            // Verify prevHash links to our current tip
-            if (remote.prevHash !== chainState.latestBlock?.hash) {
+            // Verify prevHash links to Ω, not to a retained operational record.
+            if (remote.prevHash !== work.prevHash) {
               logger.debug(
-                { blockHash, remotePrev: remote.prevHash, ourTip: chainState.latestBlock?.hash },
+                { blockHash, remotePrev: remote.prevHash, ourTip: work.prevHash },
                 'P2P sync: block prevHash mismatch — likely fork, skipping',
               );
               return;
@@ -255,7 +256,7 @@ if (Number.isNaN(port) || port <= 0) {
     // chain state — no HTTP required on the remote peer's end.
     p2pBridge.onLightNodeRequest = async (requestId, fromPeerId, query) => {
       try {
-        const tip = chainState.latestBlock;
+        const tip = chainState.canonicalTip;
         if (!tip) {
           await p2pBridge.respondToLightNodeRequest(requestId, null, false, 'Chain not initialised');
           return;

@@ -64,7 +64,7 @@ function requireVerifiedStateRoot(res: Response) {
 // ── GET /lightnode/tip ────────────────────────────────────────────────────────
 
 router.get("/lightnode/tip", (_req, res) => {
-  const tip = chainState.latestBlock;
+  const tip = chainState.canonicalTip;
   if (!tip) {
     res.status(503).json({ error: "Chain not initialised" });
     return;
@@ -98,7 +98,7 @@ router.get("/lightnode/tip", (_req, res) => {
 // ── GET /lightnode/headers?from=N&to=M ────────────────────────────────────────
 
 router.get("/lightnode/headers", (req, res) => {
-  const tip = chainState.latestBlock;
+  const tip = chainState.canonicalTip;
   if (!tip) { res.status(503).json({ error: "Chain not initialised" }); return; }
 
   const from  = Math.max(0, parseInt(String(req.query["from"]  ?? 0), 10));
@@ -132,7 +132,7 @@ router.get("/lightnode/headers", (req, res) => {
 // the returned `count` each time, until `tip` === its current height.
 
 router.get("/lightnode/sync", (req, res) => {
-  const tip = chainState.latestBlock;
+  const tip = chainState.canonicalTip;
   if (!tip) { res.status(503).json({ error: "Chain not initialised" }); return; }
 
   const after = parseInt(String(req.query["after"] ?? -1), 10);
@@ -243,7 +243,7 @@ router.get("/lightnode/proof/utxo/:txHash/:index", (req, res) => {
 // ── GET /lightnode/chain-params ───────────────────────────────────────────────
 
 router.get("/lightnode/chain-params", (_req, res) => {
-  const tip = chainState.latestBlock;
+  const tip = chainState.canonicalTip;
   res.json({
     chainId:         "equilibrium-1",
     height:          tip?.height ?? 0,

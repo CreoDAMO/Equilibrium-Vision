@@ -117,8 +117,9 @@ const refused = state.reorganize([
   }),
 ]);
 assert.equal(refused.switched, false);
-assert.equal(state.blocks.length, 2);
-assert.equal(state.blocks[1]?.hash, tail.hash);
+assert.equal(state.blocks.length, 0);
+assert.equal(state.retainedBlocks.length, 2);
+assert.equal(state.retainedBlocks[1]?.hash, tail.hash);
 assert.equal(omegaDigest(state.canonicalBody.omega), parked);
 
 state.addBlock(block({

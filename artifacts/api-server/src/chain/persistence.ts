@@ -1,12 +1,12 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { and, asc, desc, eq, gte, isNull, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt } from "drizzle-orm";
 import { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zkmlProofsTable } from "@workspace/db/schema";
 import type { BlockRecord, TxRecord, DexPool, ValidatorRecord, StakeRecord, UnbondingEntry } from "./types.js";
 import type { ContractRecord } from "./wasm.js";
 import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
 import { logger } from "../lib/logger.js";
-import { snapshotCoversPrune } from "./restart-boundary.js";
+import { snapshotCoversPrune, operationalReplaySet } from "./restart-boundary.js";
 
 // ── Self-contained persistence layer ─────────────────────────────────────────
 //
@@ -200,60 +200,49 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
     const canonicalRows = dbBlocks.filter((b) => b.evidence != null);
     const chainRows = dbBlocks.filter((b) => b.evidence == null);
 
-    // ── Chain integrity check ────────────────────────────────────────────────
-    // Validate contiguous heights and prevHash linkage before accepting DB data.
-    // A partial write (crash mid-genesis persist, or schema not yet applied on
-    // first boot) can produce a gap.  Rather than falling back to genesis and
-    // discarding all history, we truncate to the longest contiguous sequence
-    // from height 0 so any valid history is preserved.
-    //
-    // Exception: if the very first block isn't height 0 we have no base to
-    // build on, so fall back to genesis.
-    let operable = chainRows;
-    if (operable.length > 0 && operable[0]!.height !== 0) {
-      logger.warn({ got: operable[0]!.height }, "Chain integrity check failed: missing genesis block — falling back to genesis");
+    // Parent hash is the lineage. Height is not unique, and array order is not
+    // a choice between two children of the same parent. Orphans are removed.
+    // A fork is left in the table and is not replayed, so a later restart
+    // does not pick the other child or delete a suffix by height.
+    let operable: typeof chainRows = [];
+    let retainedRows: typeof chainRows = [];
+    if (chainRows.length === 0) {
       if (canonicalRows.length === 0) return null;
-      operable = [];
-    }
-    let contiguousEnd = operable.length; // exclusive index of first broken block
-    for (let i = 1; i < operable.length; i++) {
-      const b = operable[i]!;
-      if (b.height !== i) {
+    } else {
+      const selected = operationalReplaySet(chainRows);
+      if (selected.replay.length === 0) {
         logger.warn(
-          { expected: i, got: b.height, truncatingAt: i },
-          "Chain integrity: height gap detected — truncating to last contiguous block",
+          { retained: selected.retained.length, orphans: selected.orphans.length },
+          "Chain integrity: no unique height-0 chain — not choosing a branch",
         );
-        contiguousEnd = i;
-        break;
-      }
-      if (b.prevHash !== operable[i - 1]!.hash) {
-        logger.warn(
-          { height: i, truncatingAt: i },
-          "Chain integrity: prevHash mismatch — truncating to last contiguous block",
-        );
-        contiguousEnd = i;
-        break;
+        if (canonicalRows.length === 0 && selected.retained.length === 0) return null;
+        retainedRows = selected.retained;
+      } else {
+        operable = selected.replay;
+        retainedRows = selected.retained;
+        if (selected.retained.length > 0) {
+          logger.warn(
+            { retained: selected.retained.map((row) => row.hash.slice(0, 16)) },
+            "Chain integrity: fork retained and not replayed",
+          );
+        }
+        if (selected.orphans.length > 0) {
+          const hashes = selected.orphans.map((row) => row.hash);
+          try {
+            const db2 = getDb()!;
+            await db2.transaction(async (tx) => {
+              await tx.delete(transactionsTable).where(inArray(transactionsTable.blockHash, hashes));
+              await tx.delete(blocksTable).where(inArray(blocksTable.hash, hashes));
+            });
+            logger.info({ deleted: hashes.length }, "Pruned operational rows that do not connect to genesis");
+          } catch (pruneErr) {
+            logger.warn({ pruneErr }, "Failed to prune disconnected operational rows (will retry)");
+          }
+        }
       }
     }
-    // Drop any blocks beyond the first integrity violation — both in memory
-    // and in the DB so subsequent restarts don't re-hit the same truncation.
-    const validBlocks = [...operable.slice(0, contiguousEnd), ...canonicalRows];
-    if (contiguousEnd < operable.length) {
-      const cutHeight = contiguousEnd; // first invalid height
-      try {
-        const db2 = getDb()!;
-        await db2.transaction(async (tx) => {
-          // Delete orphaned transactions first (FK-safe order).
-          await tx.delete(transactionsTable).where(gte(transactionsTable.blockHeight, cutHeight));
-          await tx.delete(blocksTable).where(and(gte(blocksTable.height, cutHeight), isNull(blocksTable.evidence)));
-        });
-        logger.info({ deletedFrom: cutHeight }, "Pruned invalid chain suffix from DB");
-      } catch (pruneErr) {
-        // Non-fatal — in-memory chain is still correct; next restart will
-        // re-truncate until the prune eventually succeeds.
-        logger.warn({ pruneErr }, "Failed to prune invalid chain suffix from DB (will retry)");
-      }
-    }
+
+    const validBlocks = [...operable, ...retainedRows, ...canonicalRows];
 
     // Group txs by blockHash for O(1) lookup
     const txsByBlock = new Map<string, TxRecord[]>();

@@ -260,15 +260,9 @@ export class StratumServer {
       this.respond(session.socket, req.id, false, [20, "Chain not initialised", null]);
       return;
     }
-    const prev = cs.latestBlock;
-    if (!prev) {
-      this.respond(session.socket, req.id, false, [20, "Chain not initialised", null]);
-      return;
-    }
-
-    // Reject stale work — the chain tip advanced since this job was issued.
-    if (prev.hash !== job.tipHash) {
-      logger.info({ worker: session.worker, job: jobId, jobTip: job.tipHash, currentTip: prev.hash }, "Stratum share rejected: stale job");
+    const work = cs.canonicalWork();
+    if (work.prevHash !== job.tipHash) {
+      logger.info({ worker: session.worker, job: jobId, jobTip: job.tipHash, currentTip: work.prevHash }, "Stratum share rejected: stale job");
       this.respond(session.socket, req.id, false, [21, "Stale job — chain tip has advanced", null]);
       return;
     }
@@ -337,7 +331,7 @@ export class StratumServer {
     }
 
     // ── Assemble the block (mirrors POST /api/blocks/submit) ────────────────
-    const height  = cs.height + 1;
+    const height  = work.height;
     const now     = Number.isFinite(parsedNtime) ? parsedNtime : Math.floor(Date.now() / 1000);
     const nonce   = Number.isFinite(parsedNonce) ? parsedNonce : 0;
 
@@ -347,7 +341,7 @@ export class StratumServer {
     const difficulty = cs.canonicalBody.omega.difficulty;
     const recomputed = canonicalResidual(
       {
-        prevHash: prev.hash,
+        prevHash: work.prevHash,
         merkleRoot: mr,
         timestamp: now,
         nonce,
@@ -363,7 +357,7 @@ export class StratumServer {
       this.respond(session.socket, req.id, false, [23, admission.error, null]);
       return;
     }
-    const blockHash = hash256(`block-${height}-${prev.hash}-${now}`);
+    const blockHash = hash256(`block-${height}-${work.prevHash}-${now}`);
     residual = admission.residual;
 
     const reward = canonicalCoinbase(height, residual, cs.admissionTarget);
@@ -380,7 +374,7 @@ export class StratumServer {
     const block = {
       hash:          blockHash,
       height,
-      prevHash:      prev.hash,
+      prevHash:      work.prevHash,
       merkleRoot:    mr,
       timestamp:     now,
       nonce,
@@ -437,8 +431,7 @@ export class StratumServer {
   // ── Job builder ───────────────────────────────────────────────────────────
 
   private buildJob(): StratumRequest {
-    const prev = this.chainState?.latestBlock;
-    const tipHash = prev?.hash ?? "0".repeat(64);
+    const tipHash = this.chainState?.canonicalWork().prevHash ?? "0".repeat(64);
     const jobIdHex = (++this.jobId).toString(16).padStart(8, "0");
 
     // Track tip hash per job so submit can verify the work is not stale.

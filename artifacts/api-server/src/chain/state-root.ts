@@ -58,7 +58,7 @@ export function rebuildStateSmt(chainState: ChainState): SparseMerkleTree {
 export function getVerifiedStateRoot(
   chainState: ChainState,
 ): { snapshot?: StateRootSnapshot; error?: StateRootError } {
-  const tip = chainState.latestBlock;
+  const tip = chainState.canonicalTip;
   if (!tip) {
     return {
       error: { status: 503, message: "Chain not initialised" },

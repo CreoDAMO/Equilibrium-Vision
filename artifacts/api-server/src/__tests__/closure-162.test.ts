@@ -8,6 +8,8 @@ import { ChainState } from "../chain/state.js";
 import {
   selectSnapshotAnchor,
   chainThroughAnchor,
+  continuationAfterAnchor,
+  operationalReplaySet,
   evidenceToReplay,
   snapshotCoversPrune,
 } from "../chain/restart-boundary.js";
@@ -69,7 +71,9 @@ describe("a canonical skip is not execution", () => {
     const state = new ChainState();
     const recorded = { ...block, coinbaseReward: 100 };
     state.recordUnexecuted(recorded);
-    expect(state.blocks).toHaveLength(1);
+    expect(state.blocks).toHaveLength(0);
+    expect(state.retainedBlocks).toHaveLength(1);
+    expect(state.latestBlock).toBeUndefined();
     expect(recorded.canonicalSuccessor).toBe(false);
     expect(state.ledger.balance(miner)).toBe(0);
     expect(state.canonicalBody.omega.height).toBe(-1);
@@ -371,5 +375,107 @@ describe("pending governance keys are not a second writer", () => {
     process.env["GOVERNANCE_CONTRACT_ADDRESS"] = address;
     expect(drainPendingParamUpdates(vm)).toEqual({ baseReward: 999 });
     expect(vm.getStorage(address)["gov_pending_param:baseReward"]).toBeUndefined();
+  });
+});
+
+describe("snapshot replay follows the anchor, not the height", () => {
+  const genesis = { hash: "g", height: 0, prevHash: "" };
+  const anchor = { hash: "a", height: 5, prevHash: "g" };
+  const descendant = { hash: "b", height: 6, prevHash: "a" };
+  const unrelated = { hash: "x", height: 6, prevHash: "other" };
+  const sibling = { hash: "s", height: 6, prevHash: "a" };
+
+  it("does not admit an unrelated row because its height is past the snapshot", () => {
+    const forward = continuationAfterAnchor([genesis, anchor, descendant, unrelated], anchor);
+    const reverse = continuationAfterAnchor([unrelated, descendant, anchor, genesis], anchor);
+    expect(forward.fork).toBeNull();
+    expect(forward.blocks.map((row) => row.hash)).toEqual(["b"]);
+    expect(reverse.blocks.map((row) => row.hash)).toEqual(["b"]);
+    expect(new Set(forward.ignored.map((row) => row.hash))).toEqual(new Set(["g", "x"]));
+    expect(new Set(reverse.ignored.map((row) => row.hash))).toEqual(new Set(["g", "x"]));
+    expect(forward.retained).toEqual([]);
+  });
+
+  it("does not choose a same-height sibling by hash order", () => {
+    const lowFirst = continuationAfterAnchor([anchor, descendant, sibling], anchor);
+    const highFirst = continuationAfterAnchor([anchor, sibling, descendant], anchor);
+    expect(lowFirst.blocks).toEqual([]);
+    expect(highFirst.blocks).toEqual([]);
+    expect(new Set(lowFirst.fork?.children)).toEqual(new Set(["b", "s"]));
+    expect(new Set(highFirst.fork?.children)).toEqual(new Set(["b", "s"]));
+    expect(new Set(lowFirst.retained.map((row) => row.hash))).toEqual(new Set(["b", "s"]));
+    expect(new Set(highFirst.retained.map((row) => row.hash))).toEqual(new Set(["b", "s"]));
+  });
+
+  it("keeps a unique prefix and retains the fork, including a later child of one sibling", () => {
+    const child = { hash: "c", height: 7, prevHash: "b" };
+    const earlyX = { hash: "x", height: 7, prevHash: "s", timestamp: 1 };
+    const rows = [genesis, anchor, descendant, sibling, child, earlyX];
+    const selected = operationalReplaySet(rows);
+    const reversed = operationalReplaySet([...rows].reverse());
+    expect(selected.replay.map((row) => row.hash)).toEqual(["g", "a"]);
+    expect(reversed.replay.map((row) => row.hash)).toEqual(["g", "a"]);
+    expect(new Set(selected.retained.map((row) => row.hash))).toEqual(new Set(["b", "s", "c", "x"]));
+    expect(new Set(reversed.retained.map((row) => row.hash))).toEqual(new Set(["b", "s", "c", "x"]));
+    expect(selected.orphans).toEqual([]);
+  });
+
+  it("treats a disconnected row as an orphan and does not let it join the replay", () => {
+    const orphan = { hash: "z", height: 9, prevHash: "missing" };
+    const selected = operationalReplaySet([genesis, anchor, descendant, orphan]);
+    expect(selected.replay.map((row) => row.hash)).toEqual(["g", "a", "b"]);
+    expect(selected.orphans.map((row) => row.hash)).toEqual(["z"]);
+    expect(selected.retained).toEqual([]);
+  });
+});
+
+describe("a retained record is not canonical authority", () => {
+  const miner = "ab".repeat(20);
+  const decoy = {
+    hash: "ab".repeat(32),
+    height: 4,
+    prevHash: "1".repeat(64),
+    merkleRoot: "0".repeat(64),
+    timestamp: 9_000_000_000,
+    nonce: 0,
+    difficulty: 1_000_000,
+    residual: 1e-9,
+    recursionDepth: 2,
+    coinbaseReward: 100,
+    miner,
+    txCount: 0,
+    transactions: [],
+    finalized: false,
+  };
+
+  it("does not set the tip, the height, or the producer parent", () => {
+    const state = new ChainState();
+    const omegaHeight = state.canonicalBody.omega.height;
+    state.recordUnexecuted({ ...decoy });
+    expect(state.blocks).toHaveLength(0);
+    expect(state.height).toBe(-1);
+    expect(state.latestBlock).toBeUndefined();
+    expect(state.canonicalTip).toBeUndefined();
+    expect(state.retainedBlocks).toHaveLength(1);
+    expect(state.retainedBlocks[0]?.canonicalSuccessor).toBe(false);
+    expect(state.canonicalWork().prevHash).toBe(state.canonicalBody.omega.tipHash);
+    expect(state.canonicalWork().prevHash).not.toBe(decoy.hash);
+    expect(state.canonicalWork().height).toBe(omegaHeight + 1);
+    expect(state.ledger.balance(miner)).toBe(0);
+  });
+
+  it("does not let that record's timestamp refuse a later candidate before Ω does", () => {
+    const state = new ChainState();
+    state.recordUnexecuted({ ...decoy });
+    expect(() => state.addBlock({
+      ...decoy,
+      hash: "11".repeat(32),
+      height: 0,
+      timestamp: 1_700_000_000,
+    })).toThrow(/block is not the successor/);
+    expect(state.blocks).toHaveLength(0);
+    expect(state.canonicalBody.omega.height).toBe(-1);
+    expect(state.ledger.balance(miner)).toBe(0);
+    expect(state.retainedBlocks).toHaveLength(1);
   });
 });

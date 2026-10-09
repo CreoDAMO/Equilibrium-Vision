@@ -235,7 +235,8 @@ router.post("/blocks/submit", async (req, res) => {
     return;
   }
 
-  const tipHash = chainState.latestBlock?.hash ?? "0".repeat(64);
+  const work = chainState.canonicalWork();
+  const tipHash = work.prevHash;
 
   // ── Reject stale work (optional prevHash check) ─────────────────────────────
   if (typeof prevHash === "string" && prevHash.length > 0 && prevHash !== tipHash) {
@@ -243,7 +244,7 @@ router.post("/blocks/submit", async (req, res) => {
       error:          "Stale work — chain tip has advanced",
       submittedPrev:  prevHash,
       currentTip:     tipHash,
-      currentHeight:  chainState.height,
+      currentHeight:  work.height - 1,
     });
     return;
   }
@@ -295,7 +296,7 @@ router.post("/blocks/submit", async (req, res) => {
   }
 
   // ── Build the new block ─────────────────────────────────────────────────────
-  const height  = chainState.height + 1;
+  const height  = work.height;
   const now     = (typeof timestamp === "number" && timestamp > 0)
     ? Math.floor(timestamp)
     : Math.floor(Date.now() / 1000);

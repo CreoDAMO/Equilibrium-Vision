@@ -1504,6 +1504,59 @@ describe("ChainState UTXO fee sweep", () => {
   });
 });
 
+describe("a retained non-successor is not the producer parent", () => {
+  it("admits the next Ω successor after the record, and the record is not the tip", () => {
+    const state = buildGenesisChainFromDoc({
+      chain_id: "equilibrium-1",
+      timestamp: "2026-07-05T00:44:37.417Z",
+      initial_supply: "100000000",
+      allocations: KERNEL_ALLOCATIONS.map((line) => ({
+        address: line.address,
+        amount: String(line.amount),
+        vesting: "none",
+        category: "line",
+      })),
+      initial_validators: [],
+      dex_pools: [],
+      parameters: {
+        target_block_time_ms: 15_000,
+        residual_threshold: 8e-4,
+        initial_difficulty: 1_000_000,
+        slashing_double_sign_pct: 5,
+        slashing_downtime_pct: 1,
+        unbonding_period_blocks: 10,
+        max_validators: 100,
+        governance_quorum_pct: 67,
+        governance_voting_period_blocks: 10,
+      },
+    });
+    const omega = state.canonicalBody.omega;
+    const miner = kernelParty("mainnet").miner;
+    state.recordUnexecuted({
+      ...fakeBlock(9, 9_000_000_000),
+      hash: "cd".repeat(32),
+      prevHash: "1".repeat(64),
+    });
+    state.addBlock({
+      ...fakeBlock(omega.height + 1, 1_700_000_000),
+      prevHash: omega.tipHash,
+      miner,
+      nonce: 6,
+      difficulty: omega.difficulty,
+      committedPressure: 0,
+    });
+    expect(state.blocks).toHaveLength(1);
+    expect(state.blocks[0]?.canonicalSuccessor).toBe(true);
+    expect(state.blocks[0]?.hash).toBe(state.canonicalBody.omega.tipHash);
+    expect(state.canonicalTip?.hash).toBe(state.canonicalBody.omega.tipHash);
+    expect(state.latestBlock?.hash).not.toBe("cd".repeat(32));
+    expect(state.retainedBlocks.map((block) => block.hash)).toEqual(["cd".repeat(32)]);
+    expect(state.canonicalWork().prevHash).toBe(state.canonicalTip?.hash);
+    expect(state.ledger.balance(miner)).toBe(state.canonicalBody.omega.ledger.get(miner)?.balance);
+    expect(state.canonicalBody.omega.height).toBe(0);
+  });
+});
+
 describe("stratum admission", () => {
   it("does not ask the variational-ai CLI to decide a share", () => {
     const src = readFileSync(fileURLToPath(new URL("../lib/stratum-server.ts", import.meta.url)), "utf8");

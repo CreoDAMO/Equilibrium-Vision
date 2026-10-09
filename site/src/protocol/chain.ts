@@ -2324,7 +2324,7 @@ export class OrganismNode {
     const paidOutside = outsideStep.ok && row?.status === "settled" && row.effectLocator !== null && escrow === 0 && senderLeft === senderWas - 1_000;
     const ethRefused = !ethStep.ok && ethStep.error === "withdrawal destination refused";
     const token = "ab".repeat(20);
-    const recipient = "ef".repeat(20);
+    const ethRecipient = "ef".repeat(20);
     const logData = new Uint8Array(32);
     logData[30] = 0x03;
     logData[31] = 0xe8;
@@ -2333,7 +2333,7 @@ export class OrganismNode {
       cumulativeGas: 21_000,
       logs: [{
         address: token,
-        topics: [TRANSFER_TOPIC, `${"00".repeat(12)}${"11".repeat(20)}`, `${"00".repeat(12)}${recipient}`],
+        topics: [TRANSFER_TOPIC, `${"00".repeat(12)}${"11".repeat(20)}`, `${"00".repeat(12)}${ethRecipient}`],
         data: logData,
       }],
     });
@@ -2351,7 +2351,7 @@ export class OrganismNode {
           amount: 1_000,
           network: "eth",
           asset: token,
-          destination: `eth:${recipient}`,
+          destination: `eth:${ethRecipient}`,
           nonce: 2,
         })
       : null;
@@ -2367,7 +2367,7 @@ export class OrganismNode {
                 amount: 1_000,
                 network: "eth" as const,
                 asset: token,
-                destination: `eth:${recipient}`,
+                destination: `eth:${ethRecipient}`,
                 nonce: 2,
                 publicKey: ethOpen.publicKey,
                 signature: ethOpen.signature,
@@ -2405,7 +2405,7 @@ export class OrganismNode {
       && ethRow.effectLocator === `${parsedHeader.hash}:0:0`
       && ethEscrow === 0
       && ethSender === senderWas - 1_000
-      && ethPaidStep.next.ledger.get(recipient) === undefined,
+      && ethPaidStep.next.ledger.get(ethRecipient) === undefined,
     );
     rows.push({
       id: "withdraw",
