@@ -102,8 +102,8 @@ const tail = block({
   residualFp: 50,
   timestamp: 1_700_000_015,
 });
-state.addBlock(anchor);
-state.addBlock(tail);
+state.recordUnexecuted(anchor);
+state.recordUnexecuted(tail);
 const parked = omegaDigest(state.canonicalBody.omega);
 const refused = state.reorganize([
   block({
@@ -196,7 +196,7 @@ assert.equal(gov.couplings.structural, 0);
 assert.equal(gov.canonicalBody.omega.couplings.structural, 0);
 assert.equal(gov.canonicalProposals.find((p) => p.id === 7)?.status, "executed");
 gov.kernelProposals.push({ id: "k", status: "passed", couplingKey: "structural", couplingValue: 1 });
-gov.addBlock(block({
+gov.recordUnexecuted(block({
   hash: "99".repeat(32),
   height: 2,
   prevHash: "1".repeat(64),

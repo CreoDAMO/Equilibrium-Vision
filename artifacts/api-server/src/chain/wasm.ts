@@ -115,6 +115,7 @@ export class WasmVM {
   private contracts = new Map<string, ContractRecord>();
   private blockHeight = 0;
   private persistFn?: (contract: ContractRecord) => Promise<void>;
+  private commitFn?: (contracts: ContractRecord[]) => Promise<boolean>;
   private hostCtx?: WasmHostContext;
 
   setBlockHeight(h: number) { this.blockHeight = h; }
@@ -133,6 +134,14 @@ export class WasmVM {
     this.persistFn = fn;
   }
 
+  /**
+   * One commit for every contract a top-level call touched.
+   * False means none of those writes should be treated as durable.
+   */
+  setCommitCallback(fn: (contracts: ContractRecord[]) => Promise<boolean>): void {
+    this.commitFn = fn;
+  }
+
   /** Bulk-load contracts from DB on startup — skips validation for speed. */
   loadContracts(records: ContractRecord[]): void {
     for (const r of records) this.contracts.set(r.address, r);
@@ -149,6 +158,47 @@ export class WasmVM {
       this.persistFn(contract).catch((err) =>
         console.warn("[WasmVM] contract persist failed:", err),
       );
+    }
+  }
+
+  private snapshotCallMeta(): Map<string, { callCount: number; totalGasUsed: number; events?: string[] }> {
+    const snap = new Map<string, { callCount: number; totalGasUsed: number; events?: string[] }>();
+    for (const [addr, contract] of this.contracts) {
+      snap.set(addr, {
+        callCount: contract.callCount,
+        totalGasUsed: contract.totalGasUsed,
+        events: contract.events ? [...contract.events] : undefined,
+      });
+    }
+    return snap;
+  }
+
+  private restoreCallMeta(snap: Map<string, { callCount: number; totalGasUsed: number; events?: string[] }>): void {
+    for (const [addr, saved] of snap) {
+      const contract = this.contracts.get(addr);
+      if (!contract) continue;
+      contract.callCount = saved.callCount;
+      contract.totalGasUsed = saved.totalGasUsed;
+      contract.events = saved.events;
+    }
+  }
+
+  /** Commit every contract from one successful top-level call, or none of them. */
+  private async commitContracts(contracts: ContractRecord[]): Promise<boolean> {
+    if (contracts.length === 0) return true;
+    if (this.commitFn) {
+      try {
+        return await this.commitFn(contracts);
+      } catch {
+        return false;
+      }
+    }
+    if (!this.persistFn) return true;
+    try {
+      for (const contract of contracts) await this.persistFn(contract);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -246,7 +296,24 @@ export class WasmVM {
     // "[wasm-worker] host RPC port closed unexpectedly" on every call that
     // touches host-context (balance, debit, DEX, etc.).
     if (!isMainThread || !this.hostCtx || !WORKER_SCRIPT || process.env["VITEST"]) {
-      return this.execCall(address, methodId, args, gasLimit, callerAddr, 0);
+      const snap = this.snapshotAllStorage();
+      const meta = this.snapshotCallMeta();
+      const pending: ContractRecord[] = [];
+      const result = this.execCall(address, methodId, args, gasLimit, callerAddr, 0, pending);
+      if (!result.success) return result;
+      const committed = await this.commitContracts(pending);
+      if (!committed) {
+        this.restoreAllStorage(snap);
+        this.restoreCallMeta(meta);
+        return {
+          success: false,
+          returnValue: null,
+          gasUsed: result.gasUsed,
+          logs: result.logs,
+          error: "contract persist did not commit",
+        };
+      }
+      return result;
     }
 
     // ── Worker dispatch ────────────────────────────────────────────────────
@@ -307,21 +374,53 @@ export class WasmVM {
       worker.on("message", (msg: Record<string, unknown>) => {
         if (msg["type"] !== "done") return;
         // Apply storage + call-counter updates back to the live contract map.
+        const result = msg["result"] as CallResult;
+        if (!result.success) {
+          settle(result);
+          return;
+        }
         const updates = msg["contractUpdates"] as Array<{
           address: string; storage: Record<string, string>;
           callCount: number; totalGasUsed: number; events?: string[];
         }>;
+        const touched: ContractRecord[] = [];
+        const previous = new Map<string, { storage: Record<string, string>; callCount: number; totalGasUsed: number; events?: string[] }>();
         for (const u of updates) {
           const live = this.contracts.get(u.address);
-          if (live) {
-            live.storage      = u.storage;
-            live.callCount    = u.callCount;
-            live.totalGasUsed = u.totalGasUsed;
-            if (u.events) live.events = u.events;
-            this.firePersist(live);
-          }
+          if (!live) continue;
+          previous.set(u.address, {
+            storage: { ...live.storage },
+            callCount: live.callCount,
+            totalGasUsed: live.totalGasUsed,
+            events: live.events ? [...live.events] : undefined,
+          });
+          live.storage = u.storage;
+          live.callCount = u.callCount;
+          live.totalGasUsed = u.totalGasUsed;
+          if (u.events) live.events = u.events;
+          touched.push(live);
         }
-        settle(msg["result"] as CallResult);
+        void this.commitContracts(touched).then((committed) => {
+          if (!committed) {
+            for (const [addr, saved] of previous) {
+              const live = this.contracts.get(addr);
+              if (!live) continue;
+              this.restoreOneStorage(live.storage, saved.storage);
+              live.callCount = saved.callCount;
+              live.totalGasUsed = saved.totalGasUsed;
+              live.events = saved.events;
+            }
+            settle({
+              success: false,
+              returnValue: null,
+              gasUsed: result.gasUsed,
+              logs: result.logs,
+              error: "contract persist did not commit",
+            });
+            return;
+          }
+          settle(result);
+        });
       });
 
       worker.on("error", (err) => {
@@ -343,6 +442,7 @@ export class WasmVM {
     gasLimit: number,
     callerAddr: string,
     depth: number,
+    pending: ContractRecord[],
   ): CallResult {
     const contract = this.contracts.get(address);
     if (!contract) {
@@ -769,7 +869,7 @@ export class WasmVM {
             for (let i = 0; i < argWordCount; i++) {
               childArgs.push(view.getInt32(argsPtr + i * 4, true));
             }
-            const childResult = this.execCall(targetAddr, childMethodId, childArgs, remaining, address, depth + 1);
+            const childResult = this.execCall(targetAddr, childMethodId, childArgs, remaining, address, depth + 1, pending);
             if (!childResult.success) {
               restoreStorage(); // ROLLBACK: discard any partial child writes
             }
@@ -838,12 +938,12 @@ export class WasmVM {
         events.push(...logs);
         if (events.length > 200) events.splice(0, events.length - 200);
       }
-      this.firePersist(contract);
+      if (!pending.includes(contract)) pending.push(contract);
 
       return { success: true, returnValue, gasUsed, logs };
     } catch (e) {
-      // In-memory only. A nested call that already returned may have scheduled
-      // firePersist; that write is not cancelled here.
+      // In-memory restore. The caller's pending list is not committed unless
+      // this frame returns success. A nested write is not durable until then.
       restoreStorage();
       return {
         success: false,

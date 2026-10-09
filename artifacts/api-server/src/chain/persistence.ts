@@ -434,6 +434,47 @@ export async function persistContract(contract: ContractRecord): Promise<void> {
   }
 }
 
+/**
+ * Write every contract from one call in a single transaction.
+ * False means the transaction did not commit. No row from the batch is kept.
+ */
+export async function persistContractsAtomic(contracts: ContractRecord[]): Promise<boolean> {
+  if (contracts.length === 0) return true;
+  const db = getDb();
+  if (!db) return true;
+  try {
+    await db.transaction(async (tx) => {
+      for (const contract of contracts) {
+        await tx
+          .insert(contractsTable)
+          .values({
+            address:      contract.address,
+            deployer:     contract.deployer,
+            bytecode:     contract.bytecode,
+            bytecodeHash: contract.bytecodeHash,
+            storage:      contract.storage,
+            deployedAt:   contract.deployedAt,
+            callCount:    contract.callCount,
+            totalGasUsed: contract.totalGasUsed,
+            abi:          contract.abi ?? null,
+          })
+          .onConflictDoUpdate({
+            target: contractsTable.address,
+            set: {
+              storage:      contract.storage,
+              callCount:    contract.callCount,
+              totalGasUsed: contract.totalGasUsed,
+            },
+          });
+      }
+    });
+    return true;
+  } catch (err) {
+    logger.warn({ err, count: contracts.length }, "Contract batch did not commit");
+    return false;
+  }
+}
+
 function rowToContractRecord(r: typeof contractsTable.$inferSelect): ContractRecord {
   return {
     address:      r.address,

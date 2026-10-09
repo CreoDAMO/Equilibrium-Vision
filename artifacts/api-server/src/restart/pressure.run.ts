@@ -27,8 +27,31 @@ const block: BlockRecord = {
   committedPressure: 0.25,
   sealIdentity: true,
 };
-state.addBlock(block);
-if (!block.stateRoot) throw new Error("seal did not produce a state root");
+const stateRoot = "33".repeat(32);
+block.stateRoot = stateRoot;
+block.residualFp = Math.floor(block.residual * 1e18);
+block.hash = canonicalHeaderHash({
+  prevHash: block.prevHash,
+  merkleRoot: block.merkleRoot,
+  stateRoot,
+  timestamp: block.timestamp,
+  nonce: block.nonce,
+  difficulty: block.difficulty,
+  residualFp: block.residualFp,
+  miner: block.miner,
+  height: block.height,
+  committedPressure: block.committedPressure ?? 0,
+});
+let refused = "";
+try {
+  state.addBlock(block);
+} catch (err) {
+  refused = err instanceof Error ? err.message : String(err);
+}
+if (refused !== "block is not the successor") {
+  throw new Error(`a non-successor was not refused: ${refused || "accepted"}`);
+}
+if (state.blocks.length !== 0) throw new Error("a refused block was appended");
 await persistBlock(block);
 await closePersistence();
 

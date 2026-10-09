@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlockAsync } from "./state.js";
 import {
-  persistContract, loadContractsFromDb,
+  persistContract, persistContractsAtomic, loadContractsFromDb,
   loadBlocksFromDb, persistBlock, persistBlocks,
   loadLatestSnapshot, saveStateSnapshot, loadAllBlocksRaw,
   pruneOldBlocks, DEFAULT_PRUNE_KEEP,
@@ -218,7 +218,12 @@ export async function initChain(): Promise<void> {
           .filter((block) => !block.evidence && block.height > snapshot.height)
           .sort((a, b) => a.height - b.height || (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0));
         for (const block of later) {
-          seedState.addBlock(block);
+          try {
+            seedState.addBlock(block);
+          } catch (err) {
+            if (!(err instanceof Error) || err.message !== "block is not the successor") throw err;
+            seedState.recordUnexecuted(block);
+          }
           for (const peer of seedState.peers) {
             if (peer.connected) peer.height = block.height;
           }
@@ -298,6 +303,7 @@ export async function initChain(): Promise<void> {
   // Wire the persist callback first so any contract deployed during replay
   // (future feature) is captured.
   chainState.wasmVM.setPersistCallback(persistContract);
+  chainState.wasmVM.setCommitCallback(persistContractsAtomic);
 
   // Load previously deployed contracts from DB.
   const savedContracts = await loadContractsFromDb();
@@ -527,6 +533,10 @@ export async function initChain(): Promise<void> {
         transactions:   [],
       };
       chainState.addBlock(block);
+      if (block.canonicalSuccessor !== true) {
+        logger.warn({ hash: hash.slice(0, 16), height }, "p2p: block is not the successor");
+        return;
+      }
       void p2pBridge.gossipBlock(hash); // propagate to other desktop peers
       chainState.gossipBlock(hash);
       logger.info({ hash: hash.slice(0, 16), height }, 'p2p: block from gossip body accepted');
@@ -600,6 +610,13 @@ let miningTimer: ReturnType<typeof setTimeout> | null = null;
 async function runMiningCycle(generation: number): Promise<void> {
   try {
     const block = await mineNextBlockAsync(chainState, minerAddress);
+    if (block.canonicalSuccessor !== true) {
+      logger.warn(
+        { height: block.height, hash: block.hash.slice(0, 16) },
+        "Mined block is not the successor — not persisted or announced",
+      );
+      return;
+    }
     logger.info(
       { height: block.height, hash: block.hash.slice(0, 16), txCount: block.txCount, residual: block.residual },
       "Block mined",
@@ -649,6 +666,8 @@ async function runMiningCycle(generation: number): Promise<void> {
         pressure: chainState.mempool.pressure,
       },
     });
+  } catch (err) {
+    logger.warn({ err }, "Mining cycle refused the block — it was not announced");
   } finally {
     // Only reschedule if this cycle's generation is still current and mining
     // is still enabled.  Bumping miningGeneration in stopMining() makes any

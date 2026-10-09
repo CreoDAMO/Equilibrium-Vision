@@ -207,6 +207,10 @@ if (Number.isNaN(port) || port <= 0) {
             // All checks pass — insert into chain state
             logger.info({ blockHash, height: remoteHeight, miner: remote.miner, peerId }, 'P2P sync: accepting block from peer');
             chainState.addBlock(remote);
+            if (remote.canonicalSuccessor !== true) {
+              logger.warn({ blockHash, height: remoteHeight }, "P2P sync: block is not the successor");
+              return;
+            }
 
             // Persist to Postgres so the block survives a restart
             const { persistBlock } = await import('./chain/persistence.js');

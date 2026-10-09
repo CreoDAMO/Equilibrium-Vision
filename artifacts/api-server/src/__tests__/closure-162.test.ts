@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { WasmVM } from "../chain/wasm.js";
+import { ChainState } from "../chain/state.js";
 import {
   selectSnapshotAnchor,
   chainThroughAnchor,
@@ -35,6 +36,45 @@ async function compile(name: string, wat: string): Promise<string> {
   const { buffer } = mod.toBinary({});
   return Buffer.from(buffer).toString("hex");
 }
+
+describe("a canonical skip is not execution", () => {
+  const miner = "ab".repeat(20);
+  const block = {
+    hash: "11".repeat(32),
+    height: 0,
+    prevHash: "1".repeat(64),
+    merkleRoot: "0".repeat(64),
+    timestamp: 1_700_000_000,
+    nonce: 0,
+    difficulty: 1_000_000,
+    residual: 1e-9,
+    recursionDepth: 2,
+    coinbaseReward: 50_000_000,
+    miner,
+    txCount: 0,
+    transactions: [],
+    finalized: false,
+  };
+
+  it("refuses a wrong parent without appending it or paying the coinbase", () => {
+    const state = new ChainState();
+    const height = state.canonicalBody.omega.height;
+    expect(() => state.addBlock({ ...block })).toThrow(/block is not the successor/);
+    expect(state.blocks).toHaveLength(0);
+    expect(state.ledger.balance(miner)).toBe(0);
+    expect(state.canonicalBody.omega.height).toBe(height);
+  });
+
+  it("can record that block without paying it", () => {
+    const state = new ChainState();
+    const recorded = { ...block, coinbaseReward: 100 };
+    state.recordUnexecuted(recorded);
+    expect(state.blocks).toHaveLength(1);
+    expect(recorded.canonicalSuccessor).toBe(false);
+    expect(state.ledger.balance(miner)).toBe(0);
+    expect(state.canonicalBody.omega.height).toBe(-1);
+  });
+});
 
 describe("snapshot anchor is the block hash", () => {
   const rows = [evidenceSibling, operational, genesis, later, laterEvidence, tiedHigh, tiedLow];
@@ -228,8 +268,28 @@ describe("a trapping call does not keep the storage it wrote", () => {
     expect(result.success).toBe(false);
     expect(vm.getStorage(child.address)["k"]).toBe("before-child");
     expect(vm.getStorage(parent.address)["p"]).toBe("before-parent");
-    // The nested call already handed its record to persist. That is not cancelled.
-    expect(persisted).toEqual([child.address]);
+    expect(persisted).toEqual([]);
+  });
+
+  it("does not commit a nested write when the batch commit fails", async () => {
+    const hex = await compile("keep.wat", `(module
+      (import "env" "storage_set" (func $storage_set (param i32 i32 i32 i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 0) "k")
+      (data (i32.const 16) "kept")
+      (func (export "call") (param i32) (param i32) (param i32) (result i32)
+        (call $storage_set (i32.const 0) (i32.const 1) (i32.const 16) (i32.const 4))
+        (i32.const 1))
+    )`);
+    const vm = new WasmVM();
+    const deployed = await vm.deploy("aa".repeat(20), hex);
+    expect(deployed.error).toBeUndefined();
+    vm.getContract(deployed.address)!.storage["k"] = "before";
+    vm.setCommitCallback(async () => false);
+    const result = await vm.call(deployed.address, 0, []);
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("contract persist did not commit");
+    expect(vm.getStorage(deployed.address)["k"]).toBe("before");
   });
 });
 

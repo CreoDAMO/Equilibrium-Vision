@@ -591,200 +591,45 @@ export class ChainState {
     if (admitted.kind === "skip" && poolHit) {
       throw new Error("pool effects are applied by the successor, not addBlock");
     }
+    // A skip is not executed and not appended. Recording a non-successor is
+    // recordUnexecuted. That path does not pay, and it is not acceptance.
+    if (admitted.kind === "skip") {
+      throw new Error("block is not the successor");
+    }
     this.noteBefore(block.height, priorOmega, priorCanonBlocks);
-    if (admitted.kind === "accept") {
-      block.hash = admitted.hash;
-      block.merkleRoot = admitted.merkleRoot;
-      block.stateRoot = admitted.stateRoot;
-      block.evidenceRoot = admitted.evidenceRoot;
-      block.omegaRoot = admitted.omegaRoot;
-      block.chainId = admitted.chainId;
-      block.residual = admitted.residual;
-      block.residualFp = admitted.residualFp;
-      block.coinbaseReward = admitted.reward;
-      block.transitionRoot = admitted.transitionRoot;
-    }
+    block.hash = admitted.hash;
+    block.merkleRoot = admitted.merkleRoot;
+    block.stateRoot = admitted.stateRoot;
+    block.evidenceRoot = admitted.evidenceRoot;
+    block.omegaRoot = admitted.omegaRoot;
+    block.chainId = admitted.chainId;
+    block.residual = admitted.residual;
+    block.residualFp = admitted.residualFp;
+    block.coinbaseReward = admitted.reward;
+    block.transitionRoot = admitted.transitionRoot;
+    block.canonicalSuccessor = true;
     this.blocks.push(block);
-    if (admitted.kind === "accept") {
-      for (const tx of block.transactions) {
-        const confirmed: TxRecord = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" };
-        this.txIndex.set(tx.hash, confirmed);
-        this.mempool.remove([tx.hash]);
-        for (const addr of [tx.from, tx.to]) {
-          if (!this.addressTxs.has(addr)) this.addressTxs.set(addr, new Set());
-          this.addressTxs.get(addr)!.add(tx.hash);
-        }
-      }
-      this.embodyCanonical();
-      this.wasmVM.setBlockHeight(block.height);
-      return;
-    }
-
     for (const tx of block.transactions) {
       const confirmed: TxRecord = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" };
       this.txIndex.set(tx.hash, confirmed);
       this.mempool.remove([tx.hash]);
-
       for (const addr of [tx.from, tx.to]) {
         if (!this.addressTxs.has(addr)) this.addressTxs.set(addr, new Set());
         this.addressTxs.get(addr)!.add(tx.hash);
       }
-
-      const poolDest = this.dexPools.has(tx.to)
-        || this.canonicalBody.omega.pools.some((p) => (p.address || poolAddress(p.id)) === tx.to);
-      if (poolDest) {
-        const failed: TxRecord = { ...confirmed, status: "failed" };
-        this.txIndex.set(tx.hash, failed);
-        continue;
-      }
-
-      // The account ledger is the monetary state. A transfer it rejects does
-      // not become a confirmed output, and a transfer it accepts does not
-      // also mint a recipient UTXO.
-      const applyErr = this.ledger.applyTx(tx);
-      if (applyErr) {
-        const failed: TxRecord = { ...confirmed, status: "failed" };
-        this.txIndex.set(tx.hash, failed);
-        logger.warn({ txHash: tx.hash, err: applyErr }, "ledger.applyTx rejected — no UTXO created");
-        continue;
-      }
-
-      if (tx.fee > 0) {
-        this.ledger.credit(block.miner, tx.fee);
-      }
     }
-
-    // A UTXO-model fee is not a second output. It is credited on the account
-    // ledger of this block's miner. Rollback puts the pool back.
-    if (this.pendingUtxoFees > 0) {
-      block.utxoFeeCredit = this.pendingUtxoFees;
-      this.ledger.credit(block.miner, this.pendingUtxoFees);
-      this.pendingUtxoFees = 0;
-    }
-
-    const prevBlock = this.blocks[this.blocks.length - 2];
-    const blockTime = prevBlock ? block.timestamp - prevBlock.timestamp : TARGET_BLOCK_TIME;
-
-    this.blockStats.push({
-      height: block.height,
-      txCount: block.txCount,
-      residual: block.residual,
-      mempoolPressure: block.committedPressure ?? 0,
-      timestamp: block.timestamp,
-      difficulty: this.currentDifficulty,
-      blockTime,
-    });
-    if (this.blockStats.length > 50) this.blockStats.shift();
-
-    this.updateDifficulty();
-    this.runFinalityRound(block);
-    this.processUnbonding(block.height);
-    this.distributeBlockReward(block);
-    this.governance.processBlock(block.timestamp, this.totalBondedStake);
-
-    // WASM gov_pending_param:* keys are contract storage, not a second writer.
-    // ChainParameters are not updated here. Couplings move only when the
-    // successor opens a kernel proposal. Unapplied keys are left in place.
-    noteIgnoredGovernanceParams(this.wasmVM, this.notedGovParams, (name, value) => {
-      logger.info({ param: name, value }, "governance param ignored; it is not the successor");
-    });
-
-    // Keep the WASM VM's block_number() host import in sync with the chain tip.
+    this.embodyCanonical();
     this.wasmVM.setBlockHeight(block.height);
+  }
 
-    // ── Cryptographic state root (Sparse Merkle Tree) ─────────────────────────
-    //
-    // Commits the full world state to a single 32-byte root in every block header.
-    // A mobile light node can verify any account balance or UTXO with a
-    // 256-sibling Merkle proof against this root — without downloading the
-    // full chain. This is the foundational primitive for the mobile node design.
-    //
-    // Scope: accounts, unspent outputs, contract storage, pool reserves,
-    // and validator bond, commission, jail, and slash. This root is not
-    // stateRootOf. The public kernel binds accounts, pools, foreign tips,
-    // and wasm there, and binds validators in the omega digest.
-    try {
-      const smt = new SparseMerkleTree();
-
-      // 1. Account balances and nonces
-      for (const [addr, acc] of this.ledger.getAllAccounts()) {
-        smt.set(
-          smtKey("acct", addr),
-          smtValue(`${acc.balance}:${acc.nonce}`),
-        );
-      }
-
-      // 2. Unspent UTXOs
-      for (const utxo of this.utxoSet.getAllUnspent()) {
-        smt.set(
-          smtKey("utxo", `${utxo.txHash}:${utxo.outputIndex}`),
-          smtValue(`${utxo.amount}:${utxo.address}:${utxo.blockHeight}`),
-        );
-      }
-
-      // 3. WASM contract storage commitments
-      for (const contract of this.wasmVM.listContracts()) {
-        smt.set(
-          smtKey("contract", contract.address),
-          smtValue(JSON.stringify(contract.storage)),
-        );
-      }
-
-      for (const [id, pool] of this.dexPools) {
-        smt.set(
-          smtKey("pool", id),
-          smtValue(`${pool.reserveA}:${pool.reserveB}:${pool.fee}`),
-        );
-      }
-      for (const [addr, v] of this.validators) {
-        smt.set(
-          smtKey("val", addr),
-          smtValue(`${v.bondedStake}:${v.commission}:${v.jailed ? 1 : 0}:${v.slashed ? 1 : 0}`),
-        );
-      }
-
-      const bindCanonical = evidenceBound(block);
-      const operationalRoot = smt.root();
-      block.operationalRoot = operationalRoot;
-      if (!bindCanonical) {
-        block.stateRoot = operationalRoot;
-        delete block.chainId;
-        delete block.evidenceRoot;
-        delete block.omegaRoot;
-      }
-
-      this._stateSmt = smt;
-      if (block.sealIdentity) {
-        block.residualFp = block.residualFp ?? Math.floor(block.residual * 1e18);
-        block.hash = canonicalHeaderHash({
-          prevHash: block.prevHash,
-          merkleRoot: block.merkleRoot,
-          stateRoot: block.stateRoot ?? operationalRoot,
-          timestamp: block.timestamp,
-          nonce: block.nonce,
-          difficulty: block.difficulty,
-          residualFp: block.residualFp,
-          miner: block.miner,
-          height: block.height,
-          committedPressure: block.committedPressure ?? 0,
-          ...(bindCanonical
-            ? { chainId: block.chainId, evidenceRoot: block.evidenceRoot, omegaRoot: block.omegaRoot }
-            : {}),
-        });
-        for (const tx of block.transactions) {
-          tx.blockHash = block.hash;
-          const indexed = this.txIndex.get(tx.hash);
-          if (indexed) indexed.blockHash = block.hash;
-        }
-      }
-
-      // Patch-05: persist SMT root to Postgres (fire-and-forget)
-      this._persistSmtRoot({ height: block.height, hash: block.hash }).catch((e) =>
-        logger.warn({ err: e, height: block.height }, "[ChainState] persistSmtRoot failed"),
-      );
-    } catch (err) {
-      logger.warn({ err, height: block.height }, "State root computation failed — skipping");
-    }
+  /**
+   * Keep a block on the operational list without executing it.
+   * It does not move the ledger, rewards, difficulty, finality, governance, or Ω.
+   * It is not a canonical successor and must not be announced as one.
+   */
+  recordUnexecuted(block: BlockRecord): void {
+    block.canonicalSuccessor = false;
+    this.blocks.push(block);
   }
 
   /**
@@ -1788,7 +1633,12 @@ export function buildDocChainFromBlocks(doc: GenesisDocument, blocks: BlockRecor
 
   for (const block of blocks) {
     if (block.evidence) continue;
-    state.addBlock(block);
+    try {
+      state.addBlock(block);
+    } catch (err) {
+      if (!(err instanceof Error) || err.message !== "block is not the successor") throw err;
+      state.recordUnexecuted(block);
+    }
     for (const peer of state.peers) {
       if (peer.connected) peer.height = block.height;
     }
@@ -1815,7 +1665,12 @@ export function buildChainFromBlocks(blocks: BlockRecord[]): ChainState {
 
   for (const block of blocks) {
     if (block.evidence) continue;
-    state.addBlock(block);
+    try {
+      state.addBlock(block);
+    } catch (err) {
+      if (!(err instanceof Error) || err.message !== "block is not the successor") throw err;
+      state.recordUnexecuted(block);
+    }
     for (const peer of state.peers) {
       if (peer.connected) peer.height = block.height;
     }

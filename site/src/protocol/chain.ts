@@ -2188,7 +2188,7 @@ export class OrganismNode {
         id: "trade",
         status: moved ? "local" : "absent",
         detail: moved
-          ? `The pool reserve changed by ${(reserveAfter - reserveBefore).toLocaleString()} EQU. The genesis liquidity address changed by ${(lockedAfter - lockedBefore).toLocaleString()}, which is not that reserve. The pool is not that allocation, and it settles nowhere else.`
+          ? `The EQU-USDC pool reserve changed by ${(reserveAfter - reserveBefore).toLocaleString()} EQU. The genesis liquidity address changed by ${(lockedAfter - lockedBefore).toLocaleString()} on the ledger, which is not that reserve. The pool is not that allocation. This swap does not settle on another chain.`
           : "A signed swap did not move the pool.",
       });
     }
@@ -2223,7 +2223,7 @@ export class OrganismNode {
       status: !admitted.ok && refused && recipient === 0 ? "works" : "absent",
       detail:
         !admitted.ok && refused && recipient === 0
-          ? `An unfunded transfer of 10,000,000,001 was refused at the mempool and by the transition. The sender stayed at ${senderBefore.toLocaleString()}. No second output was created.`
+          ? `An unfunded transfer of 10,000,000,001 was refused by the mempool and by the transition. The sender stayed at ${senderBefore.toLocaleString()}. No recipient balance was created.`
           : `An unfunded transfer was accepted. ${admitted.error ?? ("error" in stepped ? stepped.error : "transition applied")}`,
     });
 
@@ -2417,7 +2417,7 @@ export class OrganismNode {
     rows.push({
       id: "other-miners",
       status: "local",
-      detail: "This process produces the blocks. A second body can replay them. It does not compete for them, and the Rust crate does not mine them.",
+      detail: "This fork produced its own block and did not start another producer. Separately, a second body given only the blocks produced the next block, and a third body accepted it. The Rust crate does not mine them.",
     });
     return rows;
   }

@@ -399,7 +399,18 @@ export class StratumServer {
     };
 
     // ── Apply to chain ──────────────────────────────────────────────────────
-    cs.addBlock(block);
+    try {
+      cs.addBlock(block);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "block refused";
+      logger.info({ height, miner: minerAddr, message }, "Stratum share rejected");
+      this.respond(session.socket, req.id, false, [23, message, null]);
+      return;
+    }
+    if (block.canonicalSuccessor !== true) {
+      this.respond(session.socket, req.id, false, [23, "block is not the successor", null]);
+      return;
+    }
     block.zkProof = generateZkProof(block.residual, block.hash, block.height);
     cs.gossipBlock(block.hash);
 

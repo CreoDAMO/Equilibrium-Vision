@@ -363,7 +363,17 @@ router.post("/blocks/submit", async (req, res) => {
   // ── Apply to chain state ────────────────────────────────────────────────────
   // Note: do NOT call chainState.ledger.credit() here — addBlock() calls
   // distributeBlockReward(). A pre-credit here would double the miner's balance.
-  chainState.addBlock(block);
+  try {
+    chainState.addBlock(block);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "block refused";
+    res.status(422).json({ error: message });
+    return;
+  }
+  if (block.canonicalSuccessor !== true) {
+    res.status(422).json({ error: "block is not the successor" });
+    return;
+  }
   block.zkProof = generateZkProof(block.residual, block.hash, block.height);
   chainState.gossipBlock(block.hash);
 

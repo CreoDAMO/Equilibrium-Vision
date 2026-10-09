@@ -66,7 +66,8 @@ export interface BlockRecord {
   coinbaseReward: number;
   miner: string;
   txCount: number;
-  transactions: TxRecord[];
+  /** True only when addBlock installed this block as the canonical successor. */
+  canonicalSuccessor?: boolean;
   finalized?: boolean;
   zkProof?: ZkProof;
   /**

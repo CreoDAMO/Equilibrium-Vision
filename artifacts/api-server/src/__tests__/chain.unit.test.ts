@@ -400,46 +400,43 @@ describe("ChainState UTXO fee sweep", () => {
   const minerA = "a".repeat(40);
   const minerB = "b".repeat(40);
 
-  it("credits accrued UTXO fees on the account ledger, and does not mint a fee output", () => {
+  it("does not pay accrued UTXO fees from a block that is not the successor", () => {
     const state = new ChainState();
     state.pendingUtxoFees = 1_500;
 
     const block = { ...fakeBlock(0, 1_700_000_000), miner: minerA };
-    state.addBlock(block);
+    expect(() => state.addBlock(block)).toThrow(/block is not the successor/);
 
-    expect(state.pendingUtxoFees).toBe(0);
+    expect(state.pendingUtxoFees).toBe(1_500);
     expect(state.utxoSet.balance(minerA)).toBe(0);
-    expect(block.utxoFeeCredit).toBe(1_500);
-    expect(state.ledger.balance(minerA)).toBe(block.coinbaseReward + 1_500);
+    expect(state.ledger.balance(minerA)).toBe(0);
+    expect(state.blocks).toHaveLength(0);
   });
 
-  it("does not create a coinbase UTXO when no UTXO fees have accrued", () => {
+  it("does not pay a coinbase from a block that is not the successor", () => {
     const state = new ChainState();
 
     const block = { ...fakeBlock(0, 1_700_000_000), miner: minerA };
-    state.addBlock(block);
+    expect(() => state.addBlock(block)).toThrow(/block is not the successor/);
 
     expect(state.utxoSet.balance(minerA)).toBe(0);
-    expect(state.ledger.balance(minerA)).toBe(block.coinbaseReward);
+    expect(state.ledger.balance(minerA)).toBe(0);
+    expect(state.blocks).toHaveLength(0);
   });
 
-  it("restores the fee pool on rollback so it can be re-swept on the winning fork", () => {
+  it("a refused block leaves the fee pool where it was", () => {
     const state = new ChainState();
     state.pendingUtxoFees = 750;
 
     const block = { ...fakeBlock(0, 1_700_000_000), miner: minerB };
-    state.addBlock(block);
-    expect(state.pendingUtxoFees).toBe(0);
-    expect(state.utxoSet.balance(minerB)).toBe(0);
-    expect(state.ledger.balance(minerB)).toBe(block.coinbaseReward + 750);
-
-    state.rollbackToHeight(-1);
-
+    expect(() => state.addBlock(block)).toThrow(/block is not the successor/);
     expect(state.pendingUtxoFees).toBe(750);
     expect(state.utxoSet.balance(minerB)).toBe(0);
+    expect(state.ledger.balance(minerB)).toBe(0);
+    expect(state.blocks).toHaveLength(0);
   });
 
-  it("rollback puts the account coinbase and the transfer back", () => {
+  it("a refused block does not move the transfer or the coinbase", () => {
     const state = new ChainState();
     const alice = "c".repeat(40);
     const bob = "d".repeat(40);
@@ -457,20 +454,12 @@ describe("ChainState UTXO fee sweep", () => {
       status: "pending" as const,
     };
     const block = { ...fakeBlock(0, 1_700_000_000), miner: minerA, transactions: [tx], txCount: 1, coinbaseReward: 100 };
-    state.addBlock(block);
-    expect(state.ledger.balance(minerA)).toBe(110);
-    expect(state.ledger.balance(alice)).toBe(3_990);
-    expect(state.ledger.balance(bob)).toBe(1_000);
-
-    state.rollbackToHeight(-1);
+    expect(() => state.addBlock(block)).toThrow(/block is not the successor/);
     expect(state.height).toBe(-1);
     expect(state.ledger.balance(minerA)).toBe(0);
     expect(state.ledger.balance(alice)).toBe(5_000);
     expect(state.ledger.balance(bob)).toBe(0);
-
-    const again = { ...fakeBlock(0, 1_700_000_000), hash: "1".repeat(64), miner: minerA, coinbaseReward: 100 };
-    state.addBlock(again);
-    expect(state.ledger.balance(minerA)).toBe(100);
+    expect(state.txIndex.has(tx.hash)).toBe(false);
   });
 
   it("a swap that cannot pay does not debit, and a failed second hop keeps neither hop", () => {
@@ -547,13 +536,13 @@ describe("ChainState UTXO fee sweep", () => {
       status: "pending" as const,
     };
     const block = { ...fakeBlock(0, 1_700_000_000), miner: minerA, transactions: [tx], txCount: 1 };
-    state.addBlock(block);
+    expect(() => state.addBlock(block)).toThrow(/block is not the successor/);
 
     expect(state.ledger.balance(alice)).toBe(1_500);
     expect(state.ledger.balance(bob)).toBe(0);
     expect(state.utxoSet.get(tx.hash, 0)).toBeUndefined();
-    expect(state.txIndex.get(tx.hash)?.status).toBe("failed");
-    expect(state.ledger.selectApplicable([tx])).toEqual([]);
+    expect(state.txIndex.has(tx.hash)).toBe(false);
+    expect(state.blocks).toHaveLength(0);
   });
 
   it("a restart snapshot rebuilds the same state root, including pools and validators", () => {
@@ -586,7 +575,7 @@ describe("ChainState UTXO fee sweep", () => {
       blocksVoted: 0,
       commission: 0.1,
     });
-    state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner: minerA, coinbaseReward: 100 });
+    expect(() => state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner: minerA, coinbaseReward: 100 })).toThrow(/block is not the successor/);
     const snap = state.exportRestartSnapshot();
     const born = new ChainState();
     born.importRestartSnapshot(snap);
@@ -655,7 +644,7 @@ describe("ChainState UTXO fee sweep", () => {
     }
   });
 
-  it("a validator miner does not mint beside the coinbase", () => {
+  it("a block that is not the successor does not mint beside the coinbase", () => {
     const state = new ChainState();
     const miner = "b".repeat(40);
     const other = "c".repeat(40);
@@ -687,38 +676,35 @@ describe("ChainState UTXO fee sweep", () => {
     state.ledger.credit(delegator, 50);
     const supply = () => state.ledger.balance(miner) + state.ledger.balance(other) + state.ledger.balance(delegator);
     const before = supply();
-    state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner, coinbaseReward: 100 });
-    expect(supply() - before).toBe(10);
-    expect(state.ledger.balance(miner)).toBe(10);
+    expect(() => state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner, coinbaseReward: 100 })).toThrow(/block is not the successor/);
+    expect(supply() - before).toBe(0);
+    expect(state.ledger.balance(miner)).toBe(0);
     expect(state.ledger.balance(other)).toBe(0);
     expect(state.ledger.balance(delegator)).toBe(50);
-    expect(state.validators.get(miner)?.accumulatedRewards).toBe(45);
-    expect(state.validators.get(other)?.accumulatedRewards).toBe(45);
-    expect((supply() - before) + 45 + 45).toBe(100);
+    expect(state.validators.get(miner)?.accumulatedRewards).toBe(0);
+    expect(state.validators.get(other)?.accumulatedRewards).toBe(0);
+    expect(state.blocks).toHaveLength(0);
+    expect(state.canonicalBody.omega.height).toBe(-1);
   });
 
-  it("the sealed block hash binds the nonce and matches the public kernel", () => {
-    const seal = (nonce: number, credit = 0) => {
-      const state = new ChainState();
-      if (credit > 0) state.ledger.credit("e".repeat(40), credit);
-      const block = {
-        ...fakeBlock(0, 1_700_000_000),
-        miner: "b".repeat(40),
-        coinbaseReward: 0,
-        nonce,
-        residual: 1e-6,
-        residualFp: 1_000_000_000_000,
-        committedPressure: 0,
-        sealIdentity: true,
-      };
-      state.addBlock(block);
-      return block.hash;
+  it("a non-successor is not resealed, and the public kernel hash still binds the nonce", () => {
+    const block = {
+      ...fakeBlock(0, 1_700_000_000),
+      miner: "b".repeat(40),
+      coinbaseReward: 0,
+      nonce: 1,
+      residual: 1e-6,
+      residualFp: 1_000_000_000_000,
+      committedPressure: 0,
+      sealIdentity: true,
     };
-    const nonce1 = seal(1);
-    expect(nonce1).not.toBe(seal(2));
-    expect(seal(1)).toBe(nonce1);
-    expect(seal(1, 5)).not.toBe(nonce1);
-    expect(nonce1).not.toBe(hash256(`block-0-${"0".repeat(64)}-1700000000`));
+    const before = block.hash;
+    expect(() => new ChainState().addBlock(block)).toThrow(/block is not the successor/);
+    expect(block.hash).toBe(before);
+    const otherNonce = { ...block, nonce: 2 };
+    expect(() => new ChainState().addBlock(otherNonce)).toThrow(/block is not the successor/);
+    expect(otherNonce.hash).toBe(before);
+    expect(before).not.toBe(hash256(`block-0-${"0".repeat(64)}-1700000000`));
     expect(canonicalHeaderHash({
       prevHash: "11".repeat(32),
       merkleRoot: "22".repeat(32),
@@ -731,22 +717,15 @@ describe("ChainState UTXO fee sweep", () => {
       height: 3,
       committedPressure: 0,
     })).toBe("836ce07ec08403bf07acc120a50163b48c5910b4bfa7c1de1c08200f1f09f306");
-    const pressured = new ChainState();
     const hot = {
-      ...fakeBlock(0, 1_700_000_000),
-      miner: "b".repeat(40),
-      coinbaseReward: 0,
-      nonce: 1,
-      residual: 1e-6,
-      residualFp: 1_000_000_000_000,
+      ...block,
       committedPressure: 1,
-      sealIdentity: true,
     };
-    pressured.addBlock(hot);
-    expect(hot.hash).not.toBe(nonce1);
+    expect(() => new ChainState().addBlock(hot)).toThrow(/block is not the successor/);
+    expect(hot.hash).toBe(before);
   });
 
-  it("a sealed block still rolls the fee UTXO back", () => {
+  it("a non-successor does not sweep the fee UTXO", () => {
     const state = new ChainState();
     const miner = "b".repeat(40);
     state.pendingUtxoFees = 750;
@@ -757,18 +736,20 @@ describe("ChainState UTXO fee sweep", () => {
       committedPressure: 0.25,
       sealIdentity: true,
     };
-    state.addBlock(block);
-    expect(block.hash).not.toBe(hash256(`block-0-${"0".repeat(64)}-1700000000`));
-    expect(state.ledger.balance(miner)).toBe(750);
+    const before = block.hash;
+    expect(() => state.addBlock(block)).toThrow(/block is not the successor/);
+    expect(block.hash).toBe(before);
+    expect(state.ledger.balance(miner)).toBe(0);
     expect(state.utxoSet.balance(miner)).toBe(0);
-    expect(state.pendingUtxoFees).toBe(0);
+    expect(state.pendingUtxoFees).toBe(750);
+    expect(state.blocks).toHaveLength(0);
     state.rollbackToHeight(-1);
     expect(state.pendingUtxoFees).toBe(750);
     expect(state.ledger.balance(miner)).toBe(0);
     expect(state.utxoSet.balance(miner)).toBe(0);
   });
 
-  it("an evidence header keeps the supplied state root and does not bind the operational tree", () => {
+  it("a non-successor does not bind an evidence header", () => {
     const canonical = "33".repeat(32);
     const state = new ChainState();
     const block = {
@@ -785,10 +766,14 @@ describe("ChainState UTXO fee sweep", () => {
       evidenceRoot: "cd".repeat(32),
       omegaRoot: "ef".repeat(32),
     };
-    state.addBlock(block);
+    const before = block.hash;
+    expect(() => state.addBlock(block)).toThrow(/block is not the successor/);
+    expect(block.hash).toBe(before);
     expect(block.stateRoot).toBe(canonical);
-    expect(block.operationalRoot).not.toBe(canonical);
-    const common = {
+    expect(block.operationalRoot).toBeUndefined();
+    expect(block.chainId).toBe(1);
+    expect(state.blocks).toHaveLength(0);
+    expect(canonicalHeaderHash({
       prevHash: block.prevHash,
       merkleRoot: block.merkleRoot,
       stateRoot: canonical,
@@ -799,12 +784,13 @@ describe("ChainState UTXO fee sweep", () => {
       miner: block.miner,
       height: block.height,
       committedPressure: 0,
-    };
-    expect(block.hash).toBe(canonicalHeaderHash({ ...common, chainId: 1, evidenceRoot: "cd".repeat(32), omegaRoot: "ef".repeat(32) }));
-    expect(block.hash).not.toBe(canonicalHeaderHash({ ...common, stateRoot: block.operationalRoot! }));
+      chainId: 1,
+      evidenceRoot: "cd".repeat(32),
+      omegaRoot: "ef".repeat(32),
+    })).not.toBe(before);
   });
 
-  it("evidence fields without a canonical state root are not sealed as an evidence header", () => {
+  it("evidence fields on a non-successor are not stripped into an operational header", () => {
     const state = new ChainState();
     const block = {
       ...fakeBlock(0, 1_700_000_000),
@@ -819,21 +805,12 @@ describe("ChainState UTXO fee sweep", () => {
       evidenceRoot: "cd".repeat(32),
       omegaRoot: "ef".repeat(32),
     };
-    state.addBlock(block);
-    expect(block.chainId).toBeUndefined();
-    expect(block.stateRoot).toBe(block.operationalRoot);
-    expect(block.hash).toBe(canonicalHeaderHash({
-      prevHash: block.prevHash,
-      merkleRoot: block.merkleRoot,
-      stateRoot: block.operationalRoot!,
-      timestamp: block.timestamp,
-      nonce: block.nonce,
-      difficulty: block.difficulty,
-      residualFp: block.residualFp!,
-      miner: block.miner,
-      height: block.height,
-      committedPressure: 0,
-    }));
+    expect(() => state.addBlock(block)).toThrow(/block is not the successor/);
+    expect(block.chainId).toBe(1);
+    expect(block.evidenceRoot).toBe("cd".repeat(32));
+    expect(block.stateRoot).toBeUndefined();
+    expect(block.operationalRoot).toBeUndefined();
+    expect(state.blocks).toHaveLength(0);
   });
 
   it("the kernel's evidence-bearing header is the same hash in this process", () => {
@@ -884,7 +861,7 @@ describe("ChainState UTXO fee sweep", () => {
     expect(born.currentDifficulty).toBe(1_000_000);
   });
 
-  it("contract storage moves the operational root and not an evidence header", () => {
+  it("contract storage on a non-successor does not reseal either header", () => {
     const stored: ContractRecord = {
       address: "aa".repeat(20),
       deployer: "b".repeat(40),
@@ -913,13 +890,15 @@ describe("ChainState UTXO fee sweep", () => {
     dirty.wasmVM.replaceContracts([stored]);
     const a = { ...fakeBlock(0, 1_700_000_000), ...evidence };
     const b = { ...fakeBlock(0, 1_700_000_000), ...evidence };
-    plain.addBlock(a);
-    dirty.addBlock(b);
+    expect(() => plain.addBlock(a)).toThrow(/block is not the successor/);
+    expect(() => dirty.addBlock(b)).toThrow(/block is not the successor/);
     expect(a.hash).toBe(b.hash);
     expect(a.stateRoot).toBe(evidence.stateRoot);
     expect(b.stateRoot).toBe(evidence.stateRoot);
-    expect(a.operationalRoot).not.toBe(b.operationalRoot);
+    expect(a.operationalRoot).toBeUndefined();
+    expect(b.operationalRoot).toBeUndefined();
     expect(b.chainId).toBe(1);
+    expect(dirty.wasmVM.listContracts()[0]?.storage.cell).toBe("changed");
 
     const nativeA = new ChainState();
     const nativeB = new ChainState();
@@ -934,16 +913,17 @@ describe("ChainState UTXO fee sweep", () => {
       omegaRoot: "ef".repeat(32),
     };
     const right = { ...left };
-    nativeA.addBlock(left);
-    nativeB.addBlock(right);
-    expect(left.hash).not.toBe(right.hash);
-    expect(left.chainId).toBeUndefined();
-    expect(right.chainId).toBeUndefined();
-    expect(left.stateRoot).toBe(left.operationalRoot);
-    expect(right.stateRoot).toBe(right.operationalRoot);
+    expect(() => nativeA.addBlock(left)).toThrow(/block is not the successor/);
+    expect(() => nativeB.addBlock(right)).toThrow(/block is not the successor/);
+    expect(left.hash).toBe(right.hash);
+    expect(left.chainId).toBe(1);
+    expect(right.chainId).toBe(1);
+    expect(left.stateRoot).toBeUndefined();
+    expect(right.operationalRoot).toBeUndefined();
+    expect(nativeB.wasmVM.listContracts()[0]?.storage.cell).toBe("other");
   });
 
-  it("governance baseReward and miningThreshold do not decide the coinbase or the difficulty", () => {
+  it("a non-successor does not pay the coinbase or apply governance params", () => {
     const miner = "b".repeat(40);
     const other = "c".repeat(40);
     const run = (baseReward: number, miningThreshold: number) => {
@@ -953,7 +933,7 @@ describe("ChainState UTXO fee sweep", () => {
       state.currentDifficulty = 1_000_000;
       state.validators.set(miner, validator(miner));
       state.validators.set(other, validator(other));
-      state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner, coinbaseReward: 99, difficulty: 1_000_000 });
+      expect(() => state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner, coinbaseReward: 99, difficulty: 1_000_000 })).toThrow(/block is not the successor/);
       return {
         liquid: state.ledger.balance(miner),
         stakeA: state.validators.get(miner)?.accumulatedRewards,
@@ -962,27 +942,28 @@ describe("ChainState UTXO fee sweep", () => {
         baseReward: state.governance.params.baseReward,
         miningThreshold: state.governance.params.miningThreshold,
         bond: state.validators.get(miner)?.bondedStake,
+        height: state.canonicalBody.omega.height,
       };
     };
     const governed = run(50_000_000, 1e-8);
     const perturbed = run(1_000_000, 1e-4);
-    expect(governed.liquid).toBe(perturbed.liquid);
-    expect(governed.stakeA).toBe(perturbed.stakeA);
-    expect(governed.stakeB).toBe(perturbed.stakeB);
-    expect(governed.difficulty).toBe(perturbed.difficulty);
+    expect(governed.liquid).toBe(0);
+    expect(perturbed.liquid).toBe(0);
+    expect(governed.stakeA).toBe(0);
+    expect(perturbed.stakeA).toBe(0);
+    expect(governed.stakeB).toBe(0);
+    expect(perturbed.stakeB).toBe(0);
+    expect(governed.difficulty).toBe(1_000_000);
+    expect(perturbed.difficulty).toBe(1_000_000);
     expect(governed.bond).toBe(perturbed.bond);
+    expect(governed.height).toBe(-1);
     expect(governed.baseReward).toBe(50_000_000);
     expect(perturbed.baseReward).toBe(1_000_000);
     expect(governed.miningThreshold).toBe(1e-8);
     expect(perturbed.miningThreshold).toBe(1e-4);
-    expect(governed.liquid).toBe(9);
-    expect(governed.stakeA).toBe(45);
-    expect(governed.stakeB).toBe(45);
-    expect(governed.difficulty).toBe(1_000_000);
-    expect(governed.liquid).not.toBe(5_000_000);
   });
 
-  it("finality lags two blocks, ignores validator keys, and does not slash", () => {
+  it("a non-successor does not advance finality or slash", () => {
     const state = new ChainState();
     const addrs = ["b", "c", "d"].map((ch) => ch.repeat(40));
     for (const address of addrs) {
@@ -997,24 +978,15 @@ describe("ChainState UTXO fee sweep", () => {
     const beforeUptime = uptimes();
     const beforeVoted = voted();
 
-    state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner: addrs[0]! });
+    expect(() => state.addBlock({ ...fakeBlock(0, 1_700_000_000), miner: addrs[0]! })).toThrow(/block is not the successor/);
     expect(state.finalizedHeight).toBe(-1);
-    expect(state.blocks[0]?.finalized).toBe(false);
-    state.addBlock({ ...fakeBlock(1, 1_700_000_015), miner: addrs[1]!, prevHash: state.blocks[0]!.hash });
-    expect(state.finalizedHeight).toBe(-1);
-    expect(nextFinalizedHeight(1, -1, 3_000, 3_000)).toBe(-1);
-
-    state.addBlock({ ...fakeBlock(2, 1_700_000_030), miner: addrs[2]!, prevHash: state.blocks[1]!.hash });
-    expect(state.finalizedHeight).toBe(0);
-    expect(state.blocks[0]?.finalized).toBe(true);
-    expect(state.blocks[1]?.finalized).toBe(false);
-    expect(state.blocks[2]?.finalized).toBe(false);
-    expect(state.finalityRounds.get(2)?.votes).toEqual([]);
-    expect(state.finalityRounds.get(2)?.finalized).toBe(false);
+    expect(state.blocks).toHaveLength(0);
+    expect(state.finalityRounds.size).toBe(0);
     expect(state.slashEvents).toEqual([]);
     expect(bonds()).toEqual(beforeBonds);
     expect(uptimes()).toEqual(beforeUptime);
     expect(voted()).toEqual(beforeVoted);
+    expect(nextFinalizedHeight(1, -1, 3_000, 3_000)).toBe(-1);
     expect(nextFinalizedHeight(2, -1, 3_000, 3_000)).toBe(0);
     expect(nextFinalizedHeight(3, -1, 3_000, 3_000)).toBe(1);
     expect(nextFinalizedHeight(3, -1, 2_000, 3_000)).toBe(1);
@@ -1024,14 +996,11 @@ describe("ChainState UTXO fee sweep", () => {
     const jailed = new ChainState();
     for (const address of addrs) jailed.validators.set(address, validator(address));
     jailed.validators.get(addrs[2]!)!.jailed = true;
-    for (let h = 0; h < 3; h++) {
-      jailed.addBlock({ ...fakeBlock(h, 1_700_000_000 + h * 15), miner: addrs[0]! });
-    }
-    expect(jailed.finalizedHeight).toBe(0);
-    jailed.validators.get(addrs[1]!)!.slashed = true;
-    jailed.addBlock({ ...fakeBlock(3, 1_700_000_045), miner: addrs[0]! });
-    expect(jailed.finalizedHeight).toBe(0);
-    expect(jailed.blocks[3]?.finalized).toBe(false);
+    expect(() => jailed.addBlock({ ...fakeBlock(0, 1_700_000_000), miner: addrs[0]! })).toThrow(/block is not the successor/);
+    expect(jailed.finalizedHeight).toBe(-1);
+    expect(jailed.blocks).toHaveLength(0);
+    expect(jailed.validators.get(addrs[2]!)!.jailed).toBe(true);
+    expect(jailed.validators.get(addrs[1]!)!.slashed).toBe(false);
   });
 
   it("a genesis document with the seven kernel lines credits the kernel operating balances", () => {
@@ -1108,10 +1077,12 @@ describe("ChainState UTXO fee sweep", () => {
       omegaRoot: "ef".repeat(32),
       wasmEntries: [["cell", "from-call"]] as Array<[string, string]>,
     };
-    state.addBlock(block);
+    expect(() => state.addBlock(block)).toThrow(/block is not the successor/);
     expect(wasmLeafOf(state.canonicalWasm.entries())).toBe("none");
     expect(state.wasmVM.listContracts()[0]?.storage.cell).toBe("local");
     expect(block.stateRoot).toBe("33".repeat(32));
+    expect(block.wasmEntries).toEqual([["cell", "from-call"]]);
+    expect(state.blocks).toHaveLength(0);
   });
 
   it("a block field does not change couplings, and a passed kernel proposal does", () => {
@@ -1143,7 +1114,7 @@ describe("ChainState UTXO fee sweep", () => {
       difficulty: 1_000_000,
     };
     const before = canonicalResidual(header, [], { cumulativeWork: 1, mempoolPressure: 0 }, state.couplings);
-    state.addBlock({
+    expect(() => state.addBlock({
       ...fakeBlock(0, 1_700_000_000),
       miner: "b".repeat(40),
       coinbaseReward: 0,
@@ -1153,7 +1124,7 @@ describe("ChainState UTXO fee sweep", () => {
       omegaRoot: "ef".repeat(32),
       couplingKey: "structural",
       couplingValue: 0,
-    });
+    })).toThrow(/block is not the successor/);
     expect(state.couplings.structural).toBe(1);
     state.kernelProposals.push({
       id: "k1",
@@ -1161,9 +1132,10 @@ describe("ChainState UTXO fee sweep", () => {
       couplingKey: "structural",
       couplingValue: 0,
     });
-    state.addBlock({ ...fakeBlock(1, 1_700_000_015), miner: "b".repeat(40), coinbaseReward: 0 });
+    expect(() => state.addBlock({ ...fakeBlock(1, 1_700_000_015), miner: "b".repeat(40), coinbaseReward: 0 })).toThrow(/block is not the successor/);
     expect(state.kernelProposals[0]?.status).toBe("passed");
     expect(state.couplings.structural).toBe(1);
+    expect(state.blocks).toHaveLength(0);
     const after = canonicalResidual(header, [], { cumulativeWork: 1, mempoolPressure: 0 }, state.couplings);
     expect(after).toBe(before);
     expect(residualFingerprint(after)).toBe(residualFingerprint(before));
@@ -1269,6 +1241,8 @@ describe("ChainState UTXO fee sweep", () => {
       expect(recomputed).toBe(stepped.residual);
       expect(canonicalCoinbase(height, recomputed, state.admissionTarget)).toBe(stepped.reward);
       const before = state.ledger.balance(miner);
+      const omegaHeight = state.canonicalBody.omega.height;
+      const blockCount = state.blocks.length;
       const block = {
         ...fakeBlock(height, timestamp),
         prevHash: current.tipHash,
@@ -1278,18 +1252,27 @@ describe("ChainState UTXO fee sweep", () => {
         residual: stepped.residual,
         coinbaseReward: stepped.reward,
       };
-      state.addBlock(block);
-      expect(state.ledger.balance(miner) - before).toBe(stepped.liquid);
-      for (const [addr, v] of stepped.next.validators) {
-        expect(state.validators.get(addr)?.accumulatedRewards).toBe(v.accumulatedRewards);
-        expect(state.validators.get(addr)?.blocksProposed).toBe(v.blocksProposed);
-        expect(state.validators.get(addr)?.bondedStake).toBe(v.bondedStake);
+      if (step === 0) {
+        state.addBlock(block);
+        expect(block.canonicalSuccessor).toBe(true);
+        expect(state.ledger.balance(miner) - before).toBe(stepped.liquid);
+        for (const [addr, v] of stepped.next.validators) {
+          expect(state.validators.get(addr)?.accumulatedRewards).toBe(v.accumulatedRewards);
+          expect(state.validators.get(addr)?.blocksProposed).toBe(v.blocksProposed);
+          expect(state.validators.get(addr)?.bondedStake).toBe(v.bondedStake);
+        }
+        expect(state.currentDifficulty).toBe(stepped.next.difficulty);
+        expect(state.finalizedHeight).toBe(stepped.next.finalizedHeight);
+        expect(state.couplings).toEqual(stepped.next.couplings);
+        expect(block.stateRoot).toBe(stepped.stateRoot);
+        operationalDiffers = false;
+      } else {
+        expect(() => state.addBlock(block)).toThrow(/block is not the successor/);
+        expect(state.ledger.balance(miner)).toBe(before);
+        expect(state.blocks).toHaveLength(blockCount);
+        expect(state.canonicalBody.omega.height).toBe(omegaHeight);
+        expect(block.canonicalSuccessor).not.toBe(true);
       }
-      expect(state.currentDifficulty).toBe(stepped.next.difficulty);
-      expect(state.finalizedHeight).toBe(stepped.next.finalizedHeight);
-      expect(state.couplings).toEqual(stepped.next.couplings);
-      expect(block.operationalRoot).not.toBe(stepped.stateRoot);
-      operationalDiffers = true;
       rewards.push(stepped.reward);
       liquids.push(stepped.liquid);
       finals.push(stepped.next.finalizedHeight);
@@ -1376,14 +1359,16 @@ describe("ChainState UTXO fee sweep", () => {
     if (!committed.ok) return;
     expect(wasmLeafOf(committed.record.wasm)).toBe(wasmLeafOf(stepped.next.wasm.entries()));
 
-    state.addBlock({
+    const wasmBefore = wasmLeafOf(state.canonicalBody.omega.wasm.entries());
+    expect(() => state.addBlock({
       ...fakeBlock(0, 1_700_000_000),
       miner: "b".repeat(40),
       coinbaseReward: 0,
       wasmEntries: [["cell", "from-call"]],
-    });
+    })).toThrow(/block is not the successor/);
     expect(wasmLeafOf(state.canonicalWasm.entries())).toBe("none");
     expect(state.canonicalWasm.get("cell")).toBeUndefined();
+    expect(wasmLeafOf(state.canonicalBody.omega.wasm.entries())).toBe(wasmBefore);
     expect(wasmLeafOf(state.canonicalBody.omega.wasm.entries())).toBe(wasmLeafOf(stepped.next.wasm.entries()));
   });
 
