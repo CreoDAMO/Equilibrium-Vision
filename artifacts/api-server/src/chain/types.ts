@@ -71,8 +71,8 @@ export interface BlockRecord {
   finalized?: boolean;
   zkProof?: ZkProof;
   /**
-   * Header state root. On an evidence-bearing block this is the canonical projection
-   * supplied with the block. On an artifacts-native block it is the operational SMT.
+   * Protocol header commitment: stateRootOf(Ω) for the admitted successor.
+   * Not the operational SMT over accounts, UTXOs, contracts, pools, and validators.
    */
   stateRoot?: string;
   /**

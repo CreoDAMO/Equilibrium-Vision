@@ -26,7 +26,10 @@ export function selectSnapshotAnchor<T extends { hash: string; height: number }>
   return { ok: true, block };
 }
 
-/** Parent walk from the anchor. A same-height sibling that is not this hash is not installed. */
+/** Parent walk from the anchor. A same-height sibling that is not this hash is not installed.
+ *  A missing parent or a cycle stops the walk and is not reported here.
+ *  Callers that must reach genesis use lineageReachesGenesis.
+ */
 export function chainThroughAnchor<T extends { hash: string; height: number; prevHash: string }>(
   blocks: readonly T[],
   anchor: T,
@@ -44,6 +47,43 @@ export function chainThroughAnchor<T extends { hash: string; height: number; pre
     cursor = byHash.get(cursor.prevHash);
   }
   return chain.reverse();
+}
+
+export type LineageGap = "missing-parent" | "cycle";
+
+/**
+ * The parent walk reaches a height-0 block, or it does not.
+ * Height 0 is the end of the walk: its prevHash does not have to be in the table.
+ * A missing parent before that, or a repeated hash, is not a lineage to install.
+ * chainThroughAnchor's return shape is unchanged; this is the completeness check.
+ */
+export function lineageReachesGenesis<T extends { hash: string; height: number; prevHash: string }>(
+  blocks: readonly T[],
+  anchor: T,
+): { complete: true; chain: T[] } | { complete: false; reason: LineageGap; chain: T[] } {
+  const byHash = new Map<string, T>();
+  for (const block of blocks) {
+    if (!byHash.has(block.hash)) byHash.set(block.hash, block);
+  }
+  const chain: T[] = [];
+  const seen = new Set<string>();
+  let cursor: T | undefined = anchor;
+  while (cursor) {
+    if (seen.has(cursor.hash)) {
+      return { complete: false, reason: "cycle", chain: chain.slice().reverse() };
+    }
+    seen.add(cursor.hash);
+    chain.push(cursor);
+    if (cursor.height === 0) {
+      return { complete: true, chain: chain.slice().reverse() };
+    }
+    const parent = byHash.get(cursor.prevHash);
+    if (!parent) {
+      return { complete: false, reason: "missing-parent", chain: chain.slice().reverse() };
+    }
+    cursor = parent;
+  }
+  return { complete: false, reason: "missing-parent", chain: chain.slice().reverse() };
 }
 
 /**

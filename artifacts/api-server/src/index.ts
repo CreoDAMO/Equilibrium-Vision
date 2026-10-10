@@ -205,19 +205,22 @@ if (Number.isNaN(port) || port <= 0) {
               return;
             }
 
-            // All checks pass — insert into chain state
-            logger.info({ blockHash, height: remoteHeight, miner: remote.miner, peerId }, 'P2P sync: accepting block from peer');
+            const beforeHeight = chainState.canonicalBody.omega.height;
             chainState.addBlock(remote);
             if (remote.canonicalSuccessor !== true) {
               logger.warn({ blockHash, height: remoteHeight }, "P2P sync: block is not the successor");
               return;
             }
 
-            // Persist to Postgres so the block survives a restart
             const { persistBlock } = await import('./chain/persistence.js');
-            persistBlock(remote).catch((err: unknown) =>
-              logger.warn({ err, height: remoteHeight }, 'P2P sync: block persistence failed'),
-            );
+            const saved = await persistBlock(remote);
+            if (!saved) {
+              chainState.rollbackToHeight(beforeHeight);
+              logger.error({ blockHash, height: remoteHeight }, "P2P sync: block was not persisted — not announced");
+              return;
+            }
+
+            logger.info({ blockHash, height: remoteHeight, miner: remote.miner, peerId }, 'P2P sync: accepting block from peer');
 
             // Notify WebSocket clients
             const { broadcast } = await import('./lib/ws-server.js');
@@ -294,10 +297,18 @@ if (Number.isNaN(port) || port <= 0) {
             }
             const address = String(query.params?.['address'] ?? '');
             const acc     = chainState.ledger.getAccount(address);
-            const { tip: verifiedTip, smt } = verified.snapshot;
+            const { smt, protocolStateRoot, operationalRoot } = verified.snapshot;
             const key     = smtKey('acct', address);
             const proof   = smt.proveCompact(key);
-            data = { address, balance: acc.balance, nonce: acc.nonce, stateRoot: verifiedTip.stateRoot, proof };
+            data = {
+              address,
+              balance: acc.balance,
+              nonce: acc.nonce,
+              protocolStateRoot,
+              operationalRoot,
+              stateRoot: protocolStateRoot,
+              proof,
+            };
             break;
           }
 
@@ -310,10 +321,18 @@ if (Number.isNaN(port) || port <= 0) {
             const txHash      = String(query.params?.['txHash'] ?? '');
             const outputIndex = Number(query.params?.['outputIndex'] ?? 0);
             const utxo        = chainState.utxoSet.get(txHash, outputIndex);
-            const { tip: verifiedTip, smt } = verified.snapshot;
+            const { smt, protocolStateRoot, operationalRoot } = verified.snapshot;
             const key         = smtKey('utxo', `${txHash}:${outputIndex}`);
             const proof       = smt.proveCompact(key);
-            data = { txHash, outputIndex, utxo: utxo ?? null, stateRoot: verifiedTip.stateRoot, proof };
+            data = {
+              txHash,
+              outputIndex,
+              utxo: utxo ?? null,
+              protocolStateRoot,
+              operationalRoot,
+              stateRoot: protocolStateRoot,
+              proof,
+            };
             break;
           }
 

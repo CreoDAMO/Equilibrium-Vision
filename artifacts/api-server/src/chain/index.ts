@@ -24,7 +24,7 @@ import { deployCrossChainRelayIfNeeded } from "./crossChainRelay.js";
 import { p2pBridge } from "./p2p-bridge.js";
 import { smtKey } from "./smt.js";
 import { getVerifiedStateRoot } from "./state-root.js";
-import { selectSnapshotAnchor, chainThroughAnchor, continuationAfterAnchor, evidenceToReplay } from "./restart-boundary.js";
+import { selectSnapshotAnchor, lineageReachesGenesis, continuationAfterAnchor, evidenceToReplay } from "./restart-boundary.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
 // address, but overridden by initChain() to the first genesis.json validator
@@ -161,6 +161,17 @@ export async function initChain(): Promise<void> {
           "Snapshot anchor is not the block with that hash — falling back to full replay",
         );
       } else {
+        const reached = lineageReachesGenesis(allRaw, anchor.block);
+        if (!reached.complete) {
+          logger.warn(
+            {
+              snapshotHeight: snapshot.height,
+              reason: reached.reason,
+              anchor: anchor.block.hash.slice(0, 16),
+            },
+            "Snapshot lineage does not reach a height-0 block — falling back to full replay",
+          );
+        } else {
         // ── All checks passed: use snapshot fast-path ─────────────────────
         usedSnapshotPath = true;
 
@@ -192,7 +203,8 @@ export async function initChain(): Promise<void> {
         }
 
         // The anchor's parent walk, not whichever same-height row arrived first.
-        const lineage = chainThroughAnchor(allRaw, anchor.block);
+        // Incomplete walks are refused above and do not reach this assignment.
+        const lineage = reached.chain;
         for (const block of lineage) {
           seedState.blocks[block.height] = block;
           for (const tx of block.transactions) {
@@ -253,6 +265,7 @@ export async function initChain(): Promise<void> {
           { height: chainState.height, snapshotHeight: snapshot.height, anchor: anchor.block.hash.slice(0, 16) },
           "Chain restored from validated snapshot + post-snapshot replay",
         );
+        }
       }
     }
   }
@@ -466,13 +479,22 @@ export async function initChain(): Promise<void> {
         });
         return;
       }
-      const { tip, smt } = verified.snapshot;
+      const { tip, smt, protocolStateRoot, operationalRoot } = verified.snapshot;
       const acc          = chainState.ledger.getAccount(address);
       const key          = smtKey("acct", address);
       const compactProof = smt.proveCompact(key);
       await p2pBridge.respondToLightNodeRequest(requestId, {
         ok: true,
-        data: { address, balance: acc.balance, nonce: acc.nonce, stateRoot: tip.stateRoot, height: tip.height, compactProof },
+        data: {
+          address,
+          balance: acc.balance,
+          nonce: acc.nonce,
+          protocolStateRoot,
+          operationalRoot,
+          stateRoot: protocolStateRoot,
+          height: tip.height,
+          compactProof,
+        },
       });
       return;
     }
@@ -489,7 +511,7 @@ export async function initChain(): Promise<void> {
   // gossips the full block body via the block-bodies topic.  This lets desktop
   // nodes (and other phones) add the block to their chain without needing a
   // separate sync RR request or direct HTTP submission.
-  p2pBridge.onBlockBody = (body, _peerId) => {
+  p2pBridge.onBlockBody = async (body, _peerId) => {
     if (!chainState) return;
 
     const hash       = typeof body['hash']       === 'string' ? body['hash']       : '';
@@ -532,6 +554,7 @@ export async function initChain(): Promise<void> {
 
     logger.info({ hash: hash.slice(0, 16), height }, "p2p: received block body via gossip");
 
+    const beforeHeight = chainState.canonicalBody.omega.height;
     try {
       const block: BlockRecord = {
         hash,
@@ -552,6 +575,12 @@ export async function initChain(): Promise<void> {
       chainState.addBlock(block);
       if (block.canonicalSuccessor !== true) {
         logger.warn({ hash: hash.slice(0, 16), height }, "p2p: block is not the successor");
+        return;
+      }
+      const saved = await persistBlock(block);
+      if (!saved) {
+        chainState.rollbackToHeight(beforeHeight);
+        logger.error({ hash: hash.slice(0, 16), height }, "p2p: block was not persisted — not announced");
         return;
       }
       void p2pBridge.gossipBlock(hash); // propagate to other desktop peers
@@ -625,6 +654,8 @@ let miningGeneration = 0;
 let miningTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function runMiningCycle(generation: number): Promise<void> {
+  const beforeHeight = chainState.canonicalBody.omega.height;
+  let durable = false;
   try {
     const block = await mineNextBlockAsync(chainState, minerAddress);
     if (block.canonicalSuccessor !== true) {
@@ -634,18 +665,22 @@ async function runMiningCycle(generation: number): Promise<void> {
       );
       return;
     }
+    const saved = await persistBlock(block);
+    if (!saved) {
+      chainState.rollbackToHeight(beforeHeight);
+      logger.error(
+        { height: block.height, hash: block.hash.slice(0, 16) },
+        "Mined block was not persisted — rolled back and not announced",
+      );
+      return;
+    }
+    durable = true;
     logger.info(
       { height: block.height, hash: block.hash.slice(0, 16), txCount: block.txCount, residual: block.residual },
       "Block mined",
     );
 
-    // Persist to Postgres (fire-and-forget — never blocks the mining loop)
-    persistBlock(block).catch((err) =>
-      logger.warn({ err, height: block.height }, "Block persistence failed"),
-    );
-
-    // Take a state snapshot every SNAPSHOT_INTERVAL blocks so that pruning
-    // and fast-path restarts are always possible without a full block replay.
+    // Snapshot only after the block row is durable.
     if (block.height % SNAPSHOT_INTERVAL === 0 && block.height > 0) {
       takeSnapshot().catch((err) =>
         logger.warn({ err, height: block.height }, "Periodic snapshot failed — continuing"),
@@ -684,6 +719,9 @@ async function runMiningCycle(generation: number): Promise<void> {
       },
     });
   } catch (err) {
+    if (!durable && chainState.canonicalBody.omega.height !== beforeHeight) {
+      chainState.rollbackToHeight(beforeHeight);
+    }
     logger.warn({ err }, "Mining cycle refused the block — it was not announced");
   } finally {
     // Only reschedule if this cycle's generation is still current and mining

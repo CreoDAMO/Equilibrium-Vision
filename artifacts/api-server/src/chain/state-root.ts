@@ -1,12 +1,18 @@
 import type { ChainState } from "./state.js";
 import { SparseMerkleTree, smtKey, smtValue } from "./smt.js";
 import type { BlockRecord } from "./types.js";
+import { stateRootOf } from "../../../../site/src/protocol/constitution.js";
 
 const ZERO_ROOT = "0".repeat(64);
 
 export interface StateRootSnapshot {
   tip: BlockRecord;
+  /** Operational SMT. Its root is not the protocol header commitment. */
   smt: SparseMerkleTree;
+  /** stateRootOf(Ω). This is what the header's stateRoot has to match. */
+  protocolStateRoot: string;
+  /** rebuildStateSmt(state).root(). A different domain from protocolStateRoot. */
+  operationalRoot: string;
 }
 
 export interface StateRootError {
@@ -15,9 +21,8 @@ export interface StateRootError {
 }
 
 /**
- * Rebuild the state commitment from the same state partitions used by
- * ChainState.addBlock(). This is intentionally kept outside the HTTP route so
- * the HTTP and libp2p light-node protocols cannot drift apart.
+ * Rebuild the operational commitment: accounts, UTXOs, contract storage,
+ * pools, and validators. This is not stateRootOf(Ω).
  */
 export function rebuildStateSmt(chainState: ChainState): SparseMerkleTree {
   const smt = new SparseMerkleTree();
@@ -51,9 +56,9 @@ export function rebuildStateSmt(chainState: ChainState): SparseMerkleTree {
 }
 
 /**
- * Return the current SMT only when it cryptographically agrees with the
- * advertised tip commitment. A missing/legacy zero root is rejected rather
- * than silently replaced with a locally rebuilt root.
+ * The header commitment is stateRootOf(Ω). The operational SMT is named
+ * separately and is not required to equal that commitment.
+ * A missing or legacy zero header root is rejected rather than replaced.
  */
 export function getVerifiedStateRoot(
   chainState: ChainState,
@@ -65,8 +70,8 @@ export function getVerifiedStateRoot(
     };
   }
 
-  const expectedRoot = tip.stateRoot;
-  if (!expectedRoot || expectedRoot === ZERO_ROOT) {
+  const headerRoot = tip.stateRoot;
+  if (!headerRoot || headerRoot === ZERO_ROOT) {
     return {
       error: {
         status: 503,
@@ -75,18 +80,24 @@ export function getVerifiedStateRoot(
     };
   }
 
-  const smt = chainState._stateSmt ?? rebuildStateSmt(chainState);
-  // Cache a cold rebuild, but never trust it until it has passed this check.
-  chainState._stateSmt = smt;
-  const actualRoot = smt.root();
-  if (actualRoot !== expectedRoot) {
+  const protocolStateRoot = stateRootOf(chainState.canonicalBody.omega);
+  if (headerRoot !== protocolStateRoot) {
     return {
       error: {
         status: 409,
-        message: `State root mismatch at height ${tip.height}: expected ${expectedRoot}, rebuilt ${actualRoot}`,
+        message: `Protocol state root mismatch at height ${tip.height}: header ${headerRoot}, stateRootOf ${protocolStateRoot}`,
       },
     };
   }
 
-  return { snapshot: { tip, smt } };
+  const smt = chainState._stateSmt ?? rebuildStateSmt(chainState);
+  chainState._stateSmt = smt;
+  return {
+    snapshot: {
+      tip,
+      smt,
+      protocolStateRoot,
+      operationalRoot: smt.root(),
+    },
+  };
 }

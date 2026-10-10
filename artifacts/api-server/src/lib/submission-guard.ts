@@ -123,6 +123,11 @@ export class ReplaySet {
     return true;
   }
 
+  /** Drop a key that was recorded before admission finished. A refusal must not consume it. */
+  forget(key: string): void {
+    this.seen.delete(key);
+  }
+
   /** Returns the number of distinct keys currently tracked. */
   get size(): number {
     return this.seen.size;

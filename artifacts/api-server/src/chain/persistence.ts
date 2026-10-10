@@ -287,12 +287,14 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
 /**
  * Persist a single block and its confirmed transactions.
  * Uses INSERT … ON CONFLICT DO NOTHING so replayed or duplicate blocks are
- * silently skipped.  Errors are logged but never thrown — persistence is
- * best-effort and must not crash the mining loop.
+ * silently skipped.
+ * Returns true when there is no database, or when the write commits.
+ * Returns false when the write fails. Does not throw: a caller that has
+ * already admitted the block in memory must not announce it on false.
  */
-export async function persistBlock(block: BlockRecord): Promise<void> {
+export async function persistBlock(block: BlockRecord): Promise<boolean> {
   const db = getDb();
-  if (!db) return;
+  if (!db) return true;
 
   try {
     await ensureCommittedPressure();
@@ -346,10 +348,12 @@ export async function persistBlock(block: BlockRecord): Promise<void> {
         }
       }),
     );
+    return true;
   } catch (err) {
     // Retries exhausted or non-retryable error — escalate to ERROR so operators
     // know a block slot has been permanently dropped from the DB.
     logger.error({ err, height: block.height, hash: block.hash }, "persistBlock failed after retries — block data NOT persisted to DB");
+    return false;
   }
 }
 

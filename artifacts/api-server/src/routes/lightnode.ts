@@ -13,8 +13,10 @@
  *   GET /lightnode/peers            — peer list for mobile P2P bootstrap
  *
  * Protocol guarantees:
- *   - Every response includes the current `stateRoot` so the client can
- *     verify proofs without a separate round-trip.
+ *   - `stateRoot` on tip and headers is the protocol header commitment
+ *     (stateRootOf(Ω)), not the operational SMT.
+ *   - Account and UTXO proofs are operational SMT proofs. Verify them
+ *     against `operationalRoot` in the proof response, not against /tip.
  *   - Headers contain only fields needed for fork-choice (no tx data).
  *   - Proofs are 256-sibling SMT proofs verifiable offline.
  */
@@ -164,16 +166,17 @@ router.get("/lightnode/sync", (req, res) => {
 
 // ── GET /lightnode/proof/account/:address ─────────────────────────────────────
 //
-// Returns the account's current balance+nonce plus a 256-sibling SMT proof
-// against the current tip's stateRoot. A mobile client can verify this
-// offline with SparseMerkleTree.verify() against the stateRoot from /tip.
+// Returns the account's current balance+nonce plus a 256-sibling SMT proof.
+// The proof verifies against operationalRoot. protocolStateRoot is the
+// header commitment from stateRootOf(Ω). Those two roots are not the same
+// domain and are not checked against each other.
 
 router.get("/lightnode/proof/account/:address", (req, res) => {
   const { address } = req.params;
   const compact = req.query["compact"] !== "false"; // compact by default for mobile
   const verified = requireVerifiedStateRoot(res);
   if (!verified) return;
-  const { tip, smt } = verified;
+  const { tip, smt, protocolStateRoot, operationalRoot } = verified;
 
   const acc          = chainState.ledger.getAccount(address);
   const key          = smtKey("acct", address);
@@ -184,7 +187,9 @@ router.get("/lightnode/proof/account/:address", (req, res) => {
     address,
     balance:    acc.balance,
     nonce:      acc.nonce,
-    stateRoot:  tip.stateRoot,
+    protocolStateRoot,
+    operationalRoot,
+    stateRoot:  protocolStateRoot,
     height:     tip.height,
     /**
      * Full 256-sibling proof (8 KB) — use for maximum compatibility.
@@ -198,7 +203,7 @@ router.get("/lightnode/proof/account/:address", (req, res) => {
     },
     /**
      * Compact proof — only non-default siblings (~32–512 bytes).
-     * Verify offline with SparseMerkleTree.verifyCompact(compactProof, stateRoot).
+     * Verify offline against operationalRoot, not against /tip stateRoot.
      * Included by default; pass ?compact=false to omit.
      */
     compactProof: compact ? compactProof : undefined,
@@ -215,7 +220,7 @@ router.get("/lightnode/proof/utxo/:txHash/:index", (req, res) => {
   const compact     = req.query["compact"] !== "false";
   const verified = requireVerifiedStateRoot(res);
   if (!verified) return;
-  const { tip, smt } = verified;
+  const { tip, smt, protocolStateRoot, operationalRoot } = verified;
   if (isNaN(outputIndex)) { res.status(400).json({ error: "index must be an integer" }); return; }
 
   const utxo         = chainState.utxoSet.get(txHash, outputIndex);
@@ -227,7 +232,9 @@ router.get("/lightnode/proof/utxo/:txHash/:index", (req, res) => {
     txHash,
     outputIndex,
     utxo:       utxo ?? null,
-    stateRoot:  tip.stateRoot,
+    protocolStateRoot,
+    operationalRoot,
+    stateRoot:  protocolStateRoot,
     height:     tip.height,
     proof: {
       key:      proof.key,

@@ -2157,7 +2157,7 @@ export async function mineNextBlockAsync(
 
   state.addBlock(block);
   block.zkProof = generateZkProof(block.residual, block.hash, block.height);
-  state.gossipBlock(block.hash);
+  // Announcement is the mining cycle's, after persistBlock returns true.
   return block;
 }
 

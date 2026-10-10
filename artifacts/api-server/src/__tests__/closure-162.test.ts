@@ -3,8 +3,10 @@
  * boundary. These do not start the chain.
  */
 import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { WasmVM } from "../chain/wasm.js";
-import { ChainState } from "../chain/state.js";
+import { ChainState, buildGenesisChainFromDoc } from "../chain/state.js";
 import {
   selectSnapshotAnchor,
   chainThroughAnchor,
@@ -12,12 +14,19 @@ import {
   operationalReplaySet,
   evidenceToReplay,
   snapshotCoversPrune,
+  lineageReachesGenesis,
 } from "../chain/restart-boundary.js";
 import {
   noteIgnoredGovernanceParams,
   drainPendingParamUpdates,
 } from "../chain/governanceContract.js";
 import { DEFAULT_PARAMS, GovernanceModule, type Proposal } from "../chain/governance.js";
+import { ReplaySet } from "../lib/submission-guard.js";
+import { persistBlock } from "../chain/persistence.js";
+import { getVerifiedStateRoot, rebuildStateSmt } from "../chain/state-root.js";
+import { stateRootOf } from "../../../../site/src/protocol/constitution.js";
+import { kernelParty, KERNEL_ALLOCATIONS } from "../chain/kernel-genesis.js";
+import type { BlockRecord } from "../chain/types.js";
 
 type Row = { hash: string; height: number; prevHash: string; evidence?: unknown };
 
@@ -477,5 +486,173 @@ describe("a retained record is not canonical authority", () => {
     expect(state.canonicalBody.omega.height).toBe(-1);
     expect(state.ledger.balance(miner)).toBe(0);
     expect(state.retainedBlocks).toHaveLength(1);
+  });
+});
+
+describe("a snapshot walk that misses genesis is not a lineage", () => {
+  it("treats a height-0 block as complete even when its parent is absent", () => {
+    const genesis = { hash: "g", height: 0, prevHash: "not-in-table" };
+    const child = { hash: "c", height: 1, prevHash: "g" };
+    const reached = lineageReachesGenesis([child, genesis], child);
+    expect(reached.complete).toBe(true);
+    if (!reached.complete) return;
+    expect(reached.chain.map((row) => row.hash)).toEqual(["g", "c"]);
+    expect(chainThroughAnchor([child, genesis], child).map((row) => row.hash)).toEqual(["g", "c"]);
+  });
+
+  it("refuses a missing parent before height 0", () => {
+    const tip = { hash: "t", height: 4, prevHash: "missing" };
+    const reached = lineageReachesGenesis([tip], tip);
+    expect(reached.complete).toBe(false);
+    if (reached.complete) return;
+    expect(reached.reason).toBe("missing-parent");
+    expect(chainThroughAnchor([tip], tip).map((row) => row.hash)).toEqual(["t"]);
+  });
+
+  it("refuses a cycle that never reaches height 0", () => {
+    const a = { hash: "a", height: 2, prevHash: "b" };
+    const b = { hash: "b", height: 1, prevHash: "a" };
+    const reached = lineageReachesGenesis([a, b], a);
+    expect(reached.complete).toBe(false);
+    if (reached.complete) return;
+    expect(reached.reason).toBe("cycle");
+  });
+});
+
+describe("a refused submission does not keep its replay key", () => {
+  it("forgets a key so the same candidate can be submitted again", () => {
+    const seen = new ReplaySet(4);
+    expect(seen.tryAdd("tip:1")).toBe(true);
+    expect(seen.tryAdd("tip:1")).toBe(false);
+    seen.forget("tip:1");
+    expect(seen.tryAdd("tip:1")).toBe(true);
+    expect(seen.size).toBe(1);
+  });
+});
+
+describe("persistBlock reports whether the write happened", () => {
+  it("returns false instead of throwing when the configured database does not commit", async () => {
+    const block: BlockRecord = {
+      hash: "ab".repeat(32),
+      height: 0,
+      prevHash: "0".repeat(64),
+      merkleRoot: "0".repeat(64),
+      timestamp: 1,
+      nonce: 0,
+      difficulty: 1,
+      residual: 0,
+      recursionDepth: 2,
+      coinbaseReward: 0,
+      miner: "ab".repeat(20),
+      txCount: 0,
+      transactions: [],
+    };
+    expect(await persistBlock(block)).toBe(false);
+  });
+});
+
+describe("the header root is not the operational SMT", () => {
+  it("accepts a successor when stateRootOf matches the header and does not require the SMT to match", () => {
+    const state = buildGenesisChainFromDoc({
+      chain_id: "equilibrium-1",
+      timestamp: "2026-07-05T00:44:37.417Z",
+      initial_supply: "100000000",
+      allocations: KERNEL_ALLOCATIONS.map((line) => ({
+        address: line.address,
+        amount: String(line.amount),
+        vesting: "none",
+        category: "line",
+      })),
+      initial_validators: [],
+      dex_pools: [],
+      parameters: {
+        target_block_time_ms: 15_000,
+        residual_threshold: 8e-4,
+        initial_difficulty: 1_000_000,
+        slashing_double_sign_pct: 5,
+        slashing_downtime_pct: 1,
+        unbonding_period_blocks: 10,
+        max_validators: 100,
+        governance_quorum_pct: 67,
+        governance_voting_period_blocks: 10,
+      },
+    });
+    const omega = state.canonicalBody.omega;
+    const miner = kernelParty("mainnet").miner;
+    state.addBlock({
+      hash: "11".repeat(32),
+      height: omega.height + 1,
+      prevHash: omega.tipHash,
+      merkleRoot: "0".repeat(64),
+      timestamp: 1_700_000_000,
+      nonce: 6,
+      difficulty: omega.difficulty,
+      residual: 1e-9,
+      recursionDepth: 2,
+      coinbaseReward: 0,
+      miner,
+      txCount: 0,
+      transactions: [],
+      committedPressure: 0,
+    });
+    const tip = state.canonicalTip;
+    expect(tip?.stateRoot).toBe(stateRootOf(state.canonicalBody.omega));
+    const verified = getVerifiedStateRoot(state);
+    expect(verified.error).toBeUndefined();
+    expect(verified.snapshot?.protocolStateRoot).toBe(tip?.stateRoot);
+    expect(verified.snapshot?.operationalRoot).toBe(rebuildStateSmt(state).root());
+    expect(verified.snapshot?.operationalRoot).not.toBe(verified.snapshot?.protocolStateRoot);
+
+    tip!.stateRoot = "ab".repeat(32);
+    const refused = getVerifiedStateRoot(state);
+    expect(refused.snapshot).toBeUndefined();
+    expect(refused.error?.status).toBe(409);
+    expect(refused.error?.message).toMatch(/Protocol state root mismatch/);
+  });
+});
+
+describe("a block is not announced before it is persisted", () => {
+  const source = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("waits for the HTTP persist result before 201", () => {
+    const src = source("../routes/blocks.ts");
+    const persist = src.indexOf("const saved = await persistBlock(block)");
+    const created = src.indexOf("res.status(201)", persist);
+    expect(persist).toBeGreaterThan(0);
+    expect(created).toBeGreaterThan(persist);
+    expect(src.indexOf("submitReplay.forget(replayKey)")).toBeGreaterThan(0);
+  });
+
+  it("waits for the Stratum persist result before accepting the share", () => {
+    const src = source("../lib/stratum-server.ts");
+    const persist = src.indexOf("const saved = await persistBlock(block)");
+    const accepted = src.indexOf("this.respond(session.socket, req.id, true, null)", persist);
+    expect(persist).toBeGreaterThan(0);
+    expect(accepted).toBeGreaterThan(persist);
+    expect(src.includes("recentShares.forget(shareKey)")).toBe(true);
+  });
+
+  it("logs peer acceptance only after the block is the successor and the write returned", () => {
+    const src = source("../index.ts");
+    const accept = src.indexOf("P2P sync: accepting block from peer");
+    const successor = src.lastIndexOf("canonicalSuccessor", accept);
+    const persist = src.lastIndexOf("await persistBlock", accept);
+    expect(successor).toBeGreaterThan(0);
+    expect(persist).toBeGreaterThan(successor);
+    expect(accept).toBeGreaterThan(persist);
+  });
+
+  it("does not gossip a mined block from the async miner before the cycle persists it", () => {
+    const src = source("../chain/state.ts");
+    const asyncFn = src.slice(src.indexOf("export async function mineNextBlockAsync"));
+    const body = asyncFn.slice(0, asyncFn.indexOf("export function mineNextBlock("));
+    expect(body.includes("gossipBlock")).toBe(false);
+    const cycleSrc = source("../chain/index.ts");
+    const cycleAt = cycleSrc.indexOf("async function runMiningCycle");
+    const cycle = cycleSrc.slice(cycleAt, cycleSrc.indexOf("export function startMining"));
+    const persist = cycle.indexOf("const saved = await persistBlock(block)");
+    const gossip = cycle.indexOf("chainState.gossipBlock(block.hash)");
+    expect(persist).toBeGreaterThan(0);
+    expect(gossip).toBeGreaterThan(persist);
   });
 });

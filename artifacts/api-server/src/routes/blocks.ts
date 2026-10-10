@@ -285,16 +285,6 @@ router.post("/blocks/submit", async (req, res) => {
     return;
   }
 
-  // ── Replay detection — reject duplicate (prevHash, nonce) pairs ─────────────
-  // A valid PoS solution is unique to a given chain tip; the same (tip, nonce)
-  // cannot produce two distinct valid blocks, so a duplicate is always spam.
-  const replayKey = `${tipHash}:${submittedNonce.toString()}`;
-  if (!submitReplay.tryAdd(replayKey)) {
-    logger.warn({ ip, miner, nonce: submittedNonce.toString(), prevHash: tipHash }, "Block submission replay rejected");
-    res.status(409).json({ error: "Duplicate submission — this (prevHash, nonce) pair has already been processed" });
-    return;
-  }
-
   // ── Build the new block ─────────────────────────────────────────────────────
   const height  = work.height;
   const now     = (typeof timestamp === "number" && timestamp > 0)
@@ -361,18 +351,39 @@ router.post("/blocks/submit", async (req, res) => {
     sealIdentity: true,
   };
 
+  // Replay key is recorded only once the candidate is otherwise formed.
+  // A residual refusal above does not consume it. Admission failure forgets it.
+  const replayKey = `${tipHash}:${submittedNonce.toString()}`;
+  if (!submitReplay.tryAdd(replayKey)) {
+    logger.warn({ ip, miner, nonce: submittedNonce.toString(), prevHash: tipHash }, "Block submission replay rejected");
+    res.status(409).json({ error: "Duplicate submission — this (prevHash, nonce) pair has already been processed" });
+    return;
+  }
+
   // ── Apply to chain state ────────────────────────────────────────────────────
   // Note: do NOT call chainState.ledger.credit() here — addBlock() calls
   // distributeBlockReward(). A pre-credit here would double the miner's balance.
+  const beforeHeight = chainState.canonicalBody.omega.height;
   try {
     chainState.addBlock(block);
   } catch (err) {
+    submitReplay.forget(replayKey);
     const message = err instanceof Error ? err.message : "block refused";
     res.status(422).json({ error: message });
     return;
   }
   if (block.canonicalSuccessor !== true) {
+    submitReplay.forget(replayKey);
+    if (chainState.canonicalBody.omega.height !== beforeHeight) chainState.rollbackToHeight(beforeHeight);
     res.status(422).json({ error: "block is not the successor" });
+    return;
+  }
+  const saved = await persistBlock(block);
+  if (!saved) {
+    chainState.rollbackToHeight(beforeHeight);
+    submitReplay.forget(replayKey);
+    logger.error({ height, hash: block.hash.slice(0, 16) }, "Submitted block was not persisted — rolled back and not announced");
+    res.status(503).json({ error: "block was not persisted" });
     return;
   }
   block.zkProof = generateZkProof(block.residual, block.hash, block.height);
@@ -392,11 +403,6 @@ router.post("/blocks/submit", async (req, res) => {
     type: "mempool_update",
     data: { size: chainState.mempool.size, pressure: chainState.mempool.pressure },
   });
-
-  // ── Persist fire-and-forget ─────────────────────────────────────────────────
-  persistBlock(block).catch((err) =>
-    logger.warn({ err, height }, "Failed to persist externally submitted block"),
-  );
 
   res.status(201).json({ hash: block.hash, height, reward, txCount: txs.length });
 });

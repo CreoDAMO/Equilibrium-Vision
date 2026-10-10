@@ -206,7 +206,11 @@ export class StratumServer {
     switch (req.method) {
       case "mining.subscribe":  this.onSubscribe(session, req);  break;
       case "mining.authorize":  this.onAuthorize(session, req);  break;
-      case "mining.submit":     this.onSubmit(session, req);     break;
+      case "mining.submit":
+        void this.onSubmit(session, req).catch((err: unknown) => {
+          logger.warn({ err, sessionId: session.sessionId }, "Stratum submit failed");
+        });
+        break;
       default:
         this.respond(session.socket, req.id, null, [20, `Unknown method: ${req.method}`, null]);
     }
@@ -236,7 +240,7 @@ export class StratumServer {
     this.send(session.socket, this.buildJob());
   }
 
-  private onSubmit(session: MinerSession, req: StratumRequest): void {
+  private async onSubmit(session: MinerSession, req: StratumRequest): Promise<void> {
     if (!session.authorized) {
       this.respond(session.socket, req.id, false, [24, "Unauthorized", null]);
       return;
@@ -317,19 +321,6 @@ export class StratumServer {
       return;
     }
 
-    // ── Duplicate share detection ────────────────────────────────────────────
-    // Keyed by (jobId, nonce, extraNonce2, ntime) — including ntime prevents
-    // an attacker from replaying the same (jobId, nonce, extraNonce2) triple
-    // with a different claimed timestamp to slip past this dedupe check.
-    // Prevents double-submission on reconnect or intentional replay attacks.
-    const shareKey = `${jobId}:${nonceHex ?? ""}:${extraNonce2 ?? ""}:${ntimeHex ?? ""}`;
-    if (!this.recentShares.tryAdd(shareKey)) {
-      this.duplicateShareRejectionsByIp.set(session.remoteIp, (this.duplicateShareRejectionsByIp.get(session.remoteIp) ?? 0) + 1);
-      logger.warn({ worker: session.worker, minerAddr, job: jobId, shareKey }, "Stratum share rejected: duplicate");
-      this.respond(session.socket, req.id, false, [22, "Duplicate share", null]);
-      return;
-    }
-
     // ── Assemble the block (mirrors POST /api/blocks/submit) ────────────────
     const height  = work.height;
     const now     = Number.isFinite(parsedNtime) ? parsedNtime : Math.floor(Date.now() / 1000);
@@ -392,17 +383,39 @@ export class StratumServer {
       sealIdentity: true,
     };
 
+    // The share key is consumed only when the candidate is otherwise formed.
+    // A residual refusal above does not consume it. A failed admission forgets it.
+    const shareKey = `${jobId}:${nonceHex ?? ""}:${extraNonce2 ?? ""}:${ntimeHex ?? ""}`;
+    if (!this.recentShares.tryAdd(shareKey)) {
+      this.duplicateShareRejectionsByIp.set(session.remoteIp, (this.duplicateShareRejectionsByIp.get(session.remoteIp) ?? 0) + 1);
+      logger.warn({ worker: session.worker, minerAddr, job: jobId, shareKey }, "Stratum share rejected: duplicate");
+      this.respond(session.socket, req.id, false, [22, "Duplicate share", null]);
+      return;
+    }
+
     // ── Apply to chain ──────────────────────────────────────────────────────
+    const beforeHeight = cs.canonicalBody.omega.height;
     try {
       cs.addBlock(block);
     } catch (err) {
+      this.recentShares.forget(shareKey);
       const message = err instanceof Error ? err.message : "block refused";
       logger.info({ height, miner: minerAddr, message }, "Stratum share rejected");
       this.respond(session.socket, req.id, false, [23, message, null]);
       return;
     }
     if (block.canonicalSuccessor !== true) {
+      this.recentShares.forget(shareKey);
+      if (cs.canonicalBody.omega.height !== beforeHeight) cs.rollbackToHeight(beforeHeight);
       this.respond(session.socket, req.id, false, [23, "block is not the successor", null]);
+      return;
+    }
+    const saved = await persistBlock(block);
+    if (!saved) {
+      cs.rollbackToHeight(beforeHeight);
+      this.recentShares.forget(shareKey);
+      logger.error({ height, hash: block.hash.slice(0, 16) }, "Stratum block was not persisted — rolled back and not announced");
+      this.respond(session.socket, req.id, false, [20, "block was not persisted", null]);
       return;
     }
     block.zkProof = generateZkProof(block.residual, block.hash, block.height);
@@ -416,11 +429,6 @@ export class StratumServer {
     // Notify WebSocket clients
     broadcast({ type: "new_block",     data: { height, hash: block.hash, txCount: txs.length, residual, miner: minerAddr, timestamp: now } });
     broadcast({ type: "mempool_update", data: { size: cs.mempool.size, pressure: cs.mempool.pressure } });
-
-    // Persist fire-and-forget
-    persistBlock(block).catch((err) =>
-      logger.warn({ err, height }, "Stratum: failed to persist block"),
-    );
 
     // Push new work to all miners so they stop working on stale jobs
     this.notifyAll();
