@@ -617,45 +617,49 @@ export class ChainState {
     const poolHit = block.transactions.some((tx) =>
       this.dexPools.has(tx.to)
       || this.canonicalBody.omega.pools.some((p) => (p.address || poolAddress(p.id)) === tx.to));
-    const priorOmega = cloneOmega(this.canonicalBody.omega);
-    const priorCanonBlocks = this.canonicalBody.blocks.slice();
-    const admitted = this.installCanonical(block);
-    if (admitted.kind === "reject") throw new Error(admitted.error);
-    if (admitted.kind === "skip" && block.evidence) {
-      throw new Error("canonical evidence is adopted by the successor, not addBlock");
-    }
-    if (admitted.kind === "skip" && poolHit) {
-      throw new Error("pool effects are applied by the successor, not addBlock");
-    }
-    // A skip is not executed and not appended. Recording a non-successor is
-    // recordUnexecuted. That path does not pay, and it is not acceptance.
-    if (admitted.kind === "skip") {
-      throw new Error("block is not the successor");
-    }
-    this.noteBefore(block.height, priorOmega, priorCanonBlocks);
-    block.hash = admitted.hash;
-    block.merkleRoot = admitted.merkleRoot;
-    block.stateRoot = admitted.stateRoot;
-    block.evidenceRoot = admitted.evidenceRoot;
-    block.omegaRoot = admitted.omegaRoot;
-    block.chainId = admitted.chainId;
-    block.residual = admitted.residual;
-    block.residualFp = admitted.residualFp;
-    block.coinbaseReward = admitted.reward;
-    block.transitionRoot = admitted.transitionRoot;
-    block.canonicalSuccessor = true;
-    this.blocks.push(block);
-    for (const tx of block.transactions) {
-      const confirmed: TxRecord = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" };
-      this.txIndex.set(tx.hash, confirmed);
-      this.mempool.remove([tx.hash]);
-      for (const addr of [tx.from, tx.to]) {
-        if (!this.addressTxs.has(addr)) this.addressTxs.set(addr, new Set());
-        this.addressTxs.get(addr)!.add(tx.hash);
+    // Ω is installed before the operational row exists. A throw after that
+    // must put both bodies back. Skip and reject still surface the same error.
+    this.guardAdmission(() => {
+      const priorOmega = cloneOmega(this.canonicalBody.omega);
+      const priorCanonBlocks = this.canonicalBody.blocks.slice();
+      const admitted = this.installCanonical(block);
+      if (admitted.kind === "reject") throw new Error(admitted.error);
+      if (admitted.kind === "skip" && block.evidence) {
+        throw new Error("canonical evidence is adopted by the successor, not addBlock");
       }
-    }
-    this.embodyCanonical();
-    this.wasmVM.setBlockHeight(block.height);
+      if (admitted.kind === "skip" && poolHit) {
+        throw new Error("pool effects are applied by the successor, not addBlock");
+      }
+      // A skip is not executed and not appended. Recording a non-successor is
+      // recordUnexecuted. That path does not pay, and it is not acceptance.
+      if (admitted.kind === "skip") {
+        throw new Error("block is not the successor");
+      }
+      this.noteBefore(block.height, priorOmega, priorCanonBlocks);
+      block.hash = admitted.hash;
+      block.merkleRoot = admitted.merkleRoot;
+      block.stateRoot = admitted.stateRoot;
+      block.evidenceRoot = admitted.evidenceRoot;
+      block.omegaRoot = admitted.omegaRoot;
+      block.chainId = admitted.chainId;
+      block.residual = admitted.residual;
+      block.residualFp = admitted.residualFp;
+      block.coinbaseReward = admitted.reward;
+      block.transitionRoot = admitted.transitionRoot;
+      block.canonicalSuccessor = true;
+      this.blocks.push(block);
+      for (const tx of block.transactions) {
+        const confirmed: TxRecord = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" };
+        this.txIndex.set(tx.hash, confirmed);
+        this.mempool.remove([tx.hash]);
+        for (const addr of [tx.from, tx.to]) {
+          if (!this.addressTxs.has(addr)) this.addressTxs.set(addr, new Set());
+          this.addressTxs.get(addr)!.add(tx.hash);
+        }
+      }
+      this.embodyCanonical();
+      this.wasmVM.setBlockHeight(block.height);
+    });
   }
 
   /**
@@ -734,10 +738,8 @@ export class ChainState {
 
   /** Operational fields that are canonical take the successor's values. UTXOs stay operational. */
   private embodyCanonical(): void {
+    this.projectLedger();
     const omega = this.canonicalBody.omega;
-    const accounts: Record<string, { balance: number; nonce: number }> = {};
-    for (const [addr, acc] of omega.ledger) accounts[addr] = { balance: acc.balance, nonce: acc.nonce };
-    this.ledger.restoreAccounts(accounts);
     this.validators.clear();
     for (const v of omega.validators.values()) {
       this.validators.set(v.address, {
@@ -793,6 +795,15 @@ export class ChainState {
     this.canonicalEth = omega.eth.map((h) => ({ ...h }));
   }
 
+  /** Ω.ledger copied onto the operational ledger. Validators and pools are later. */
+  private projectLedger(): void {
+    const accounts: Record<string, { balance: number; nonce: number }> = {};
+    for (const [addr, acc] of this.canonicalBody.omega.ledger) {
+      accounts[addr] = { balance: acc.balance, nonce: acc.nonce };
+    }
+    this.ledger.restoreAccounts(accounts);
+  }
+
   /** The successor already moved Ω. Copy it onto the operational body. */
   alignEmbodiment(): void {
     this.embodyCanonical();
@@ -820,37 +831,73 @@ export class ChainState {
    * A refusal leaves both where they were.
    */
   async admitEvidence(inputs: Omit<CanonicalInputs, "wasmAfter">) {
-    const priorOmega = cloneOmega(this.canonicalBody.omega);
-    const priorCanon = this.canonicalBody.blocks.slice();
-    const committed = await this.canonicalBody.commit(inputs);
-    if (!committed.ok) return committed;
-    const block: BlockRecord = {
-      hash: committed.hash,
-      height: committed.height,
-      prevHash: committed.prevHash,
-      merkleRoot: committed.merkleRoot,
-      timestamp: inputs.timestamp,
-      nonce: inputs.nonce,
-      difficulty: inputs.difficulty,
-      residual: committed.residual,
-      residualFp: committed.residualFp,
-      recursionDepth: 2,
-      coinbaseReward: committed.reward,
-      miner: inputs.miner,
-      txCount: inputs.transactions.length,
-      transactions: inputs.transactions as BlockRecord["transactions"],
-      stateRoot: committed.stateRoot,
-      chainId: committed.evidence.chainId,
-      evidenceRoot: committed.evidenceRoot,
-      omegaRoot: committed.omegaRoot,
-      evidence: committed.evidence,
-      committedPressure: inputs.committedPressure,
-    };
-    this.noteBefore(block.height, priorOmega, priorCanon);
-    this.blocks.push(block);
-    this.embodyCanonical();
-    this.wasmVM.setBlockHeight(block.height);
-    return committed;
+    return this.guardAdmissionAsync(async () => {
+      const priorOmega = cloneOmega(this.canonicalBody.omega);
+      const priorCanon = this.canonicalBody.blocks.slice();
+      const committed = await this.canonicalBody.commit(inputs);
+      if (!committed.ok) return committed;
+      const block: BlockRecord = {
+        hash: committed.hash,
+        height: committed.height,
+        prevHash: committed.prevHash,
+        merkleRoot: committed.merkleRoot,
+        timestamp: inputs.timestamp,
+        nonce: inputs.nonce,
+        difficulty: inputs.difficulty,
+        residual: committed.residual,
+        residualFp: committed.residualFp,
+        recursionDepth: 2,
+        coinbaseReward: committed.reward,
+        miner: inputs.miner,
+        txCount: inputs.transactions.length,
+        transactions: inputs.transactions as BlockRecord["transactions"],
+        stateRoot: committed.stateRoot,
+        chainId: committed.evidence.chainId,
+        evidenceRoot: committed.evidenceRoot,
+        omegaRoot: committed.omegaRoot,
+        evidence: committed.evidence,
+        committedPressure: inputs.committedPressure,
+      };
+      this.noteBefore(block.height, priorOmega, priorCanon);
+      this.blocks.push(block);
+      this.embodyCanonical();
+      this.wasmVM.setBlockHeight(block.height);
+      return committed;
+    });
+  }
+
+  /**
+   * Snapshot taken before mutation. A throw puts that snapshot back and
+   * rethrows. If the restore itself throws, the original failure stays in
+   * the message and the result is not success. State is whatever remains.
+   */
+  private guardAdmission(run: () => void): void {
+    const saved = this.captureTemporal();
+    try {
+      run();
+    } catch (err) {
+      this.failAdmission(saved, err);
+    }
+  }
+
+  private async guardAdmissionAsync<T>(run: () => Promise<T>): Promise<T> {
+    const saved = this.captureTemporal();
+    try {
+      return await run();
+    } catch (err) {
+      this.failAdmission(saved, err);
+    }
+  }
+
+  private failAdmission(saved: ReturnType<ChainState["captureTemporal"]>, err: unknown): never {
+    try {
+      this.restoreTemporal(saved);
+    } catch (restoreErr) {
+      const original = err instanceof Error ? err.message : String(err);
+      const restoreMsg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+      throw new Error(`admission failed: ${original}; restore failed: ${restoreMsg}`);
+    }
+    throw err;
   }
 
   /**
@@ -895,9 +942,8 @@ export class ChainState {
       try {
         this.addBlock(block);
       } catch (err) {
-        if (this.canonicalBody.omega.height !== beforeHeight && this.canonicalBody.omega.tipHash === block.hash) {
-          this.rollbackToHeight(beforeHeight);
-        }
+        // addBlock already restored, or restore itself failed. A second
+        // rollback would hide the failed restore and report a clean refusal.
         return {
           admitted: false,
           kept: false,
@@ -954,7 +1000,18 @@ export class ChainState {
     return this.withAdmission(async () => {
       const beforeHeight = this.canonicalBody.omega.height;
       const beforeTip = this.canonicalBody.omega.tipHash;
-      const committed = await this.admitEvidence(inputs);
+      let committed;
+      try {
+        committed = await this.admitEvidence(inputs);
+      } catch (err) {
+        // admitEvidence restored, or named a failed restore. Do not treat either as kept.
+        return {
+          admitted: false,
+          kept: false,
+          error: err instanceof Error ? err.message : "block refused",
+          persist: null,
+        };
+      }
       if (!committed.ok) {
         if (this.canonicalBody.omega.tipHash !== beforeTip) this.rollbackToHeight(beforeHeight);
         return { admitted: false, kept: false, error: committed.error, persist: null };
@@ -995,28 +1052,30 @@ export class ChainState {
 
   /** Replay a sealed evidence block. A mismatch does not move either body. */
   async adoptReplay(block: BlockRecord): Promise<string | null> {
-    const priorOmega = cloneOmega(this.canonicalBody.omega);
-    const priorCanon = this.canonicalBody.blocks.slice();
-    const err = await this.canonicalBody.replay({
-      hash: block.hash,
-      evidence: block.evidence,
-      transactions: block.transactions as Parameters<CanonicalBody["replay"]>[0]["transactions"],
-      timestamp: block.timestamp,
-      nonce: block.nonce,
-      miner: block.miner,
-      difficulty: block.difficulty,
-      committedPressure: block.committedPressure,
-      stateRoot: block.stateRoot,
-      omegaRoot: block.omegaRoot,
+    return this.guardAdmissionAsync(async () => {
+      const priorOmega = cloneOmega(this.canonicalBody.omega);
+      const priorCanon = this.canonicalBody.blocks.slice();
+      const err = await this.canonicalBody.replay({
+        hash: block.hash,
+        evidence: block.evidence,
+        transactions: block.transactions as Parameters<CanonicalBody["replay"]>[0]["transactions"],
+        timestamp: block.timestamp,
+        nonce: block.nonce,
+        miner: block.miner,
+        difficulty: block.difficulty,
+        committedPressure: block.committedPressure,
+        stateRoot: block.stateRoot,
+        omegaRoot: block.omegaRoot,
+      });
+      if (err) return err;
+      if (!this.getBlockByHash(block.hash)) {
+        this.noteBefore(block.height, priorOmega, priorCanon);
+        this.blocks.push(block);
+      }
+      this.embodyCanonical();
+      this.wasmVM.setBlockHeight(this.height);
+      return null;
     });
-    if (err) return err;
-    if (!this.getBlockByHash(block.hash)) {
-      this.noteBefore(block.height, priorOmega, priorCanon);
-      this.blocks.push(block);
-    }
-    this.embodyCanonical();
-    this.wasmVM.setBlockHeight(this.height);
-    return null;
   }
 
   private captureTemporal() {
@@ -1060,6 +1119,7 @@ export class ChainState {
       preWasm: new Map(this.preBlockWasm),
       preProposals: new Map(this.preBlockProposals),
       prePools: new Map(this.preBlockPools),
+      wasmHeight: (this.wasmVM as unknown as { blockHeight: number }).blockHeight,
     };
   }
 
@@ -1104,7 +1164,7 @@ export class ChainState {
     this.preBlockWasm = saved.preWasm;
     this.preBlockProposals = saved.preProposals;
     this.preBlockPools = saved.prePools;
-    this.wasmVM.setBlockHeight(this.height);
+    this.wasmVM.setBlockHeight(saved.wasmHeight);
   }
 
   // ── Chain reorganization ─────────────────────────────────────────────────────
