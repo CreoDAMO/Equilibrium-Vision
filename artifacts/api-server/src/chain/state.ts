@@ -25,6 +25,7 @@ import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
 import { generateZkProof } from "./zkproof.js";
 import { verifyEd25519BatchDetailed } from "./batchVerify.js";
+import { canonicalSigningBytes } from "../lib/canonical-tx.js";
 import { canonicalResidual, pressureEvidence } from "./canonical-residual.js";
 import { withDbRetry, persistBlock, persistKeepsMemory, type PersistBlockResult } from "./persistence.js";
 import { operationalReplaySet } from "./restart-boundary.js";
@@ -35,17 +36,18 @@ import { allocationsMatchKernel, kernelNetworkOf, kernelParty, KERNEL_POOLS, KER
 import { CanonicalBody } from "./canonical-body.js";
 import { selectSuccessorTxs } from "../../../../site/src/protocol/tx-select.js";
 import { poolAddress } from "../../../../site/src/protocol/dex.js";
-import { asBlockNonce, foreignNonce } from "../../../../site/src/protocol/domain.js";
+import { asBlockNonce, foreignNonce, participationBytes, popcount } from "../../../../site/src/protocol/domain.js";
 import { applySuccessor, openedCouplings, cloneOmega, type CanonicalInputs, type Omega } from "../../../../site/src/protocol/constitution.js";
 import { sealFromSuccessor, omegaRecord } from "../../../../site/src/protocol/seal.js";
 import type { BtcHeaderRecord, EthHeaderRecord, ModelClaim, Proposal, Settlement } from "../../../../site/src/protocol/types.js";
 import { callArbitrage } from "../../../../site/src/protocol/wasm-host.js";
 import {
   ETH_MIN_PARTICIPANTS,
+  committeeAggregate,
   hashEthHeader,
   hexOf,
   hexToBytes as ethHex,
-  verifyEthHeader,
+  verifySelectedHeader,
 } from "../../../../site/src/protocol/eth-light.js";
 import {
   canonicalCoinbase,
@@ -259,32 +261,36 @@ export class ChainState {
   }
 
   /**
-   * Admit an Ethereum header the way the kernel does.
-   * Committee key, 342 participants, slot continuity, and a BLS signature.
+   * Admit an Ethereum header the way the successor does.
+   * The committee aggregate must be the one derived from the committee.
+   * Participants are the popcount of the signed bitset. Quorum is 342.
    * A raw ethTipHash is not this, and it does not move difficulty.
    */
   admitEthHeader(input: {
-    pubkeyHex: string;
+    committee: string;
+    aggregate: string;
     slot: number;
     proposerIndex: number;
     parentRoot: string;
     stateRoot: string;
     bodyRoot: string;
-    participants: number;
+    participation: string;
     signatureHex: string;
   }): string | null {
-    let rawPub: Uint8Array;
+    let bits: Uint8Array;
     let sig: Uint8Array;
     try {
-      rawPub = ethHex(input.pubkeyHex.replace(/^0x/, ""));
+      bits = participationBytes(input.participation);
       sig = ethHex(input.signatureHex.replace(/^0x/, ""));
     } catch {
       return null;
     }
-    if (rawPub.length !== 48) return null;
-    const pubkey = hexOf(rawPub);
-    if (this.ethPubkey && pubkey !== this.ethPubkey) return null;
-    if (input.participants < ETH_MIN_PARTICIPANTS) return null;
+    if (sig.length !== 96) return null;
+    if (popcount(bits) < ETH_MIN_PARTICIPANTS) return null;
+    const derived = committeeAggregate(input.committee);
+    const claim = input.aggregate.trim().replace(/^0x/i, "").toLowerCase();
+    if (!derived || claim !== derived) return null;
+    if (this.ethPubkey && this.ethPubkey !== derived) return null;
     const fields = {
       slot: input.slot,
       proposerIndex: input.proposerIndex,
@@ -296,9 +302,9 @@ export class ChainState {
       if (input.slot !== this.admittedEthSlot + 1) return null;
       if (input.parentRoot !== this.admittedEthTip) return null;
     }
-    if (!verifyEthHeader(ethHex(pubkey), fields, sig)) return null;
-    const hash = hexOf(hashEthHeader(fields));
-    this.ethPubkey = pubkey;
+    if (!verifySelectedHeader(input.committee, fields, sig, bits)) return null;
+    const hash = hexOf(hashEthHeader(fields, bits));
+    this.ethPubkey = derived;
     this.admittedEthSlot = input.slot;
     this.admittedEthTip = hash;
     return hash;
@@ -2144,6 +2150,49 @@ export function buildGenesisChain(): ChainState {
 // ── Block miner ───────────────────────────────────────────────────────────────
 
 /**
+ * The pre-filter uses the same bytes intake and the successor verify.
+ * A UTF-8 concatenation of the fields is not that message.
+ * A transaction that fails it is removed. One that passes stays.
+ */
+export function retainCanonicalTransactions(state: ChainState, candidates: TxRecord[]): TxRecord[] {
+  const chainId = state.canonicalBody.omega.chainId;
+  const signed = candidates.filter((t) => t.signature && t.publicKey);
+  const invalidHashes = new Set<string>();
+  const sigItems: Array<{ hash: string; sig: Uint8Array; message: Uint8Array; publicKey: Uint8Array }> = [];
+  for (const tx of signed) {
+    try {
+      sigItems.push({
+        hash: tx.hash,
+        sig: new Uint8Array(Buffer.from(tx.signature!, "hex")),
+        message: new Uint8Array(canonicalSigningBytes({
+          from: tx.from,
+          to: tx.to,
+          amount: tx.amount,
+          fee: tx.fee,
+          nonce: tx.nonce,
+          publicKey: tx.publicKey!,
+          chainId,
+        })),
+        publicKey: new Uint8Array(Buffer.from(tx.publicKey!, "hex")),
+      });
+    } catch {
+      invalidHashes.add(tx.hash);
+    }
+  }
+  if (sigItems.length > 0) {
+    const results = verifyEd25519BatchDetailed(sigItems);
+    sigItems.forEach((item, index) => {
+      if (!results[index]) invalidHashes.add(item.hash);
+    });
+  }
+  if (invalidHashes.size > 0) {
+    logger.warn(`dropping ${invalidHashes.size} tx(s) whose signature is not the canonical transaction`);
+    state.mempool.remove([...invalidHashes]);
+  }
+  return candidates.filter((tx) => !invalidHashes.has(tx.hash));
+}
+
+/**
  * Async block miner — tries the real Proof-of-Stationarity solver first
  * (Rust consensus-api binary), falls back to the deterministic-random
  * approach if the solver binary is unavailable (dev / CI environments).
@@ -2161,24 +2210,7 @@ export async function mineNextBlockAsync(
   const now = Math.floor(Date.now() / 1000);
 
   const candidates = state.selectCanonical(state.mempool.all());
-  const signed = candidates.filter((t) => t.signature && t.publicKey);
-  let invalidHashes = new Set<string>();
-  if (signed.length > 0) {
-    const sigItems = signed.map((t) => ({
-      sig: new Uint8Array(Buffer.from(t.signature!, "hex")),
-      message: new TextEncoder().encode(`${t.from}${t.to}${t.amount}${t.fee}${t.nonce}`),
-      publicKey: new Uint8Array(Buffer.from(t.publicKey!, "hex")),
-    }));
-    const results = verifyEd25519BatchDetailed(sigItems);
-    invalidHashes = new Set(
-      signed.filter((_, i) => !results[i]).map((t) => t.hash),
-    );
-    if (invalidHashes.size > 0) {
-      logger.warn(`mineNextBlockAsync: dropping ${invalidHashes.size} tx(s) with invalid signatures`);
-      state.mempool.remove([...invalidHashes]);
-    }
-  }
-  const selected = candidates.filter((t) => !invalidHashes.has(t.hash));
+  const selected = retainCanonicalTransactions(state, candidates);
   const txHashes = selected.map((t) => t.hash);
   const mr = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
 
@@ -2326,29 +2358,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   const committedPressure = state.mempool.pressure;
 
   const candidates = state.selectCanonical(state.mempool.all());
-
-  // Re-verify signatures at block-assembly time using batch verification —
-  // one combined check instead of N full verifications. Any tx that fails
-  // (bad signature, mempool tampering, stale/invalid data) is dropped from
-  // this block and stays in the mempool as pending rather than being mined.
-  const signed = candidates.filter((t) => t.signature && t.publicKey);
-  let invalidHashes = new Set<string>();
-  if (signed.length > 0) {
-    const sigItems = signed.map((t) => ({
-      sig: new Uint8Array(Buffer.from(t.signature!, "hex")),
-      message: new TextEncoder().encode(`${t.from}${t.to}${t.amount}${t.fee}${t.nonce}`),
-      publicKey: new Uint8Array(Buffer.from(t.publicKey!, "hex")),
-    }));
-    const results = verifyEd25519BatchDetailed(sigItems);
-    invalidHashes = new Set(
-      signed.filter((_, i) => !results[i]).map((t) => t.hash)
-    );
-    if (invalidHashes.size > 0) {
-      logger.warn(`mineNextBlock: dropping ${invalidHashes.size} tx(s) with invalid signatures from block ${height}`);
-      state.mempool.remove([...invalidHashes]);
-    }
-  }
-  const selected = candidates.filter((t) => !invalidHashes.has(t.hash));
+  const selected = retainCanonicalTransactions(state, candidates);
   const txHashes = selected.map((t) => t.hash);
   const mr = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
 

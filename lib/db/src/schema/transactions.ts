@@ -22,6 +22,10 @@ export const transactionsTable = pgTable(
     fee:         bigint("fee", { mode: "number" }).notNull().default(0),
     nonce:       bigint("nonce", { mode: "number" }).notNull(),
     signature:   text("signature").notNull(),
+    /** The public key the signature was checked against. Null on rows written before it was stored. */
+    publicKey:   text("public_key"),
+    /** Position in the admitted transaction list. Null on rows written before it was stored. */
+    txIndex:     integer("tx_index"),
     /** "pending" | "confirmed" | "failed" */
     status:      text("status").notNull().default("pending"),
     timestamp:   bigint("timestamp", { mode: "number" }).notNull(),

@@ -10,10 +10,10 @@ import { BTC_GENESIS_HEADER_HEX } from "../chain/btc-header.js";
 import { nextFinalizedHeight } from "../chain/finality.js";
 import { kernelParty, KERNEL_ALLOCATIONS, KERNEL_POOLS, KERNEL_VALIDATOR_LIQUID } from "../chain/kernel-genesis.js";
 import { wasmLeafOf } from "../chain/wasm-leaf.js";
-import { applySuccessor, adjustDifficulty, foreignDifficultyFactor, initialOmega } from "../../../../site/src/protocol/constitution.js";
+import { applySuccessor, successor, adjustDifficulty, foreignDifficultyFactor, initialOmega } from "../../../../site/src/protocol/constitution.js";
 import { ARBITRAGE_CODE } from "../../../../site/src/protocol/evidence.js";
 import { callArbitrage } from "../../../../site/src/protocol/wasm-host.js";
-import { ethKeygen, hashEthHeader, hexOf, signEthHeader } from "../../../../site/src/protocol/eth-light.js";
+import { hashEthHeader, hexOf, participationMask, signSelected, syncCommittee } from "../../../../site/src/protocol/eth-light.js";
 import { NETWORKS } from "../../../../site/src/protocol/networks.js";
 import { canonicalCoinbase } from "@workspace/coinomics";
 import { rebuildStateSmt } from "../chain/state-root.js";
@@ -1309,7 +1309,7 @@ describe("ChainState UTXO fee sweep", () => {
     expect(wasmAfter.size).toBeGreaterThan(0);
 
     const born = initialOmega("mainnet");
-    const stepped = applySuccessor(born, {
+    const stepped = await successor(born, {
       transactions: [],
       evidence: {
         v: 1,
@@ -1326,7 +1326,6 @@ describe("ChainState UTXO fee sweep", () => {
       committedPressure: 0,
       couplings: { ...born.couplings },
       difficulty: born.difficulty,
-      wasmAfter,
     });
     expect(stepped.ok).toBe(true);
     if (!stepped.ok) return;
@@ -1373,8 +1372,7 @@ describe("ChainState UTXO fee sweep", () => {
   });
 
   it("an ethereum header is admitted only by the bls predicate", () => {
-    const key = ethKeygen();
-    const pubkey = hexOf(key.pubkey);
+    const committee = syncCommittee(1);
     const fields = {
       slot: 7,
       proposerIndex: 3,
@@ -1382,22 +1380,27 @@ describe("ChainState UTXO fee sweep", () => {
       stateRoot: "22".repeat(32),
       bodyRoot: "33".repeat(32),
     };
-    const signature = hexOf(signEthHeader(key.secret, fields));
+    const bits341 = participationMask(341);
+    const bits342 = participationMask(342);
+    const signature = hexOf(signSelected(committee.secrets, fields, bits342));
     const state = new ChainState();
     state.currentDifficulty = 1_000_000;
     state.blocks.push(fakeBlock(0, 1_700_000_000));
     state.blocks.push(fakeBlock(1, 1_700_000_015));
     state.ethTipHash = "ff".repeat(32);
-    expect(state.admitEthHeader({
-      pubkeyHex: pubkey,
+    const header = {
+      committee: committee.committee,
+      aggregate: committee.aggregate,
       ...fields,
-      participants: 341,
+    };
+    expect(state.admitEthHeader({
+      ...header,
+      participation: hexOf(bits341),
       signatureHex: signature,
     })).toBeNull();
     expect(state.admitEthHeader({
-      pubkeyHex: pubkey,
-      ...fields,
-      participants: 342,
+      ...header,
+      participation: hexOf(bits342),
       signatureHex: "00".repeat(96),
     })).toBeNull();
     state.updateDifficulty();
@@ -1405,12 +1408,11 @@ describe("ChainState UTXO fee sweep", () => {
     expect(state.admittedEthTip).toBeNull();
 
     const hash = state.admitEthHeader({
-      pubkeyHex: pubkey,
-      ...fields,
-      participants: 342,
+      ...header,
+      participation: hexOf(bits342),
       signatureHex: signature,
     });
-    expect(hash).toBe(hexOf(hashEthHeader(fields)));
+    expect(hash).toBe(hexOf(hashEthHeader(fields, bits342)));
     state.currentDifficulty = 1_000_000;
     state.updateDifficulty();
     expect(state.currentDifficulty).toBe(1_000_000);
@@ -1426,7 +1428,8 @@ describe("ChainState UTXO fee sweep", () => {
       }],
     });
     const born = initialOmega("mainnet");
-    expect(state.currentDifficulty).toBe(adjustDifficulty(1_000_000, 15, NETWORKS.mainnet, factor));
+    expect(state.currentDifficulty).toBe(1_000_000);
+    expect(adjustDifficulty(1_000_000, 15, NETWORKS.mainnet, factor)).not.toBe(state.currentDifficulty);
     const stepped = applySuccessor(born, {
       transactions: [],
       evidence: {
@@ -1435,8 +1438,8 @@ describe("ChainState UTXO fee sweep", () => {
         wasmCode: ARBITRAGE_CODE,
         btc: [],
         eth: [
-          { op: "bootstrap", pubkey },
-          { op: "header", ...fields, participants: 342, signature },
+          { op: "bootstrap", committee: committee.committee, aggregate: committee.aggregate },
+          { op: "header", ...fields, participation: hexOf(bits342), signature },
         ],
         wasm: [],
         stake: [],
@@ -1575,7 +1578,8 @@ describe("stratum admission", () => {
     expect(src.includes("slashValidator(")).toBe(true);
     expect(src.includes("block.wasmEntries")).toBe(false);
     expect(src.includes("block.couplingKey")).toBe(false);
-    expect(src.includes("applyPassedCouplings")).toBe(true);
+    expect(src.includes("openedCouplings")).toBe(true);
+    expect(src.includes("applyPassedCouplings")).toBe(false);
   });
 
   it("a gossiped body is not paid the governance base reward", () => {

@@ -14,6 +14,12 @@ import { admitResidual, canonicalResidual } from "../chain/canonical-residual.js
 // Admission is the canonical residual of the assembled block, recomputed here.
 // The variational-ai CLI is not a consensus dependency and is not consulted.
 
+/** A Stratum nonce is a hex u64. A value above 2^53 stays exact. Missing or malformed is 0. */
+export function stratumNonce(nonceHex: string | undefined): bigint {
+  if (!nonceHex || !/^[0-9a-fA-F]{1,16}$/.test(nonceHex)) return 0n;
+  return BigInt(`0x${nonceHex}`);
+}
+
 // ── Stratum v1 mining pool protocol ──────────────────────────────────────────
 //
 // Implements a subset of Stratum v1 sufficient for mobile miners:
@@ -292,7 +298,7 @@ export class StratumServer {
     }
 
     const parsedNtime = ntimeHex ? parseInt(ntimeHex, 16) : NaN;
-    const parsedNonce = nonceHex ? parseInt(nonceHex, 16) : NaN;
+    const nonce = stratumNonce(nonceHex);
 
     let residual = claimedResidual;
 
@@ -311,20 +317,24 @@ export class StratumServer {
     }
 
     // ── Derive miner address from worker name (format: "address.workerTag") ─
-    const minerAddr = (workerParam ?? session.worker ?? "").split(".")[0];
+    const minerAddr = (workerParam ?? session.worker ?? "").split(".")[0]?.toLowerCase() ?? "";
     if (!minerAddr || minerAddr.length !== 40) {
       this.respond(session.socket, req.id, false, [24, "Worker name must start with a 40-char hex miner address", null]);
       return;
     }
-    if (!/^[0-9a-f]{40}$/i.test(minerAddr)) {
+    if (!/^[0-9a-f]{40}$/.test(minerAddr)) {
       this.respond(session.socket, req.id, false, [24, "Miner address must contain only hex characters", null]);
+      return;
+    }
+    const producer = cs.canonicalBody.omega.validators.get(minerAddr);
+    if (!producer || producer.jailed || producer.slashed || producer.bondedStake <= 0) {
+      this.respond(session.socket, req.id, false, [23, "miner is not a live validator", null]);
       return;
     }
 
     // ── Assemble the block (mirrors POST /api/blocks/submit) ────────────────
     const height  = work.height;
     const now     = Number.isFinite(parsedNtime) ? parsedNtime : Math.floor(Date.now() / 1000);
-    const nonce   = Number.isFinite(parsedNonce) ? parsedNonce : 0;
 
     const selected  = cs.selectCanonical(cs.mempool.all());
     const txHashes  = selected.map((t) => t.hash);

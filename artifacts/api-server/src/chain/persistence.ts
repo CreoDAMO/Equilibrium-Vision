@@ -151,7 +151,9 @@ async function ensureCommittedPressure(): Promise<void> {
             ALTER TABLE blocks ALTER COLUMN nonce TYPE numeric(20,0);
           END IF;
         END $$`))
-      .then(() => undefined)
+      .then(() => pool.query(`ALTER TABLE transactions
+        ADD COLUMN IF NOT EXISTS public_key text,
+        ADD COLUMN IF NOT EXISTS tx_index integer`))
       .catch((err) => {
         _pressureColumn = null;
         throw err;
@@ -174,6 +176,8 @@ function toTxRecord(row: typeof transactionsTable.$inferSelect): TxRecord {
     timestamp:   row.timestamp,
     blockHash:   row.blockHash   ?? null,
     blockHeight: row.blockHeight ?? null,
+    signature:   row.signature || undefined,
+    publicKey:   row.publicKey ?? undefined,
   };
 }
 
@@ -244,13 +248,17 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
 
     const validBlocks = [...operable, ...retainedRows, ...canonicalRows];
 
-    // Group txs by blockHash for O(1) lookup
-    const txsByBlock = new Map<string, TxRecord[]>();
+    const rowsByBlock = new Map<string, typeof dbTxs>();
     for (const row of dbTxs) {
       if (!row.blockHash) continue;
-      const list = txsByBlock.get(row.blockHash) ?? [];
-      list.push(toTxRecord(row));
-      txsByBlock.set(row.blockHash, list);
+      const list = rowsByBlock.get(row.blockHash) ?? [];
+      list.push(row);
+      rowsByBlock.set(row.blockHash, list);
+    }
+    const txsByBlock = new Map<string, TxRecord[]>();
+    for (const [hash, rows] of rowsByBlock) {
+      rows.sort((a, b) => (a.txIndex ?? 0) - (b.txIndex ?? 0) || (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0));
+      txsByBlock.set(hash, rows.map(toTxRecord));
     }
 
     return validBlocks.map((b) => ({
@@ -332,6 +340,29 @@ function sameStoredBlock(row: BlockRow, block: BlockRecord): boolean {
     && (row.omegaRoot ?? null) === (block.omegaRoot ?? null);
 }
 
+type TxRow = typeof transactionsTable.$inferSelect;
+
+/** The stored transactions are the ones that were admitted, in that order. */
+function sameStoredTxs(rows: TxRow[], block: BlockRecord): boolean {
+  const ordered = [...rows].sort(
+    (a, b) => (a.txIndex ?? 0) - (b.txIndex ?? 0) || (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0),
+  );
+  if (ordered.length !== block.transactions.length) return false;
+  return block.transactions.every((tx, index) => {
+    const row = ordered[index];
+    if (!row) return false;
+    return row.hash === tx.hash
+      && row.from === tx.from
+      && row.to === tx.to
+      && Number(row.amount) === tx.amount
+      && Number(row.fee) === tx.fee
+      && Number(row.nonce) === tx.nonce
+      && row.signature === (tx.signature ?? "")
+      && (row.publicKey ?? null) === (tx.publicKey ?? null)
+      && (row.txIndex ?? index) === index;
+  });
+}
+
 type PersistTx = {
   insert: (table: unknown) => {
     values: (values: unknown) => {
@@ -342,7 +373,7 @@ type PersistTx = {
   };
   select: () => {
     from: (table: unknown) => {
-      where: (condition: unknown) => Promise<BlockRow[]>;
+      where: (condition: unknown) => Promise<any[]>;
     };
   };
 };
@@ -393,13 +424,18 @@ export async function persistBlockUsing(db: PersistDb | null, block: BlockRecord
       if (!row || !sameStoredBlock(row, block)) {
         throw new Error("persist conflict");
       }
-      if (inserted.length === 0) return "identical" as const;
+      const storedTxs = await tx.select().from(transactionsTable).where(eq(transactionsTable.blockHash, block.hash));
+      if (inserted.length === 0) {
+        if (!sameStoredTxs(storedTxs, block)) throw new Error("persist conflict");
+        return "identical" as const;
+      }
+      if (storedTxs.length !== 0) throw new Error("persist conflict");
 
       if (block.transactions.length > 0) {
         const written = await tx
           .insert(transactionsTable)
           .values(
-            block.transactions.map((t) => ({
+            block.transactions.map((t, index) => ({
               hash:        t.hash,
               blockHash:   block.hash,
               blockHeight: block.height,
@@ -408,7 +444,9 @@ export async function persistBlockUsing(db: PersistDb | null, block: BlockRecord
               amount:      t.amount,
               fee:         t.fee,
               nonce:       t.nonce,
-              signature:   "",
+              signature:   t.signature ?? "",
+              publicKey:   t.publicKey ?? null,
+              txIndex:     index,
               status:      "confirmed" as const,
               timestamp:   t.timestamp,
             })),

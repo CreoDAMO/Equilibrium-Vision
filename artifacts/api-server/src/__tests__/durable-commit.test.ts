@@ -354,6 +354,8 @@ describe("persistBlock names the database outcome", () => {
         fee bigint NOT NULL DEFAULT 0,
         nonce bigint NOT NULL,
         signature text NOT NULL,
+        public_key text,
+        tx_index integer,
         status text NOT NULL DEFAULT 'pending',
         timestamp bigint NOT NULL
       );
