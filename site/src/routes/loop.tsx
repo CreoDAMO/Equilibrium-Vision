@@ -186,7 +186,7 @@ function LoopPage() {
           <div>
             <h2 className="font-display text-xl">Persisted comparisons</h2>
             <p className="mt-1 text-sm text-muted">
-              One row per height. {snap?.persisted ? "This kernel restored from the database." : "First boot — writing the chain now."}
+              One row per height. {snap?.persisted ? "A saved body was loaded, or a later write returned." : "No database write for this kernel has returned. Memory is not that write."}
             </p>
           </div>
           <Badge tone={log.data?.every((r) => r.agree) ? "ok" : "warn"}>

@@ -9,7 +9,7 @@ function StatePage() {
   if (!snap) return <p className="text-muted">Loading…</p>;
   const { wholes } = snap;
   const cols = [
-    { title: "Committed", items: wholes.committed, note: "stateRoot binds these" },
+    { title: "Committed", items: wholes.committed, note: "stateRootOf binds these, and not the omega digest" },
     { title: "Observed", items: wholes.observed, note: "what this surface can see" },
     { title: "Operational", items: wholes.operational, note: "needed to compute Ωt+1" },
     { title: "Whole", items: wholes.whole, note: "the organism, including theory" },
@@ -19,7 +19,10 @@ function StatePage() {
       <header>
         <h1 className="font-display text-4xl tracking-tight">State</h1>
         <p className="mt-2 max-w-2xl text-muted">
-          Four wholes. The state root is a compressed memory fingerprint, not the organism.
+          The state root binds the committed list. Validators, delegations, proposals, couplings,
+          difficulty, and finalized height move the omega digest and do not move that root.
+          An account or UTXO proof checks a different root. It does not check this header.
+          These four lists are not a proof that each one is contained in the next.
           Tip state root {truncateHash(snap.recentBlocks[0]?.stateRoot ?? "")}.
         </p>
       </header>

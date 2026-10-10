@@ -142,6 +142,19 @@ function Home() {
                   this network's header, not a shared object.
                 </li>
                 <li>
+                  The header state root is stateRootOf. Validators, delegations, proposals, couplings,
+                  difficulty, and finalized height move the omega digest. They do not move that root.
+                </li>
+                <li>
+                  An account or UTXO proof checks the stored root. That root is not the header, and
+                  the header is not that proof.
+                </li>
+                <li>
+                  The block store does not treat a missing database as a durable write. A conflicting
+                  row or a failed write is not announced. A later candidate waits, then it is checked
+                  against the tip that remains. Death during the write is not one fact in memory and on disk.
+                </li>
+                <li>
                   {data.constitution?.q1
                     ? `The transition is successor, not this process. One next state once transactions, evidence, miner, and timestamp are fixed. At least ${data.constitution.admittingNonces} nonces in a window of ${data.constitution.nonceWindow} satisfy the residual predicate${data.constitution.admittingShareState ? " and share one Ω" : ""}. A vote changes Ω only inside the block.`
                     : "The transition relation did not close. The page is not claiming a constitution it could not run."}
