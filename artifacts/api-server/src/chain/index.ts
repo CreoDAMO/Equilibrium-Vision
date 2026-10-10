@@ -23,6 +23,7 @@ import { deployArbitrageIfNeeded } from "./arbitrage.js";
 import { deployCrossChainRelayIfNeeded } from "./crossChainRelay.js";
 import { p2pBridge } from "./p2p-bridge.js";
 import { smtKey } from "./smt.js";
+import { generateZkProof } from "./zkproof.js";
 import { getVerifiedStateRoot } from "./state-root.js";
 import { selectSnapshotAnchor, lineageReachesGenesis, continuationAfterAnchor, evidenceToReplay } from "./restart-boundary.js";
 
@@ -554,7 +555,6 @@ export async function initChain(): Promise<void> {
 
     logger.info({ hash: hash.slice(0, 16), height }, "p2p: received block body via gossip");
 
-    const beforeHeight = chainState.canonicalBody.omega.height;
     try {
       const block: BlockRecord = {
         hash,
@@ -572,20 +572,18 @@ export async function initChain(): Promise<void> {
         txCount:        0,
         transactions:   [],
       };
-      chainState.addBlock(block);
-      if (block.canonicalSuccessor !== true) {
-        logger.warn({ hash: hash.slice(0, 16), height }, "p2p: block is not the successor");
+      const outcome = await chainState.commitOperational(block);
+      if (!outcome.admitted) {
+        logger.warn({ hash: hash.slice(0, 16), height, error: outcome.error }, "p2p: block is not the successor");
         return;
       }
-      const saved = await persistBlock(block);
-      if (!saved) {
-        chainState.rollbackToHeight(beforeHeight);
-        logger.error({ hash: hash.slice(0, 16), height }, "p2p: block was not persisted — not announced");
+      if (!outcome.kept) {
+        logger.error({ hash: hash.slice(0, 16), height, outcome: outcome.persist?.outcome }, "p2p: block was not persisted — not announced");
         return;
       }
-      void p2pBridge.gossipBlock(hash); // propagate to other desktop peers
-      chainState.gossipBlock(hash);
-      logger.info({ hash: hash.slice(0, 16), height }, 'p2p: block from gossip body accepted');
+      void p2pBridge.gossipBlock(block.hash);
+      chainState.gossipBlock(block.hash);
+      logger.info({ hash: block.hash.slice(0, 16), height, durable: outcome.persist?.durable }, "p2p: block from gossip body accepted");
     } catch (err) {
       logger.warn({ err, hash: hash.slice(0, 16) }, 'p2p: block body from gossip rejected');
     }
@@ -654,34 +652,34 @@ let miningGeneration = 0;
 let miningTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function runMiningCycle(generation: number): Promise<void> {
-  const beforeHeight = chainState.canonicalBody.omega.height;
-  let durable = false;
   try {
     const block = await mineNextBlockAsync(chainState, minerAddress);
-    if (block.canonicalSuccessor !== true) {
+    const outcome = await chainState.commitOperational(block, {
+      beforePersist: (admitted) => {
+        admitted.zkProof = generateZkProof(admitted.residual, admitted.hash, admitted.height);
+      },
+    });
+    if (!outcome.admitted) {
       logger.warn(
-        { height: block.height, hash: block.hash.slice(0, 16) },
+        { height: block.height, hash: block.hash.slice(0, 16), error: outcome.error },
         "Mined block is not the successor — not persisted or announced",
       );
       return;
     }
-    const saved = await persistBlock(block);
-    if (!saved) {
-      chainState.rollbackToHeight(beforeHeight);
+    if (!outcome.kept || !outcome.persist) {
       logger.error(
-        { height: block.height, hash: block.hash.slice(0, 16) },
+        { height: block.height, hash: block.hash.slice(0, 16), outcome: outcome.persist?.outcome },
         "Mined block was not persisted — rolled back and not announced",
       );
       return;
     }
-    durable = true;
     logger.info(
-      { height: block.height, hash: block.hash.slice(0, 16), txCount: block.txCount, residual: block.residual },
+      { height: block.height, hash: block.hash.slice(0, 16), txCount: block.txCount, residual: block.residual, durable: outcome.persist.durable },
       "Block mined",
     );
 
-    // Snapshot only after the block row is durable.
-    if (block.height % SNAPSHOT_INTERVAL === 0 && block.height > 0) {
+    // A snapshot is a durable restart point. In-memory mode has nothing to anchor.
+    if (outcome.persist.durable && block.height % SNAPSHOT_INTERVAL === 0 && block.height > 0) {
       takeSnapshot().catch((err) =>
         logger.warn({ err, height: block.height }, "Periodic snapshot failed — continuing"),
       );
@@ -719,9 +717,6 @@ async function runMiningCycle(generation: number): Promise<void> {
       },
     });
   } catch (err) {
-    if (!durable && chainState.canonicalBody.omega.height !== beforeHeight) {
-      chainState.rollbackToHeight(beforeHeight);
-    }
     logger.warn({ err }, "Mining cycle refused the block — it was not announced");
   } finally {
     // Only reschedule if this cycle's generation is still current and mining

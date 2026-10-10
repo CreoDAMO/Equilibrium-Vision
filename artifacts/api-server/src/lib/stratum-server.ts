@@ -4,7 +4,7 @@ import { logger } from "./logger.js";
 import { broadcast } from "./ws-server.js";
 import { merkleRoot, hash256 } from "../chain/crypto.js";
 import { generateZkProof } from "../chain/zkproof.js";
-import { persistBlock } from "../chain/persistence.js";
+import { persistKeepsMemory } from "../chain/persistence.js";
 import type { TxRecord } from "../chain/types.js";
 import type { ChainState } from "../chain/state.js";
 import { RateLimiter, ReplaySet } from "./submission-guard.js";
@@ -393,32 +393,23 @@ export class StratumServer {
       return;
     }
 
-    // ── Apply to chain ──────────────────────────────────────────────────────
-    const beforeHeight = cs.canonicalBody.omega.height;
-    try {
-      cs.addBlock(block);
-    } catch (err) {
+    const outcome = await cs.commitOperational(block, {
+      beforePersist: (admitted) => {
+        admitted.zkProof = generateZkProof(admitted.residual, admitted.hash, admitted.height);
+      },
+    });
+    if (!outcome.admitted) {
       this.recentShares.forget(shareKey);
-      const message = err instanceof Error ? err.message : "block refused";
-      logger.info({ height, miner: minerAddr, message }, "Stratum share rejected");
-      this.respond(session.socket, req.id, false, [23, message, null]);
+      logger.info({ height, miner: minerAddr, message: outcome.error }, "Stratum share rejected");
+      this.respond(session.socket, req.id, false, [23, outcome.error ?? "block is not the successor", null]);
       return;
     }
-    if (block.canonicalSuccessor !== true) {
+    if (!outcome.kept || !outcome.persist || !persistKeepsMemory(outcome.persist)) {
       this.recentShares.forget(shareKey);
-      if (cs.canonicalBody.omega.height !== beforeHeight) cs.rollbackToHeight(beforeHeight);
-      this.respond(session.socket, req.id, false, [23, "block is not the successor", null]);
-      return;
-    }
-    const saved = await persistBlock(block);
-    if (!saved) {
-      cs.rollbackToHeight(beforeHeight);
-      this.recentShares.forget(shareKey);
-      logger.error({ height, hash: block.hash.slice(0, 16) }, "Stratum block was not persisted — rolled back and not announced");
+      logger.error({ height, hash: block.hash.slice(0, 16), outcome: outcome.persist?.outcome }, "Stratum block was not persisted — rolled back and not announced");
       this.respond(session.socket, req.id, false, [20, "block was not persisted", null]);
       return;
     }
-    block.zkProof = generateZkProof(block.residual, block.hash, block.height);
     cs.gossipBlock(block.hash);
 
     logger.info(

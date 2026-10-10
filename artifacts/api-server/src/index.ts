@@ -87,36 +87,42 @@ if (Number.isNaN(port) || port <= 0) {
             remote.nonce = remoteNonce;
 
             if (remote.evidence && chainState) {
-              const err = await chainState.adoptReplay({
-                hash: typeof remote.hash === "string" ? remote.hash : blockHash,
-                height: Number(remote.height) || 0,
-                prevHash: typeof remote.prevHash === "string" ? remote.prevHash : "",
-                merkleRoot: typeof remote.merkleRoot === "string" ? remote.merkleRoot : "0".repeat(64),
-                timestamp: Number(remote.timestamp) || 0,
-                nonce: remoteNonce,
-                difficulty: Number(remote.difficulty) || 0,
-                residual: Number(remote.residual) || 0,
-                residualFp: typeof remote.residualFp === "number" ? remote.residualFp : undefined,
-                recursionDepth: 2,
-                coinbaseReward: Number(remote.coinbaseReward) || 0,
-                miner: String(remote.miner ?? ""),
-                txCount: 0,
-                transactions: [],
-                committedPressure: typeof remote.committedPressure === "number" ? remote.committedPressure : 0,
-                stateRoot: typeof remote.stateRoot === "string" ? remote.stateRoot : undefined,
-                chainId: typeof remote.chainId === "number" ? remote.chainId : undefined,
-                evidenceRoot: typeof remote.evidenceRoot === "string" ? remote.evidenceRoot : undefined,
-                omegaRoot: typeof remote.omegaRoot === "string" ? remote.omegaRoot : undefined,
-                evidence: remote.evidence,
+              const beforeHeight = chainState.canonicalBody.omega.height;
+              const beforeTip = chainState.canonicalBody.omega.tipHash;
+              await chainState.withAdmission(async () => {
+                const err = await chainState.adoptReplay({
+                  hash: typeof remote.hash === "string" ? remote.hash : blockHash,
+                  height: Number(remote.height) || 0,
+                  prevHash: typeof remote.prevHash === "string" ? remote.prevHash : "",
+                  merkleRoot: typeof remote.merkleRoot === "string" ? remote.merkleRoot : "0".repeat(64),
+                  timestamp: Number(remote.timestamp) || 0,
+                  nonce: remoteNonce,
+                  difficulty: Number(remote.difficulty) || 0,
+                  residual: Number(remote.residual) || 0,
+                  residualFp: typeof remote.residualFp === "number" ? remote.residualFp : undefined,
+                  recursionDepth: 2,
+                  coinbaseReward: Number(remote.coinbaseReward) || 0,
+                  miner: String(remote.miner ?? ""),
+                  txCount: 0,
+                  transactions: [],
+                  committedPressure: typeof remote.committedPressure === "number" ? remote.committedPressure : 0,
+                  stateRoot: typeof remote.stateRoot === "string" ? remote.stateRoot : undefined,
+                  chainId: typeof remote.chainId === "number" ? remote.chainId : undefined,
+                  evidenceRoot: typeof remote.evidenceRoot === "string" ? remote.evidenceRoot : undefined,
+                  omegaRoot: typeof remote.omegaRoot === "string" ? remote.omegaRoot : undefined,
+                  evidence: remote.evidence,
+                });
+                if (err) {
+                  logger.warn({ err, blockHash, peerId }, "P2P sync: canonical evidence refused");
+                  return;
+                }
+                const { persistBlock, persistKeepsMemory } = await import("./chain/persistence.js");
+                const saved = await persistBlock({ ...remote, hash: typeof remote.hash === "string" ? remote.hash : blockHash });
+                if (!persistKeepsMemory(saved)) {
+                  if (chainState.canonicalBody.omega.tipHash !== beforeTip) chainState.rollbackToHeight(beforeHeight);
+                  logger.error({ blockHash, outcome: saved.outcome }, "P2P sync: canonical evidence was not persisted — not announced");
+                }
               });
-              if (err) {
-                logger.warn({ err, blockHash, peerId }, "P2P sync: canonical evidence refused");
-                return;
-              }
-              const { persistBlock } = await import("./chain/persistence.js");
-              persistBlock({ ...remote, hash: typeof remote.hash === "string" ? remote.hash : blockHash }).catch((persistErr: unknown) =>
-                logger.warn({ err: persistErr, blockHash }, "P2P sync: canonical evidence persistence failed"),
-              );
               return;
             }
 
@@ -205,22 +211,17 @@ if (Number.isNaN(port) || port <= 0) {
               return;
             }
 
-            const beforeHeight = chainState.canonicalBody.omega.height;
-            chainState.addBlock(remote);
-            if (remote.canonicalSuccessor !== true) {
-              logger.warn({ blockHash, height: remoteHeight }, "P2P sync: block is not the successor");
+            const outcome = await chainState.commitOperational(remote);
+            if (!outcome.admitted) {
+              logger.warn({ blockHash, height: remoteHeight, error: outcome.error }, "P2P sync: block is not the successor");
+              return;
+            }
+            if (!outcome.kept) {
+              logger.error({ blockHash, height: remoteHeight, outcome: outcome.persist?.outcome }, "P2P sync: block was not persisted — not announced");
               return;
             }
 
-            const { persistBlock } = await import('./chain/persistence.js');
-            const saved = await persistBlock(remote);
-            if (!saved) {
-              chainState.rollbackToHeight(beforeHeight);
-              logger.error({ blockHash, height: remoteHeight }, "P2P sync: block was not persisted — not announced");
-              return;
-            }
-
-            logger.info({ blockHash, height: remoteHeight, miner: remote.miner, peerId }, 'P2P sync: accepting block from peer');
+            logger.info({ blockHash, height: remoteHeight, miner: remote.miner, peerId, durable: outcome.persist?.durable }, 'P2P sync: accepting block from peer');
 
             // Notify WebSocket clients
             const { broadcast } = await import('./lib/ws-server.js');

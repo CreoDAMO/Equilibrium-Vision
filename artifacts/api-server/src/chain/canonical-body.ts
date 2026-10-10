@@ -16,6 +16,12 @@ export class CanonicalBody {
     this.omega = initialOmega(network);
   }
 
+  /**
+   * Test seam. Awaited after the successor returns and before Ω is installed.
+   * Production leaves it null. It is not a consensus input.
+   */
+  overlapBarrier: (() => Promise<void>) | null = null;
+
   async commit(inputs: Omit<CanonicalInputs, "wasmAfter">): Promise<
     | { ok: false; error: string }
     | {
@@ -38,10 +44,20 @@ export class CanonicalBody {
         difficulty: number;
       }
   > {
-    const prevHash = this.omega.tipHash;
-    const stepped = await successor(this.omega, inputs);
+    const before = this.omega;
+    const prevHash = before.tipHash;
+    const stepped = await successor(before, inputs);
     if (!stepped.ok) return stepped;
-    const sealed = sealFromSuccessor(this.omega, { ...inputs, wasmAfter: null }, stepped);
+    if (this.overlapBarrier) await this.overlapBarrier();
+    // A newer successor may have installed while this one was running.
+    // The result was computed from `before` and must not overwrite that tip.
+    if (this.omega !== before || this.omega.tipHash !== prevHash) {
+      return { ok: false, error: "block is not the successor" };
+    }
+    const sealed = sealFromSuccessor(before, { ...inputs, wasmAfter: null }, stepped);
+    if (this.omega !== before || this.omega.tipHash !== prevHash) {
+      return { ok: false, error: "block is not the successor" };
+    }
     const digestRecord = omegaRecord(sealed.digestOmega);
     const record = omegaRecord(sealed.carried);
     this.omega = sealed.carried;

@@ -26,7 +26,7 @@ import { WasmVM } from "./wasm.js";
 import { generateZkProof } from "./zkproof.js";
 import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import { canonicalResidual, pressureEvidence } from "./canonical-residual.js";
-import { withDbRetry } from "./persistence.js";
+import { withDbRetry, persistBlock, persistKeepsMemory, type PersistBlockResult } from "./persistence.js";
 import { operationalReplaySet } from "./restart-boundary.js";
 import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import { btcHeaderHash } from "./btc-header.js";
@@ -347,6 +347,12 @@ export class ChainState {
   canonicalEth: EthHeaderRecord[] = [];
   /** Evidence-bearing Ω. addBlock does not write this. */
   canonicalBody = new CanonicalBody("mainnet");
+
+  /**
+   * One durable admission at a time. The next candidate waits, then runs
+   * against whatever Ω the previous attempt left.
+   */
+  private admissionTail: Promise<void> = Promise.resolve();
 
   // BFT: real Ed25519 vote keypairs for each validator (testnet: held in-process)
   private validatorKeys = new Map<string, Uint8Array>();    // address → pubkey
@@ -839,6 +845,146 @@ export class ChainState {
     this.embodyCanonical();
     this.wasmVM.setBlockHeight(block.height);
     return committed;
+  }
+
+  /**
+   * Hold the admission queue. A nested call deadlocks; do not call this from
+   * inside another admission.
+   */
+  async withAdmission<T>(run: () => Promise<T>): Promise<T> {
+    const previous = this.admissionTail;
+    let release: () => void = () => {};
+    this.admissionTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      await previous;
+      return await run();
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * Admit one operational successor and persist it before anyone else may
+   * extend it. A failed or conflicting write rolls this block back only when
+   * it is still the tip. No database keeps the in-memory block and is not durable.
+   */
+  async commitOperational(
+    block: BlockRecord,
+    hooks: {
+      persist?: (block: BlockRecord) => Promise<PersistBlockResult>;
+      beforePersist?: (block: BlockRecord) => void | Promise<void>;
+    } = {},
+  ): Promise<{
+    admitted: boolean;
+    kept: boolean;
+    error?: string;
+    persist: PersistBlockResult | null;
+  }> {
+    const persist = hooks.persist ?? persistBlock;
+    return this.withAdmission(async () => {
+      const beforeHeight = this.canonicalBody.omega.height;
+      const beforeTip = this.canonicalBody.omega.tipHash;
+      try {
+        this.addBlock(block);
+      } catch (err) {
+        if (this.canonicalBody.omega.height !== beforeHeight && this.canonicalBody.omega.tipHash === block.hash) {
+          this.rollbackToHeight(beforeHeight);
+        }
+        return {
+          admitted: false,
+          kept: false,
+          error: err instanceof Error ? err.message : "block refused",
+          persist: null,
+        };
+      }
+      if (block.canonicalSuccessor !== true || this.canonicalBody.omega.tipHash === beforeTip) {
+        if (this.canonicalBody.omega.height !== beforeHeight) this.rollbackToHeight(beforeHeight);
+        return { admitted: false, kept: false, error: "block is not the successor", persist: null };
+      }
+      let saved: PersistBlockResult | null = null;
+      try {
+        if (hooks.beforePersist) await hooks.beforePersist(block);
+        saved = await persist(block);
+      } catch (err) {
+        if (this.canonicalBody.omega.tipHash === block.hash) this.rollbackToHeight(beforeHeight);
+        return {
+          admitted: true,
+          kept: false,
+          error: err instanceof Error ? err.message : "block was not persisted",
+          persist: { durable: false, outcome: "failed" },
+        };
+      }
+      if (!persistKeepsMemory(saved)) {
+        if (this.canonicalBody.omega.tipHash === block.hash) this.rollbackToHeight(beforeHeight);
+        return { admitted: true, kept: false, error: saved.outcome, persist: saved };
+      }
+      return { admitted: true, kept: true, persist: saved };
+    });
+  }
+
+  /**
+   * Admit one evidence successor and persist that row before the next admission.
+   * A stale overlapping successor is refused by CanonicalBody and is not pushed.
+   */
+  async commitEvidence(
+    inputs: Omit<CanonicalInputs, "wasmAfter">,
+    hooks: {
+      persist?: (block: BlockRecord) => Promise<PersistBlockResult>;
+    } = {},
+  ): Promise<{
+    admitted: boolean;
+    kept: boolean;
+    error?: string;
+    persist: PersistBlockResult | null;
+    hash?: string;
+    height?: number;
+    omegaRoot?: string;
+    tipHash?: string;
+    reward?: number;
+  }> {
+    const persist = hooks.persist ?? persistBlock;
+    return this.withAdmission(async () => {
+      const beforeHeight = this.canonicalBody.omega.height;
+      const beforeTip = this.canonicalBody.omega.tipHash;
+      const committed = await this.admitEvidence(inputs);
+      if (!committed.ok) {
+        if (this.canonicalBody.omega.tipHash !== beforeTip) this.rollbackToHeight(beforeHeight);
+        return { admitted: false, kept: false, error: committed.error, persist: null };
+      }
+      const block = this.blocks[this.blocks.length - 1];
+      if (!block || block.hash !== this.canonicalBody.omega.tipHash) {
+        if (this.canonicalBody.omega.tipHash !== beforeTip) this.rollbackToHeight(beforeHeight);
+        return { admitted: false, kept: false, error: "block is not the successor", persist: null };
+      }
+      let saved: PersistBlockResult;
+      try {
+        saved = await persist(block);
+      } catch (err) {
+        if (this.canonicalBody.omega.tipHash === block.hash) this.rollbackToHeight(beforeHeight);
+        return {
+          admitted: true,
+          kept: false,
+          error: err instanceof Error ? err.message : "block was not persisted",
+          persist: { durable: false, outcome: "failed" },
+        };
+      }
+      if (!persistKeepsMemory(saved)) {
+        if (this.canonicalBody.omega.tipHash === block.hash) this.rollbackToHeight(beforeHeight);
+        return { admitted: true, kept: false, error: saved.outcome, persist: saved };
+      }
+      return {
+        admitted: true,
+        kept: true,
+        persist: saved,
+        hash: committed.hash,
+        height: committed.height,
+        omegaRoot: committed.omegaRoot,
+        tipHash: committed.tipHash,
+        reward: committed.reward,
+      };
+    });
   }
 
   /** Replay a sealed evidence block. A mismatch does not move either body. */
@@ -2155,9 +2301,8 @@ export async function mineNextBlockAsync(
     sealIdentity:   true,
   };
 
-  state.addBlock(block);
-  block.zkProof = generateZkProof(block.residual, block.hash, block.height);
-  // Announcement is the mining cycle's, after persistBlock returns true.
+  // The mining cycle admits this block. Doing it here would publish it
+  // before the cycle's persistence result.
   return block;
 }
 

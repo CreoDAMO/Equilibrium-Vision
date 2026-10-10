@@ -284,76 +284,169 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
   }
 }
 
+export type PersistBlockOutcome = "inserted" | "identical" | "conflict" | "failed" | "absent";
+
+export interface PersistBlockResult {
+  /** True only when a matching row is confirmed in the database. */
+  durable: boolean;
+  outcome: PersistBlockOutcome;
+}
+
+/** In-memory state stays only for a confirmed row, or when no database is configured. */
+export function persistKeepsMemory(result: PersistBlockResult): boolean {
+  return result.outcome === "inserted" || result.outcome === "identical" || result.outcome === "absent";
+}
+
+type BlockRow = typeof blocksTable.$inferSelect;
+
+function sameStoredBlock(row: BlockRow, block: BlockRecord): boolean {
+  let nonce: bigint;
+  try {
+    nonce = asBlockNonce(block.nonce);
+  } catch {
+    return false;
+  }
+  let storedNonce: bigint;
+  try {
+    storedNonce = BigInt(row.nonce);
+  } catch {
+    return false;
+  }
+  const residualFp = block.residualFp ?? Math.floor(block.residual * 1e18);
+  const storedFp = row.residualFp === null || row.residualFp === undefined ? null : Number(row.residualFp);
+  return row.hash === block.hash
+    && row.height === block.height
+    && row.prevHash === block.prevHash
+    && row.merkleRoot === block.merkleRoot
+    && Number(row.timestamp) === block.timestamp
+    && storedNonce === nonce
+    && row.miner === block.miner
+    && row.txCount === block.txCount
+    && Number(row.coinbaseReward) === block.coinbaseReward
+    && Boolean(row.finalized) === (block.finalized ?? false)
+    && (row.stateRoot ?? null) === (block.stateRoot ?? null)
+    && storedFp === residualFp
+    && (row.committedPressure ?? null) === (block.committedPressure ?? null)
+    && (row.chainId ?? null) === (block.chainId ?? null)
+    && (row.evidenceRoot ?? null) === (block.evidenceRoot ?? null)
+    && (row.omegaRoot ?? null) === (block.omegaRoot ?? null);
+}
+
+type PersistTx = {
+  insert: (table: unknown) => {
+    values: (values: unknown) => {
+      onConflictDoNothing: () => {
+        returning: (selection: unknown) => Promise<Array<{ hash: string }>>;
+      };
+    };
+  };
+  select: () => {
+    from: (table: unknown) => {
+      where: (condition: unknown) => Promise<BlockRow[]>;
+    };
+  };
+};
+
+type PersistDb = {
+  transaction: <T>(fn: (tx: PersistTx) => Promise<T>) => Promise<T>;
+};
+
+/**
+ * Write one block and say what the database actually contains afterwards.
+ * `inserted` and `identical` are confirmed matching rows.
+ * `conflict` is a different row under the same hash. `failed` did not commit.
+ * `absent` means there is no database — that is not durable storage.
+ */
+export async function persistBlockUsing(db: PersistDb | null, block: BlockRecord): Promise<PersistBlockResult> {
+  if (!db) return { durable: false, outcome: "absent" };
+  try {
+    const outcome = await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(blocksTable)
+        .values({
+          hash:           block.hash,
+          height:         block.height,
+          prevHash:       block.prevHash,
+          merkleRoot:     block.merkleRoot,
+          timestamp:      block.timestamp,
+          nonce:          asBlockNonce(block.nonce),
+          difficulty:     block.difficulty,
+          residual:       block.residual,
+          residualFp:     block.residualFp ?? Math.floor(block.residual * 1e18),
+          miner:          block.miner,
+          txCount:        block.txCount,
+          coinbaseReward: block.coinbaseReward,
+          finalized:      block.finalized ?? false,
+          zkProof:        (block.zkProof ?? null) as unknown as null,
+          stateRoot:      block.stateRoot ?? null,
+          committedPressure: block.committedPressure ?? null,
+          chainId:        block.chainId ?? null,
+          evidenceRoot:   block.evidenceRoot ?? null,
+          omegaRoot:      block.omegaRoot ?? null,
+          evidence:       (block.evidence ?? null) as unknown as null,
+        })
+        .onConflictDoNothing()
+        .returning({ hash: blocksTable.hash });
+
+      const rows = await tx.select().from(blocksTable).where(eq(blocksTable.hash, block.hash));
+      const row = rows[0];
+      if (!row || !sameStoredBlock(row, block)) {
+        throw new Error("persist conflict");
+      }
+      if (inserted.length === 0) return "identical" as const;
+
+      if (block.transactions.length > 0) {
+        const written = await tx
+          .insert(transactionsTable)
+          .values(
+            block.transactions.map((t) => ({
+              hash:        t.hash,
+              blockHash:   block.hash,
+              blockHeight: block.height,
+              from:        t.from,
+              to:          t.to,
+              amount:      t.amount,
+              fee:         t.fee,
+              nonce:       t.nonce,
+              signature:   "",
+              status:      "confirmed" as const,
+              timestamp:   t.timestamp,
+            })),
+          )
+          .onConflictDoNothing()
+          .returning({ hash: transactionsTable.hash });
+        if (written.length !== block.transactions.length) throw new Error("persist conflict");
+      }
+      return "inserted" as const;
+    });
+    return { durable: true, outcome };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const code = (err as { code?: string }).code;
+    if (message === "persist conflict" || message.includes("persist conflict") || code === "23505") {
+      return { durable: false, outcome: "conflict" };
+    }
+    if (isRetryableError(err)) throw err;
+    logger.error({ err, height: block.height, hash: block.hash }, "persistBlock failed after retries — block data NOT persisted to DB");
+    return { durable: false, outcome: "failed" };
+  }
+}
+
 /**
  * Persist a single block and its confirmed transactions.
- * Uses INSERT … ON CONFLICT DO NOTHING so replayed or duplicate blocks are
- * silently skipped.
- * Returns true when there is no database, or when the write commits.
- * Returns false when the write fails. Does not throw: a caller that has
- * already admitted the block in memory must not announce it on false.
+ * Does not throw. A caller that has already admitted the block must not
+ * announce it unless persistKeepsMemory is true, and must not treat
+ * `absent` as a durable write.
  */
-export async function persistBlock(block: BlockRecord): Promise<boolean> {
+export async function persistBlock(block: BlockRecord): Promise<PersistBlockResult> {
   const db = getDb();
-  if (!db) return true;
-
+  if (!db) return persistBlockUsing(null, block);
   try {
     await ensureCommittedPressure();
-    await withDbRetry("persistBlock", () =>
-      db.transaction(async (tx) => {
-        await tx
-          .insert(blocksTable)
-          .values({
-            hash:           block.hash,
-            height:         block.height,
-            prevHash:       block.prevHash,
-            merkleRoot:     block.merkleRoot,
-            timestamp:      block.timestamp,
-            nonce:          asBlockNonce(block.nonce),
-            difficulty:     block.difficulty,
-            residual:       block.residual,
-            residualFp:     block.residualFp ?? Math.floor(block.residual * 1e18),
-            miner:          block.miner,
-            txCount:        block.txCount,
-            coinbaseReward: block.coinbaseReward,
-            finalized:      block.finalized ?? false,
-            zkProof:        (block.zkProof ?? null) as unknown as null,
-            stateRoot:      block.stateRoot ?? null,
-            committedPressure: block.committedPressure ?? null,
-            chainId:        block.chainId ?? null,
-            evidenceRoot:   block.evidenceRoot ?? null,
-            omegaRoot:      block.omegaRoot ?? null,
-            evidence:       (block.evidence ?? null) as unknown as null,
-          })
-          .onConflictDoNothing();
-
-        if (block.transactions.length > 0) {
-          await tx
-            .insert(transactionsTable)
-            .values(
-              block.transactions.map((t) => ({
-                hash:        t.hash,
-                blockHash:   block.hash,
-                blockHeight: block.height,
-                from:        t.from,
-                to:          t.to,
-                amount:      t.amount,
-                fee:         t.fee,
-                nonce:       t.nonce,
-                signature:   "",   // TxRecord has no signature field; placeholder for schema NOT NULL
-                status:      "confirmed" as const,
-                timestamp:   t.timestamp,
-              })),
-            )
-            .onConflictDoNothing();
-        }
-      }),
-    );
-    return true;
+    return await withDbRetry("persistBlock", () => persistBlockUsing(db as unknown as PersistDb, block));
   } catch (err) {
-    // Retries exhausted or non-retryable error — escalate to ERROR so operators
-    // know a block slot has been permanently dropped from the DB.
     logger.error({ err, height: block.height, hash: block.hash }, "persistBlock failed after retries — block data NOT persisted to DB");
-    return false;
+    return { durable: false, outcome: "failed" };
   }
 }
 

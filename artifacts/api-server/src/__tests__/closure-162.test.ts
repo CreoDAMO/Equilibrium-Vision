@@ -547,7 +547,9 @@ describe("persistBlock reports whether the write happened", () => {
       txCount: 0,
       transactions: [],
     };
-    expect(await persistBlock(block)).toBe(false);
+    const saved = await persistBlock(block);
+    expect(saved.durable).toBe(false);
+    expect(saved.outcome).toBe("failed");
   });
 });
 
@@ -616,30 +618,30 @@ describe("a block is not announced before it is persisted", () => {
 
   it("waits for the HTTP persist result before 201", () => {
     const src = source("../routes/blocks.ts");
-    const persist = src.indexOf("const saved = await persistBlock(block)");
-    const created = src.indexOf("res.status(201)", persist);
-    expect(persist).toBeGreaterThan(0);
-    expect(created).toBeGreaterThan(persist);
+    const commit = src.indexOf("commitOperational(block");
+    const created = src.indexOf("res.status(201)", commit);
+    expect(commit).toBeGreaterThan(0);
+    expect(created).toBeGreaterThan(commit);
+    expect(src.includes("outcome.kept")).toBe(true);
     expect(src.indexOf("submitReplay.forget(replayKey)")).toBeGreaterThan(0);
   });
 
   it("waits for the Stratum persist result before accepting the share", () => {
     const src = source("../lib/stratum-server.ts");
-    const persist = src.indexOf("const saved = await persistBlock(block)");
-    const accepted = src.indexOf("this.respond(session.socket, req.id, true, null)", persist);
-    expect(persist).toBeGreaterThan(0);
-    expect(accepted).toBeGreaterThan(persist);
+    const commit = src.indexOf("commitOperational(block");
+    const accepted = src.indexOf("this.respond(session.socket, req.id, true, null)", commit);
+    expect(commit).toBeGreaterThan(0);
+    expect(accepted).toBeGreaterThan(commit);
     expect(src.includes("recentShares.forget(shareKey)")).toBe(true);
   });
 
   it("logs peer acceptance only after the block is the successor and the write returned", () => {
     const src = source("../index.ts");
     const accept = src.indexOf("P2P sync: accepting block from peer");
-    const successor = src.lastIndexOf("canonicalSuccessor", accept);
-    const persist = src.lastIndexOf("await persistBlock", accept);
-    expect(successor).toBeGreaterThan(0);
-    expect(persist).toBeGreaterThan(successor);
-    expect(accept).toBeGreaterThan(persist);
+    const commit = src.lastIndexOf("commitOperational", accept);
+    expect(commit).toBeGreaterThan(0);
+    expect(accept).toBeGreaterThan(commit);
+    expect(src.includes("outcome.kept")).toBe(true);
   });
 
   it("does not gossip a mined block from the async miner before the cycle persists it", () => {
@@ -647,12 +649,13 @@ describe("a block is not announced before it is persisted", () => {
     const asyncFn = src.slice(src.indexOf("export async function mineNextBlockAsync"));
     const body = asyncFn.slice(0, asyncFn.indexOf("export function mineNextBlock("));
     expect(body.includes("gossipBlock")).toBe(false);
+    expect(body.includes("addBlock")).toBe(false);
     const cycleSrc = source("../chain/index.ts");
     const cycleAt = cycleSrc.indexOf("async function runMiningCycle");
     const cycle = cycleSrc.slice(cycleAt, cycleSrc.indexOf("export function startMining"));
-    const persist = cycle.indexOf("const saved = await persistBlock(block)");
+    const commit = cycle.indexOf("commitOperational");
     const gossip = cycle.indexOf("chainState.gossipBlock(block.hash)");
-    expect(persist).toBeGreaterThan(0);
-    expect(gossip).toBeGreaterThan(persist);
+    expect(commit).toBeGreaterThan(0);
+    expect(gossip).toBeGreaterThan(commit);
   });
 });

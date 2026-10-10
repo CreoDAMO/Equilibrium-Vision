@@ -2,7 +2,7 @@ import { Router } from "express";
 import { chainState } from "../chain/index.js";
 import { merkleRoot, hash256 } from "../chain/crypto.js";
 import { generateZkProof } from "../chain/zkproof.js";
-import { persistBlock } from "../chain/persistence.js";
+import { persistKeepsMemory } from "../chain/persistence.js";
 import { broadcast } from "../lib/ws-server.js";
 import { logger } from "../lib/logger.js";
 import type { TxRecord } from "../chain/types.js";
@@ -173,7 +173,7 @@ router.post("/blocks/submit", async (req, res) => {
     const now = (typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0)
       ? Math.floor(timestamp)
       : Math.floor(Date.now() / 1000);
-    const committed = await chainState.admitEvidence({
+    const outcome = await chainState.commitEvidence({
       transactions: [],
       evidence: evidence as TransitionEvidence,
       timestamp: now,
@@ -183,39 +183,25 @@ router.post("/blocks/submit", async (req, res) => {
       couplings: openedCouplings(chainState.canonicalBody.omega),
       difficulty: chainState.canonicalBody.omega.difficulty,
     });
-    if (!committed.ok) {
-      res.status(422).json({ error: committed.error });
+    if (!outcome.admitted) {
+      res.status(422).json({ error: outcome.error ?? "block is not the successor" });
       return;
     }
-    persistBlock({
-      hash: committed.hash,
-      height: committed.height,
-      prevHash: committed.prevHash,
-      merkleRoot: committed.merkleRoot,
-      stateRoot: committed.stateRoot,
-      timestamp: now,
-      nonce: submittedNonce,
-      difficulty: committed.difficulty,
-      residual: committed.residual,
-      residualFp: committed.residualFp,
-      recursionDepth: 2,
-      coinbaseReward: committed.reward,
-      miner: miner.toLowerCase(),
-      txCount: 0,
-      transactions: [],
-      finalized: false,
-      chainId: committed.evidence.chainId,
-      evidenceRoot: committed.evidenceRoot,
-      omegaRoot: committed.omegaRoot,
-      evidence: committed.evidence,
-      committedPressure: 0,
-    }).catch((err) => logger.warn({ err, height: committed.height }, "Failed to persist canonical evidence block"));
+    if (!outcome.kept || !outcome.persist || !persistKeepsMemory(outcome.persist)) {
+      const status = outcome.persist?.outcome === "conflict" ? 409 : 503;
+      res.status(status).json({
+        error: outcome.persist?.outcome === "conflict" ? "block conflicts with the stored row" : "block was not persisted",
+        outcome: outcome.persist?.outcome ?? "failed",
+      });
+      return;
+    }
     res.status(201).json({
-      hash: committed.hash,
-      height: committed.height,
-      omegaRoot: committed.omegaRoot,
-      tipHash: committed.tipHash,
-      reward: committed.reward,
+      hash: outcome.hash,
+      height: outcome.height,
+      omegaRoot: outcome.omegaRoot,
+      tipHash: outcome.tipHash,
+      reward: outcome.reward,
+      durable: outcome.persist.durable,
     });
     return;
   }
@@ -360,37 +346,30 @@ router.post("/blocks/submit", async (req, res) => {
     return;
   }
 
-  // ── Apply to chain state ────────────────────────────────────────────────────
-  // Note: do NOT call chainState.ledger.credit() here — addBlock() calls
-  // distributeBlockReward(). A pre-credit here would double the miner's balance.
-  const beforeHeight = chainState.canonicalBody.omega.height;
-  try {
-    chainState.addBlock(block);
-  } catch (err) {
+  const outcome = await chainState.commitOperational(block, {
+    beforePersist: (admitted) => {
+      admitted.zkProof = generateZkProof(admitted.residual, admitted.hash, admitted.height);
+    },
+  });
+  if (!outcome.admitted) {
     submitReplay.forget(replayKey);
-    const message = err instanceof Error ? err.message : "block refused";
-    res.status(422).json({ error: message });
+    res.status(422).json({ error: outcome.error ?? "block is not the successor" });
     return;
   }
-  if (block.canonicalSuccessor !== true) {
+  if (!outcome.kept || !outcome.persist) {
     submitReplay.forget(replayKey);
-    if (chainState.canonicalBody.omega.height !== beforeHeight) chainState.rollbackToHeight(beforeHeight);
-    res.status(422).json({ error: "block is not the successor" });
+    const status = outcome.persist?.outcome === "conflict" ? 409 : 503;
+    logger.error({ height, hash: block.hash.slice(0, 16), outcome: outcome.persist?.outcome }, "Submitted block was not persisted — rolled back and not announced");
+    res.status(status).json({
+      error: outcome.persist?.outcome === "conflict" ? "block conflicts with the stored row" : "block was not persisted",
+      outcome: outcome.persist?.outcome ?? "failed",
+    });
     return;
   }
-  const saved = await persistBlock(block);
-  if (!saved) {
-    chainState.rollbackToHeight(beforeHeight);
-    submitReplay.forget(replayKey);
-    logger.error({ height, hash: block.hash.slice(0, 16) }, "Submitted block was not persisted — rolled back and not announced");
-    res.status(503).json({ error: "block was not persisted" });
-    return;
-  }
-  block.zkProof = generateZkProof(block.residual, block.hash, block.height);
   chainState.gossipBlock(block.hash);
 
   logger.info(
-    { height, hash: block.hash.slice(0, 16), miner, residual: admission.residual, txCount: txs.length },
+    { height, hash: block.hash.slice(0, 16), miner, residual: admission.residual, txCount: txs.length, durable: outcome.persist.durable },
     "Block submitted by external miner",
   );
 
@@ -404,7 +383,13 @@ router.post("/blocks/submit", async (req, res) => {
     data: { size: chainState.mempool.size, pressure: chainState.mempool.pressure },
   });
 
-  res.status(201).json({ hash: block.hash, height, reward, txCount: txs.length });
+  res.status(201).json({
+    hash: block.hash,
+    height,
+    reward,
+    txCount: txs.length,
+    durable: outcome.persist.durable,
+  });
 });
 
 export default router;
