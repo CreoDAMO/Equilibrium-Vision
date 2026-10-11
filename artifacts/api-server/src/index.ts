@@ -12,6 +12,7 @@ import { smtKey } from "./chain/smt.js";
 import { getVerifiedStateRoot } from "./chain/state-root.js";
 import { admitResidual, canonicalResidual, pressureEvidence } from "./chain/canonical-residual.js";
 import { foreignNonce } from "../../../site/src/protocol/domain.js";
+import { admitRemoteEvidence } from "./chain/evidence-ingress.js";
 
 const rawPort = process.env["PORT"];
 
@@ -87,42 +88,13 @@ if (Number.isNaN(port) || port <= 0) {
             remote.nonce = remoteNonce;
 
             if (remote.evidence && chainState) {
-              const beforeHeight = chainState.canonicalBody.omega.height;
-              const beforeTip = chainState.canonicalBody.omega.tipHash;
-              await chainState.withAdmission(async () => {
-                const err = await chainState.adoptReplay({
-                  hash: typeof remote.hash === "string" ? remote.hash : blockHash,
-                  height: Number(remote.height) || 0,
-                  prevHash: typeof remote.prevHash === "string" ? remote.prevHash : "",
-                  merkleRoot: typeof remote.merkleRoot === "string" ? remote.merkleRoot : "0".repeat(64),
-                  timestamp: Number(remote.timestamp) || 0,
-                  nonce: remoteNonce,
-                  difficulty: Number(remote.difficulty) || 0,
-                  residual: Number(remote.residual) || 0,
-                  residualFp: typeof remote.residualFp === "number" ? remote.residualFp : undefined,
-                  recursionDepth: 2,
-                  coinbaseReward: Number(remote.coinbaseReward) || 0,
-                  miner: String(remote.miner ?? ""),
-                  txCount: 0,
-                  transactions: [],
-                  committedPressure: typeof remote.committedPressure === "number" ? remote.committedPressure : 0,
-                  stateRoot: typeof remote.stateRoot === "string" ? remote.stateRoot : undefined,
-                  chainId: typeof remote.chainId === "number" ? remote.chainId : undefined,
-                  evidenceRoot: typeof remote.evidenceRoot === "string" ? remote.evidenceRoot : undefined,
-                  omegaRoot: typeof remote.omegaRoot === "string" ? remote.omegaRoot : undefined,
-                  evidence: remote.evidence,
-                });
-                if (err) {
-                  logger.warn({ err, blockHash, peerId }, "P2P sync: canonical evidence refused");
-                  return;
-                }
-                const { persistBlock, persistKeepsMemory } = await import("./chain/persistence.js");
-                const saved = await persistBlock({ ...remote, hash: typeof remote.hash === "string" ? remote.hash : blockHash });
-                if (!persistKeepsMemory(saved)) {
-                  if (chainState.canonicalBody.omega.tipHash !== beforeTip) chainState.rollbackToHeight(beforeHeight);
-                  logger.error({ blockHash, outcome: saved.outcome }, "P2P sync: canonical evidence was not persisted — not announced");
-                }
-              });
+              const outcome = await admitRemoteEvidence(chainState, remote as Record<string, unknown>, blockHash);
+              if (!outcome.kept) {
+                logger.warn(
+                  { err: outcome.error, blockHash, peerId, outcome: outcome.persist?.outcome },
+                  "P2P sync: canonical evidence refused",
+                );
+              }
               return;
             }
 

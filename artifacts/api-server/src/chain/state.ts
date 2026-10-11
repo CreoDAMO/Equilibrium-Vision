@@ -1066,6 +1066,11 @@ export class ChainState {
         committedPressure: block.committedPressure,
         stateRoot: block.stateRoot,
         omegaRoot: block.omegaRoot,
+        transitionRoot: block.transitionRoot,
+        merkleRoot: block.merkleRoot,
+        prevHash: block.prevHash,
+        height: block.height,
+        txCount: block.txCount,
       });
       if (err) return err;
       if (!this.getBlockByHash(block.hash)) {

@@ -98,10 +98,18 @@ export class CanonicalBody {
     committedPressure?: number;
     stateRoot?: string;
     omegaRoot?: string;
+    merkleRoot?: string;
+    prevHash?: string;
+    height?: number;
+    txCount?: number;
     transitionRoot?: string;
   }): Promise<string | null> {
     if (!block.evidence) return "no evidence";
     if (block.difficulty !== this.omega.difficulty) return "difficulty is not the next difficulty";
+    const listed = block.transactions?.length ?? 0;
+    if (block.txCount !== undefined && block.txCount !== listed) {
+      return "txCount is not the transaction set";
+    }
     const nonce = typeof block.nonce === "bigint" ? blockNonce(block.nonce) : asBlockNonce(block.nonce);
     const before = this.omega;
     const claim = transitionDigest(before, {
@@ -133,6 +141,21 @@ export class CanonicalBody {
       this.omega = before;
       this.blocks.pop();
       return "header is not the successor";
+    }
+    if (block.merkleRoot !== undefined && block.merkleRoot !== committed.merkleRoot) {
+      this.omega = before;
+      this.blocks.pop();
+      return "merkle root is not the transaction set";
+    }
+    if (block.prevHash !== undefined && block.prevHash !== committed.prevHash) {
+      this.omega = before;
+      this.blocks.pop();
+      return "prevHash is not the predecessor";
+    }
+    if (block.height !== undefined && block.height !== committed.height) {
+      this.omega = before;
+      this.blocks.pop();
+      return "height is not the successor height";
     }
     if (block.omegaRoot && block.omegaRoot !== committed.omegaRoot) {
       this.omega = before;
