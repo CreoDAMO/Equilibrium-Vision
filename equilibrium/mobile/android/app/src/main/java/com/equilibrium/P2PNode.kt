@@ -176,15 +176,34 @@ object P2PNode {
     external fun submitBlockForValidation(blockJson: String, fromPeer: Boolean): Boolean
 
     /**
-     * Poll for the most recent validation result (non-blocking).
+     * Submit one body and receive the id of that submission.
+     * A non-positive return means the validator is not running.
+     * The result for this id is retrieved only via [getValidationResultFor].
+     */
+    @JvmStatic
+    external fun submitBlockForValidationId(blockJson: String, fromPeer: Boolean): Long
+
+    /**
+     * Poll for the most recent finished result that was not requested by id.
+     * Two outstanding candidates can still consume each other through this call.
+     * Prefer [getValidationResultFor].
      * Returns a JSON string:
      *   `{"status":"accept","hash":"…","height":N}`
      *   `{"status":"reject","hash":"…","reason":"…","banPeer":true|false}`
      *   `{"status":"deferred","hash":"…","reason":"…","banPeer":false}`
      * Returns an empty string if no result is ready yet.
+     * The hash is the phone header. It is not the artifacts seal.
      */
     @JvmStatic
     external fun getValidationResult(): String
+
+    /**
+     * Poll the result for one submission id.
+     * An empty string means that id has not finished. Another id's result is not returned.
+     * An accept hash is the phone header, not a durable write and not the artifacts seal.
+     */
+    @JvmStatic
+    external fun getValidationResultFor(id: Long): String
 
     /**
      * Returns true if device conditions (battery ≥ 50%, nominal thermals) allow

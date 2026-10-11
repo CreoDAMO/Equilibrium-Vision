@@ -19,7 +19,7 @@ function refused(error: string): EvidenceIngressResult {
   return { admitted: false, kept: false, error, persist: null };
 }
 
-function transactionList(value: unknown): TxRecord[] | null {
+export function remoteTransactions(value: unknown): TxRecord[] | null {
   if (value == null) return [];
   if (!Array.isArray(value)) return null;
   const out: TxRecord[] = [];
@@ -69,7 +69,7 @@ export async function admitRemoteEvidence(
   const hash = bodyHash || blockHash;
   if (!/^[0-9a-f]{64}$/i.test(hash)) return refused("hash is not the announced block");
 
-  const transactions = transactionList(remote.transactions);
+  const transactions = remoteTransactions(remote.transactions);
   if (!transactions) return refused("transactions are not a list");
   if (remote.txCount !== undefined && remote.txCount !== null) {
     if (typeof remote.txCount !== "number" || !Number.isInteger(remote.txCount) || remote.txCount !== transactions.length) {

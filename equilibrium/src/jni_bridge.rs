@@ -541,6 +541,27 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_stopValidator(
     }
 }
 
+/// JSON a Kotlin poll can match. The hash is the native header, not the artifacts seal.
+fn validation_result_json(result: ValidationResult) -> String {
+    match result {
+        ValidationResult::Accept { hash, height } => {
+            format!(r#"{{"status":"accept","hash":"{}","height":{}}}"#, hash, height)
+        }
+        ValidationResult::Reject { hash, reason, ban_peer } => {
+            format!(
+                r#"{{"status":"reject","hash":"{}","reason":"{}","banPeer":{}}}"#,
+                hash, reason.replace('"', "'"), ban_peer
+            )
+        }
+        ValidationResult::Deferred { hash, reason } => {
+            format!(
+                r#"{{"status":"deferred","hash":"{}","reason":"{}","banPeer":false}}"#,
+                hash, reason.replace('"', "'")
+            )
+        }
+    }
+}
+
 /// Submit a block JSON string for background validation (fire-and-forget).
 ///
 /// Kotlin declaration:
@@ -573,6 +594,52 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_submitBlockForValidation(
     JNI_TRUE
 }
 
+/// Submit one body and return the id of that submission.
+///
+/// Kotlin: `external fun submitBlockForValidationId(blockJson: String, fromPeer: Boolean): Long`
+/// A non-positive return means the validator is not running.
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_submitBlockForValidationId(
+    mut env: JNIEnv,
+    _obj: JObject,
+    block_json: JString,
+    from_peer: jboolean,
+) -> jlong {
+    let Ok(json_str) = env.get_string(&block_json) else {
+        return 0;
+    };
+    let Some(validator) = VALIDATOR.get() else {
+        return 0;
+    };
+    validator.submit_json(json_str.to_string_lossy().to_string(), from_peer == JNI_TRUE) as jlong
+}
+
+/// Poll the result for one submission id.
+///
+/// Kotlin: `external fun getValidationResultFor(id: Long): String`
+/// An empty string means that id has not finished. Another id's result is not returned.
+#[no_mangle]
+pub extern "system" fn Java_com_equilibrium_P2PNode_getValidationResultFor(
+    env: JNIEnv,
+    _obj: JObject,
+    id: jlong,
+) -> jstring {
+    let empty = || env.new_string("").map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut());
+    if id <= 0 {
+        return empty();
+    }
+    let Some(validator) = VALIDATOR.get() else {
+        return empty();
+    };
+    let json = match validator.poll_result_for(id as u64) {
+        Some(result) => validation_result_json(result),
+        None => String::new(),
+    };
+    env.new_string(&json)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
 /// Poll for the most recent validation result.
 ///
 /// Kotlin declaration:
@@ -597,21 +664,7 @@ pub extern "system" fn Java_com_equilibrium_P2PNode_getValidationResult(
     };
 
     let json = match validator.poll_result() {
-        Some(ValidationResult::Accept { hash, height }) => {
-            format!(r#"{{"status":"accept","hash":"{}","height":{}}}"#, hash, height)
-        }
-        Some(ValidationResult::Reject { hash, reason, ban_peer }) => {
-            format!(
-                r#"{{"status":"reject","hash":"{}","reason":"{}","banPeer":{}}}"#,
-                hash, reason.replace('"', "'"), ban_peer
-            )
-        }
-        Some(ValidationResult::Deferred { hash, reason }) => {
-            format!(
-                r#"{{"status":"deferred","hash":"{}","reason":"{}","banPeer":false}}"#,
-                hash, reason.replace('"', "'")
-            )
-        }
+        Some(result) => validation_result_json(result),
         None => String::new(),
     };
 

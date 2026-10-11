@@ -155,6 +155,17 @@ function Home() {
                   against the tip that remains. Death during the write is not one fact in memory and on disk.
                 </li>
                 <li>
+                  A phone that does not yet know the post-state fills that root with 64 zero bytes.
+                  That hash is the phone's tip. The native header stops before the transition digest.
+                  It is not the seal this node admits.
+                </li>
+                <li>
+                  A gossip body keeps the transaction list it carries. An empty list stays empty.
+                  This node does not replace that list, or the pressure in the body, with its own mempool.
+                  An HTTP submission does not carry a producer list. This node selects from its mempool,
+                  and the successor replaces the submitted hash.
+                </li>
+                <li>
                   {data.constitution?.q1
                     ? `The transition is successor, not this process. One next state once transactions, evidence, miner, and timestamp are fixed. At least ${data.constitution.admittingNonces} nonces in a window of ${data.constitution.nonceWindow} satisfy the residual predicate${data.constitution.admittingShareState ? " and share one Ω" : ""}. A vote changes Ω only inside the block.`
                     : "The transition relation did not close. The page is not claiming a constitution it could not run."}

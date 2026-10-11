@@ -258,10 +258,11 @@ class MiningCycle(
     private fun validateAndAwaitAccept(blockBodyJson: String, fromPeer: Boolean): String? {
         if (P2PNode.isRunning()) P2PNode.startValidator()
         if (!P2PNode.shouldValidateNow()) return null
-        if (!P2PNode.submitBlockForValidation(blockBodyJson, fromPeer)) return null
+        val id = P2PNode.submitBlockForValidationId(blockBodyJson, fromPeer)
+        if (id <= 0L) return null
         val deadline = System.currentTimeMillis() + VALIDATION_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
-            val raw = P2PNode.getValidationResult()
+            val raw = P2PNode.getValidationResultFor(id)
             if (raw.isNotEmpty()) {
                 val json = runCatching { JSONObject(raw) }.getOrNull() ?: return null
                 return when (json.optString("status")) {

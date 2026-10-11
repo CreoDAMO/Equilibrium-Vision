@@ -30,6 +30,10 @@ function MempoolPage() {
             ))
           )}
         </ul>
+        <p className="mt-4 text-sm text-muted">
+          Pressure in a header is the committed value. A peer does not replace it with this mempool.
+          An HTTP submission selects transactions from this mempool. A gossip body does not.
+        </p>
       </div>
     </div>
   );

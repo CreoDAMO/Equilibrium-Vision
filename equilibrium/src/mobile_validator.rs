@@ -21,6 +21,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,7 +37,8 @@ const MAX_VALIDATED_BLOCKS: usize = 1024;
 
 pub struct MobileValidator {
     tx: mpsc::Sender<ValidationJob>,
-    last_result: Arc<Mutex<Option<ValidationResult>>>,
+    results: Arc<Mutex<HashMap<u64, ValidationResult>>>,
+    next_id: AtomicU64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -66,8 +68,8 @@ pub enum ValidationResult {
 impl MobileValidator {
     pub fn start() -> Self {
         let (tx, rx) = mpsc::channel::<ValidationJob>();
-        let last_result: Arc<Mutex<Option<ValidationResult>>> = Arc::new(Mutex::new(None));
-        let lr_worker = Arc::clone(&last_result);
+        let results: Arc<Mutex<HashMap<u64, ValidationResult>>> = Arc::new(Mutex::new(HashMap::new()));
+        let worker_results = Arc::clone(&results);
 
         thread::Builder::new()
             .name("mobile-validator".into())
@@ -76,12 +78,8 @@ impl MobileValidator {
                 let mut engine = ValidationEngine::new();
                 while let Ok(job) = rx.recv() {
                     match job {
-                        ValidationJob::ValidateJson {
-                            json,
-                            from_peer,
-                            last_result: lr,
-                        } => {
-                            match parse_block_json(&json) {
+                        ValidationJob::ValidateJson { id, json, from_peer } => {
+                            let vr = match parse_block_json(&json) {
                                 Ok(block) => {
                                     let decision = if should_validate_now() {
                                         engine.validate(&block, from_peer)
@@ -91,18 +89,18 @@ impl MobileValidator {
                                     if decision == ValidationDecision::Accept {
                                         engine.accept(&block);
                                     }
-                                    // The result hash is the EQ-07 identity. A JSON `hash`
-                                    // that is not that identity is already a reject.
+                                    // Native header identity. It stops before transitionRoot.
+                                    // It is not the artifacts seal.
                                     let hash = hex::encode(canonical_identity(&block));
                                     let height = block.header.recursion_depth as u64;
-                                    let vr = match &decision {
+                                    match decision {
                                         ValidationDecision::Accept => {
                                             ValidationResult::Accept { hash, height }
                                         }
                                         ValidationDecision::Reject { reason } => {
                                             ValidationResult::Reject {
                                                 hash,
-                                                reason: reason.clone(),
+                                                reason,
                                                 ban_peer: from_peer,
                                             }
                                         }
@@ -112,27 +110,16 @@ impl MobileValidator {
                                                 reason: "battery/thermal defer".to_string(),
                                             }
                                         }
-                                    };
-                                    if let Ok(mut guard) = lr.lock() {
-                                        *guard = Some(vr.clone());
-                                    }
-                                    if let Ok(mut guard) = lr_worker.lock() {
-                                        *guard = Some(vr);
                                     }
                                 }
-                                Err(e) => {
-                                    let vr = ValidationResult::Reject {
-                                        hash: "unknown".to_string(),
-                                        reason: e,
-                                        ban_peer: from_peer,
-                                    };
-                                    if let Ok(mut guard) = lr.lock() {
-                                        *guard = Some(vr.clone());
-                                    }
-                                    if let Ok(mut guard) = lr_worker.lock() {
-                                        *guard = Some(vr);
-                                    }
-                                }
+                                Err(e) => ValidationResult::Reject {
+                                    hash: "unknown".to_string(),
+                                    reason: e,
+                                    ban_peer: from_peer,
+                                },
+                            };
+                            if let Ok(mut guard) = worker_results.lock() {
+                                guard.insert(id, vr);
                             }
                         }
                         ValidationJob::Shutdown => break,
@@ -141,23 +128,32 @@ impl MobileValidator {
             })
             .expect("mobile validator thread spawn failed");
 
-        MobileValidator { tx, last_result }
+        MobileValidator {
+            tx,
+            results,
+            next_id: AtomicU64::new(1),
+        }
     }
 
-    /// Submit a block JSON string for async validation (fire-and-forget).
-    /// Use `poll_result()` to retrieve the outcome.
-    pub fn submit_json(&self, json: String, from_peer: bool) {
-        let _ = self.tx.send(ValidationJob::ValidateJson {
-            json,
-            from_peer,
-            last_result: Arc::clone(&self.last_result),
-        });
+    /// Submit one body. The returned id is the only key for its result.
+    pub fn submit_json(&self, json: String, from_peer: bool) -> u64 {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let _ = self.tx.send(ValidationJob::ValidateJson { id, json, from_peer });
+        id
     }
 
-    /// Poll for the most recent validation result (non-blocking).
-    /// Consumes the stored result; returns None if none available yet.
+    /// The result for this submission, if it has finished. Another id is not this result.
+    pub fn poll_result_for(&self, id: u64) -> Option<ValidationResult> {
+        self.results.lock().ok().and_then(|mut guard| guard.remove(&id))
+    }
+
+    /// Oldest finished result. A caller that does not name an id can still
+    /// observe a different submission. Prefer [poll_result_for].
     pub fn poll_result(&self) -> Option<ValidationResult> {
-        self.last_result.lock().ok().and_then(|mut g| g.take())
+        self.results.lock().ok().and_then(|mut guard| {
+            let id = guard.keys().copied().min()?;
+            guard.remove(&id)
+        })
     }
 
     pub fn shutdown(&self) {
@@ -167,9 +163,9 @@ impl MobileValidator {
 
 enum ValidationJob {
     ValidateJson {
+        id: u64,
         json: String,
         from_peer: bool,
-        last_result: Arc<Mutex<Option<ValidationResult>>>,
     },
     Shutdown,
 }
@@ -984,6 +980,50 @@ pub fn should_validate_now() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn two_submissions_do_not_share_a_result() {
+        let validator = MobileValidator::start();
+        let first = flat_body(1);
+        let second = flat_body(2);
+        let id1 = validator.submit_json(first, false);
+        let id2 = validator.submit_json(second, false);
+        let mut left = None;
+        let mut right = None;
+        for _ in 0..200 {
+            if left.is_none() {
+                left = validator.poll_result_for(id1);
+            }
+            if right.is_none() {
+                right = validator.poll_result_for(id2);
+            }
+            if left.is_some() && right.is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let left = left.expect("first submission produced no result");
+        let right = right.expect("second submission produced no result");
+        let hash = |result: ValidationResult| match result {
+            ValidationResult::Accept { hash, .. }
+            | ValidationResult::Reject { hash, .. }
+            | ValidationResult::Deferred { hash, .. } => hash,
+        };
+        assert_ne!(hash(left), hash(right));
+        assert!(validator.poll_result_for(id1).is_none());
+        assert!(validator.poll_result_for(id2).is_none());
+        validator.shutdown();
+    }
+
+    fn flat_body(nonce: u64) -> String {
+        format!(
+            r#"{{"hash":"11","height":1,"prevHash":"{prev}","nonce":{nonce},"residualFp":1,"timestamp":1700000000,"miner":"{miner}","difficulty":1,"merkleRoot":"{root}","stateRoot":"{root}"}}"#,
+            prev = "11".repeat(32),
+            miner = "ab".repeat(20),
+            root = "00".repeat(32),
+        )
+    }
 
     // ── residual_fp_from_header (ZK v2 shared function) ───────────────────────
 

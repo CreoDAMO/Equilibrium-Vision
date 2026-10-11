@@ -119,7 +119,9 @@ function MobilePage() {
         <h1 className="font-display text-4xl tracking-tight">Mobile body</h1>
         <p className="mt-2 max-w-2xl text-muted">
           This phone holds the wallet. The miner address is that address. The key is not
-          sent to the solver. A transfer moves EQU to another EQU address. A withdrawal
+          sent to the solver. The hash it computes before it knows the post-state is its tip,
+          not the seal a node admits. A local accept is that tip. It is not a durable write.
+          A transfer moves EQU to another EQU address. A withdrawal
           is a different signature: it leaves when a Bitcoin output matches the lock, or when an
           Ethereum receipt matches an admitted execution header.
         </p>

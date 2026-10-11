@@ -9,12 +9,8 @@ import {
   getRawPool,
 } from "./persistence.js";
 import type { ChainState } from "./state.js";
-import type { BlockRecord } from "./types.js";
 import type { GenesisDocument } from "@workspace/coinomics";
 import { addressFromSeed } from "./crypto.js";
-import { canonicalCoinbase } from "@workspace/coinomics";
-import { admitResidual, canonicalResidual } from "./canonical-residual.js";
-import { foreignNonce } from "../../../../site/src/protocol/domain.js";
 import { logger } from "../lib/logger.js";
 import { broadcast } from "../lib/ws-server.js";
 import { deployAdminMultisigIfConfigured } from "./multisig.js";
@@ -25,6 +21,7 @@ import { p2pBridge } from "./p2p-bridge.js";
 import { smtKey } from "./smt.js";
 import { generateZkProof } from "./zkproof.js";
 import { getVerifiedStateRoot } from "./state-root.js";
+import { prepareGossipBlock } from "./gossip-ingress.js";
 import { selectSnapshotAnchor, lineageReachesGenesis, continuationAfterAnchor, evidenceToReplay } from "./restart-boundary.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
@@ -514,78 +511,34 @@ export async function initChain(): Promise<void> {
   // separate sync RR request or direct HTTP submission.
   p2pBridge.onBlockBody = async (body, _peerId) => {
     if (!chainState) return;
-
-    const hash       = typeof body['hash']       === 'string' ? body['hash']       : '';
-    const height     = typeof body['height']     === 'number' ? body['height']     : -1;
-    const prevHash   = typeof body['prevHash']   === 'string' ? body['prevHash']   : '';
-    let nonce: bigint;
+    const claimed = typeof body["hash"] === "string" ? body["hash"] : "";
+    if (claimed && chainState.blocks.some((block) => block?.hash === claimed)) return;
+    const prepared = prepareGossipBlock(body, {
+      difficulty: chainState.canonicalBody.omega.difficulty,
+      couplings: chainState.canonicalBody.omega.couplings,
+      admissionTarget: chainState.admissionTarget,
+    });
+    if (!prepared.ok) {
+      logger.warn({ hash: claimed.slice(0, 16), error: prepared.error }, "p2p: gossip body refused");
+      return;
+    }
+    const block = prepared.block;
+    logger.info({ hash: block.hash.slice(0, 16), height: block.height, txCount: block.txCount }, "p2p: received block body via gossip");
     try {
-      nonce = foreignNonce(body['nonce']);
-    } catch (err) {
-      logger.warn({ err, hash: hash.slice(0, 16) }, "p2p: nonce is not a u64");
-      return;
-    }
-    const residual   = typeof body['residual']   === 'number' ? body['residual']   : 1;
-    const timestamp  = typeof body['timestamp']  === 'number' ? body['timestamp']  : 0;
-    const miner      = typeof body['miner']      === 'string' ? body['miner']      : '';
-    const difficulty = typeof body['difficulty'] === 'number' ? body['difficulty'] : 1;
-
-    if (!hash || height < 0 || !prevHash || !miner) return;
-    if (chainState.blocks.some((b) => b?.hash === hash)) return;
-
-    const merkle = typeof body["merkleRoot"] === "string" && /^[0-9a-f]{64}$/i.test(body["merkleRoot"])
-      ? body["merkleRoot"]
-      : "0".repeat(64);
-    const canonicalDifficulty = chainState.canonicalBody.omega.difficulty;
-    if (difficulty !== canonicalDifficulty) {
-      logger.warn({ hash: hash.slice(0, 16), height, claimed: difficulty, canonical: canonicalDifficulty }, "p2p: difficulty is not the canonical difficulty");
-      return;
-    }
-    const recomputed = canonicalResidual(
-      { prevHash, merkleRoot: merkle, timestamp, nonce, difficulty: canonicalDifficulty },
-      [],
-      { cumulativeWork: height, mempoolPressure: 0 },
-      chainState.canonicalBody.omega.couplings,
-    );
-    const admission = admitResidual(residual, recomputed, chainState.admissionTarget);
-    if (!admission.ok) {
-      logger.warn({ hash: hash.slice(0, 16), height, error: admission.error }, "p2p: gossip residual refused");
-      return;
-    }
-
-    logger.info({ hash: hash.slice(0, 16), height }, "p2p: received block body via gossip");
-
-    try {
-      const block: BlockRecord = {
-        hash,
-        height,
-        prevHash,
-        merkleRoot:     merkle,
-        timestamp,
-        nonce,
-        difficulty,
-        residual:       admission.residual,
-        residualFp:     Math.floor(admission.residual * 1e18),
-        recursionDepth: 2,
-        coinbaseReward: canonicalCoinbase(height, admission.residual, chainState.admissionTarget),
-        miner,
-        txCount:        0,
-        transactions:   [],
-      };
       const outcome = await chainState.commitOperational(block);
       if (!outcome.admitted) {
-        logger.warn({ hash: hash.slice(0, 16), height, error: outcome.error }, "p2p: block is not the successor");
+        logger.warn({ hash: block.hash.slice(0, 16), height: block.height, error: outcome.error }, "p2p: block is not the successor");
         return;
       }
       if (!outcome.kept) {
-        logger.error({ hash: hash.slice(0, 16), height, outcome: outcome.persist?.outcome }, "p2p: block was not persisted — not announced");
+        logger.error({ hash: block.hash.slice(0, 16), height: block.height, outcome: outcome.persist?.outcome }, "p2p: block was not persisted — not announced");
         return;
       }
       void p2pBridge.gossipBlock(block.hash);
       chainState.gossipBlock(block.hash);
-      logger.info({ hash: block.hash.slice(0, 16), height, durable: outcome.persist?.durable }, "p2p: block from gossip body accepted");
+      logger.info({ hash: block.hash.slice(0, 16), height: block.height, txCount: block.txCount, durable: outcome.persist?.durable }, "p2p: block from gossip body accepted");
     } catch (err) {
-      logger.warn({ err, hash: hash.slice(0, 16) }, 'p2p: block body from gossip rejected');
+      logger.warn({ err, hash: block.hash.slice(0, 16) }, "p2p: block body from gossip rejected");
     }
   };
 }
