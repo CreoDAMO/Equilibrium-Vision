@@ -22,7 +22,7 @@ import {
 } from "../chain/governanceContract.js";
 import { DEFAULT_PARAMS, GovernanceModule, type Proposal } from "../chain/governance.js";
 import { ReplaySet } from "../lib/submission-guard.js";
-import { persistBlock } from "../chain/persistence.js";
+import { persistBlockUsing } from "../chain/persistence.js";
 import { getVerifiedStateRoot, rebuildStateSmt } from "../chain/state-root.js";
 import { stateRootOf } from "../../../../site/src/protocol/constitution.js";
 import { kernelParty, KERNEL_ALLOCATIONS } from "../chain/kernel-genesis.js";
@@ -531,7 +531,7 @@ describe("a refused submission does not keep its replay key", () => {
 });
 
 describe("persistBlock reports whether the write happened", () => {
-  it("returns false instead of throwing when the configured database does not commit", async () => {
+  it("returns false instead of throwing when the database client rejects the write", async () => {
     const block: BlockRecord = {
       hash: "ab".repeat(32),
       height: 0,
@@ -547,7 +547,11 @@ describe("persistBlock reports whether the write happened", () => {
       txCount: 0,
       transactions: [],
     };
-    const saved = await persistBlock(block);
+    const saved = await persistBlockUsing({
+      transaction: async () => {
+        throw new Error("disk full");
+      },
+    }, block);
     expect(saved.durable).toBe(false);
     expect(saved.outcome).toBe("failed");
   });
