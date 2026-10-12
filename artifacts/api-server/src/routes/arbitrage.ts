@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { chainState } from "../chain/index.js";
-import { findArbitrageOpportunities } from "../variational-ai/bridge.js";
+import { findArbitrageOpportunities, type ArbitrageOpportunity } from "../variational-ai/bridge.js";
 import { logger } from "../lib/logger.js";
 import { RateLimiter } from "../lib/submission-guard.js";
 import {
@@ -68,25 +68,49 @@ function requireAdmin(req: import("express").Request, res: import("express").Res
 
 // Scanning spawns a Rust subprocess; cache briefly so bursts of requests
 // (e.g. Explorer polling) don't spawn a process per request.
+// The cache stores the scan, not one HTTP body. A later request with a
+// smaller limit slices that scan. A larger limit rescans unless the scan
+// already returned fewer cycles than it was allowed to ask for.
 const CACHE_TTL_MS = 4_000;
-let cache: { at: number; body: unknown } | null = null;
+export type OpportunityScan = {
+  at: number;
+  poolsScanned: number;
+  scannedAt: number;
+  opportunities: ArbitrageOpportunity[];
+};
+let cache: OpportunityScan | null = null;
+
+export function opportunityLimit(raw: unknown): number {
+  const n = typeof raw === "string" || typeof raw === "number" ? Number(raw) : 5;
+  if (!Number.isFinite(n)) return 5;
+  return Math.min(20, Math.max(1, Math.floor(n)));
+}
+
+export function scanCovers(scan: OpportunityScan, limit: number, poolCount: number): boolean {
+  if (Date.now() - scan.at >= CACHE_TTL_MS) return false;
+  if (scan.poolsScanned !== poolCount) return false;
+  if (scan.scannedAt >= limit) return true;
+  return scan.opportunities.length < scan.scannedAt;
+}
+
+export function opportunitiesBody(scan: OpportunityScan, limit: number) {
+  const opportunities = scan.opportunities.slice(0, limit);
+  return { opportunities, count: opportunities.length, poolsScanned: scan.poolsScanned };
+}
 
 router.get("/arbitrage/opportunities", async (req, res) => {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) {
-    res.json(cache.body);
-    return;
-  }
-
+  const limit = opportunityLimit(req.query["limit"]);
   const pools = [...chainState.dexPools.values()];
-  if (pools.length === 0) {
-    const body = { opportunities: [], count: 0, poolsScanned: 0 };
-    cache = { at: Date.now(), body };
-    res.json(body);
+  if (cache && scanCovers(cache, limit, pools.length)) {
+    res.json(opportunitiesBody(cache, limit));
     return;
   }
 
-  const rawLimit = Number(req.query["limit"] ?? 5);
-  const maxOpportunities = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 5, 1), 20);
+  if (pools.length === 0) {
+    cache = { at: Date.now(), poolsScanned: 0, scannedAt: 20, opportunities: [] };
+    res.json(opportunitiesBody(cache, limit));
+    return;
+  }
 
   try {
     const result = await findArbitrageOpportunities({
@@ -98,25 +122,24 @@ router.get("/arbitrage/opportunities", async (req, res) => {
         reserve_b: p.reserveB,
         fee: p.fee,
       })),
-      max_opportunities: maxOpportunities,
+      max_opportunities: limit,
     });
 
-    const body = {
-      opportunities: result.opportunities,
-      count: result.count,
+    cache = {
+      at: Date.now(),
       poolsScanned: pools.length,
+      scannedAt: limit,
+      opportunities: result.opportunities,
     };
-    cache = { at: Date.now(), body };
-    res.json(body);
+    res.json(opportunitiesBody(cache, limit));
   } catch (err) {
     // The Rust scanner binary may be temporarily unavailable (e.g. not yet
     // built in a fresh CI environment, or restarting after a crash).  Return
     // an empty-opportunities response rather than 500 so the explorer stays
     // functional and the endpoint shape is always consistent.
     logger.warn({ err }, "arbitrage scan unavailable — returning empty results");
-    const body = { opportunities: [], count: 0, poolsScanned: pools.length };
-    cache = { at: Date.now(), body };
-    res.json(body);
+    cache = { at: Date.now(), poolsScanned: pools.length, scannedAt: 20, opportunities: [] };
+    res.json(opportunitiesBody(cache, limit));
   }
 });
 

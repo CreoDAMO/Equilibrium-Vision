@@ -58,6 +58,7 @@ describe("GET /api/arbitrage/opportunities", () => {
     const res = await api.get("/api/arbitrage/opportunities?limit=2");
     expect(res.status).toBe(200);
     expect(res.body.opportunities.length).toBeLessThanOrEqual(2);
+    expect(res.body.count).toBe(res.body.opportunities.length);
   });
 
   it("clamps an oversized limit to 20", async () => {
@@ -66,12 +67,21 @@ describe("GET /api/arbitrage/opportunities", () => {
     expect(res.body.opportunities.length).toBeLessThanOrEqual(20);
   });
 
-  it("each opportunity has the required fields when present", async () => {
+  it("each opportunity has the published fields when present", async () => {
+    // The scanner emits tokens and profitFactor. path and profit_ratio are not this response.
     const res = await api.get("/api/arbitrage/opportunities");
+    expect(res.body.count).toBe(res.body.opportunities.length);
     for (const opp of res.body.opportunities as unknown[]) {
       const o = opp as Record<string, unknown>;
-      expect(Array.isArray(o["path"])).toBe(true);
-      expect(typeof o["profit_ratio"]).toBe("number");
+      expect(Array.isArray(o["tokens"])).toBe(true);
+      expect(Array.isArray(o["poolIds"])).toBe(true);
+      expect(typeof o["hopCount"]).toBe("number");
+      expect(Array.isArray(o["rates"])).toBe(true);
+      expect(typeof o["profitFactor"]).toBe("number");
+      expect(typeof o["optimalAmountIn"]).toBe("number");
+      expect(typeof o["expectedProfit"]).toBe("number");
+      expect(o["path"]).toBeUndefined();
+      expect(o["profit_ratio"]).toBeUndefined();
     }
   });
 });
