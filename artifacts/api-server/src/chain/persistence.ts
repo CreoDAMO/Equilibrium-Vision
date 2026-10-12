@@ -7,6 +7,7 @@ import type { ContractRecord } from "./wasm.js";
 import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
 import { logger } from "../lib/logger.js";
 import { snapshotCoversPrune, operationalReplaySet } from "./restart-boundary.js";
+import { orderRestoredRows, RestoreIntegrityError } from "./block-body.js";
 
 // ── Self-contained persistence layer ─────────────────────────────────────────
 //
@@ -181,6 +182,10 @@ function toTxRecord(row: typeof transactionsTable.$inferSelect): TxRecord {
   };
 }
 
+function transactionsInCommittedOrder(rows: Array<typeof transactionsTable.$inferSelect>): TxRecord[] {
+  return orderRestoredRows(rows).map(toTxRecord);
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -257,8 +262,7 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
     }
     const txsByBlock = new Map<string, TxRecord[]>();
     for (const [hash, rows] of rowsByBlock) {
-      rows.sort((a, b) => (a.txIndex ?? 0) - (b.txIndex ?? 0) || (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0));
-      txsByBlock.set(hash, rows.map(toTxRecord));
+      txsByBlock.set(hash, transactionsInCommittedOrder(rows));
     }
 
     return validBlocks.map((b) => ({
@@ -287,6 +291,7 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       evidence:      (b.evidence as BlockRecord["evidence"]) ?? undefined,
     }));
   } catch (err) {
+    if (err instanceof RestoreIntegrityError) throw err;
     logger.warn({ err }, "Failed to load chain from Postgres — falling back to genesis");
     return null;
   }
@@ -774,12 +779,16 @@ export async function loadAllBlocksRaw(): Promise<BlockRecord[] | null> {
       .where(eq(transactionsTable.status, "confirmed"))
       .orderBy(asc(transactionsTable.blockHeight));
 
-    const txByBlock = new Map<string, TxRecord[]>();
+    const rowsByBlock = new Map<string, Array<typeof transactionsTable.$inferSelect>>();
     for (const row of txRows) {
       if (!row.blockHash) continue;
-      const tx = toTxRecord(row);
-      if (!txByBlock.has(row.blockHash)) txByBlock.set(row.blockHash, []);
-      txByBlock.get(row.blockHash)!.push(tx);
+      const list = rowsByBlock.get(row.blockHash) ?? [];
+      list.push(row);
+      rowsByBlock.set(row.blockHash, list);
+    }
+    const txByBlock = new Map<string, TxRecord[]>();
+    for (const [hash, rows] of rowsByBlock) {
+      txByBlock.set(hash, transactionsInCommittedOrder(rows));
     }
 
     return blockRows.map((b) => ({
@@ -806,6 +815,7 @@ export async function loadAllBlocksRaw(): Promise<BlockRecord[] | null> {
       transactions:  txByBlock.get(b.hash) ?? [],
     }));
   } catch (err) {
+    if (err instanceof RestoreIntegrityError) throw err;
     logger.warn({ err }, "Failed to load raw blocks");
     return null;
   }

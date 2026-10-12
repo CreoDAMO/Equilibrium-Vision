@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlockAsync } from "./state.js";
+import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlockAsync, admitRestoredBlock } from "./state.js";
+import { verifyBlockBody } from "./block-body.js";
 import {
   persistContract, persistContractsAtomic, loadContractsFromDb,
   loadBlocksFromDb, persistBlock, persistBlocks,
@@ -23,6 +24,7 @@ import { generateZkProof } from "./zkproof.js";
 import { getVerifiedStateRoot } from "./state-root.js";
 import { prepareGossipBlock } from "./gossip-ingress.js";
 import { selectSnapshotAnchor, lineageReachesGenesis, continuationAfterAnchor, evidenceToReplay } from "./restart-boundary.js";
+import { replayCanonicalEvidence } from "./evidence-restore.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
 // address, but overridden by initChain() to the first genesis.json validator
@@ -203,6 +205,15 @@ export async function initChain(): Promise<void> {
         // The anchor's parent walk, not whichever same-height row arrived first.
         // Incomplete walks are refused above and do not reach this assignment.
         const lineage = reached.chain;
+        // The parent walk shows the rows connect. It does not recompute each
+        // successor, and it does not prove the imported snapshot is that state.
+        // A body that is not the committed list is refused before it is seeded.
+        for (const block of lineage) {
+          const verdict = verifyBlockBody(block, seedState.canonicalBody.omega.chainId);
+          if (!verdict.ok) {
+            throw new Error(`snapshot lineage block refused at height ${block.height} (${verdict.code}): ${verdict.reason}`);
+          }
+        }
         for (const block of lineage) {
           seedState.blocks[block.height] = block;
           for (const tx of block.transactions) {
@@ -234,7 +245,7 @@ export async function initChain(): Promise<void> {
             continue;
           }
           try {
-            seedState.addBlock(block);
+            admitRestoredBlock(seedState, block);
           } catch (err) {
             if (!(err instanceof Error) || err.message !== "block is not the successor") throw err;
             seedState.recordUnexecuted(block);
@@ -312,10 +323,7 @@ export async function initChain(): Promise<void> {
     }
   }
 
-  for (const block of evidenceReplay) {
-    const err = await chainState.adoptReplay(block);
-    if (err) logger.warn({ err, height: block.height, hash: block.hash }, "canonical evidence did not replay");
-  }
+  await replayCanonicalEvidence(chainState, evidenceReplay);
 
   // ── Patch-05: DEX pool + SMT root persistence ─────────────────────────────
   // Inject a raw pg.Pool into ChainState so that swap / addLiquidity /

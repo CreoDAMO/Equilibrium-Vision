@@ -16,6 +16,7 @@ function hexToBytes(hex: string): Uint8Array {
 }
 import { SparseMerkleTree, smtKey, smtValue } from "./smt.js";
 import { merkleRoot, addressFromSeed, hash256, canonicalHeaderHash } from "./crypto.js";
+import { verifyBlockBody } from "./block-body.js";
 import { solveBlock } from "../variational-ai/bridge.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "./mining-policy.js";
 import { logger } from "../lib/logger.js";
@@ -613,7 +614,7 @@ export class ChainState {
     );
   }
 
-  addBlock(block: BlockRecord): void {
+  addBlock(block: BlockRecord, expect?: { hash: string; merkleRoot: string }): void {
     const poolHit = block.transactions.some((tx) =>
       this.dexPools.has(tx.to)
       || this.canonicalBody.omega.pools.some((p) => (p.address || poolAddress(p.id)) === tx.to));
@@ -634,6 +635,15 @@ export class ChainState {
       // recordUnexecuted. That path does not pay, and it is not acceptance.
       if (admitted.kind === "skip") {
         throw new Error("block is not the successor");
+      }
+      // A restored row must come back as the block that was stored. Live
+      // admission does not pass expect: the successor replaces the incoming hash.
+      // A mismatch throws here, inside the admission guard, before the operational
+      // row exists. A failed restore is not reported as a clean refusal.
+      if (expect && (admitted.hash !== expect.hash || admitted.merkleRoot !== expect.merkleRoot)) {
+        throw new Error(
+          `restored block identity mismatch at height ${block.height}: stored ${expect.hash.slice(0, 16)}/${expect.merkleRoot.slice(0, 16)}, recomputed ${admitted.hash.slice(0, 16)}/${admitted.merkleRoot.slice(0, 16)}`,
+        );
       }
       this.noteBefore(block.height, priorOmega, priorCanonBlocks);
       block.hash = admitted.hash;
@@ -1817,9 +1827,25 @@ function seedDexPools(state: ChainState): void {
 }
 
 /**
+ * Admit a block read back from storage.
+ * The attached list must be the committed list, and the identity the successor
+ * recomputes must be the stored identity. A refusal does not keep the transition.
+ * A block that is not the successor still throws that exact error so replay can
+ * retain it. This does not prove an imported snapshot.
+ */
+export function admitRestoredBlock(state: ChainState, block: BlockRecord): void {
+  const verdict = verifyBlockBody(block, state.canonicalBody.omega.chainId);
+  if (!verdict.ok) {
+    throw new Error(`restored block body refused at height ${block.height} (${verdict.code}): ${verdict.reason}`);
+  }
+  state.addBlock(block, { hash: block.hash, merkleRoot: block.merkleRoot });
+}
+
+/**
  * Replay only the unique parent chain from height 0.
  * A fork is retained and not executed. An unrelated row is not applied,
  * so its timestamp cannot abort the lineage that does connect.
+ * A body or sealed identity that is not the stored block aborts the restore.
  */
 function replayOperational(state: ChainState, blocks: BlockRecord[]): void {
   const selected = operationalReplaySet(blocks);
@@ -1830,7 +1856,7 @@ function replayOperational(state: ChainState, blocks: BlockRecord[]): void {
       continue;
     }
     try {
-      state.addBlock(block);
+      admitRestoredBlock(state, block);
     } catch (err) {
       const message = err instanceof Error ? err.message : "";
       if (message !== "block is not the successor") throw err;

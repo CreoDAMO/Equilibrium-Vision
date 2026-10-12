@@ -166,6 +166,12 @@ function Home() {
                   and the successor replaces the submitted hash.
                 </li>
                 <li>
+                  A restored row is kept only when its transaction list is the one it committed and the
+                  successor recomputes that stored identity. Unsigned history is refused, not grandfathered.
+                  Canonical evidence that does not replay does not start this node. A snapshot parent walk
+                  is not that recomputation.
+                </li>
+                <li>
                   {data.constitution?.q1
                     ? `The transition is successor, not this process. One next state once transactions, evidence, miner, and timestamp are fixed. At least ${data.constitution.admittingNonces} nonces in a window of ${data.constitution.nonceWindow} satisfy the residual predicate${data.constitution.admittingShareState ? " and share one Ω" : ""}. A vote changes Ω only inside the block.`
                     : "The transition relation did not close. The page is not claiming a constitution it could not run."}

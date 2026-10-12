@@ -1583,10 +1583,13 @@ describe("stratum admission", () => {
   });
 
   it("a gossiped body is not paid the governance base reward", () => {
-    const src = readFileSync(fileURLToPath(new URL("../chain/index.ts", import.meta.url)), "utf8");
+    const src = readFileSync(fileURLToPath(new URL("../chain/gossip-ingress.ts", import.meta.url)), "utf8");
+    const wiring = readFileSync(fileURLToPath(new URL("../chain/index.ts", import.meta.url)), "utf8");
     expect(src.includes("coinbaseReward: 50_000_000")).toBe(false);
+    expect(wiring.includes("coinbaseReward: 50_000_000")).toBe(false);
     expect(src.includes("admitResidual")).toBe(true);
     expect(src.includes("canonicalCoinbase(height, admission.residual")).toBe(true);
     expect(src.includes("canonicalCoinbase(height, residual)")).toBe(false);
+    expect(wiring.includes("prepareGossipBlock")).toBe(true);
   });
 });
