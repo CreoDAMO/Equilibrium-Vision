@@ -518,7 +518,11 @@ export class WasmVM {
         },
         block_number: (): number => {
           gasUsed += gasPerInstruction;
-          return this.blockHeight;
+          // The import is u32. Empty Ω reports height -1, and a negative
+          // return wraps to 2^32-1. A window opened at that value never
+          // elapses. Before block 0 exists the only representable height is 0.
+          const height = this.blockHeight;
+          return height < 0 ? 0 : height;
         },
         abort: (msg: number, file: number, line: number, col: number): never => {
           throw new Error(`WASM abort at ${line}:${col}`);
