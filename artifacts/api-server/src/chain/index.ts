@@ -23,7 +23,7 @@ import { smtKey } from "./smt.js";
 import { generateZkProof } from "./zkproof.js";
 import { getVerifiedStateRoot } from "./state-root.js";
 import { prepareGossipBlock } from "./gossip-ingress.js";
-import { selectSnapshotAnchor, lineageReachesGenesis, continuationAfterAnchor, evidenceToReplay } from "./restart-boundary.js";
+import { selectSnapshotAnchor, lineageReachesGenesis, continuationAfterAnchor, evidenceToReplay, snapshotContradictsAnchor } from "./restart-boundary.js";
 import { replayCanonicalEvidence } from "./evidence-restore.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
@@ -169,6 +169,17 @@ export async function initChain(): Promise<void> {
               anchor: anchor.block.hash.slice(0, 16),
             },
             "Snapshot lineage cycles — falling back to full replay",
+          );
+        } else if (snapshotContradictsAnchor(snapshot.stateRoot, anchor.block.stateRoot)) {
+          // The recorded root is not the header's stateRoot. Importing it
+          // would restart from a state the anchor does not name. The missing
+          // prefix is still not recomputed by refusing this row.
+          logger.warn(
+            {
+              snapshotHeight: snapshot.height,
+              anchor: anchor.block.hash.slice(0, 16),
+            },
+            "Snapshot state root is not the anchor header — not restarting from it",
           );
         } else {
         // A missing ancestor is a pruned prefix. The surviving walk is the

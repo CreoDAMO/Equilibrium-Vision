@@ -26,6 +26,17 @@ export function selectSnapshotAnchor<T extends { hash: string; height: number }>
   return { ok: true, block };
 }
 
+/**
+ * The snapshot names the state at the anchor. The header's stateRoot is that
+ * commitment when the row has one. A different string is not that block.
+ * A header with no state root is not a contradiction: there is nothing to compare.
+ * Agreement is not a recomputation of a pruned prefix.
+ */
+export function snapshotContradictsAnchor(snapshotRoot: string, headerRoot: string | undefined): boolean {
+  if (typeof headerRoot !== "string" || !/^[0-9a-f]{64}$/.test(headerRoot)) return false;
+  return snapshotRoot !== headerRoot;
+}
+
 /** Parent walk from the anchor. A same-height sibling that is not this hash is not installed.
  *  A missing parent or a cycle stops the walk and is not reported here.
  *  Callers that must reach genesis use lineageReachesGenesis.

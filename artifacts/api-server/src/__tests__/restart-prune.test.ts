@@ -3,7 +3,7 @@
  * The walk does not recompute the missing ancestors.
  */
 import { describe, expect, it } from "vitest";
-import { lineageReachesGenesis, preservedBySnapshotAnchor } from "../chain/restart-boundary.js";
+import { lineageReachesGenesis, preservedBySnapshotAnchor, snapshotContradictsAnchor } from "../chain/restart-boundary.js";
 
 const row = (hash: string, height: number, prevHash: string) => ({ hash, height, prevHash });
 
@@ -46,5 +46,26 @@ describe("a pruned ancestor does not condemn the snapshot suffix", () => {
 
   it("preserves nothing when the anchor row is gone", () => {
     expect(preservedBySnapshotAnchor([row("g", 0, "x")], "missing").size).toBe(0);
+  });
+});
+
+describe("a snapshot root that is not the anchor header is not that block", () => {
+  const header = "ab".repeat(32);
+
+  it("contradicts a different 64-hex root", () => {
+    expect(snapshotContradictsAnchor("cd".repeat(32), header)).toBe(true);
+  });
+
+  it("does not contradict the header's own root", () => {
+    expect(snapshotContradictsAnchor(header, header)).toBe(false);
+  });
+
+  it("does not invent a contradiction when the header has no state root", () => {
+    expect(snapshotContradictsAnchor("cd".repeat(32), undefined)).toBe(false);
+    expect(snapshotContradictsAnchor("", "")).toBe(false);
+  });
+
+  it("contradicts an empty snapshot root when the header committed one", () => {
+    expect(snapshotContradictsAnchor("", header)).toBe(true);
   });
 });
