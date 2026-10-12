@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import supertest from "supertest";
 import { WasmVM, type ContractRecord } from "../chain/wasm.js";
 import app from "../app.js";
-import { initChain, stopMining } from "../chain/index.js";
+import { initChain, stopMining, chainState } from "../chain/index.js";
 
 const api = supertest(app);
 
@@ -500,7 +500,9 @@ describe("POST /api/contracts/deploy", () => {
     expect(res.body.success).toBe(true);
     expect(res.body.address).toMatch(/^[0-9a-f]{40}$/);
     expect(res.body.deployer).toBe(DEPLOYER);
-    expect(res.body.blockHeight).toBeGreaterThanOrEqual(0);
+    // Empty Ω is height -1. The wasm host clamps the u32 import; this field is the chain height.
+    expect(res.body.blockHeight).toBe(chainState.height);
+    expect(res.body.blockHeight).toBe(-1);
   });
 
   it("returns 400 when bytecodeHex is absent", async () => {

@@ -9,11 +9,15 @@
  * invoke the handlers directly — this tests the TS handler logic in isolation.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { initChain, stopMining, chainState } from "../chain/index.js";
+import { initChain, stopMining, chainState, minerAddress } from "../chain/index.js";
+import { mineNextBlock } from "../chain/state.js";
 import { p2pBridge } from "../chain/p2p-bridge.js";
 
 beforeAll(async () => {
   await initChain();
+  // An empty kernel has no block. The handler is what this file tests;
+  // the block is the row those handlers read.
+  mineNextBlock(chainState, minerAddress);
 }, 30_000);
 
 afterAll(() => {

@@ -10,7 +10,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import supertest from "supertest";
 import { generateKeyPairSync, sign as cryptoSign, createHash, type KeyObject } from "node:crypto";
 import app from "../app.js";
-import { initChain, stopMining, chainState } from "../chain/index.js";
+import { initChain, stopMining, chainState, minerAddress } from "../chain/index.js";
+import { mineNextBlock } from "../chain/state.js";
 
 const api = supertest(app);
 
@@ -54,10 +55,10 @@ describe("GET /api/chain/status", () => {
     expect(res.body.latestHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("height is a non-negative integer", async () => {
+  it("an empty chain is height -1", async () => {
     const res = await api.get("/api/chain/status");
-    expect(res.body.height).toBeGreaterThanOrEqual(0);
     expect(Number.isInteger(res.body.height)).toBe(true);
+    expect(res.body.height).toBe(-1);
   });
 
   it("difficulty is a positive integer", async () => {
@@ -115,19 +116,21 @@ describe("GET /api/blocks", () => {
 });
 
 describe("GET /api/blocks/:hashOrHeight", () => {
-  it("returns block 0 (genesis) by height", async () => {
+  it("returns 404 for height 0 until a successor exists", async () => {
+    expect(chainState.height).toBe(-1);
     const res = await api.get("/api/blocks/0");
-    expect(res.status).toBe(200);
-    expect(res.body.height).toBe(0);
-    expect(res.body.prevHash).toBe("0".repeat(64));
+    expect(res.status).toBe(404);
+    expect(res.body).toHaveProperty("error");
   });
 
-  it("returns the same block when fetched by its hash", async () => {
+  it("returns the mined successor by height and by its hash", async () => {
+    mineNextBlock(chainState, minerAddress);
     const byHeight = await api.get("/api/blocks/0");
-    const { hash } = byHeight.body;
-    const byHash = await api.get(`/api/blocks/${hash}`);
+    expect(byHeight.status).toBe(200);
+    expect(byHeight.body.height).toBe(0);
+    const byHash = await api.get(`/api/blocks/${byHeight.body.hash}`);
     expect(byHash.status).toBe(200);
-    expect(byHash.body.hash).toBe(hash);
+    expect(byHash.body.hash).toBe(byHeight.body.hash);
     expect(byHash.body.height).toBe(0);
   });
 
@@ -185,11 +188,11 @@ describe("POST /api/blocks/submit", () => {
     expect(res.body.error).toMatch(/residual/i);
   });
 
-  it("returns 422 when residual is above the threshold (1e-7)", async () => {
+  it("returns 422 when residual is not under the admission target", async () => {
     const res = await api.post("/api/blocks/submit").send({
       miner:    "a".repeat(40),
       nonce:    12345,
-      residual: 5e-5, // well above 1e-7 threshold
+      residual: 1,
       timestamp: Math.floor(Date.now() / 1000),
     });
     expect(res.status).toBe(422);
@@ -202,44 +205,38 @@ describe("POST /api/blocks/submit", () => {
   it("returns 409 when prevHash does not match the current chain tip", async () => {
     const res = await api.post("/api/blocks/submit").send({
       miner:    "a".repeat(40),
-      prevHash: "0".repeat(64), // stale — won't match unless chain is at genesis
+      prevHash: "ab".repeat(32),
       nonce:    12345,
       residual: 1e-9,
       timestamp: Math.floor(Date.now() / 1000),
     });
-    // Only fails with 409 if chain tip != all-zeros; genesis case returns 201
-    if (res.status !== 201) {
-      expect(res.status).toBe(409);
-      expect(res.body).toMatchObject({
-        error:         expect.stringMatching(/stale/i),
-        currentTip:    expect.any(String),
-        currentHeight: expect.any(Number),
-      });
-    }
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      error:         expect.stringMatching(/stale/i),
+      currentTip:    expect.any(String),
+      currentHeight: expect.any(Number),
+    });
   });
 
   it("returns 422 when the submission does not commit pressure", async () => {
     const status = await api.get("/api/chain/status");
-    const { latestHash } = status.body;
-
     const res = await api.post("/api/blocks/submit").send({
-      miner:     "a".repeat(40),
-      prevHash:  latestHash,
+      miner:     minerAddress,
+      prevHash:  status.body.latestHash,
       nonce:     999_999,
-      residual:  3e-9,
+      residual:  1e-9,
       timestamp: Math.floor(Date.now() / 1000),
+      committedPressure: 2,
     });
     expect(res.status).toBe(422);
     expect(res.body.error).toMatch(/committed pressure/i);
   });
 
-  it("block submitted above reflects in chain status height", async () => {
-    const res = await api.get("/api/chain/status");
-    // After the successful submit above, height should have advanced
-    // (we can't know the exact value since the auto-miner may also fire,
-    // but it should be at least the height we saw before + 1)
-    expect(res.status).toBe(200);
-    expect(res.body.height).toBeGreaterThan(0);
+  it("a mined successor advances the height an unsigned submit does not", () => {
+    const before = chainState.height;
+    mineNextBlock(chainState, minerAddress);
+    expect(chainState.height).toBe(before + 1);
+    expect(chainState.height).toBeGreaterThanOrEqual(0);
   });
 });
 
