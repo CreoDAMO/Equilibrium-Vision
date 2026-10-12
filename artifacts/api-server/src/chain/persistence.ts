@@ -7,7 +7,7 @@ import type { ContractRecord } from "./wasm.js";
 import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
 import { omegaRecord } from "../../../../site/src/protocol/seal.js";
 import { logger } from "../lib/logger.js";
-import { snapshotCoversPrune, operationalReplaySet, preservedBySnapshotAnchor } from "./restart-boundary.js";
+import { snapshotCoversPrune, operationalReplaySet, preservedBySnapshotAnchor, rowsReturnedAfterOrphanCleanup } from "./restart-boundary.js";
 import { orderRestoredRows, RestoreIntegrityError } from "./block-body.js";
 
 // ── Self-contained persistence layer ─────────────────────────────────────────
@@ -211,12 +211,7 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
     const canonicalRows = dbBlocks.filter((b) => b.evidence != null);
     const chainRows = dbBlocks.filter((b) => b.evidence == null);
 
-    // Parent hash is the lineage. Height is not unique, and array order is not
-    // a choice between two children of the same parent. Orphans are removed.
-    // A fork is left in the table and is not replayed, so a later restart
-    // does not pick the other child or delete a suffix by height.
-    let operable: typeof chainRows = [];
-    let retainedRows: typeof chainRows = [];
+    let splitLoad: typeof chainRows = [];
     if (chainRows.length === 0) {
       if (canonicalRows.length === 0) return null;
     } else {
@@ -226,41 +221,38 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
           { retained: selected.retained.length, orphans: selected.orphans.length },
           "Chain integrity: no unique height-0 chain — not choosing a branch",
         );
-        if (canonicalRows.length === 0 && selected.retained.length === 0) return null;
-        retainedRows = selected.retained;
-      } else {
-        operable = selected.replay;
-        retainedRows = selected.retained;
-        if (selected.retained.length > 0) {
-          logger.warn(
-            { retained: selected.retained.map((row) => row.hash.slice(0, 16)) },
-            "Chain integrity: fork retained and not replayed",
+      } else if (selected.retained.length > 0) {
+        logger.warn(
+          { retained: selected.retained.map((row) => row.hash.slice(0, 16)) },
+          "Chain integrity: fork retained and not replayed",
+        );
+      }
+      const snap = selected.orphans.length > 0 ? await loadLatestSnapshot() : null;
+      const preserved = snap ? preservedBySnapshotAnchor(chainRows, snap.blockHash) : new Set<string>();
+      const split = rowsReturnedAfterOrphanCleanup(selected, preserved);
+      splitLoad = split.load;
+      if (split.drop.length === 0) {
+        if (selected.orphans.length > 0) {
+          logger.info(
+            { preserved: selected.orphans.length },
+            "Disconnected rows are the snapshot suffix — not deleted",
           );
         }
-        if (selected.orphans.length > 0) {
-          const snap = await loadLatestSnapshot();
-          const preserved = snap ? preservedBySnapshotAnchor(chainRows, snap.blockHash) : new Set<string>();
-          const hashes = selected.orphans.map((row) => row.hash).filter((hash) => !preserved.has(hash));
-          if (hashes.length === 0) {
-            logger.info(
-              { preserved: preserved.size },
-              "Disconnected rows are the snapshot suffix — not deleted",
-            );
-          } else try {
-            const db2 = getDb()!;
-            await db2.transaction(async (tx) => {
-              await tx.delete(transactionsTable).where(inArray(transactionsTable.blockHash, hashes));
-              await tx.delete(blocksTable).where(inArray(blocksTable.hash, hashes));
-            });
-            logger.info({ deleted: hashes.length }, "Pruned operational rows that do not connect to genesis");
-          } catch (pruneErr) {
-            logger.warn({ pruneErr }, "Failed to prune disconnected operational rows (will retry)");
-          }
-        }
+      } else try {
+        const db2 = getDb()!;
+        const hashes = split.drop.map((row) => row.hash);
+        await db2.transaction(async (tx) => {
+          await tx.delete(transactionsTable).where(inArray(transactionsTable.blockHash, hashes));
+          await tx.delete(blocksTable).where(inArray(blocksTable.hash, hashes));
+        });
+        logger.info({ deleted: hashes.length }, "Pruned operational rows that do not connect to genesis");
+      } catch (pruneErr) {
+        logger.warn({ pruneErr }, "Failed to prune disconnected operational rows (will retry)");
       }
+      if (splitLoad.length === 0 && canonicalRows.length === 0) return null;
     }
 
-    const validBlocks = [...operable, ...retainedRows, ...canonicalRows];
+    const validBlocks = [...splitLoad, ...canonicalRows];
 
     const rowsByBlock = new Map<string, typeof dbTxs>();
     for (const row of dbTxs) {
@@ -321,6 +313,19 @@ export function persistKeepsMemory(result: PersistBlockResult): boolean {
 
 type BlockRow = typeof blocksTable.$inferSelect;
 
+function canonicalJson(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+}
+
+function sameJson(stored: unknown, incoming: unknown): boolean {
+  return canonicalJson(stored ?? null) === canonicalJson(incoming ?? null);
+}
+
 function sameStoredBlock(row: BlockRow, block: BlockRecord): boolean {
   let nonce: bigint;
   try {
@@ -351,7 +356,10 @@ function sameStoredBlock(row: BlockRow, block: BlockRecord): boolean {
     && (row.committedPressure ?? null) === (block.committedPressure ?? null)
     && (row.chainId ?? null) === (block.chainId ?? null)
     && (row.evidenceRoot ?? null) === (block.evidenceRoot ?? null)
-    && (row.omegaRoot ?? null) === (block.omegaRoot ?? null);
+    && (row.omegaRoot ?? null) === (block.omegaRoot ?? null)
+    && Number(row.difficulty) === block.difficulty
+    && sameJson(row.zkProof, block.zkProof ?? null)
+    && sameJson(row.evidence, block.evidence ?? null);
 }
 
 type TxRow = typeof transactionsTable.$inferSelect;
@@ -845,6 +853,45 @@ export async function loadAllBlocksRaw(): Promise<BlockRecord[] | null> {
 /** Default number of blocks to retain. ~7 days at 15 s/block. */
 export const DEFAULT_PRUNE_KEEP = 40_320;
 
+type PruneTx = {
+  delete: (table: typeof blocksTable | typeof transactionsTable) => {
+    where: (condition: unknown) => Promise<unknown>;
+  };
+};
+
+type PruneDb = {
+  select: (selection: { hash: typeof blocksTable.hash }) => {
+    from: (table: typeof blocksTable) => {
+      where: (condition: unknown) => Promise<Array<{ hash: string }>>;
+    };
+  };
+  transaction: <T>(fn: (tx: PruneTx) => Promise<T>) => Promise<T>;
+};
+
+/**
+ * Delete block rows below `pruneBelow`, and the transaction rows that name them.
+ * The declared schema has an index on block_hash, not a foreign key, so a
+ * block delete does not remove those transactions.
+ * Height 0 is not in this range. Returns how many block rows were selected.
+ */
+export async function deletePrunedBlockRows(db: PruneDb, pruneBelow: number): Promise<number> {
+  const doomed = await db
+    .select({ hash: blocksTable.hash })
+    .from(blocksTable)
+    .where(and(gte(blocksTable.height, 1), lt(blocksTable.height, pruneBelow)));
+  const hashes = doomed.map((row) => row.hash);
+  if (hashes.length === 0) return 0;
+  await db.transaction(async (tx) => {
+    await tx.delete(transactionsTable).where(inArray(transactionsTable.blockHash, hashes));
+    await tx.delete(transactionsTable).where(and(
+      gte(transactionsTable.blockHeight, 1),
+      lt(transactionsTable.blockHeight, pruneBelow),
+    ));
+    await tx.delete(blocksTable).where(inArray(blocksTable.hash, hashes));
+  });
+  return hashes.length;
+}
+
 /**
  * Prune blocks older than `keepBlocks` from Postgres.
  * Refuses (returns 0) unless the snapshot's own block row would survive the
@@ -906,15 +953,8 @@ export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<n
     }
 
     // Delete blocks with height in (0, pruneBelow) — never prune genesis (0).
-    // The FK cascade on transactions removes their rows automatically.
-    const result = await db
-      .delete(blocksTable)
-      .where(and(
-        gte(blocksTable.height, 1),
-        lt(blocksTable.height, decision.pruneBelow),
-      ));
-
-    const count = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+    // transactions.block_hash is not a foreign key. The rows do not cascade.
+    const count = await deletePrunedBlockRows(db, decision.pruneBelow);
     logger.info(
       { pruneBelow: decision.pruneBelow, tipHeight, keepBlocks, deleted: count },
       "Block pruning complete",

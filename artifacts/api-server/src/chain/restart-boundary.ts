@@ -241,3 +241,23 @@ export function operationalReplaySet<T extends LineageRow>(
     orphans: rest.ignored,
   };
 }
+
+/**
+ * Rows the fallback may hand to replay after orphan cleanup.
+ * The operational prefix and retained forks are loaded.
+ * An orphan the snapshot still names is loaded so replay can retain it.
+ * It is not added to the replay prefix. A row the snapshot does not name is dropped.
+ * Loading the suffix does not recompute the pruned prefix.
+ */
+export function rowsReturnedAfterOrphanCleanup<T extends { hash: string }>(
+  selected: { replay: T[]; retained: T[]; orphans: T[] },
+  preserved: ReadonlySet<string>,
+): { load: T[]; drop: T[] } {
+  const kept: T[] = [];
+  const drop: T[] = [];
+  for (const row of selected.orphans) {
+    if (preserved.has(row.hash)) kept.push(row);
+    else drop.push(row);
+  }
+  return { load: [...selected.replay, ...selected.retained, ...kept], drop };
+}

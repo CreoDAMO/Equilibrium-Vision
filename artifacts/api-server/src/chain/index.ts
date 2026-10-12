@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlockAsync, admitRestoredBlock } from "./state.js";
+import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlockAsync, admitRestoredBlock, importedOmegaContradictsHeader } from "./state.js";
 import { verifyBlockBody } from "./block-body.js";
 import {
   persistContract, persistContractsAtomic, loadContractsFromDb,
@@ -180,6 +180,17 @@ export async function initChain(): Promise<void> {
               anchor: anchor.block.hash.slice(0, 16),
             },
             "Snapshot state root is not the anchor header — not restarting from it",
+          );
+        } else if (importedOmegaContradictsHeader(snapshot.partitions?.omega, anchor.block.stateRoot)) {
+          // The header string can match a snapshot field that is not the
+          // payload. stateRootOf of the stored Ω is that payload. Refusing
+          // it does not recompute the pruned prefix and is not applySuccessor.
+          logger.warn(
+            {
+              snapshotHeight: snapshot.height,
+              anchor: anchor.block.hash.slice(0, 16),
+            },
+            "Imported Ω does not hash to the anchor header — not restarting from it",
           );
         } else {
         // A missing ancestor is a pruned prefix. The surviving walk is the

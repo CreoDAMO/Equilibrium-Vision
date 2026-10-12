@@ -202,6 +202,43 @@ describe("a restored successor must be the stored block", () => {
     expect(kept.retainedBlocks.map((block) => block.hash)).toEqual([other.hash]);
   });
 
+  it("retains a suffix that does not connect and does not execute it", async () => {
+    const origin = fresh();
+    const omega = origin.canonicalBody.omega;
+    const outcome = await origin.commitOperational({
+      hash: "11".repeat(32),
+      height: omega.height + 1,
+      prevHash: omega.tipHash,
+      merkleRoot: zeros,
+      timestamp: 1_700_000_000,
+      nonce: 6n,
+      difficulty: omega.difficulty,
+      residual: 0,
+      recursionDepth: 2,
+      coinbaseReward: 0,
+      miner,
+      txCount: 0,
+      transactions: [],
+      committedPressure: 0,
+    }, { persist: async () => inserted });
+    expect(outcome.admitted, outcome.error).toBe(true);
+    const sealed = origin.blocks[origin.blocks.length - 1];
+    if (!sealed) throw new Error("operational seal missing");
+    const suffix = shell({
+      hash: "33".repeat(32),
+      height: 5,
+      prevHash: "44".repeat(32),
+      merkleRoot: zeros,
+      txCount: 0,
+      transactions: [],
+    });
+    const rebuilt = buildChainFromBlocks([sealed, suffix]);
+    expect(rebuilt.blocks.map((block) => block.hash)).toEqual([sealed.hash]);
+    expect(rebuilt.canonicalBody.omega.tipHash).toBe(sealed.hash);
+    expect(rebuilt.canonicalBody.omega.height).not.toBe(suffix.height);
+    expect(rebuilt.retainedBlocks.map((block) => block.hash)).toEqual([suffix.hash]);
+  });
+
   it("does not keep a stored hash the successor did not recompute", async () => {
     const sealed = await seal(fresh());
     const copy = fresh();

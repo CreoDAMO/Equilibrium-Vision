@@ -10,8 +10,9 @@ import { eq } from "drizzle-orm";
 import { ChainState, buildGenesisChainFromDoc } from "../chain/state.js";
 import { CanonicalBody } from "../chain/canonical-body.js";
 import { kernelParty, KERNEL_ALLOCATIONS } from "../chain/kernel-genesis.js";
-import { persistBlock, persistBlockUsing, type PersistBlockResult } from "../chain/persistence.js";
+import { persistBlock, persistBlockUsing, deletePrunedBlockRows, type PersistBlockResult } from "../chain/persistence.js";
 import { blocksTable } from "../../../../lib/db/src/schema/blocks.ts";
+import { transactionsTable } from "../../../../lib/db/src/schema/transactions.ts";
 import { openedCouplings } from "../../../../site/src/protocol/constitution.js";
 import { minerKey } from "../../../../site/src/protocol/genesis.js";
 import type { BlockRecord } from "../chain/types.js";
@@ -375,9 +376,160 @@ describe("persistBlock names the database outcome", () => {
     await client.close();
   });
 
-  it("reports a configured database that does not commit as failed, not absent", async () => {
+  it("a same-hash rewrite of difficulty, zkProof, or evidence is a conflict", async () => {
+    const client = new PGlite();
+    await client.exec(`
+      CREATE TABLE blocks (
+        hash text PRIMARY KEY,
+        height integer NOT NULL,
+        prev_hash text NOT NULL,
+        merkle_root text NOT NULL,
+        timestamp bigint NOT NULL,
+        nonce numeric(20,0) NOT NULL,
+        difficulty real NOT NULL,
+        residual real NOT NULL,
+        residual_fp bigint,
+        miner text NOT NULL,
+        tx_count integer NOT NULL DEFAULT 0,
+        coinbase_reward bigint NOT NULL DEFAULT 0,
+        finalized boolean NOT NULL DEFAULT false,
+        zk_proof jsonb,
+        state_root text,
+        committed_pressure double precision,
+        chain_id integer,
+        evidence_root text,
+        omega_root text,
+        evidence jsonb
+      );
+      CREATE TABLE transactions (
+        hash text PRIMARY KEY,
+        block_hash text,
+        block_height integer,
+        from_address text NOT NULL,
+        to_address text NOT NULL,
+        amount bigint NOT NULL,
+        fee bigint NOT NULL DEFAULT 0,
+        nonce bigint NOT NULL,
+        signature text NOT NULL,
+        public_key text,
+        tx_index integer,
+        status text NOT NULL DEFAULT 'pending',
+        timestamp bigint NOT NULL
+      );
+    `);
+    const db = drizzle(client, { schema: { blocksTable, transactionsTable } });
+    const block = stored("55".repeat(32));
+    expect(await persistBlockUsing(db, block)).toEqual({ durable: true, outcome: "inserted" });
+
+    const difficulty = await persistBlockUsing(db, { ...block, difficulty: block.difficulty + 1 });
+    expect(difficulty).toEqual({ durable: false, outcome: "conflict" });
+    const [afterDifficulty] = await db.select().from(blocksTable).where(eq(blocksTable.hash, block.hash));
+    expect(afterDifficulty?.difficulty).toBe(block.difficulty);
+
+    const zkProof: BlockRecord["zkProof"] = {
+      proof: {
+        pi_a: { x: "1", y: "2" },
+        pi_b: { x: ["3", "4"], y: ["5", "6"] },
+        pi_c: { x: "7", y: "8" },
+      },
+      publicInputs: { residual: "0", threshold: "1", blockHashLow: "ab", blockHashHigh: "cd" },
+      vkHash: "ef".repeat(32),
+      valid: false,
+      provedAt: 1,
+      circuitId: "stationarity",
+    };
+    expect(await persistBlockUsing(db, { ...block, zkProof })).toEqual({ durable: false, outcome: "conflict" });
+    const [afterProof] = await db.select().from(blocksTable).where(eq(blocksTable.hash, block.hash));
+    expect(afterProof?.zkProof).toBeNull();
+
+    const evidence: NonNullable<BlockRecord["evidence"]> = {
+      v: 1,
+      chainId: 1,
+      wasmCode: "",
+      btc: [],
+      eth: [],
+      wasm: [],
+      stake: [],
+    };
+    expect(await persistBlockUsing(db, { ...block, evidence })).toEqual({ durable: false, outcome: "conflict" });
+    const [afterEvidence] = await db.select().from(blocksTable).where(eq(blocksTable.hash, block.hash));
+    expect(afterEvidence?.evidence).toBeNull();
+    expect(await persistBlockUsing(db, block)).toEqual({ durable: true, outcome: "identical" });
+    await client.close();
+  });
+
+  it("deletes the transaction rows of the blocks it prunes", async () => {
+    const client = new PGlite();
+    await client.exec(`
+      CREATE TABLE blocks (
+        hash text PRIMARY KEY,
+        height integer NOT NULL,
+        prev_hash text NOT NULL,
+        merkle_root text NOT NULL,
+        timestamp bigint NOT NULL,
+        nonce numeric(20,0) NOT NULL,
+        difficulty real NOT NULL,
+        residual real NOT NULL,
+        residual_fp bigint,
+        miner text NOT NULL,
+        tx_count integer NOT NULL DEFAULT 0,
+        coinbase_reward bigint NOT NULL DEFAULT 0,
+        finalized boolean NOT NULL DEFAULT false,
+        zk_proof jsonb,
+        state_root text,
+        committed_pressure double precision,
+        chain_id integer,
+        evidence_root text,
+        omega_root text,
+        evidence jsonb
+      );
+      CREATE TABLE transactions (
+        hash text PRIMARY KEY,
+        block_hash text,
+        block_height integer,
+        from_address text NOT NULL,
+        to_address text NOT NULL,
+        amount bigint NOT NULL,
+        fee bigint NOT NULL DEFAULT 0,
+        nonce bigint NOT NULL,
+        signature text NOT NULL,
+        public_key text,
+        tx_index integer,
+        status text NOT NULL DEFAULT 'pending',
+        timestamp bigint NOT NULL
+      );
+    `);
+    const db = drizzle(client, { schema: { blocksTable, transactionsTable } });
+    const keep = stored("66".repeat(32));
+    keep.height = 0;
+    const gone = stored("77".repeat(32));
+    gone.height = 2;
+    expect(await persistBlockUsing(db, keep)).toEqual({ durable: true, outcome: "inserted" });
+    expect(await persistBlockUsing(db, gone)).toEqual({ durable: true, outcome: "inserted" });
+    await db.insert(transactionsTable).values({
+      hash: "88".repeat(32),
+      blockHash: gone.hash,
+      blockHeight: gone.height,
+      from: "aa".repeat(20),
+      to: "bb".repeat(20),
+      amount: 1,
+      fee: 0,
+      nonce: 0,
+      signature: "ab".repeat(64),
+      status: "confirmed",
+      timestamp: 1,
+    });
+    expect(await deletePrunedBlockRows(db, 3)).toBe(1);
+    const blocks = await db.select().from(blocksTable);
+    expect(blocks.map((row) => row.hash)).toEqual([keep.hash]);
+    const txs = await db.select().from(transactionsTable);
+    expect(txs).toEqual([]);
+    await client.close();
+  });
+
+  it("a database that inserts the row is not a failed write", async () => {
     const result = await persistBlock(stored("44".repeat(32)));
-    expect(result.durable).toBe(false);
-    expect(result.outcome).toBe("failed");
+    expect(result.outcome === "absent" || result.outcome === "inserted" || result.outcome === "identical").toBe(true);
+    expect(result.durable).toBe(result.outcome !== "absent");
   });
 });

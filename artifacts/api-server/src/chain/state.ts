@@ -38,7 +38,7 @@ import { CanonicalBody } from "./canonical-body.js";
 import { selectSuccessorTxs } from "../../../../site/src/protocol/tx-select.js";
 import { poolAddress } from "../../../../site/src/protocol/dex.js";
 import { asBlockNonce, foreignNonce, participationBytes, popcount } from "../../../../site/src/protocol/domain.js";
-import { applySuccessor, openedCouplings, cloneOmega, type CanonicalInputs, type Omega } from "../../../../site/src/protocol/constitution.js";
+import { applySuccessor, openedCouplings, cloneOmega, stateRootOf, type CanonicalInputs, type Omega } from "../../../../site/src/protocol/constitution.js";
 import { sealFromSuccessor, omegaRecord } from "../../../../site/src/protocol/seal.js";
 import type { BtcHeaderRecord, EthHeaderRecord, ModelClaim, Proposal, Settlement } from "../../../../site/src/protocol/types.js";
 import { callArbitrage } from "../../../../site/src/protocol/wasm-host.js";
@@ -222,6 +222,34 @@ function omegaFromRecord(record: ReturnType<typeof omegaRecord>): Omega {
     settlements: record.settlements.map((s) => ({ ...s })),
     finalizedHeight: record.finalizedHeight,
   };
+}
+
+/**
+ * stateRootOf of a stored Ω record.
+ * This is the commitment of the imported payload. It is not applySuccessor,
+ * and it does not rebuild a prefix the snapshot no longer has.
+ */
+export function stateRootOfOmegaRecord(record: ReturnType<typeof omegaRecord>): string {
+  return stateRootOf(omegaFromRecord(record));
+}
+
+/**
+ * A header root that is 64 hex commits to Ω. If the snapshot carries that Ω,
+ * stateRootOf of the record has to be the header. A missing record is not a
+ * contradiction: there is no preimage. A throw is a contradiction: the payload
+ * is not a state we can commit. Agreement still does not recompute missing ancestors.
+ */
+export function importedOmegaContradictsHeader(
+  omega: ReturnType<typeof omegaRecord> | undefined,
+  headerRoot: string | undefined,
+): boolean {
+  if (!omega) return false;
+  if (typeof headerRoot !== "string" || !/^[0-9a-f]{64}$/.test(headerRoot)) return false;
+  try {
+    return stateRootOfOmegaRecord(omega) !== headerRoot;
+  } catch {
+    return true;
+  }
 }
 
 export class ChainState {
@@ -1843,8 +1871,10 @@ export function admitRestoredBlock(state: ChainState, block: BlockRecord): void 
 
 /**
  * Replay only the unique parent chain from height 0.
- * A fork is retained and not executed. An unrelated row is not applied,
- * so its timestamp cannot abort the lineage that does connect.
+ * A fork is retained and not executed.
+ * A row that does not connect is retained and not admitted: a missing parent
+ * is not a successor. Retaining it does not recompute a pruned prefix and
+ * does not move Ω, so its timestamp cannot abort the lineage that does connect.
  * A body or sealed identity that is not the stored block aborts the restore.
  */
 function replayOperational(state: ChainState, blocks: BlockRecord[]): void {
@@ -1865,6 +1895,7 @@ function replayOperational(state: ChainState, blocks: BlockRecord[]): void {
     }
   }
   for (const block of selected.retained) state.recordUnexecuted(block);
+  for (const block of selected.orphans) state.recordUnexecuted(block);
   for (const peer of state.peers) {
     if (peer.connected) peer.height = state.canonicalBody.omega.height;
   }

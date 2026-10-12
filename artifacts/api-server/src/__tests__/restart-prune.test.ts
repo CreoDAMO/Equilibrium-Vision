@@ -3,7 +3,15 @@
  * The walk does not recompute the missing ancestors.
  */
 import { describe, expect, it } from "vitest";
-import { lineageReachesGenesis, preservedBySnapshotAnchor, snapshotContradictsAnchor } from "../chain/restart-boundary.js";
+import { ChainState, importedOmegaContradictsHeader } from "../chain/state.js";
+import { stateRootOf } from "../../../../site/src/protocol/constitution.js";
+import {
+  lineageReachesGenesis,
+  operationalReplaySet,
+  preservedBySnapshotAnchor,
+  rowsReturnedAfterOrphanCleanup,
+  snapshotContradictsAnchor,
+} from "../chain/restart-boundary.js";
 
 const row = (hash: string, height: number, prevHash: string) => ({ hash, height, prevHash });
 
@@ -67,5 +75,54 @@ describe("a snapshot root that is not the anchor header is not that block", () =
 
   it("contradicts an empty snapshot root when the header committed one", () => {
     expect(snapshotContradictsAnchor("", header)).toBe(true);
+  });
+});
+
+describe("a preserved orphan is returned, and a row the snapshot does not name is not", () => {
+  it("loads the suffix and drops the disconnected row", () => {
+    const genesis = { hash: "g", height: 0, prevHash: "" };
+    const suffix = { hash: "e", height: 5, prevHash: "missing" };
+    const junk = { hash: "z", height: 9, prevHash: "nowhere" };
+    const selected = operationalReplaySet([genesis, suffix, junk]);
+    expect(selected.replay.map((row) => row.hash)).toEqual(["g"]);
+    expect(selected.orphans.map((row) => row.hash).sort()).toEqual(["e", "z"]);
+    const preserved = preservedBySnapshotAnchor([genesis, suffix, junk], "e");
+    const rows = rowsReturnedAfterOrphanCleanup(selected, preserved);
+    expect(rows.load.map((row) => row.hash)).toEqual(["g", "e"]);
+    expect(rows.drop.map((row) => row.hash)).toEqual(["z"]);
+    expect(rows.load.some((row) => row.hash === "e" && selected.replay.some((replay) => replay.hash === "e"))).toBe(false);
+  });
+});
+
+describe("imported Ω must hash to the header that names it", () => {
+  it("accepts the record that stateRootOf commits and refuses a torn ledger", () => {
+    const state = new ChainState();
+    const record = state.exportRestartSnapshot().omega;
+    const root = stateRootOf(state.canonicalBody.omega);
+    expect(importedOmegaContradictsHeader(record, root)).toBe(false);
+    const torn = {
+      ...record,
+      ledger: record.ledger.map((row) => ({ ...row, balance: row.balance + 1 })),
+    };
+    if (torn.ledger.length === record.ledger.length && record.ledger.length === 0) {
+      torn.ledger = [{ address: "ab".repeat(20), balance: 1, nonce: 0 }];
+    }
+    expect(importedOmegaContradictsHeader(torn, root)).toBe(true);
+    expect(stateRootOf(state.canonicalBody.omega)).toBe(root);
+  });
+
+  it("does not invent a payload check when the record or the header root is absent", () => {
+    const state = new ChainState();
+    const record = state.exportRestartSnapshot().omega;
+    const root = stateRootOf(state.canonicalBody.omega);
+    expect(importedOmegaContradictsHeader(undefined, root)).toBe(false);
+    expect(importedOmegaContradictsHeader(record, undefined)).toBe(false);
+    expect(importedOmegaContradictsHeader(record, "not-a-root")).toBe(false);
+  });
+
+  it("treats a record that cannot be rebuilt as a contradiction", () => {
+    const state = new ChainState();
+    const root = stateRootOf(state.canonicalBody.omega);
+    expect(importedOmegaContradictsHeader({} as ReturnType<ChainState["exportRestartSnapshot"]>["omega"], root)).toBe(true);
   });
 });
