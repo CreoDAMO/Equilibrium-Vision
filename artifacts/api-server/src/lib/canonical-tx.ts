@@ -51,9 +51,12 @@ export function verifyCanonicalTx(body: {
   }
   if (!body.from || !HEX_ADDR.test(body.from)) return { ok: false, status: 400, error: "from address refused" };
   if (!body.to || !HEX_ADDR.test(body.to)) return { ok: false, status: 400, error: "to address refused" };
-  if (!Number.isSafeInteger(body.amount) || body.amount <= 0) return { ok: false, status: 400, error: "amount refused" };
-  if (!Number.isSafeInteger(body.fee) || body.fee < 0) return { ok: false, status: 400, error: "fee refused" };
-  if (!Number.isSafeInteger(body.nonce) || body.nonce < 0) return { ok: false, status: 400, error: "nonce refused" };
+  const amount = body.amount;
+  const fee = body.fee;
+  const nonce = body.nonce;
+  if (typeof amount !== "number" || !Number.isSafeInteger(amount) || amount <= 0) return { ok: false, status: 400, error: "amount refused" };
+  if (typeof fee !== "number" || !Number.isSafeInteger(fee) || fee < 0) return { ok: false, status: 400, error: "fee refused" };
+  if (typeof nonce !== "number" || !Number.isSafeInteger(nonce) || nonce < 0) return { ok: false, status: 400, error: "nonce refused" };
   if (!Number.isSafeInteger(body.chainId) || body.chainId < 0) return { ok: false, status: 400, error: "chain id refused" };
   if (!HEX_PUB.test(body.publicKey) || !HEX_SIG.test(body.signature) || !HEX_HASH.test(body.hash)) {
     return { ok: false, status: 400, error: "signature refused" };
@@ -63,9 +66,9 @@ export function verifyCanonicalTx(body: {
   const message = canonicalSigningBytes({
     from: body.from,
     to: body.to,
-    amount: body.amount,
-    fee: body.fee,
-    nonce: body.nonce,
+    amount,
+    fee,
+    nonce,
     publicKey: body.publicKey,
     chainId: body.chainId,
   });

@@ -169,7 +169,8 @@ function Home() {
                   A restored row is kept only when its transaction list is the one it committed and the
                   successor recomputes that stored identity. Unsigned history is refused, not grandfathered.
                   Canonical evidence that does not replay does not start this node. A snapshot parent walk
-                  is not that recomputation.
+                  is not that recomputation. A missing ancestor is not a reason to delete the suffix that
+                  snapshot still names.
                 </li>
                 <li>
                   {data.constitution?.q1

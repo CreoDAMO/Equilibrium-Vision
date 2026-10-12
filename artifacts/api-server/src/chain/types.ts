@@ -66,6 +66,8 @@ export interface BlockRecord {
   coinbaseReward: number;
   miner: string;
   txCount: number;
+  /** The admitted list, in committed order. Not the site protocol BlockRecord. */
+  transactions: TxRecord[];
   /** True only when addBlock installed this block as the canonical successor. */
   canonicalSuccessor?: boolean;
   finalized?: boolean;

@@ -13,7 +13,8 @@ import { replayCanonicalEvidence } from "../chain/evidence-restore.js";
 import { openedCouplings } from "../../../../site/src/protocol/constitution.js";
 import { minerKey } from "../../../../site/src/protocol/genesis.js";
 import { keypairFromSeed, signTx } from "../../../../site/src/protocol/wallet.js";
-import type { BlockRecord, TxRecord } from "../chain/types.js";
+import type { BlockRecord } from "../chain/types.js";
+import type { TxRecord as ProtocolTx } from "../../../../site/src/protocol/types.js";
 import type { PersistBlockResult } from "../chain/persistence.js";
 
 const miner = minerKey("mainnet").address;
@@ -28,7 +29,7 @@ function fund(state: ChainState, address: string, amount: number): void {
   state.canonicalBody.omega.ledger.set(address, { balance: amount, nonce: 0 });
 }
 
-async function seal(state: ChainState, txs: TxRecord[] = []): Promise<BlockRecord> {
+async function seal(state: ChainState, txs: ProtocolTx[] = []): Promise<BlockRecord> {
   const omega = state.canonicalBody.omega;
   const outcome = await state.commitEvidence({
     transactions: txs,
@@ -45,7 +46,7 @@ async function seal(state: ChainState, txs: TxRecord[] = []): Promise<BlockRecor
   return block;
 }
 
-function payerTx(state: ChainState, seed = "equilibrium-restore-payer"): TxRecord {
+function payerTx(state: ChainState, seed = "equilibrium-restore-payer"): ProtocolTx {
   const payer = keypairFromSeed(seed);
   fund(state, payer.address, 50_000);
   return signTx(payer, {

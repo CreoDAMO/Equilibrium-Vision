@@ -14,19 +14,16 @@ const validator = "b".repeat(40);
 state.ledger.credit(alice, 10_000);
 state.validators.set(validator, {
   address: validator,
-  pubkey: "ab",
   moniker: "b",
   commission: 0.1,
   bondedStake: 1_000,
-  selfStake: 1_000,
-  delegatedStake: 0,
-  status: "active",
-  jailed: false,
+  accumulatedRewards: 0,
   slashed: false,
+  slashCount: 0,
+  jailed: false,
   uptime: 1,
   blocksProposed: 0,
-  accumulatedRewards: 0,
-  registeredAt: 0,
+  blocksVoted: 0,
 });
 assert.match(state.stake(alice, validator, 100, 1) ?? "", /successor/);
 assert.equal(state.ledger.balance(alice), 10_000);
@@ -89,8 +86,8 @@ const committed = await state.canonicalBody.commit({
   couplings: { ...state.canonicalBody.omega.couplings },
   difficulty: before,
 });
-assert.equal(committed.ok, true);
 if (!committed.ok) throw new Error(committed.error);
+assert.equal(committed.ok, true);
 assert.notEqual(committed.record.difficulty, before);
 state.alignEmbodiment();
 assert.equal(state.currentDifficulty, committed.record.difficulty);

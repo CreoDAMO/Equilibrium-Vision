@@ -50,7 +50,7 @@ async function compile(name: string, wat: string): Promise<string> {
 
 describe("a canonical skip is not execution", () => {
   const miner = "ab".repeat(20);
-  const block = {
+  const block: BlockRecord = {
     hash: "11".repeat(32),
     height: 0,
     prevHash: "1".repeat(64),

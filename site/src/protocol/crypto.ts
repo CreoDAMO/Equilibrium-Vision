@@ -31,6 +31,8 @@ export interface HeaderCommitment {
   /** Set together. Old blocks omit both and keep the previous preimage. */
   chainId?: number;
   evidenceRoot?: string;
+  /** Omega digest bound beside the evidence root. Absent on the shorter preimage. */
+  omegaRoot?: string;
   /** Digest of (Ω, I). Present on evidence blocks sealed after the identity boundary. */
   transitionRoot?: string;
 }

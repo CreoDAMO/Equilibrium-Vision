@@ -5,8 +5,8 @@
 import { describe, it, expect } from "vitest";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { PGlite } from "../../../../site/node_modules/@electric-sql/pglite";
-import { drizzle } from "../../../../site/node_modules/drizzle-orm/pglite";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
 import { eq } from "drizzle-orm";
 import { ChainState, buildGenesisChainFromDoc, retainCanonicalTransactions } from "../chain/state.js";
 import { kernelParty, KERNEL_ALLOCATIONS } from "../chain/kernel-genesis.js";

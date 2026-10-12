@@ -4,8 +4,8 @@
  * must not overwrite a newer one. persistBlock must name what the database did.
  */
 import { describe, it, expect } from "vitest";
-import { PGlite } from "../../../../site/node_modules/@electric-sql/pglite";
-import { drizzle } from "../../../../site/node_modules/drizzle-orm/pglite";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
 import { eq } from "drizzle-orm";
 import { ChainState, buildGenesisChainFromDoc } from "../chain/state.js";
 import { CanonicalBody } from "../chain/canonical-body.js";
@@ -15,7 +15,7 @@ import { blocksTable } from "../../../../lib/db/src/schema/blocks.ts";
 import { openedCouplings } from "../../../../site/src/protocol/constitution.js";
 import { minerKey } from "../../../../site/src/protocol/genesis.js";
 import type { BlockRecord } from "../chain/types.js";
-import type { Omega } from "../../../../site/src/protocol/types.js";
+import type { Omega } from "../../../../site/src/protocol/constitution.js";
 
 const miner = kernelParty("mainnet").miner;
 

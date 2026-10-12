@@ -9,7 +9,8 @@ import { ChainState, buildGenesisChainFromDoc } from "../chain/state.js";
 import { kernelParty, KERNEL_ALLOCATIONS } from "../chain/kernel-genesis.js";
 import { openedCouplings } from "../../../../site/src/protocol/constitution.js";
 import { minerKey } from "../../../../site/src/protocol/genesis.js";
-import type { Omega } from "../../../../site/src/protocol/types.js";
+import type { Omega } from "../../../../site/src/protocol/constitution.js";
+import type { TxRecord as ProtocolTx } from "../../../../site/src/protocol/types.js";
 import type { BlockRecord } from "../chain/types.js";
 import type { PersistBlockResult } from "../chain/persistence.js";
 
@@ -306,7 +307,7 @@ function candidate(state: ChainState, nonce: number, timestamp: number): BlockRe
 
 function evidenceInputs(omega: Omega, nonce: bigint, timestamp: number) {
   return {
-    transactions: [] as BlockRecord["transactions"],
+    transactions: [] as ProtocolTx[],
     timestamp,
     nonce,
     miner: evidenceMiner,

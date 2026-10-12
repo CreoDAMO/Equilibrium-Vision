@@ -1,7 +1,7 @@
-import { successor, initialOmega, openedCouplings, transitionDigest } from "../../../../site/src/protocol/constitution.js";
+import { successor, initialOmega, openedCouplings, transitionDigest, type CanonicalInputs, type Omega } from "../../../../site/src/protocol/constitution.js";
 import { asBlockNonce, blockNonce } from "../../../../site/src/protocol/domain.js";
 import { omegaRecord, sealFromSuccessor } from "../../../../site/src/protocol/seal.js";
-import type { CanonicalInputs, NetworkId, Omega, TransitionEvidence, TxRecord } from "../../../../site/src/protocol/types.js";
+import type { NetworkId, TransitionEvidence, TxRecord } from "../../../../site/src/protocol/types.js";
 
 /**
  * The artifact embodiment of the one successor.

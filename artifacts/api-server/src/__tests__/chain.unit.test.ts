@@ -1425,6 +1425,7 @@ describe("ChainState UTXO fee sweep", () => {
         stateRoot: fields.stateRoot,
         bodyRoot: fields.bodyRoot,
         participants: 342,
+        participation: hexOf(bits342),
       }],
     });
     const born = initialOmega("mainnet");

@@ -162,17 +162,28 @@ export async function initChain(): Promise<void> {
         );
       } else {
         const reached = lineageReachesGenesis(allRaw, anchor.block);
+        if (!reached.complete && reached.reason === "cycle") {
+          logger.warn(
+            {
+              snapshotHeight: snapshot.height,
+              anchor: anchor.block.hash.slice(0, 16),
+            },
+            "Snapshot lineage cycles — falling back to full replay",
+          );
+        } else {
+        // A missing ancestor is a pruned prefix. The surviving walk is the
+        // suffix. The snapshot is the state at the anchor. This is not a
+        // recomputation of the rows that are gone.
         if (!reached.complete) {
           logger.warn(
             {
               snapshotHeight: snapshot.height,
-              reason: reached.reason,
               anchor: anchor.block.hash.slice(0, 16),
+              suffix: reached.chain.length,
             },
-            "Snapshot lineage does not reach a height-0 block — falling back to full replay",
+            "Snapshot ancestors are absent — restarting from the surviving suffix",
           );
-        } else {
-        // ── All checks passed: use snapshot fast-path ─────────────────────
+        }
         usedSnapshotPath = true;
 
         const genesisDocForSnap = loadGenesisDoc();
@@ -587,7 +598,7 @@ async function takeSnapshot(): Promise<boolean> {
       difficulty: snap.difficulty,
       unbonding: snap.unbonding,
       contracts: snap.contracts,
-      omega: snap.omega as unknown as Record<string, unknown>,
+      omega: snap.omega,
     },
   });
 }

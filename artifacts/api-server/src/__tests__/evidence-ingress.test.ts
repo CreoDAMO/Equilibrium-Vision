@@ -9,7 +9,8 @@ import { admitRemoteEvidence } from "../chain/evidence-ingress.js";
 import { openedCouplings } from "../../../../site/src/protocol/constitution.js";
 import { minerKey } from "../../../../site/src/protocol/genesis.js";
 import { keypairFromSeed, signTx } from "../../../../site/src/protocol/wallet.js";
-import type { BlockRecord, TxRecord } from "../chain/types.js";
+import type { BlockRecord } from "../chain/types.js";
+import type { TxRecord as ProtocolTx } from "../../../../site/src/protocol/types.js";
 import type { PersistBlockResult } from "../chain/persistence.js";
 
 const miner = minerKey("mainnet").address;
@@ -24,7 +25,7 @@ function fund(state: ChainState, address: string, amount: number): void {
   state.canonicalBody.omega.ledger.set(address, { balance: amount, nonce: 0 });
 }
 
-async function seal(state: ChainState, txs: TxRecord[] = []): Promise<BlockRecord> {
+async function seal(state: ChainState, txs: ProtocolTx[] = []): Promise<BlockRecord> {
   const omega = state.canonicalBody.omega;
   const outcome = await state.commitEvidence({
     transactions: txs,
@@ -41,7 +42,7 @@ async function seal(state: ChainState, txs: TxRecord[] = []): Promise<BlockRecor
   return block;
 }
 
-function payerTx(state: ChainState): TxRecord {
+function payerTx(state: ChainState): ProtocolTx {
   const payer = keypairFromSeed("equilibrium-evidence-payer");
   fund(state, payer.address, 50_000);
   return signTx(payer, {
@@ -64,17 +65,17 @@ describe("a remote evidence body is one transaction set", () => {
 
     const copy = fresh();
     fund(copy, tx.from, 50_000);
-    let persisted: BlockRecord | null = null;
+    const kept: { block: BlockRecord | null } = { block: null };
     const outcome = await admitRemoteEvidence(copy, { ...sealed }, sealed.hash, async (block) => {
-      persisted = block;
+      kept.block = block;
       return inserted;
     });
 
     expect(outcome.kept).toBe(true);
-    expect(persisted).toBe(copy.getBlockByHash(sealed.hash));
-    expect(persisted?.transactions.map((row) => row.hash)).toEqual([tx.hash]);
-    expect(persisted?.txCount).toBe(persisted?.transactions.length);
-    expect(persisted?.merkleRoot).toBe(sealed.merkleRoot);
+    expect(kept.block).toBe(copy.getBlockByHash(sealed.hash));
+    expect(kept.block?.transactions.map((row) => row.hash)).toEqual([tx.hash]);
+    expect(kept.block?.txCount).toBe(kept.block?.transactions.length);
+    expect(kept.block?.merkleRoot).toBe(sealed.merkleRoot);
     expect(copy.canonicalBody.omega.tipHash).toBe(sealed.hash);
     expect(copy.ledger.balance("cd".repeat(20))).toBe(1_000);
   });
@@ -82,14 +83,14 @@ describe("a remote evidence body is one transaction set", () => {
   it("admits an empty evidence block without inventing a second record", async () => {
     const sealed = await seal(fresh());
     const copy = fresh();
-    let persisted: BlockRecord | null = null;
+    const kept: { block: BlockRecord | null } = { block: null };
     const outcome = await admitRemoteEvidence(copy, { ...sealed }, sealed.hash, async (block) => {
-      persisted = block;
+      kept.block = block;
       return inserted;
     });
     expect(outcome.kept).toBe(true);
-    expect(persisted?.transactions).toEqual([]);
-    expect(persisted?.txCount).toBe(0);
+    expect(kept.block?.transactions).toEqual([]);
+    expect(kept.block?.txCount).toBe(0);
     expect(copy.blocks).toHaveLength(1);
     expect(copy.blocks[0]?.hash).toBe(sealed.hash);
   });

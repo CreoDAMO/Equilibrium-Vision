@@ -5,8 +5,9 @@ import { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zk
 import type { BlockRecord, TxRecord, DexPool, ValidatorRecord, StakeRecord, UnbondingEntry } from "./types.js";
 import type { ContractRecord } from "./wasm.js";
 import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
+import { omegaRecord } from "../../../../site/src/protocol/seal.js";
 import { logger } from "../lib/logger.js";
-import { snapshotCoversPrune, operationalReplaySet } from "./restart-boundary.js";
+import { snapshotCoversPrune, operationalReplaySet, preservedBySnapshotAnchor } from "./restart-boundary.js";
 import { orderRestoredRows, RestoreIntegrityError } from "./block-body.js";
 
 // ── Self-contained persistence layer ─────────────────────────────────────────
@@ -155,6 +156,7 @@ async function ensureCommittedPressure(): Promise<void> {
       .then(() => pool.query(`ALTER TABLE transactions
         ADD COLUMN IF NOT EXISTS public_key text,
         ADD COLUMN IF NOT EXISTS tx_index integer`))
+      .then(() => undefined)
       .catch((err) => {
         _pressureColumn = null;
         throw err;
@@ -236,8 +238,15 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
           );
         }
         if (selected.orphans.length > 0) {
-          const hashes = selected.orphans.map((row) => row.hash);
-          try {
+          const snap = await loadLatestSnapshot();
+          const preserved = snap ? preservedBySnapshotAnchor(chainRows, snap.blockHash) : new Set<string>();
+          const hashes = selected.orphans.map((row) => row.hash).filter((hash) => !preserved.has(hash));
+          if (hashes.length === 0) {
+            logger.info(
+              { preserved: preserved.size },
+              "Disconnected rows are the snapshot suffix — not deleted",
+            );
+          } else try {
             const db2 = getDb()!;
             await db2.transaction(async (tx) => {
               await tx.delete(transactionsTable).where(inArray(transactionsTable.blockHash, hashes));
@@ -369,15 +378,15 @@ function sameStoredTxs(rows: TxRow[], block: BlockRecord): boolean {
 }
 
 type PersistTx = {
-  insert: (table: unknown) => {
+  insert: (table: typeof blocksTable | typeof transactionsTable) => {
     values: (values: unknown) => {
       onConflictDoNothing: () => {
-        returning: (selection: unknown) => Promise<Array<{ hash: string }>>;
+        returning: (selection: unknown) => Promise<any[]>;
       };
     };
   };
   select: () => {
-    from: (table: unknown) => {
+    from: (table: typeof blocksTable | typeof transactionsTable) => {
       where: (condition: unknown) => Promise<any[]>;
     };
   };
@@ -655,7 +664,7 @@ export interface SnapshotPartitions {
   unbonding: UnbondingEntry[];
   contracts: ContractRecord[];
   /** Canonical Ω at this height. Absent on snapshots taken before the temporal membrane. */
-  omega?: Record<string, unknown>;
+  omega?: ReturnType<typeof omegaRecord>;
 }
 
 /** Stored inside the ledger JSONB so a restart does not need a new column. */

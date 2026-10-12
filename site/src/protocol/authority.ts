@@ -59,7 +59,7 @@ function verified(publicKey: string, signature: string, message: string, address
   }
 }
 
-export function gateStakeAction(input: StakeClaim & {
+export function gateStakeAction(input: Omit<StakeClaim, "op"> & {
   op: string;
   address?: string;
   publicKey?: string;

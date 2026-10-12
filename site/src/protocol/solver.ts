@@ -171,19 +171,21 @@ export function solveStationary(input: SolveInput): SolveResult {
   ) {
     throw new Error("solver search nonce is a uint32");
   }
+  let nonce = header.nonce;
   let best = evaluateResidual(header, input.txs, input.state, lambda);
-  let bestNonce = header.nonce;
+  let bestNonce = nonce;
   let iterations = 0;
   let reached = best.canonical < target;
 
   for (let d = 0; d < depth && !reached; d++) {
     for (let i = 0; i < maxIter; i++) {
       iterations++;
-      header = { ...header, nonce: (header.nonce + 1 + ((i * 0x9e3779b9) >>> 0)) >>> 0 };
+      nonce = (nonce + 1 + ((i * 0x9e3779b9) >>> 0)) >>> 0;
+      header = { ...header, nonce };
       const br = evaluateResidual(header, input.txs, input.state, lambda);
       if (br.canonical < best.canonical) {
         best = br;
-        bestNonce = header.nonce;
+        bestNonce = nonce;
         if (br.canonical < target) {
           reached = true;
           break;

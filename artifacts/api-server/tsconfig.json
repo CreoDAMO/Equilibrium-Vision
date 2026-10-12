@@ -3,23 +3,13 @@
   "compilerOptions": {
     "incremental": true,
     "tsBuildInfoFile": ".tsbuildinfo",
-    "outDir": "dist",
-    "rootDir": "src",
     "lib": ["es2022", "dom"],
     "types": ["node"],
-    "module": "node16",
-    "moduleResolution": "node16"
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "customConditions": ["workspace"]
   },
-  "include": ["src"],
-  "references": [
-    {
-      "path": "../../lib/db"
-    },
-    {
-      "path": "../../lib/api-zod"
-    },
-    {
-      "path": "../../lib/coinomics"
-    }
-  ]
+  "include": ["src"]
 }

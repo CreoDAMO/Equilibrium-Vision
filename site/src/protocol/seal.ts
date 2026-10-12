@@ -1,7 +1,7 @@
 import { merkleRoot, canonicalHeaderHash } from "./crypto";
-import { omegaDigest, transitionDigest, type Successor } from "./constitution";
+import { omegaDigest, transitionDigest, type CanonicalInputs, type Omega, type Successor } from "./constitution";
 import { ARBITRAGE_CODE, evidenceRoot } from "./evidence";
-import type { CanonicalInputs, Omega, TransitionEvidence } from "./types";
+import type { TransitionEvidence } from "./types";
 
 export type SealedSuccessor = {
   hash: string;

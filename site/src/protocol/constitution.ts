@@ -91,7 +91,7 @@ export interface Omega {
 /** What a block must carry. Difficulty is a claim about Ω, not a free choice. */
 export interface CanonicalInputs {
   transactions: TxRecord[];
-  evidence: TransitionEvidence | undefined;
+  evidence?: TransitionEvidence;
   timestamp: number;
   /** Exact u64. A JavaScript number is not this field. */
   nonce: bigint;

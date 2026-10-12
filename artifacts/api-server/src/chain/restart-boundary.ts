@@ -87,6 +87,26 @@ export function lineageReachesGenesis<T extends { hash: string; height: number; 
 }
 
 /**
+ * Rows that must survive a restart that still names this snapshot anchor.
+ * The surviving parent walk, the anchor, and its descendants. A missing
+ * ancestor is not filled in. A row that does not connect to the anchor
+ * is not kept. This does not recompute the state the snapshot imported.
+ */
+export function preservedBySnapshotAnchor<T extends LineageRow>(
+  blocks: readonly T[],
+  anchorHash: string,
+): Set<string> {
+  const anchor = blocks.find((block) => block.hash === anchorHash);
+  if (!anchor) return new Set();
+  const kept = new Set<string>();
+  for (const row of lineageReachesGenesis(blocks, anchor).chain) kept.add(row.hash);
+  const later = continuationAfterAnchor(blocks, anchor);
+  for (const row of later.blocks) kept.add(row.hash);
+  for (const row of later.retained) kept.add(row.hash);
+  return kept;
+}
+
+/**
  * Snapshot path: evidence strictly after the snapshot height.
  * No snapshot: every evidence row, in height then hash order.
  */
