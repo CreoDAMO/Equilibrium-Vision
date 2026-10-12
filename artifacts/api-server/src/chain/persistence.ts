@@ -110,7 +110,7 @@ function initPool(): InstanceType<typeof Pool> | null {
       logger.error({ err }, "pg-pool idle client error — pool will reconnect on next query");
     });
     _pool = pool;
-    _db = drizzle(pool, { schema: { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zkmlProofsTable } }) as unknown as Db;
+    _db = drizzle(pool, { schema: { blocksTable, transactionsTable, contractsTable, stateSnapshotsTable, zkmlProofsTable } });
     _initDone = true;
     logger.info({ url: url.replace(/:[^@]*@/, ":***@") }, "Postgres persistence enabled");
     return pool;
@@ -495,7 +495,7 @@ export async function persistBlock(block: BlockRecord): Promise<PersistBlockResu
   if (!db) return persistBlockUsing(null, block);
   try {
     await ensureCommittedPressure();
-    return await withDbRetry("persistBlock", () => persistBlockUsing(db as unknown as PersistDb, block));
+    return await withDbRetry("persistBlock", () => persistBlockUsing(db, block));
   } catch (err) {
     logger.error({ err, height: block.height, hash: block.hash }, "persistBlock failed after retries — block data NOT persisted to DB");
     return { durable: false, outcome: "failed" };
