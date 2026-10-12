@@ -58,7 +58,8 @@ function fund(addr: string, amount: number): void {
 
 function advanceBlocks(count: number): void {
   for (let i = 0; i < count; i++) {
-    chainState.addBlock(mineNextBlock(chainState, minerAddress));
+    // mineNextBlock admits the block. Adding it again is not a successor.
+    mineNextBlock(chainState, minerAddress);
   }
 }
 
@@ -558,8 +559,8 @@ describe("2.8 Rollback / reorg — wasmVM block height stays consistent", () => 
     // the previous tip may become final. Roll back to finalizedHeight + 1.
     const heightBefore = chainState.height;
 
-    chainState.addBlock(mineNextBlock(chainState, minerAddress));
-    chainState.addBlock(mineNextBlock(chainState, minerAddress));
+    mineNextBlock(chainState, minerAddress);
+    mineNextBlock(chainState, minerAddress);
     expect(chainState.height).toBeGreaterThanOrEqual(heightBefore + 2);
 
     // The tip is not final. The lowest block that can still move is finalizedHeight + 1.
