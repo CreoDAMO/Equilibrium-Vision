@@ -24,6 +24,10 @@ export default defineConfig({
     env: {
       DATABASE_URL: "postgresql://runner@127.0.0.1:5432/equilibrium",
       NODE_ENV: "test",
+      // The suite turns these on. Production does not. A test that asserts
+      // the refusal deletes the flag for that call and puts it back.
+      ALLOW_TS_TRAPDOOR_PROVER: "true",
+      ALLOW_RANDOM_MINING: "true",
     },
     coverage: {
       provider: "v8",

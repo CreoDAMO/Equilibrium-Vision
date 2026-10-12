@@ -127,10 +127,13 @@ const CIRCUIT_ID = "stationarity-v2-groth16-bn254";
 
 const DEFAULT_THRESHOLD = 1e-7;
 
-/** Whether the TS trapdoor prover is allowed. Never in production. */
-const ALLOW_TS_PROVER =
-  process.env["ALLOW_TS_TRAPDOOR_PROVER"] === "true" &&
-  process.env["NODE_ENV"] !== "production";
+/** Whether the TS trapdoor prover is allowed. Never in production. Read at the call. */
+function trapdoorProverAllowed(): boolean {
+  return (
+    process.env["ALLOW_TS_TRAPDOOR_PROVER"] === "true" &&
+    process.env["NODE_ENV"] !== "production"
+  );
+}
 
 /** Proof source discriminator for validation gating. */
 export const PROOF_SOURCE_RUST = "rust-sidecar";
@@ -219,7 +222,7 @@ export function generateZkProof(
   threshold = DEFAULT_THRESHOLD,
 ): ZkProof {
   // MAINNET SAFETY: trapdoor proofs are not accepted on mainnet.
-  if (!ALLOW_TS_PROVER) {
+  if (!trapdoorProverAllowed()) {
     throw new Error("TS trapdoor prover is disabled in production. Use the Rust consensus-api sidecar.");
   }
 

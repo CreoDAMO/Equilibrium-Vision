@@ -277,6 +277,36 @@ describe("generateZkProof / verifyZkProof", () => {
   });
 });
 
+describe("the trapdoor prover is not a production witness", () => {
+  const FLAG = "ALLOW_TS_TRAPDOOR_PROVER";
+  let savedFlag: string | undefined;
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    savedFlag = process.env[FLAG];
+    savedEnv = process.env["NODE_ENV"];
+  });
+
+  afterEach(() => {
+    if (savedFlag === undefined) delete process.env[FLAG];
+    else process.env[FLAG] = savedFlag;
+    if (savedEnv === undefined) delete process.env["NODE_ENV"];
+    else process.env["NODE_ENV"] = savedEnv;
+  });
+
+  it("refuses when the flag is unset", () => {
+    delete process.env[FLAG];
+    process.env["NODE_ENV"] = "test";
+    expect(() => generateZkProof(1e-9, hash256("trapdoor-off"), 1)).toThrow(/TS trapdoor prover is disabled/);
+  });
+
+  it("refuses in production even when the flag is set", () => {
+    process.env[FLAG] = "true";
+    process.env["NODE_ENV"] = "production";
+    expect(() => generateZkProof(1e-9, hash256("trapdoor-prod"), 1)).toThrow(/TS trapdoor prover is disabled/);
+  });
+});
+
 // ── ChainState — adaptive difficulty ─────────────────────────────────────────
 
 describe("ChainState.updateDifficulty", () => {
