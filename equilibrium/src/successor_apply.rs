@@ -1478,6 +1478,7 @@ fn is_btc_destination(destination: &str) -> bool {
     rest.len() == width && hex_lower(rest, width)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn verify_withdraw(
     chain_id: i64,
     sender: &str,
@@ -1888,6 +1889,7 @@ fn admit_execution(omega: &mut OmegaSnap, header_rlp: &str) -> Result<(), String
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn settle_eth(
     omega: &mut OmegaSnap,
     id: &str,
@@ -3077,7 +3079,7 @@ mod withdraw_lifecycle_tests {
         }
     }
 
-    fn settle<'a>(oracle: &'a Oracle, id: &str, raw: &str, merkle: Vec<String>) -> WithdrawOp {
+    fn settle(oracle: &Oracle, id: &str, raw: &str, merkle: Vec<String>) -> WithdrawOp {
         WithdrawOp::Settle {
             id: id.into(),
             raw_tx: raw.into(),
@@ -3134,7 +3136,7 @@ mod withdraw_lifecycle_tests {
             super::withdrawal_id(oracle.chain_id, &oracle.sender, oracle.amount, "btc", "btc", &oracle.destination, oracle.nonce),
             oracle.id
         );
-        assert_eq!(oracle.preimage.contains("|withdraw|"), true);
+        assert!(oracle.preimage.contains("|withdraw|"));
         let encoded = canonical_evidence(&body(&oracle, vec![open(&oracle, oracle.amount, 0.0, "btc", "btc", &oracle.signature)])).unwrap();
         assert_eq!(encoded, oracle.evidence);
         assert!(super::verify_withdraw(oracle.chain_id, &oracle.sender, oracle.amount, "btc", "btc", &oracle.destination, 0.0, &oracle.public_key, &oracle.delegate_signature).is_err());

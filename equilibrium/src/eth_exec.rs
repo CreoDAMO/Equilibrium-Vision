@@ -43,15 +43,15 @@ const TRANSFER_TOPIC: &str = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628
 const SAFE: u64 = 9_007_199_254_740_991;
 
 fn keccak_f(a: &mut [[u64; 5]; 5]) {
-    for round in 0..24 {
+    for rc in &RC {
         let mut c = [0u64; 5];
         for x in 0..5 {
             c[x] = a[x][0] ^ a[x][1] ^ a[x][2] ^ a[x][3] ^ a[x][4];
         }
         for x in 0..5 {
             let d = c[(x + 4) % 5] ^ c[(x + 1) % 5].rotate_left(1);
-            for y in 0..5 {
-                a[x][y] ^= d;
+            for lane in &mut a[x] {
+                *lane ^= d;
             }
         }
         let mut b = [[0u64; 5]; 5];
@@ -65,7 +65,7 @@ fn keccak_f(a: &mut [[u64; 5]; 5]) {
                 a[x][y] = b[x][y] ^ ((!b[(x + 1) % 5][y]) & b[(x + 2) % 5][y]);
             }
         }
-        a[0][0] ^= RC[round];
+        a[0][0] ^= *rc;
     }
 }
 
@@ -93,11 +93,11 @@ pub(super) fn keccak256(data: &[u8]) -> Vec<u8> {
     last[rate - 1] ^= 0x80;
     absorb(&last);
     let mut out = vec![0u8; 32];
-    for i in 0..32 {
+    for (i, byte) in out.iter_mut().enumerate() {
         let lane = i >> 3;
         let x = lane % 5;
         let y = lane / 5;
-        out[i] = ((a[x][y] >> (((i & 7) * 8) as u32)) & 0xff) as u8;
+        *byte = ((a[x][y] >> (((i & 7) * 8) as u32)) & 0xff) as u8;
     }
     out
 }
@@ -539,6 +539,7 @@ fn hex64(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prove_eth_effect(
     receipts_root: &str,
     transactions_root: &str,
@@ -638,4 +639,29 @@ pub(super) fn is_eth_destination(destination: &str) -> bool {
 
 pub(super) fn is_eth_asset(asset: &str) -> bool {
     asset == "eth" || (asset.len() == 40 && asset.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keccak256_hex;
+
+    #[test]
+    fn keccak_matches_the_empty_and_short_vectors() {
+        assert_eq!(
+            keccak256_hex(b""),
+            "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+        );
+        assert_eq!(
+            keccak256_hex(b"abc"),
+            "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"
+        );
+        assert_eq!(
+            keccak256_hex(&[0x80]),
+            "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
+        );
+        assert_eq!(
+            keccak256_hex(&[0xc0]),
+            "1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"
+        );
+    }
 }

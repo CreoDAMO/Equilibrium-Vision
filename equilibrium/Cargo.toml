@@ -25,6 +25,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 sha2 = "0.10"
+# ark-snark 0.4 requires rand_core 0.6. rand 0.9+ StdRng does not
+# implement that trait, and it has no from_entropy.
 rand = "0.8.5"
 rand_core = "0.6.4"
 pbkdf2 = { version = "0.12", features = ["hmac"] }
