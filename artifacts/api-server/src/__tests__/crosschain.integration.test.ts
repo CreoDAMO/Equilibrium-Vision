@@ -17,7 +17,7 @@
  *   4. Send aggSigHex (192 hex chars) + signers[] (pubkeyHex + signerAddress)
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { randomBytes, createHash } from "crypto";
+import { randomBytes, createHash, generateKeyPairSync, sign, type KeyObject } from "crypto";
 import supertest from "supertest";
 import { bls12_381 } from "@noble/curves/bls12-381.js";
 import app from "../app.js";
@@ -28,17 +28,35 @@ import {
   getCrossChainRelayAddress,
   buildAttestationMessage,
 } from "../chain/crossChainRelay.js";
+import { addressFromPublicKey, authorityMessage } from "../lib/signed-caller.js";
 
 const BLS = bls12_381.longSignatures; // G1 pubkeys (48 B), G2 sigs (96 B)
 const G2  = bls12_381.G2;
 
 const api = supertest(app);
 const ADMIN_KEY = "test-admin-key-crosschain";
+const operator = callerKey();
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function randomAddress(): string {
-  return randomBytes(20).toString("hex");
+interface CallerKey {
+  pair: { privateKey: KeyObject };
+  publicKey: string;
+  caller: string;
+}
+
+function callerKey(): CallerKey {
+  const pair = generateKeyPairSync("ed25519");
+  const raw = pair.publicKey.export({ type: "spki", format: "der" }).subarray(-32);
+  const publicKey = raw.toString("hex");
+  return { pair, publicKey, caller: addressFromPublicKey(publicKey) };
+}
+
+/** A caller string is not authority. The signature binds this method, path, and body. */
+function signed(pair: CallerKey, method: string, path: string, body: Record<string, unknown> = {}): Record<string, unknown> {
+  const payload = { ...body, caller: pair.caller };
+  const signature = sign(null, Buffer.from(authorityMessage(`${method} ${path}`, payload), "utf8"), pair.pair.privateKey).toString("hex");
+  return { ...payload, publicKey: pair.publicKey, signature };
 }
 
 function fund(addr: string, amount: number): void {
@@ -47,7 +65,8 @@ function fund(addr: string, amount: number): void {
 
 function advanceBlocks(count: number): void {
   for (let i = 0; i < count; i++) {
-    chainState.addBlock(mineNextBlock(chainState, minerAddress));
+    // mineNextBlock admits the block. Adding it again is not a successor.
+    mineNextBlock(chainState, minerAddress);
   }
 }
 
@@ -55,20 +74,20 @@ interface RelayerKey {
   privKey: Uint8Array;
   /** 96 hex chars — BLS12-381 G1 compressed pubkey (48 bytes) */
   pubkeyHex: string;
-  /** 40 hex chars — sha256(pubkey).slice(0,40) */
+  /**
+   * The ed25519 caller the route authorizes. The contract stores that caller.
+   * It does not derive the relayer id from the BLS public key.
+   */
   address: string;
+  auth: CallerKey;
 }
 
-/**
- * Generate a BLS12-381 key pair and derive the canonical Equilibrium address.
- * address = sha256(compressed G1 pubkey bytes).slice(0, 40)
- */
 function makeRelayerKey(): RelayerKey {
   const privKey     = randomBytes(32);
   const pubKeyBytes = BLS.getPublicKey(privKey).toBytes(true); // 48-byte G1 compressed
   const pubkeyHex   = Buffer.from(pubKeyBytes).toString("hex"); // 96 hex chars
-  const address     = createHash("sha256").update(pubKeyBytes).digest("hex").slice(0, 40);
-  return { privKey, pubkeyHex, address };
+  const auth = callerKey();
+  return { privKey, pubkeyHex, address: auth.caller, auth };
 }
 
 /**
@@ -148,7 +167,7 @@ describe("CrossChainRelay — relayer registration", () => {
     const res = await api
       .post("/api/relay/register")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ caller: relayer.address, amount: "0" });
+      .send(signed(relayer.auth, "POST", "/api/relay/register", { amount: "0" }));
     expect(res.status).toBe(400);
   });
 
@@ -158,7 +177,7 @@ describe("CrossChainRelay — relayer registration", () => {
     const res = await api
       .post("/api/relay/register")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ caller: relayer.address, amount: BOND.toString() });
+      .send(signed(relayer.auth, "POST", "/api/relay/register", { amount: BOND.toString() }));
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
@@ -170,7 +189,7 @@ describe("CrossChainRelay — relayer registration", () => {
     const res = await api
       .post("/api/relay/register")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ caller: relayer.address, amount: BOND.toString() });
+      .send(signed(relayer.auth, "POST", "/api/relay/register", { amount: BOND.toString() }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/already/i);
   });
@@ -191,7 +210,7 @@ describe("CrossChainRelay — threshold management", () => {
   it("rejects threshold update without admin key", async () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
-    const res = await api.patch("/api/relay/threshold").send({ threshold: 1 });
+    const res = await api.patch("/api/relay/threshold").send(signed(operator, "PATCH", "/api/relay/threshold", { threshold: 1 }));
     expect(res.status).toBe(403);
   });
 
@@ -201,7 +220,7 @@ describe("CrossChainRelay — threshold management", () => {
     const res = await api
       .patch("/api/relay/threshold")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ threshold: 1 });
+      .send(signed(operator, "PATCH", "/api/relay/threshold", { threshold: 1 }));
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.threshold).toBe(1);
@@ -225,7 +244,7 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     await api
       .post("/api/relay/register")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ caller: relayer.address, amount: BOND.toString() });
+      .send(signed(relayer.auth, "POST", "/api/relay/register", { amount: BOND.toString() }));
   });
 
   it("rejects attestation with missing chainId", async () => {
@@ -233,12 +252,11 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
     const { aggSigHex, signers } = buildAggPayload([relayer], msg);
-    const res = await api.post("/api/relay/attest/inbound").send({
-      caller: relayer.address,
+    const res = await api.post("/api/relay/attest/inbound").send(signed(relayer.auth, "POST", "/api/relay/attest/inbound", {
       seq: seq.toString(),
       commitmentHex: commitment,
-      aggSigHex, signers,
-    });
+      aggSigHex, signers
+    }));
     expect(res.status).toBe(400);
   });
 
@@ -248,13 +266,12 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     const wrongSeq = 5n;
     const msg = buildAttestationMessage(chainId, wrongSeq, commitment);
     const { aggSigHex, signers } = buildAggPayload([relayer], msg);
-    const res = await api.post("/api/relay/attest/inbound").send({
-      caller: relayer.address,
+    const res = await api.post("/api/relay/attest/inbound").send(signed(relayer.auth, "POST", "/api/relay/attest/inbound", {
       chainId,
       seq: wrongSeq.toString(),
       commitmentHex: commitment,
-      aggSigHex, signers,
-    });
+      aggSigHex, signers
+    }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/sequence/i);
   });
@@ -264,14 +281,13 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     if (!contractAddr) return;
     // Corrupt the aggregate BLS signature (192 hex chars = 96 bytes)
     const badAggSigHex = "ff".repeat(96);
-    const res = await api.post("/api/relay/attest/inbound").send({
-      caller: relayer.address,
+    const res = await api.post("/api/relay/attest/inbound").send(signed(relayer.auth, "POST", "/api/relay/attest/inbound", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
       aggSigHex: badAggSigHex,
-      signers: [{ pubkeyHex: relayer.pubkeyHex, signerAddress: relayer.address }],
-    });
+      signers: [{ pubkeyHex: relayer.pubkeyHex, signerAddress: relayer.address }]
+    }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/signature/i);
   });
@@ -281,13 +297,12 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
     const { aggSigHex, signers } = buildAggPayload([relayer], msg);
-    const res = await api.post("/api/relay/attest/inbound").send({
-      caller: relayer.address,
+    const res = await api.post("/api/relay/attest/inbound").send(signed(relayer.auth, "POST", "/api/relay/attest/inbound", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      aggSigHex, signers,
-    });
+      aggSigHex, signers
+    }));
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.chainId).toBe(chainId);
@@ -299,13 +314,12 @@ describe("CrossChainRelay — inbound attestation (happy path)", () => {
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
     const { aggSigHex, signers } = buildAggPayload([relayer], msg);
-    const res = await api.post("/api/relay/attest/inbound").send({
-      caller: relayer.address,
+    const res = await api.post("/api/relay/attest/inbound").send(signed(relayer.auth, "POST", "/api/relay/attest/inbound", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      aggSigHex, signers,
-    });
+      aggSigHex, signers
+    }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/already/i);
   });
@@ -344,16 +358,15 @@ describe("CrossChainRelay — inbound finalization after challenge window", () =
     await api
       .post("/api/relay/register")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ caller: relayer.address, amount: BOND.toString() });
+      .send(signed(relayer.auth, "POST", "/api/relay/register", { amount: BOND.toString() }));
     const msg = buildAttestationMessage(chainId, seq, commitment);
     const { aggSigHex, signers } = buildAggPayload([relayer], msg);
-    await api.post("/api/relay/attest/inbound").send({
-      caller: relayer.address,
+    await api.post("/api/relay/attest/inbound").send(signed(relayer.auth, "POST", "/api/relay/attest/inbound", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      aggSigHex, signers,
-    });
+      aggSigHex, signers
+    }));
   });
 
   it("rejects finalization before challenge window expires", async () => {
@@ -361,7 +374,7 @@ describe("CrossChainRelay — inbound finalization after challenge window", () =
     if (!contractAddr) return;
     const res = await api
       .post(`/api/relay/attest/inbound/${chainId}/1/finalize`)
-      .send({ caller: randomAddress() });
+      .send(signed(operator, "POST", `/api/relay/attest/inbound/${chainId}/1/finalize`, {}));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/window/i);
   });
@@ -372,7 +385,7 @@ describe("CrossChainRelay — inbound finalization after challenge window", () =
     advanceBlocks(105);
     const res = await api
       .post(`/api/relay/attest/inbound/${chainId}/1/finalize`)
-      .send({ caller: randomAddress() });
+      .send(signed(operator, "POST", `/api/relay/attest/inbound/${chainId}/1/finalize`, {}));
     expect(res.status).toBe(200);
     expect(res.body.finalized).toBe(true);
   });
@@ -390,7 +403,7 @@ describe("CrossChainRelay — inbound finalization after challenge window", () =
     if (!contractAddr) return;
     const res = await api
       .post(`/api/relay/attest/inbound/${chainId}/1/finalize`)
-      .send({ caller: randomAddress() });
+      .send(signed(operator, "POST", `/api/relay/attest/inbound/${chainId}/1/finalize`, {}));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/already finalized/i);
   });
@@ -412,16 +425,15 @@ describe("CrossChainRelay — admin challenge + slashing", () => {
     await api
       .post("/api/relay/register")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ caller: relayer.address, amount: BOND.toString() });
+      .send(signed(relayer.auth, "POST", "/api/relay/register", { amount: BOND.toString() }));
     const msg = buildAttestationMessage(chainId, seq, commitment);
     const { aggSigHex, signers } = buildAggPayload([relayer], msg);
-    await api.post("/api/relay/attest/inbound").send({
-      caller: relayer.address,
+    await api.post("/api/relay/attest/inbound").send(signed(relayer.auth, "POST", "/api/relay/attest/inbound", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      aggSigHex, signers,
-    });
+      aggSigHex, signers
+    }));
   });
 
   it("rejects challenge without admin key", async () => {
@@ -429,19 +441,17 @@ describe("CrossChainRelay — admin challenge + slashing", () => {
     if (!contractAddr) return;
     const res = await api
       .post(`/api/relay/attest/inbound/${chainId}/1/challenge`)
-      .send({ caller: randomAddress() });
+      .send(signed(operator, "POST", `/api/relay/attest/inbound/${chainId}/1/challenge`, {}));
     expect(res.status).toBe(403);
   });
 
   it("admin can challenge a fraudulent attestation", async () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
-    const challenger = randomAddress();
-    fund(challenger, RELAYER_BALANCE);
     const res = await api
       .post(`/api/relay/attest/inbound/${chainId}/1/challenge`)
       .set("x-admin-key", ADMIN_KEY)
-      .send({ caller: challenger });
+      .send(signed(operator, "POST", `/api/relay/attest/inbound/${chainId}/1/challenge`, {}));
     expect(res.status).toBe(200);
     expect(res.body.challenged).toBe(true);
   });
@@ -460,7 +470,7 @@ describe("CrossChainRelay — admin challenge + slashing", () => {
     const res = await api
       .post(`/api/relay/attest/inbound/${chainId}/1/challenge`)
       .set("x-admin-key", ADMIN_KEY)
-      .send({ caller: randomAddress() });
+      .send(signed(operator, "POST", `/api/relay/attest/inbound/${chainId}/1/challenge`, {}));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/challenged/i);
   });
@@ -471,7 +481,7 @@ describe("CrossChainRelay — admin challenge + slashing", () => {
     advanceBlocks(110);
     const res = await api
       .post(`/api/relay/attest/inbound/${chainId}/1/finalize`)
-      .send({ caller: randomAddress() });
+      .send(signed(operator, "POST", `/api/relay/attest/inbound/${chainId}/1/finalize`, {}));
     expect(res.status).toBe(400);
   });
 });
@@ -480,20 +490,19 @@ describe("CrossChainRelay — admin challenge + slashing", () => {
 
 describe("CrossChainRelay — outbound commitments", () => {
   const chainId = "cosmos-1";
-  let caller: string;
+  let outbound: CallerKey;
 
   beforeAll(() => {
-    caller = randomAddress();
-    fund(caller, RELAYER_BALANCE);
+    outbound = callerKey();
+    fund(outbound.caller, RELAYER_BALANCE);
   });
 
   it("rejects malformed commitmentHex", async () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
-    const res = await api.post(`/api/relay/outbound/${chainId}`).send({
-      caller,
-      commitmentHex: "notahex",
-    });
+    const res = await api.post(`/api/relay/outbound/${chainId}`).send(signed(outbound, "POST", `/api/relay/outbound/${chainId}`, {
+      commitmentHex: "notahex"
+    }));
     expect(res.status).toBe(400);
   });
 
@@ -501,10 +510,9 @@ describe("CrossChainRelay — outbound commitments", () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
     const commitment = randomBytes(32).toString("hex");
-    const res = await api.post(`/api/relay/outbound/${chainId}`).send({
-      caller,
-      commitmentHex: commitment,
-    });
+    const res = await api.post(`/api/relay/outbound/${chainId}`).send(signed(outbound, "POST", `/api/relay/outbound/${chainId}`, {
+      commitmentHex: commitment
+    }));
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.outboundSeq).toBe(1);
@@ -514,10 +522,9 @@ describe("CrossChainRelay — outbound commitments", () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
     const commitment = randomBytes(32).toString("hex");
-    const res = await api.post(`/api/relay/outbound/${chainId}`).send({
-      caller,
-      commitmentHex: commitment,
-    });
+    const res = await api.post(`/api/relay/outbound/${chainId}`).send(signed(outbound, "POST", `/api/relay/outbound/${chainId}`, {
+      commitmentHex: commitment
+    }));
     expect(res.status).toBe(200);
     expect(res.body.outboundSeq).toBe(2);
   });
@@ -548,13 +555,13 @@ describe("CrossChainRelay — multi-sig attestation (2-of-2)", () => {
     fund(relayerA.address, RELAYER_BALANCE);
     fund(relayerB.address, RELAYER_BALANCE);
     // Register both relayers
-    await api.post("/api/relay/register").set("x-admin-key", ADMIN_KEY).send({ caller: relayerA.address, amount: BOND.toString() });
-    await api.post("/api/relay/register").set("x-admin-key", ADMIN_KEY).send({ caller: relayerB.address, amount: BOND.toString() });
+    await api.post("/api/relay/register").set("x-admin-key", ADMIN_KEY).send(signed(relayerA.auth, "POST", "/api/relay/register", { amount: BOND.toString() }));
+    await api.post("/api/relay/register").set("x-admin-key", ADMIN_KEY).send(signed(relayerB.auth, "POST", "/api/relay/register", { amount: BOND.toString() }));
     // Set threshold to 2
     await api
       .patch("/api/relay/threshold")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ threshold: 2 });
+      .send(signed(operator, "PATCH", "/api/relay/threshold", { threshold: 2 }));
   });
 
   it("rejects attestation with only 1 signer when threshold is 2", async () => {
@@ -562,13 +569,12 @@ describe("CrossChainRelay — multi-sig attestation (2-of-2)", () => {
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
     const { aggSigHex, signers } = buildAggPayload([relayerA], msg);
-    const res = await api.post("/api/relay/attest/inbound").send({
-      caller: relayerA.address,
+    const res = await api.post("/api/relay/attest/inbound").send(signed(relayerA.auth, "POST", "/api/relay/attest/inbound", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      aggSigHex, signers,
-    });
+      aggSigHex, signers
+    }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/threshold/i);
   });
@@ -579,8 +585,7 @@ describe("CrossChainRelay — multi-sig attestation (2-of-2)", () => {
     const msg = buildAttestationMessage(chainId, seq, commitment);
     // Single valid agg sig but duplicate address in signers[] — contract checks addresses first
     const { aggSigHex } = buildAggPayload([relayerA], msg);
-    const res = await api.post("/api/relay/attest/inbound").send({
-      caller: relayerA.address,
+    const res = await api.post("/api/relay/attest/inbound").send(signed(relayerA.auth, "POST", "/api/relay/attest/inbound", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
@@ -588,8 +593,8 @@ describe("CrossChainRelay — multi-sig attestation (2-of-2)", () => {
       signers: [
         { pubkeyHex: relayerA.pubkeyHex, signerAddress: relayerA.address },
         { pubkeyHex: relayerA.pubkeyHex, signerAddress: relayerA.address },
-      ],
-    });
+      ]
+    }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/duplicate/i);
   });
@@ -599,13 +604,12 @@ describe("CrossChainRelay — multi-sig attestation (2-of-2)", () => {
     if (!contractAddr) return;
     const msg = buildAttestationMessage(chainId, seq, commitment);
     const { aggSigHex, signers } = buildAggPayload([relayerA, relayerB], msg);
-    const res = await api.post("/api/relay/attest/inbound").send({
-      caller: relayerA.address,
+    const res = await api.post("/api/relay/attest/inbound").send(signed(relayerA.auth, "POST", "/api/relay/attest/inbound", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
-      aggSigHex, signers,
-    });
+      aggSigHex, signers
+    }));
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
@@ -692,8 +696,8 @@ describe("CrossChainRelay — SPV header submission + Merkle inclusion proof", (
     await api
       .post("/api/relay/register")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ caller: relayer.address, amount: BOND.toString() });
-    await api.patch("/api/relay/threshold").set("x-admin-key", ADMIN_KEY).send({ threshold: 1 });
+      .send(signed(relayer.auth, "POST", "/api/relay/register", { amount: BOND.toString() }));
+    await api.patch("/api/relay/threshold").set("x-admin-key", ADMIN_KEY).send(signed(operator, "PATCH", "/api/relay/threshold", { threshold: 1 }));
 
     // Build the Merkle tree once — the same root must go into both the
     // header submission and the SPV inclusion proof.
@@ -710,12 +714,11 @@ describe("CrossChainRelay — SPV header submission + Merkle inclusion proof", (
     if (!contractAddr) return;
     const fakeRelayer = makeRelayerKey();
     const root = randomBytes(32).toString("hex");
-    const res = await api.post("/api/relay/header/submit").send({
-      caller: fakeRelayer.address,
+    const res = await api.post("/api/relay/header/submit").send(signed(fakeRelayer.auth, "POST", "/api/relay/header/submit", {
       chainId,
       blockNum: spvBlockNum.toString(),
-      merkleRootHex: root,
-    });
+      merkleRootHex: root
+    }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/relayer/i);
   });
@@ -723,12 +726,11 @@ describe("CrossChainRelay — SPV header submission + Merkle inclusion proof", (
   it("accepts a valid header from a registered relayer", async () => {
     const contractAddr = getCrossChainRelayAddress();
     if (!contractAddr) return;
-    const res = await api.post("/api/relay/header/submit").send({
-      caller: relayer.address,
+    const res = await api.post("/api/relay/header/submit").send(signed(relayer.auth, "POST", "/api/relay/header/submit", {
       chainId,
       blockNum: spvBlockNum.toString(),
-      merkleRootHex: sharedRoot,
-    });
+      merkleRootHex: sharedRoot
+    }));
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.blockNum).toBe(spvBlockNum.toString());
@@ -742,16 +744,15 @@ describe("CrossChainRelay — SPV header submission + Merkle inclusion proof", (
     const msg = buildAttestationMessage(chainId, seq, commitment);
     const { aggSigHex, signers } = buildAggPayload([relayer], msg);
     const fakeProof = { leafIndex: "0", siblings: [] };
-    const res = await api.post("/api/relay/attest/inbound/spv").send({
-      caller: relayer.address,
+    const res = await api.post("/api/relay/attest/inbound/spv").send(signed(relayer.auth, "POST", "/api/relay/attest/inbound/spv", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
       aggSigHex,
       signers,
       spvBlockNum: "9999",      // no header for this block
-      proof: fakeProof,
-    });
+      proof: fakeProof
+    }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/header/i);
   });
@@ -767,16 +768,15 @@ describe("CrossChainRelay — SPV header submission + Merkle inclusion proof", (
       ("ff" + proof.siblings[0]!.slice(2)) as string,
       ...proof.siblings.slice(1),
     ];
-    const res = await api.post("/api/relay/attest/inbound/spv").send({
-      caller: relayer.address,
+    const res = await api.post("/api/relay/attest/inbound/spv").send(signed(relayer.auth, "POST", "/api/relay/attest/inbound/spv", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
       aggSigHex,
       signers,
       spvBlockNum: spvBlockNum.toString(),
-      proof: { leafIndex: proof.leafIndex.toString(), siblings: corruptedSiblings },
-    });
+      proof: { leafIndex: proof.leafIndex.toString(), siblings: corruptedSiblings }
+    }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/proof/i);
   });
@@ -788,16 +788,15 @@ describe("CrossChainRelay — SPV header submission + Merkle inclusion proof", (
     const { aggSigHex, signers } = buildAggPayload([relayer], msg);
     const proof = merkleProof(sharedLayers, 0);
 
-    const res = await api.post("/api/relay/attest/inbound/spv").send({
-      caller: relayer.address,
+    const res = await api.post("/api/relay/attest/inbound/spv").send(signed(relayer.auth, "POST", "/api/relay/attest/inbound/spv", {
       chainId,
       seq: seq.toString(),
       commitmentHex: commitment,
       aggSigHex,
       signers,
       spvBlockNum: spvBlockNum.toString(),
-      proof: { leafIndex: proof.leafIndex.toString(), siblings: proof.siblings },
-    });
+      proof: { leafIndex: proof.leafIndex.toString(), siblings: proof.siblings }
+    }));
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.spv).toBe(true);
@@ -827,7 +826,7 @@ describe("CrossChainRelay — admin relayer revocation", () => {
     await api
       .post("/api/relay/register")
       .set("x-admin-key", ADMIN_KEY)
-      .send({ caller: relayer.address, amount: BOND.toString() });
+      .send(signed(relayer.auth, "POST", "/api/relay/register", { amount: BOND.toString() }));
   });
 
   it("rejects revocation without admin key", async () => {
@@ -842,7 +841,8 @@ describe("CrossChainRelay — admin relayer revocation", () => {
     if (!contractAddr) return;
     const res = await api
       .delete(`/api/relay/register/${relayer.address}`)
-      .set("x-admin-key", ADMIN_KEY);
+      .set("x-admin-key", ADMIN_KEY)
+      .send(signed(relayer.auth, "DELETE", `/api/relay/register/${relayer.address}`, {}));
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.revoked).toBe(relayer.address);
