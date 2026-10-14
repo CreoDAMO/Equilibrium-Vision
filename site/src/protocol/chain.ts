@@ -687,7 +687,7 @@ export class OrganismNode {
         return false;
       }
     }
-    if (stepped.stateRoot !== block.stateRoot || (block.evidence && stepped.omegaRoot !== block.omegaRoot)) {
+    if (stepped.stateRoot !== block.stateRoot || (block.omegaRoot !== undefined && stepped.omegaRoot !== block.omegaRoot)) {
       this.emit("in", "verify", "state did not replay");
       return false;
     }
@@ -2103,7 +2103,21 @@ export class OrganismNode {
       return "successor is stale";
     }
     if (stepped.stateRoot !== block.stateRoot) return "state root does not replay";
-    if (block.evidence && stepped.omegaRoot !== block.omegaRoot) return "omega root does not replay";
+    if (block.omegaRoot !== undefined && stepped.omegaRoot !== block.omegaRoot) return "omega root does not replay";
+    if (block.transitionRoot !== undefined) {
+      const expected = transitionDigest(this.toOmega(), {
+        transactions: block.transactions,
+        evidence: block.evidence,
+        timestamp: block.timestamp,
+        nonce: asBlockNonce(block.nonce),
+        miner: block.miner,
+        committedPressure: block.committedPressure,
+        couplings: block.couplings,
+        difficulty: block.difficulty,
+        wasmAfter: null,
+      });
+      if (block.transitionRoot !== expected) return "transition is not this input";
+    }
     if (stepped.reward !== block.coinbaseReward) return "coinbase is not the reward law";
     if (stepped.liquid !== (block.liquidIssuance ?? block.coinbaseReward)) return "liquid issuance is not the stake law";
     if (!residualsMatch(block.residual, stepped.residual)) return "residual is not the transition";
