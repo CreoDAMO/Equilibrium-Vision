@@ -7,7 +7,7 @@ import type { ContractRecord } from "./wasm.js";
 import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
 import { omegaRecord } from "../../../../site/src/protocol/seal.js";
 import { logger } from "../lib/logger.js";
-import { snapshotCoversPrune, operationalReplaySet, preservedBySnapshotAnchor, rowsReturnedAfterOrphanCleanup } from "./restart-boundary.js";
+import { snapshotCoversPrune, operationalReplaySet, preservedBySnapshotAnchor, rowsReturnedAfterOrphanCleanup, recoveryVerdict } from "./restart-boundary.js";
 import { orderRestoredRows, RestoreIntegrityError } from "./block-body.js";
 
 // ── Self-contained persistence layer ─────────────────────────────────────────
@@ -191,9 +191,11 @@ function transactionsInCommittedOrder(rows: Array<typeof transactionsTable.$infe
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Load all persisted blocks (ordered by height) plus their confirmed
- * transactions.  Returns null if Postgres is unavailable or the DB is empty
- * (caller should fall back to buildGenesisChain).
+ * Load persisted blocks for a restart.
+ * Returns null only when no database is configured, the database cannot be
+ * reached, or a successful read found an empty block table. Those three are
+ * not the same fact. A query that ran and failed, a chain with no unique
+ * height-0 row, and a retained fork throw. They are not genesis.
  */
 export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
   const db = getDb();
@@ -206,7 +208,7 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       db.select().from(transactionsTable).where(eq(transactionsTable.status, "confirmed")),
     ]);
 
-    if (dbBlocks.length === 0) return null; // empty DB → generate genesis
+    if (dbBlocks.length === 0) return null; // proved empty → genesis
 
     const canonicalRows = dbBlocks.filter((b) => b.evidence != null);
     const chainRows = dbBlocks.filter((b) => b.evidence == null);
@@ -216,16 +218,16 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       if (canonicalRows.length === 0) return null;
     } else {
       const selected = operationalReplaySet(chainRows);
-      if (selected.replay.length === 0) {
-        logger.warn(
-          { retained: selected.retained.length, orphans: selected.orphans.length },
-          "Chain integrity: no unique height-0 chain — not choosing a branch",
-        );
-      } else if (selected.retained.length > 0) {
-        logger.warn(
-          { retained: selected.retained.map((row) => row.hash.slice(0, 16)) },
-          "Chain integrity: fork retained and not replayed",
-        );
+      const verdict = recoveryVerdict({
+        configured: true,
+        queryFailed: false,
+        operationalRows: chainRows.length,
+        evidenceRows: canonicalRows.length,
+        replay: selected.replay.length,
+        retained: selected.retained.length,
+      });
+      if (verdict.verdict === "refused") {
+        throw new RestoreIntegrityError(verdict.reason ?? "chain is not recoverable");
       }
       const snap = selected.orphans.length > 0 ? await loadLatestSnapshot() : null;
       const preserved = snap ? preservedBySnapshotAnchor(chainRows, snap.blockHash) : new Set<string>();
@@ -293,9 +295,31 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
     }));
   } catch (err) {
     if (err instanceof RestoreIntegrityError) throw err;
-    logger.warn({ err }, "Failed to load chain from Postgres — falling back to genesis");
-    return null;
+    if (loadFailureIsUnreachable(err)) {
+      logger.warn({ err }, "Postgres unreachable — not a proved-empty chain");
+      return null;
+    }
+    throw new RestoreIntegrityError(
+      `chain load failed — not falling back to genesis: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
+}
+
+/** A connection that never answered. Not a SQL error, and not an empty table. */
+export function loadFailureIsUnreachable(err: unknown): boolean {
+  const text = errorText(err);
+  return /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|EHOSTUNREACH|getaddrinfo|Connection terminated unexpectedly|the database system is (starting up|shutting down)/i.test(text);
+}
+
+function errorText(err: unknown): string {
+  if (!err) return "";
+  if (typeof err === "string") return err;
+  if (err instanceof Error) {
+    const code = "code" in err ? String((err as { code?: unknown }).code ?? "") : "";
+    const cause = "cause" in err ? errorText((err as { cause?: unknown }).cause) : "";
+    return `${err.name} ${code} ${err.message} ${cause}`;
+  }
+  return String(err);
 }
 
 export type PersistBlockOutcome = "inserted" | "identical" | "conflict" | "failed" | "absent";

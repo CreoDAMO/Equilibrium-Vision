@@ -261,3 +261,34 @@ export function rowsReturnedAfterOrphanCleanup<T extends { hash: string }>(
   }
   return { load: [...selected.replay, ...selected.retained, ...kept], drop };
 }
+
+/**
+ * What startup may do with a database.
+ * fresh: no database, or a reached database whose block table is empty.
+ * restored: one operational chain and no retained fork.
+ * refused: the query failed after the database was reached, there is no
+ * unique height-0 chain, or a fork would shorten the chain that starts.
+ * Unreachable is not this function. A connection that never answered has
+ * not shown rows, and it is not a proof that the table is empty.
+ */
+export function recoveryVerdict(input: {
+  configured: boolean;
+  queryFailed: boolean;
+  operationalRows: number;
+  evidenceRows: number;
+  replay: number;
+  retained: number;
+}): { verdict: "fresh" | "restored" | "refused"; reason?: string } {
+  if (!input.configured) return { verdict: "fresh" };
+  if (input.queryFailed) {
+    return { verdict: "refused", reason: "chain load failed — not falling back to genesis" };
+  }
+  if (input.operationalRows === 0 && input.evidenceRows === 0) return { verdict: "fresh" };
+  if (input.operationalRows > 0 && input.replay === 0) {
+    return { verdict: "refused", reason: "no unique height-0 chain — not choosing a branch" };
+  }
+  if (input.retained > 0) {
+    return { verdict: "refused", reason: "fork retained — not starting on a truncated chain" };
+  }
+  return { verdict: "restored" };
+}

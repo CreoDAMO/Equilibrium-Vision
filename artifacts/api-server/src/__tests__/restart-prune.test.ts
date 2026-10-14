@@ -9,9 +9,11 @@ import {
   lineageReachesGenesis,
   operationalReplaySet,
   preservedBySnapshotAnchor,
+  recoveryVerdict,
   rowsReturnedAfterOrphanCleanup,
   snapshotContradictsAnchor,
 } from "../chain/restart-boundary.js";
+import { loadFailureIsUnreachable } from "../chain/persistence.js";
 
 const row = (hash: string, height: number, prevHash: string) => ({ hash, height, prevHash });
 
@@ -91,6 +93,38 @@ describe("a preserved orphan is returned, and a row the snapshot does not name i
     expect(rows.load.map((row) => row.hash)).toEqual(["g", "e"]);
     expect(rows.drop.map((row) => row.hash)).toEqual(["z"]);
     expect(rows.load.some((row) => row.hash === "e" && selected.replay.some((replay) => replay.hash === "e"))).toBe(false);
+  });
+});
+
+describe("a failed load is not an empty chain", () => {
+  it("starts fresh only when nothing is configured or the table is empty", () => {
+    expect(recoveryVerdict({
+      configured: false, queryFailed: false, operationalRows: 0, evidenceRows: 0, replay: 0, retained: 0,
+    }).verdict).toBe("fresh");
+    expect(recoveryVerdict({
+      configured: true, queryFailed: false, operationalRows: 0, evidenceRows: 0, replay: 0, retained: 0,
+    }).verdict).toBe("fresh");
+  });
+
+  it("restores one chain and refuses a query failure, two genesis rows, or a fork", () => {
+    expect(recoveryVerdict({
+      configured: true, queryFailed: false, operationalRows: 2, evidenceRows: 0, replay: 2, retained: 0,
+    }).verdict).toBe("restored");
+    expect(recoveryVerdict({
+      configured: true, queryFailed: true, operationalRows: 0, evidenceRows: 0, replay: 0, retained: 0,
+    }).verdict).toBe("refused");
+    expect(recoveryVerdict({
+      configured: true, queryFailed: false, operationalRows: 2, evidenceRows: 0, replay: 0, retained: 2,
+    }).reason).toMatch(/no unique height-0/);
+    expect(recoveryVerdict({
+      configured: true, queryFailed: false, operationalRows: 3, evidenceRows: 0, replay: 1, retained: 2,
+    }).reason).toMatch(/truncated/);
+  });
+
+  it("treats connection refusal as unreachable and a column error as a load failure", () => {
+    const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:5432"), { code: "ECONNREFUSED" });
+    expect(loadFailureIsUnreachable(refused)).toBe(true);
+    expect(loadFailureIsUnreachable(new Error('column "committed_pressure" does not exist'))).toBe(false);
   });
 });
 

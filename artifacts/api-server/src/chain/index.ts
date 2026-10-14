@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlockAsync, admitRestoredBlock, importedOmegaContradictsHeader } from "./state.js";
-import { verifyBlockBody } from "./block-body.js";
+import { verifyBlockBody, RestoreIntegrityError } from "./block-body.js";
 import {
   persistContract, persistContractsAtomic, loadContractsFromDb,
   loadBlocksFromDb, persistBlock, persistBlocks,
@@ -291,9 +291,8 @@ export async function initChain(): Promise<void> {
           seedState.recordUnexecuted(block);
         }
         if (later.fork) {
-          logger.warn(
-            { children: later.fork.children.map((hash) => hash.slice(0, 16)) },
-            "Snapshot continuation forks — not choosing a branch",
+          throw new RestoreIntegrityError(
+            `snapshot continuation forks — not starting on a truncated chain (${later.fork.children.length} children)`,
           );
         }
         for (const peer of seedState.peers) {
