@@ -393,7 +393,7 @@ export class ChainState {
   private validatorKeys = new Map<string, Uint8Array>();    // address → pubkey
   private validatorPrivKeys = new Map<string, Uint8Array>(); // address → privkey
 
-  /** Cached Sparse Merkle Tree for the current chain tip. Rebuilt on each addBlock(). */
+  /** Last operational SMT built for a read. Not a cache of a later chain. */
   _stateSmt: SparseMerkleTree | null = null;
 
   // ── Patch-05: DEX pool + SMT root persistence ─────────────────────────────
@@ -697,6 +697,7 @@ export class ChainState {
       }
       this.embodyCanonical();
       this.wasmVM.setBlockHeight(block.height);
+      this._stateSmt = null;
     });
   }
 
@@ -1322,6 +1323,7 @@ export class ChainState {
     // challenge window) would see a stale, too-high block height after a
     // rollback, breaking any height-relative logic until the next new block.
     this.wasmVM.setBlockHeight(this.height);
+    this._stateSmt = null;
 
     return removed;
   }
@@ -1620,6 +1622,7 @@ export class ChainState {
       this.canonicalEth = omega.eth.map((h) => ({ ...h }));
       this.canonicalWasm = new Map(omega.wasm);
     }
+    this._stateSmt = null;
   }
 
   processUnbonding(_height: number): void {
@@ -1709,6 +1712,7 @@ export class ChainState {
       createdAt: Math.floor(Date.now() / 1000),
     };
     this.dexPools.set(id, newPool);
+    this._stateSmt = null;
 
     // Patch-05: persist new pool to Postgres
     this._persistPool(newPool).catch((e) =>

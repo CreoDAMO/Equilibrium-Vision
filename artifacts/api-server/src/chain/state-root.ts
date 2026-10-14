@@ -90,7 +90,9 @@ export function getVerifiedStateRoot(
     };
   }
 
-  const smt = chainState._stateSmt ?? rebuildStateSmt(chainState);
+  // The previous tree is a different chain. Serving it after the next
+  // admission is not this tip. Rebuild. Do not reuse _stateSmt.
+  const smt = rebuildStateSmt(chainState);
   chainState._stateSmt = smt;
   return {
     snapshot: {
