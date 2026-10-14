@@ -42,8 +42,18 @@ const block = node.fork().mine(parent.timestamp + 12);
 assert.match(block.transitionRoot ?? "", /^[0-9a-f]{64}$/);
 assert.match(block.omegaRoot ?? "", /^[0-9a-f]{64}$/);
 
-const honest = await node.fork().submitExternal(block);
+const holder = node.fork();
+const honest = await holder.submitExternal(block);
 assert.equal(honest.ok, true, honest.error);
+const duplicate = await holder.submitExternal(block);
+assert.equal(duplicate.ok, true, duplicate.error);
+assert.equal(duplicate.report.ok, true);
+
+const forged = await holder.submitExternal({ ...block, residual: 1e-12, residualFp: 0 });
+assert.equal(forged.ok, false);
+assert.match(forged.error ?? "", /already canonical, claim refused/);
+assert.equal(holder.tip?.hash, block.hash);
+assert.equal(holder.height, block.height);
 
 const wrongTransition = reseal({ ...block, transitionRoot: "ab".repeat(32) });
 const transition = await node.fork().submitExternal(wrongTransition);
@@ -58,6 +68,8 @@ assert.match(omega.error ?? "", /omega root does not replay/);
 console.log(JSON.stringify({
   ok: true,
   honest: honest.ok,
+  duplicate: duplicate.ok,
+  forgedRefused: forged.error,
   transitionRefused: transition.error,
   omegaRefused: omega.error,
 }));

@@ -1,5 +1,5 @@
 import { dbSource, getSql } from "@/lib/db";
-import { OrganismNode } from "@/protocol/chain";
+import { OrganismNode, RestoreRefused } from "@/protocol/chain";
 import { stringifyCanonical } from "@/protocol/domain";
 import type { NetworkId, PersistedBody } from "@/protocol/types";
 
@@ -104,11 +104,12 @@ export async function restoreNode(network: NetworkId): Promise<OrganismNode> {
     const raw = rows[0]?.body;
     const body = (typeof raw === "string" ? JSON.parse(raw) : raw) as PersistedBody | undefined;
     if (body?.blocks?.length) {
-      const node = OrganismNode.restore(network, body, { audit: true });
+      const node = await OrganismNode.restoreDerived(network, body);
       node.persisted = true;
       return node;
     }
   } catch (err) {
+    if (err instanceof RestoreRefused) throw err;
     console.error("[equilibrium] restore", err);
   }
   const node = new OrganismNode(network);

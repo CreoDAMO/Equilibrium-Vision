@@ -92,6 +92,14 @@ import {
 let eventSeq = 1;
 let proposalSeq = 1;
 
+/** A saved body is not an organism until its blocks replay. */
+export class RestoreRefused extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "RestoreRefused";
+  }
+}
+
 export class OrganismNode {
   readonly network: NetworkId;
   readonly params = NETWORKS.testnet;
@@ -200,6 +208,29 @@ export class OrganismNode {
     n.seedPeers();
     if (opts?.audit) n.startKin();
     return n;
+  }
+
+  /**
+   * The organism that replay produces. The saved ledger, pools, and validators
+   * are not copied over that result. A block that does not absorb is not served.
+   */
+  static async restoreDerived(network: NetworkId, body: PersistedBody): Promise<OrganismNode> {
+    const blocks = (body.blocks ?? []).map((block) => ({ ...block, nonce: foreignNonce(block.nonce) }));
+    if (blocks.length === 0) throw new RestoreRefused("no blocks to derive");
+    const kin = new OrganismNode(network, { skipBootstrap: true });
+    kin.constitute();
+    for (const block of blocks) {
+      const err = await kin.absorb(block);
+      if (err) throw new RestoreRefused(err);
+    }
+    const tip = kin.tip;
+    const claimed = blocks[blocks.length - 1]!;
+    if (!tip || tip.hash !== claimed.hash || tip.stateRoot !== claimed.stateRoot) {
+      throw new RestoreRefused("derived tip is not the saved tip");
+    }
+    kin.persisted = true;
+    kin.finalizedThrough = kin.finalizedHeight;
+    return kin;
   }
 
   fork(): OrganismNode {
@@ -1709,6 +1740,14 @@ export class OrganismNode {
         cumulativeWork: claimed.height,
         params: this.params,
       });
+      if (!report.ok) {
+        const failed = report.checks.filter((c) => !c.ok).map((c) => c.name);
+        return {
+          ok: false,
+          report,
+          error: `already canonical, claim refused: ${failed.join(", ") || "verification failed"}`,
+        };
+      }
       return { ok: true, report };
     }
     const proved = await this.proveCandidate(claimed);

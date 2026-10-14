@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlockAsync, admitRestoredBlock, importedOmegaContradictsHeader } from "./state.js";
-import { verifyBlockBody, RestoreIntegrityError } from "./block-body.js";
+import { buildGenesisChain, buildGenesisChainFromDoc, buildChainFromBlocks, buildDocChainFromBlocks, mineNextBlockAsync, importedOmegaContradictsHeader } from "./state.js";
+import { RestoreIntegrityError } from "./block-body.js";
 import {
   persistContract, persistContractsAtomic, loadContractsFromDb,
   loadBlocksFromDb, persistBlock, persistBlocks,
@@ -23,7 +23,7 @@ import { smtKey } from "./smt.js";
 import { generateZkProof } from "./zkproof.js";
 import { getVerifiedStateRoot } from "./state-root.js";
 import { prepareGossipBlock } from "./gossip-ingress.js";
-import { selectSnapshotAnchor, lineageReachesGenesis, continuationAfterAnchor, evidenceToReplay, snapshotContradictsAnchor } from "./restart-boundary.js";
+import { selectSnapshotAnchor, lineageReachesGenesis, evidenceToReplay, snapshotContradictsAnchor } from "./restart-boundary.js";
 import { replayCanonicalEvidence } from "./evidence-restore.js";
 
 // Node's own mining address. Defaults to the "equilibrium-miner-1" dev seed
@@ -122,21 +122,9 @@ export async function initChain(): Promise<void> {
   // after that height through addBlock() — skipping potentially thousands of
   // full block replays on long-running chains.
   // ── Snapshot validation & fast-path ─────────────────────────────────────
-  // A snapshot captures ledger + UTXO at a given height so we only replay
-  // post-snapshot blocks.  Three conditions must ALL hold before we trust it;
-  // any failure falls through to the full block-replay path below.
-  //
-  //   (a) Block rows are present
-  //   (b) The row whose hash is snapshot.blockHash exists
-  //   (c) That row's height is snapshot.height
-  // Height is not unique, so the first row at the snapshot height is not the anchor.
-  //
-  // This guards against:
-  //   • persistBlock failing after takeSnapshot succeeds (snapshot ahead of blocks)
-  //   • Snapshot written to a different genesis/fork than what's in the DB
-  //   • Partial writes or other DB inconsistencies
+  // A snapshot is a stored ledger. It is not the successor function.
+  // Startup replays the retained blocks. A snapshot row is logged and not installed.
   const snapshot = await loadLatestSnapshot();
-  let usedSnapshotPath = false;
   let evidenceReplay: import("./types.js").BlockRecord[] = [];
 
   if (snapshot) {
@@ -192,128 +180,36 @@ export async function initChain(): Promise<void> {
             },
             "Imported Ω does not hash to the anchor header — not restarting from it",
           );
-        } else {
-        // A missing ancestor is a pruned prefix. The surviving walk is the
-        // suffix. The snapshot is the state at the anchor. This is not a
-        // recomputation of the rows that are gone.
-        if (!reached.complete) {
+        } else if (!reached.complete) {
+          // The suffix rows stay in the table. They are not installed.
+          // A prefix that is not in the walk was not replayed, so the
+          // snapshot is not the canonical state.
           logger.warn(
             {
               snapshotHeight: snapshot.height,
               anchor: anchor.block.hash.slice(0, 16),
               suffix: reached.chain.length,
+              reason: reached.reason,
             },
-            "Snapshot ancestors are absent — restarting from the surviving suffix",
+            "Snapshot ancestors are absent — not installing a prefix that was not replayed",
           );
-        }
-        usedSnapshotPath = true;
-
-        const genesisDocForSnap = loadGenesisDoc();
-        // Build a seeded-but-empty ChainState (validators, DEX, peers),
-        // then overwrite ledger + UTXOs with the validated snapshot data.
-        const seedState = genesisDocForSnap
-          ? buildDocChainFromBlocks(genesisDocForSnap, [])
-          : buildChainFromBlocks([]);
-
-        if (genesisDocForSnap) {
-          const firstV = genesisDocForSnap.initial_validators[0];
-          if (firstV) {
-            minerAddress = firstV.address;
-            logger.info({ minerAddress }, "Mining as first genesis validator");
-          }
-        }
-
-        if (snapshot.partitions) {
-          seedState.importRestartSnapshot({
-            ledger: snapshot.ledger,
-            utxos: snapshot.utxos,
-            ...snapshot.partitions,
-          });
         } else {
-          // Snapshots written before pools and validators were part of the root.
-          seedState.ledger.restoreAccounts(snapshot.ledger);
-          seedState.utxoSet.restoreFromSnapshot(snapshot.utxos);
-        }
-
-        // The anchor's parent walk, not whichever same-height row arrived first.
-        // Incomplete walks are refused above and do not reach this assignment.
-        const lineage = reached.chain;
-        // The parent walk shows the rows connect. It does not recompute each
-        // successor, and it does not prove the imported snapshot is that state.
-        // A body that is not the committed list is refused before it is seeded.
-        for (const block of lineage) {
-          const verdict = verifyBlockBody(block, seedState.canonicalBody.omega.chainId);
-          if (!verdict.ok) {
-            throw new Error(`snapshot lineage block refused at height ${block.height} (${verdict.code}): ${verdict.reason}`);
-          }
-        }
-        for (const block of lineage) {
-          seedState.blocks[block.height] = block;
-          for (const tx of block.transactions) {
-            const confirmed = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" as const };
-            seedState.txIndex.set(tx.hash, confirmed);
-            for (const addr of [tx.from, tx.to]) {
-              if (!seedState.addressTxs.has(addr)) seedState.addressTxs.set(addr, new Set());
-              seedState.addressTxs.get(addr)!.add(tx.hash);
-            }
-          }
-        }
-
-        // Difficulty after the snapshot block is what the next block reads.
-        // That number is in the snapshot partitions. The block row stores the
-        // difficulty the block was mined under, which is one adjustment behind.
-        const tipEra = lineage[lineage.length - 1];
-        if (!snapshot.partitions && tipEra) {
-          seedState.currentDifficulty = tipEra.difficulty;
-        }
-
-        // Descendants of the anchor only. A later height is not a lineage.
-        // A fork is retained and not chosen. An unrelated row is not executed.
-        const later = continuationAfterAnchor(allRaw, anchor.block);
-        const lineageHashes = new Set(lineage.map((block) => block.hash));
-        let halted = false;
-        for (const block of later.blocks) {
-          if (halted) {
-            seedState.recordUnexecuted(block);
-            continue;
-          }
-          try {
-            admitRestoredBlock(seedState, block);
-          } catch (err) {
-            if (!(err instanceof Error) || err.message !== "block is not the successor") throw err;
-            seedState.recordUnexecuted(block);
-            halted = true;
-          }
-        }
-        for (const block of later.retained) seedState.recordUnexecuted(block);
-        for (const block of later.ignored) {
-          if (lineageHashes.has(block.hash)) continue;
-          seedState.recordUnexecuted(block);
-        }
-        if (later.fork) {
-          throw new RestoreIntegrityError(
-            `snapshot continuation forks — not starting on a truncated chain (${later.fork.children.length} children)`,
+          // The rows may reach genesis. The snapshot ledger is still not
+          // that walk executed. Retained history is replayed below.
+          logger.info(
+            {
+              snapshotHeight: snapshot.height,
+              anchor: anchor.block.hash.slice(0, 16),
+            },
+            "Snapshot is not the derivation — replaying retained history",
           );
-        }
-        for (const peer of seedState.peers) {
-          if (peer.connected) peer.height = seedState.canonicalBody.omega.height;
-        }
-
-        seedState.wasmVM.setBlockHeight(seedState.height);
-        chainState = seedState;
-        evidenceReplay = evidenceToReplay(allRaw, snapshot.height);
-        logger.info(
-          { height: chainState.height, snapshotHeight: snapshot.height, anchor: anchor.block.hash.slice(0, 16) },
-          "Chain restored from validated snapshot + post-snapshot replay",
-        );
         }
       }
     }
   }
 
-  if (!usedSnapshotPath) {
-    // ── Full block replay ──────────────────────────────────────────────────
-    const loaded = await loadBlocksFromDb();
+  // ── Full block replay ──────────────────────────────────────────────────
+  const loaded = await loadBlocksFromDb();
     const decision = startupFromLoad(loaded);
     if (decision.action === "refuse") {
       throw new RestoreIntegrityError(decision.reason);
@@ -358,7 +254,6 @@ export async function initChain(): Promise<void> {
         logger.warn({ err }, "Genesis persistence failed — continuing in-memory");
       }
     }
-  }
 
   await replayCanonicalEvidence(chainState, evidenceReplay);
 
@@ -385,9 +280,7 @@ export async function initChain(): Promise<void> {
     logger.info({ count: savedContracts.length }, "Contracts loaded from DB");
   }
 
-  // A restored snapshot is already the organism, including its contracts.
-  // Deploying again would mint a contract the previous process did not have.
-  if (!usedSnapshotPath) {
+  // Contracts already stored are loaded above. A configured address is reused.
   // Admin multisig — replaces the single ADMIN_KEY secret for privileged
   // actions (validator slashing) with an on-chain, threshold-signed gate.
   // No-op unless ADMIN_MULTISIG_OWNERS (fresh deploy) or ADMIN_MULTISIG_ADDRESS
@@ -412,7 +305,6 @@ export async function initChain(): Promise<void> {
     await deployCrossChainRelayIfNeeded(chainState.wasmVM, minerAddress);
   } catch (err) {
     logger.warn({ err }, "CrossChainRelay deployment check failed — continuing without it");
-  }
   }
 
   // ── P2P inbound callbacks ──────────────────────────────────────────────────
