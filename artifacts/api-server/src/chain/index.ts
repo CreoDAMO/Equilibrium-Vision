@@ -7,7 +7,7 @@ import {
   loadBlocksFromDb, persistBlock, persistBlocks,
   loadLatestSnapshot, saveStateSnapshot, loadAllBlocksRaw,
   pruneOldBlocks, DEFAULT_PRUNE_KEEP,
-  getRawPool,
+  getRawPool, startupFromLoad,
 } from "./persistence.js";
 import type { ChainState } from "./state.js";
 import type { GenesisDocument } from "@workspace/coinomics";
@@ -313,9 +313,14 @@ export async function initChain(): Promise<void> {
 
   if (!usedSnapshotPath) {
     // ── Full block replay ──────────────────────────────────────────────────
-    const dbBlocks = await loadBlocksFromDb();
+    const loaded = await loadBlocksFromDb();
+    const decision = startupFromLoad(loaded);
+    if (decision.action === "refuse") {
+      throw new RestoreIntegrityError(decision.reason);
+    }
 
-    if (dbBlocks) {
+    if (decision.action === "restore") {
+      const dbBlocks = decision.blocks;
       logger.info({ blockCount: dbBlocks.length }, "Restoring chain from Postgres");
       const genesisDocForRestore = loadGenesisDoc();
       if (genesisDocForRestore) {

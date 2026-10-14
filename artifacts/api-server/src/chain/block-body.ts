@@ -10,6 +10,8 @@
 import { merkleRoot } from "./crypto.js";
 import { verifyCanonicalTx } from "../lib/canonical-tx.js";
 import type { BlockRecord } from "./types.js";
+import { evidenceRoot } from "../../../../site/src/protocol/evidence.js";
+import type { TransitionEvidence } from "../../../../site/src/protocol/types.js";
 
 export type BodyVerdict =
   | { ok: true }
@@ -20,6 +22,29 @@ export class RestoreIntegrityError extends Error {
     super(message);
     this.name = "RestoreIntegrityError";
   }
+}
+
+/**
+ * The stored evidenceRoot column is not the authority for the evidence.
+ * No evidence: the column is left alone. Evidence with no column, or the
+ * same root: the record carries the recomputed root. A different column
+ * is refused. It is not rewritten and it is not replayed.
+ */
+export function bindStoredEvidenceRoot(
+  stored: string | null | undefined,
+  evidence: unknown,
+): { ok: true; evidenceRoot?: string } | { ok: false; reason: string } {
+  if (evidence == null) return { ok: true, evidenceRoot: stored ?? undefined };
+  let root: string;
+  try {
+    root = evidenceRoot(evidence as TransitionEvidence);
+  } catch {
+    return { ok: false, reason: "evidenceRoot is not the evidence" };
+  }
+  if (stored != null && stored !== "" && stored.toLowerCase() !== root) {
+    return { ok: false, reason: "evidenceRoot is not the evidence" };
+  }
+  return { ok: true, evidenceRoot: root };
 }
 
 export function verifyBlockBody(

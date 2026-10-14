@@ -13,7 +13,9 @@ import {
   rowsReturnedAfterOrphanCleanup,
   snapshotContradictsAnchor,
 } from "../chain/restart-boundary.js";
-import { loadFailureIsUnreachable } from "../chain/persistence.js";
+import { loadFailureIsUnreachable, startupFromLoad } from "../chain/persistence.js";
+import { bindStoredEvidenceRoot } from "../chain/block-body.js";
+import { evidenceRoot } from "../../../../site/src/protocol/evidence.js";
 
 const row = (hash: string, height: number, prevHash: string) => ({ hash, height, prevHash });
 
@@ -125,6 +127,35 @@ describe("a failed load is not an empty chain", () => {
     const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:5432"), { code: "ECONNREFUSED" });
     expect(loadFailureIsUnreachable(refused)).toBe(true);
     expect(loadFailureIsUnreachable(new Error('column "committed_pressure" does not exist'))).toBe(false);
+  });
+
+  it("lets the caller build genesis only from unconfigured or proved-empty storage", () => {
+    expect(startupFromLoad({ kind: "unconfigured" })).toEqual({ action: "genesis" });
+    expect(startupFromLoad({ kind: "proved-empty" })).toEqual({ action: "genesis" });
+    expect(startupFromLoad({ kind: "restored", blocks: [] }).action).toBe("restore");
+    expect(startupFromLoad({ kind: "unreachable", reason: "connect ECONNREFUSED" })).toEqual({
+      action: "refuse",
+      reason: "connect ECONNREFUSED",
+    });
+    expect(startupFromLoad({ kind: "integrity-failure", reason: "fork retained — not starting on a truncated chain" }).action).toBe("refuse");
+  });
+});
+
+describe("a stored evidence root that is not the evidence is not carried", () => {
+  const evidence = { v: 1 as const, chainId: 1, wasmCode: "00", btc: [], eth: [], wasm: [], stake: [] };
+  const root = evidenceRoot(evidence);
+
+  it("fills a missing column from the evidence and keeps a matching column", () => {
+    expect(bindStoredEvidenceRoot(undefined, evidence)).toEqual({ ok: true, evidenceRoot: root });
+    expect(bindStoredEvidenceRoot(root, evidence)).toEqual({ ok: true, evidenceRoot: root });
+    expect(bindStoredEvidenceRoot(undefined, undefined)).toEqual({ ok: true, evidenceRoot: undefined });
+  });
+
+  it("refuses a column that names a different root", () => {
+    expect(bindStoredEvidenceRoot("ab".repeat(32), evidence)).toEqual({
+      ok: false,
+      reason: "evidenceRoot is not the evidence",
+    });
   });
 });
 

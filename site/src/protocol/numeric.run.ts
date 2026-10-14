@@ -332,9 +332,10 @@ if (process.env.DATABASE_URL) {
         });
       }
       const loaded = await loadBlocksFromDb();
+      if (loaded.kind !== "restored") throw new Error(`chain load is ${loaded.kind}`);
       for (const n of CORPUS) {
         const hash = `aa${n.toString(16).padStart(62, "0")}`;
-        const row = loaded?.find((block) => block.hash === hash);
+        const row = loaded.blocks.find((block) => block.hash === hash);
         if (!row) throw new Error(`persistBlock did not reload ${n}`);
         assert.equal(row.nonce, n);
         await pool.query("delete from blocks where hash = $1", [hash]);

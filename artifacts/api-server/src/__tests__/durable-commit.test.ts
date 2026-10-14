@@ -10,7 +10,8 @@ import { eq } from "drizzle-orm";
 import { ChainState, buildGenesisChainFromDoc } from "../chain/state.js";
 import { CanonicalBody } from "../chain/canonical-body.js";
 import { kernelParty, KERNEL_ALLOCATIONS } from "../chain/kernel-genesis.js";
-import { persistBlock, persistBlockUsing, deletePrunedBlockRows, type PersistBlockResult } from "../chain/persistence.js";
+import { persistBlock, persistBlockUsing, deletePrunedBlockRows, deleteAbandonedBlockRows, type PersistBlockResult } from "../chain/persistence.js";
+import { operationalReplaySet } from "../chain/restart-boundary.js";
 import { blocksTable } from "../../../../lib/db/src/schema/blocks.ts";
 import { transactionsTable } from "../../../../lib/db/src/schema/transactions.ts";
 import { openedCouplings } from "../../../../site/src/protocol/constitution.js";
@@ -522,6 +523,96 @@ describe("persistBlock names the database outcome", () => {
     expect(await deletePrunedBlockRows(db, 3)).toBe(1);
     const blocks = await db.select().from(blocksTable);
     expect(blocks.map((row) => row.hash)).toEqual([keep.hash]);
+    const txs = await db.select().from(transactionsTable);
+    expect(txs).toEqual([]);
+    await client.close();
+  });
+
+  it("deletes an abandoned sibling and the transaction that names it, and leaves the other child", async () => {
+    const client = new PGlite();
+    await client.exec(`
+      CREATE TABLE blocks (
+        hash text PRIMARY KEY,
+        height integer NOT NULL,
+        prev_hash text NOT NULL,
+        merkle_root text NOT NULL,
+        timestamp bigint NOT NULL,
+        nonce numeric(20,0) NOT NULL,
+        difficulty real NOT NULL,
+        residual real NOT NULL,
+        residual_fp bigint,
+        miner text NOT NULL,
+        tx_count integer NOT NULL DEFAULT 0,
+        coinbase_reward bigint NOT NULL DEFAULT 0,
+        finalized boolean NOT NULL DEFAULT false,
+        zk_proof jsonb,
+        state_root text,
+        committed_pressure double precision,
+        chain_id integer,
+        evidence_root text,
+        omega_root text,
+        evidence jsonb
+      );
+      CREATE TABLE transactions (
+        hash text PRIMARY KEY,
+        block_hash text,
+        block_height integer,
+        from_address text NOT NULL,
+        to_address text NOT NULL,
+        amount bigint NOT NULL,
+        fee bigint NOT NULL DEFAULT 0,
+        nonce bigint NOT NULL,
+        signature text NOT NULL,
+        public_key text,
+        tx_index integer,
+        status text NOT NULL DEFAULT 'pending',
+        timestamp bigint NOT NULL
+      );
+    `);
+    const db = drizzle(client, { schema: { blocksTable, transactionsTable } });
+    const genesisRow = stored("11".repeat(32));
+    genesisRow.height = 0;
+    genesisRow.prevHash = "00".repeat(32);
+    const kept = stored("22".repeat(32));
+    kept.height = 1;
+    kept.prevHash = genesisRow.hash;
+    const abandoned = stored("33".repeat(32));
+    abandoned.height = 1;
+    abandoned.prevHash = genesisRow.hash;
+    expect(await persistBlockUsing(db, genesisRow)).toEqual({ durable: true, outcome: "inserted" });
+    expect(await persistBlockUsing(db, kept)).toEqual({ durable: true, outcome: "inserted" });
+    expect(await persistBlockUsing(db, abandoned)).toEqual({ durable: true, outcome: "inserted" });
+    await db.insert(transactionsTable).values({
+      hash: "44".repeat(32),
+      blockHash: abandoned.hash,
+      blockHeight: 1,
+      from: "aa".repeat(20),
+      to: "bb".repeat(20),
+      amount: 1,
+      fee: 0,
+      nonce: 0,
+      signature: "ab".repeat(64),
+      status: "confirmed",
+      timestamp: 1,
+    });
+    const before = await db.select().from(blocksTable);
+    const forked = operationalReplaySet(before.map((row) => ({
+      hash: row.hash,
+      height: row.height,
+      prevHash: row.prevHash,
+      evidence: null,
+    })));
+    expect(forked.retained.map((row) => row.hash).sort()).toEqual([kept.hash, abandoned.hash].sort());
+    expect(await deleteAbandonedBlockRows(db, [abandoned.hash])).toBe(1);
+    const after = await db.select().from(blocksTable);
+    const replay = operationalReplaySet(after.map((row) => ({
+      hash: row.hash,
+      height: row.height,
+      prevHash: row.prevHash,
+      evidence: null,
+    })));
+    expect(replay.retained).toEqual([]);
+    expect(replay.replay.map((row) => row.hash).sort()).toEqual([genesisRow.hash, kept.hash].sort());
     const txs = await db.select().from(transactionsTable);
     expect(txs).toEqual([]);
     await client.close();

@@ -7,6 +7,7 @@ import type { BlockRecord, TxRecord } from "./types.js";
 import { ChainState } from "./state.js";
 import { persistBlock, persistKeepsMemory, type PersistBlockResult } from "./persistence.js";
 import { foreignNonce } from "../../../../site/src/protocol/domain.js";
+import { bindStoredEvidenceRoot } from "./block-body.js";
 
 export type EvidenceIngressResult = {
   admitted: boolean;
@@ -109,6 +110,9 @@ export async function admitRemoteEvidence(
     transitionRoot: typeof remote.transitionRoot === "string" ? remote.transitionRoot : undefined,
     evidence: remote.evidence as BlockRecord["evidence"],
   };
+  const bound = bindStoredEvidenceRoot(block.evidenceRoot, block.evidence);
+  if (!bound.ok) return refused(bound.reason);
+  block.evidenceRoot = bound.evidenceRoot;
 
   return state.withAdmission(async () => {
     const beforeHeight = state.canonicalBody.omega.height;

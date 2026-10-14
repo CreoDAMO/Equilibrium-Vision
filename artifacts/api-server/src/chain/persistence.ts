@@ -8,7 +8,7 @@ import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
 import { omegaRecord } from "../../../../site/src/protocol/seal.js";
 import { logger } from "../lib/logger.js";
 import { snapshotCoversPrune, operationalReplaySet, preservedBySnapshotAnchor, rowsReturnedAfterOrphanCleanup, recoveryVerdict } from "./restart-boundary.js";
-import { orderRestoredRows, RestoreIntegrityError } from "./block-body.js";
+import { orderRestoredRows, RestoreIntegrityError, bindStoredEvidenceRoot } from "./block-body.js";
 
 // ── Self-contained persistence layer ─────────────────────────────────────────
 //
@@ -191,15 +191,53 @@ function transactionsInCommittedOrder(rows: Array<typeof transactionsTable.$infe
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Load persisted blocks for a restart.
- * Returns null only when no database is configured, the database cannot be
- * reached, or a successful read found an empty block table. Those three are
- * not the same fact. A query that ran and failed, a chain with no unique
- * height-0 row, and a retained fork throw. They are not genesis.
+ * What a restart is allowed to do with a load.
+ * Genesis is only an unconfigured process or a table a successful read
+ * proved empty. Unreachable storage is not empty. An integrity failure
+ * is not empty either.
  */
-export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
+export type ChainLoad =
+  | { kind: "unconfigured" }
+  | { kind: "proved-empty" }
+  | { kind: "restored"; blocks: BlockRecord[] }
+  | { kind: "unreachable"; reason: string }
+  | { kind: "integrity-failure"; reason: string };
+
+export function startupFromLoad(load: ChainLoad):
+  | { action: "genesis" }
+  | { action: "restore"; blocks: BlockRecord[] }
+  | { action: "refuse"; reason: string } {
+  switch (load.kind) {
+    case "unconfigured":
+    case "proved-empty":
+      return { action: "genesis" };
+    case "restored":
+      return { action: "restore", blocks: load.blocks };
+    case "unreachable":
+    case "integrity-failure":
+      return { action: "refuse", reason: load.reason };
+  }
+}
+
+function bindBlockEvidence<T extends { evidenceRoot?: string; evidence?: unknown; height: number }>(block: T): T {
+  const bound = bindStoredEvidenceRoot(block.evidenceRoot, block.evidence);
+  if (!bound.ok) {
+    throw new RestoreIntegrityError(`${bound.reason} at height ${block.height}`);
+  }
+  block.evidenceRoot = bound.evidenceRoot;
+  return block;
+}
+
+/**
+ * Load persisted blocks for a restart.
+ * `unconfigured` and `proved-empty` are the only loads that may become genesis.
+ * Unreachable storage is its own result. A bad query, a chain with no unique
+ * height-0 row, a retained fork, and an evidenceRoot column that is not the
+ * evidence throw as integrity failures. None of those are an empty table.
+ */
+export async function loadBlocksFromDb(): Promise<ChainLoad> {
   const db = getDb();
-  if (!db) return null;
+  if (!db) return { kind: "unconfigured" };
 
   try {
     await ensureCommittedPressure();
@@ -208,15 +246,13 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       db.select().from(transactionsTable).where(eq(transactionsTable.status, "confirmed")),
     ]);
 
-    if (dbBlocks.length === 0) return null; // proved empty → genesis
+    if (dbBlocks.length === 0) return { kind: "proved-empty" };
 
     const canonicalRows = dbBlocks.filter((b) => b.evidence != null);
     const chainRows = dbBlocks.filter((b) => b.evidence == null);
 
     let splitLoad: typeof chainRows = [];
-    if (chainRows.length === 0) {
-      if (canonicalRows.length === 0) return null;
-    } else {
+    if (chainRows.length > 0) {
       const selected = operationalReplaySet(chainRows);
       const verdict = recoveryVerdict({
         configured: true,
@@ -251,7 +287,7 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       } catch (pruneErr) {
         logger.warn({ pruneErr }, "Failed to prune disconnected operational rows (will retry)");
       }
-      if (splitLoad.length === 0 && canonicalRows.length === 0) return null;
+      if (splitLoad.length === 0 && canonicalRows.length === 0) return { kind: "proved-empty" };
     }
 
     const validBlocks = [...splitLoad, ...canonicalRows];
@@ -268,7 +304,9 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       txsByBlock.set(hash, transactionsInCommittedOrder(rows));
     }
 
-    return validBlocks.map((b) => ({
+    return {
+      kind: "restored",
+      blocks: validBlocks.map((b) => bindBlockEvidence({
       hash:          b.hash,
       height:        b.height,
       prevHash:      b.prevHash,
@@ -292,16 +330,22 @@ export async function loadBlocksFromDb(): Promise<BlockRecord[] | null> {
       evidenceRoot:  b.evidenceRoot ?? undefined,
       omegaRoot:     b.omegaRoot ?? undefined,
       evidence:      (b.evidence as BlockRecord["evidence"]) ?? undefined,
-    }));
+    })),
+    };
   } catch (err) {
-    if (err instanceof RestoreIntegrityError) throw err;
-    if (loadFailureIsUnreachable(err)) {
-      logger.warn({ err }, "Postgres unreachable — not a proved-empty chain");
-      return null;
+    if (err instanceof RestoreIntegrityError) {
+      return { kind: "integrity-failure", reason: err.message };
     }
-    throw new RestoreIntegrityError(
-      `chain load failed — not falling back to genesis: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    if (loadFailureIsUnreachable(err)) {
+      const reason = err instanceof Error ? err.message : String(err);
+      logger.warn({ err }, "Postgres unreachable — not a proved-empty chain");
+      return { kind: "unreachable", reason };
+    }
+    const reason = err instanceof Error ? err.message : String(err);
+    return {
+      kind: "integrity-failure",
+      reason: `chain load failed — not falling back to genesis: ${reason}`,
+    };
   }
 }
 
@@ -832,7 +876,7 @@ export async function loadAllBlocksRaw(): Promise<BlockRecord[] | null> {
       txByBlock.set(hash, transactionsInCommittedOrder(rows));
     }
 
-    return blockRows.map((b) => ({
+    return blockRows.map((b) => bindBlockEvidence({
       hash:          b.hash,
       height:        b.height,
       prevHash:      b.prevHash,
@@ -914,6 +958,22 @@ export async function deletePrunedBlockRows(db: PruneDb, pruneBelow: number): Pr
     await tx.delete(blocksTable).where(inArray(blocksTable.hash, hashes));
   });
   return hashes.length;
+}
+
+/**
+ * Delete one abandoned branch by hash, and the transaction rows that name
+ * those hashes. The replacement branch is not in this list. A snapshot anchor
+ * must not be passed here. This does not choose between two children; the
+ * caller already decided which hashes are no longer canonical.
+ */
+export async function deleteAbandonedBlockRows(db: PruneDb, hashes: readonly string[]): Promise<number> {
+  const unique = [...new Set(hashes)].filter((hash) => hash.length > 0);
+  if (unique.length === 0) return 0;
+  await db.transaction(async (tx) => {
+    await tx.delete(transactionsTable).where(inArray(transactionsTable.blockHash, unique));
+    await tx.delete(blocksTable).where(inArray(blocksTable.hash, unique));
+  });
+  return unique.length;
 }
 
 /**

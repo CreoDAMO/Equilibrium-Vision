@@ -56,7 +56,8 @@ await persistBlock(block);
 await closePersistence();
 
 const loaded = await loadBlocksFromDb();
-const row = loaded?.[0];
+if (loaded.kind !== "restored") throw new Error(`chain load is ${loaded.kind}`);
+const row = loaded.blocks[0];
 if (!row?.stateRoot || row.residualFp === undefined) throw new Error("row did not round-trip");
 const recomputed = canonicalHeaderHash({
   prevHash: row.prevHash,
