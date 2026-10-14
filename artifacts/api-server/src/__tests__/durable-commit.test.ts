@@ -10,7 +10,7 @@ import { eq } from "drizzle-orm";
 import { ChainState, buildGenesisChainFromDoc } from "../chain/state.js";
 import { CanonicalBody } from "../chain/canonical-body.js";
 import { kernelParty, KERNEL_ALLOCATIONS } from "../chain/kernel-genesis.js";
-import { persistBlock, persistBlockUsing, deletePrunedBlockRows, deleteAbandonedBlockRows, type PersistBlockResult } from "../chain/persistence.js";
+import { persistBlock, persistBlockUsing, deletePrunedBlockRows, deleteAbandonedBlockRows, getRawPool, type PersistBlockResult } from "../chain/persistence.js";
 import { operationalReplaySet } from "../chain/restart-boundary.js";
 import { blocksTable } from "../../../../lib/db/src/schema/blocks.ts";
 import { transactionsTable } from "../../../../lib/db/src/schema/transactions.ts";
@@ -619,8 +619,20 @@ describe("persistBlock names the database outcome", () => {
   });
 
   it("a database that inserts the row is not a failed write", async () => {
-    const result = await persistBlock(stored("44".repeat(32)));
-    expect(result.outcome === "absent" || result.outcome === "inserted" || result.outcome === "identical").toBe(true);
-    expect(result.durable).toBe(result.outcome !== "absent");
+    const block = stored("44".repeat(32));
+    let result: PersistBlockResult | undefined;
+    try {
+      result = await persistBlock(block);
+      expect(result.outcome === "absent" || result.outcome === "inserted" || result.outcome === "identical").toBe(true);
+      expect(result.durable).toBe(result.outcome !== "absent");
+    } finally {
+      // This is the shared chain table. A height with no genesis makes the
+      // next initChain refuse to choose a branch. Remove only the row this
+      // test inserted.
+      if (result?.outcome === "inserted") {
+        const pool = getRawPool();
+        if (pool) await pool.query("delete from blocks where hash = $1", [block.hash]);
+      }
+    }
   });
 });
