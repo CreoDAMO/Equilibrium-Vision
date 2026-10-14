@@ -6,17 +6,18 @@ const router = Router();
 
 router.get("/chain/status", (_req, res) => {
   const s = chainState;
-  const lb = s.latestBlock;
+  const tip = s.canonicalTip;
+  const height = s.canonicalBody.omega.height;
   res.json({
-    height: s.height,
-    latestHash: lb?.hash ?? "0".repeat(64),
-    latestTimestamp: lb?.timestamp ?? 0,
+    height,
+    latestHash: tip?.hash ?? "0".repeat(64),
+    latestTimestamp: tip?.timestamp ?? 0,
     totalTxCount: s.totalTxCount,
     mempoolSize: s.mempool.size,
     mempoolPressure: s.mempool.pressure,
     validatorCount: [...s.validators.values()].filter(v => !v.slashed && !v.jailed).length,
-    cumulativeWork: s.height * s.currentDifficulty,
-    lastResidual: lb?.residual ?? 0,
+    cumulativeWork: Math.max(0, height) * s.currentDifficulty,
+    lastResidual: tip?.residual ?? 0,
     avgBlockTime: s.avgBlockTime,
     tps: s.tps,
     difficulty: s.currentDifficulty,

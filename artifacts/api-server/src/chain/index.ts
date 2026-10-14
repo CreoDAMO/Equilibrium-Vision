@@ -116,12 +116,6 @@ function loadGenesisDoc(): GenesisDocument | null {
 }
 
 export async function initChain(): Promise<void> {
-  // ── Snapshot fast-path ────────────────────────────────────────────────────
-  // Try to restore from a state snapshot first.  A snapshot captures the full
-  // ledger + UTXO set at a given height, so we only need to replay blocks
-  // after that height through addBlock() — skipping potentially thousands of
-  // full block replays on long-running chains.
-  // ── Snapshot validation & fast-path ─────────────────────────────────────
   // A snapshot is a stored ledger. It is not the successor function.
   // Startup replays the retained blocks. A snapshot row is logged and not installed.
   const snapshot = await loadLatestSnapshot();

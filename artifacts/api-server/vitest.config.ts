@@ -19,8 +19,11 @@ export default defineConfig({
     // 300 s (5 min) gives ample headroom without masking genuine hangs.
     testTimeout: 300_000,
     include: ["src/**/*.test.ts"],
-    pool: "forks",
-    forks: { singleFork: true },
+    // One worker, one database. Vitest 4 does not read forks.singleFork.
+    // Parallel workers each persist a different height-0 block, and startup
+    // then correctly refuses to choose a branch.
+    fileParallelism: false,
+    maxWorkers: 1,
     env: {
       DATABASE_URL: "postgresql://runner@127.0.0.1:5432/equilibrium",
       NODE_ENV: "test",
