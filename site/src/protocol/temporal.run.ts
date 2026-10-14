@@ -105,7 +105,7 @@ const tail = block({
 state.recordUnexecuted(anchor);
 state.recordUnexecuted(tail);
 const parked = omegaDigest(state.canonicalBody.omega);
-const refused = state.reorganize([
+const refused = await state.reorganize([
   block({
     hash: "33".repeat(32),
     height: 1,
@@ -249,7 +249,7 @@ fork.addBlock(block({
   nonce: high.nonce,
   residualFp: high.fp,
 }));
-const switched = fork.reorganize([
+const switched = await fork.reorganize([
   block({
     hash: "c3".repeat(32),
     height: 1,

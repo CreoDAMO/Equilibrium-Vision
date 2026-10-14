@@ -28,7 +28,7 @@ import { generateZkProof } from "./zkproof.js";
 import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import { canonicalSigningBytes } from "../lib/canonical-tx.js";
 import { canonicalResidual, pressureEvidence } from "./canonical-residual.js";
-import { withDbRetry, persistBlock, persistKeepsMemory, type PersistBlockResult } from "./persistence.js";
+import { withDbRetry, persistBlock, persistKeepsMemory, getDb, commitBranchSwitch, type PersistBlockResult } from "./persistence.js";
 import { operationalReplaySet } from "./restart-boundary.js";
 import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import { btcHeaderHash } from "./btc-header.js";
@@ -256,6 +256,8 @@ export class ChainState {
   blocks: BlockRecord[] = [];
   /** Non-successors kept for inspection. Not the tip, not a parent, and not a height. */
   retainedBlocks: BlockRecord[] = [];
+  /** Set when a durable branch committed and this process did not install it. Do not serve the old tip. */
+  serviceFenced = false;
   txIndex = new Map<string, TxRecord>();
   addressTxs = new Map<string, Set<string>>();
   ledger = new Ledger();
@@ -643,6 +645,7 @@ export class ChainState {
   }
 
   addBlock(block: BlockRecord, expect?: { hash: string; merkleRoot: string }): void {
+    if (this.serviceFenced) throw new Error("chain is fenced");
     const poolHit = block.transactions.some((tx) =>
       this.dexPools.has(tx.to)
       || this.canonicalBody.omega.pools.some((p) => (p.address || poolAddress(p.id)) === tx.to));
@@ -1329,37 +1332,85 @@ export class ChainState {
   }
 
   /**
-   * Attempt a chain reorganization to a competing set of blocks. Follows the
-   * Rust consensus's fork-choice rule (`choose_fork`): the chain with the
-   * lower cumulative residual (higher stationarity quality) wins. `newBlocks`
-   * must chain from a common ancestor already present in `this.blocks`
-   * (i.e. `newBlocks[0].prevHash` must equal the hash of the block at the
-   * fork point).
+   * Switch to the lower-residual branch. Structural refusal does not touch
+   * memory. When a database is passed (or configured), the replacement rows
+   * and the abandoned rows commit in one transaction before the tip is
+   * published. A failed transaction leaves the incumbent chain. If the
+   * database commits and this process cannot install it, the chain is fenced.
    */
-  reorganize(newBlocks: BlockRecord[]): { switched: boolean; reason: string } {
-    if (newBlocks.length === 0) return { switched: false, reason: "no candidate blocks" };
+  async reorganize(
+    newBlocks: BlockRecord[],
+    db: { transaction: <T>(fn: (tx: any) => Promise<T>) => Promise<T> } | null = getDb(),
+  ): Promise<{ switched: boolean; fenced: boolean; reason: string }> {
+    if (this.serviceFenced) return { switched: false, fenced: true, reason: "chain is fenced" };
+    const plan = this.planReorganization(newBlocks);
+    if (!plan.ok) return { switched: false, fenced: false, reason: plan.reason };
 
-    const forkPointHash = newBlocks[0]!.prevHash;
-    const forkHeight = this.blocks.findIndex((b) => b.hash === forkPointHash);
-    if (forkHeight === -1) {
-      return { switched: false, reason: "fork point not found on current chain" };
+    if (db) {
+      const probe = this.installReorganization(plan.forkHeight, newBlocks, plan.abandoned.length, true);
+      if (!probe.switched) return { switched: false, fenced: false, reason: probe.reason };
+      try {
+        this.restoreTemporal(probe.saved);
+      } catch {
+        this.serviceFenced = true;
+        return { switched: false, fenced: true, reason: "reorganization restore failed" };
+      }
+      const committed = await commitBranchSwitch(db, {
+        replacement: newBlocks,
+        abandoned: plan.abandoned,
+        preserve: [plan.forkHash],
+      });
+      if (!committed.committed) return { switched: false, fenced: false, reason: committed.reason };
+      try {
+        const installed = this.installReorganization(plan.forkHeight, newBlocks, plan.abandoned.length, false);
+        if (!installed.switched) {
+          this.serviceFenced = true;
+          return { switched: false, fenced: true, reason: "durable branch committed; memory did not install" };
+        }
+        return { switched: true, fenced: false, reason: installed.reason };
+      } catch {
+        this.serviceFenced = true;
+        return { switched: false, fenced: true, reason: "durable branch committed; memory did not install" };
+      }
     }
 
-    const currentTail = this.blocks.slice(forkHeight + 1);
-    // Fixed-point comparison: scale residuals by 10^18 before summing so the
-    // fork-choice is identical across all architectures regardless of their
-    // IEEE-754 floating-point accumulation order.
-    // Prefer the stored fixed-point field (computed at mine-time) over a
-    // runtime float conversion so the comparison is always bit-identical.
+    const installed = this.installReorganization(plan.forkHeight, newBlocks, plan.abandoned.length, true);
+    return { switched: installed.switched, fenced: false, reason: installed.reason };
+  }
+
+  private planReorganization(newBlocks: BlockRecord[]):
+    | { ok: false; reason: string }
+    | { ok: true; forkHeight: number; forkHash: string; abandoned: string[] } {
+    if (newBlocks.length === 0) return { ok: false, reason: "no candidate blocks" };
+    const forkHash = newBlocks[0]!.prevHash;
+    const forkIndex = this.blocks.findIndex((b) => b.hash === forkHash);
+    if (forkIndex === -1) return { ok: false, reason: "fork point not found on current chain" };
+    const forkBlock = this.blocks[forkIndex]!;
+    if (forkBlock.height < this.finalizedHeight) {
+      return { ok: false, reason: `cannot reorganize through finalized height ${this.finalizedHeight}` };
+    }
+    const currentTail = this.blocks.slice(forkIndex + 1);
     const toFP = (b: BlockRecord): bigint =>
       BigInt(b.residualFp ?? Math.floor(b.residual * 1e18));
-    const currentResidual   = currentTail.reduce((s, b) => s + toFP(b), 0n);
+    const currentResidual = currentTail.reduce((s, b) => s + toFP(b), 0n);
     const candidateResidual = newBlocks.reduce((s, b) => s + toFP(b), 0n);
-
     if (candidateResidual >= currentResidual) {
-      return { switched: false, reason: "candidate chain does not have lower cumulative residual" };
+      return { ok: false, reason: "candidate chain does not have lower cumulative residual" };
     }
+    for (let i = 1; i < newBlocks.length; i++) {
+      if (newBlocks[i]!.prevHash !== newBlocks[i - 1]!.hash) {
+        return { ok: false, reason: "reorg block is not the successor" };
+      }
+    }
+    return { ok: true, forkHeight: forkBlock.height, forkHash, abandoned: currentTail.map((b) => b.hash) };
+  }
 
+  private installReorganization(
+    forkHeight: number,
+    newBlocks: BlockRecord[],
+    removed: number,
+    restoreOnFailure: boolean,
+  ): { switched: boolean; reason: string; saved: ReturnType<ChainState["captureTemporal"]> } {
     const saved = this.captureTemporal();
     try {
       this.rollbackToHeight(forkHeight);
@@ -1377,11 +1428,15 @@ export class ChainState {
         if (block.hash !== this.canonicalBody.omega.tipHash) throw new Error("reorg block is not the successor");
       }
     } catch (err) {
+      if (!restoreOnFailure) throw err;
       this.restoreTemporal(saved);
-      return { switched: false, reason: (err as Error).message };
+      return { switched: false, reason: (err as Error).message, saved };
     }
-
-    return { switched: true, reason: `reorganized ${currentTail.length} block(s) for ${newBlocks.length} block(s) with lower residual` };
+    return {
+      switched: true,
+      reason: `reorganized ${removed} block(s) for ${newBlocks.length} block(s) with lower residual`,
+      saved,
+    };
   }
 
   // ── Finality gadget ──────────────────────────────────────────────────────────

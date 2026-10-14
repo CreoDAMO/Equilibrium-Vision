@@ -124,7 +124,7 @@ function initPool(): InstanceType<typeof Pool> | null {
 /** Lazy singleton — returns null when DATABASE_URL is absent.
  *  Does NOT cache null on failure so a transient startup race
  *  (Postgres not yet ready) is retried on the next call. */
-function getDb(): Db | null {
+export function getDb(): Db | null {
   if (_initDone) return _db;
   initPool();
   return _db;
@@ -974,6 +974,102 @@ export async function deleteAbandonedBlockRows(db: PruneDb, hashes: readonly str
     await tx.delete(blocksTable).where(inArray(blocksTable.hash, unique));
   });
   return unique.length;
+}
+
+/**
+ * Insert the replacement branch and delete the abandoned one in one transaction.
+ * A throw rolls both back, so the incumbent rows stay the recoverable chain.
+ * `preserve` is the ancestor (and any other hash that must survive). A snapshot
+ * whose block hash is abandoned is removed in the same transaction. A snapshot
+ * of a preserved hash is not.
+ */
+export async function commitBranchSwitch(
+  db: { transaction: <T>(fn: (tx: any) => Promise<T>) => Promise<T> },
+  input: { replacement: BlockRecord[]; abandoned: readonly string[]; preserve: readonly string[] },
+): Promise<{ committed: true } | { committed: false; reason: string }> {
+  const abandoned = [...new Set(input.abandoned)];
+  const preserve = new Set(input.preserve);
+  if (abandoned.some((hash) => preserve.has(hash))) {
+    return { committed: false, reason: "branch switch would delete a preserved block" };
+  }
+  if (input.replacement.some((block) => abandoned.includes(block.hash))) {
+    return { committed: false, reason: "replacement is also abandoned" };
+  }
+  try {
+    await db.transaction(async (tx) => {
+      for (const block of input.replacement) {
+        const inserted = await tx
+          .insert(blocksTable)
+          .values({
+            hash:           block.hash,
+            height:         block.height,
+            prevHash:       block.prevHash,
+            merkleRoot:     block.merkleRoot,
+            timestamp:      block.timestamp,
+            nonce:          asBlockNonce(block.nonce),
+            difficulty:     block.difficulty,
+            residual:       block.residual,
+            residualFp:     block.residualFp ?? Math.floor(block.residual * 1e18),
+            miner:          block.miner,
+            txCount:        block.txCount,
+            coinbaseReward: block.coinbaseReward,
+            finalized:      block.finalized ?? false,
+            zkProof:        (block.zkProof ?? null) as unknown as null,
+            stateRoot:      block.stateRoot ?? null,
+            committedPressure: block.committedPressure ?? null,
+            chainId:        block.chainId ?? null,
+            evidenceRoot:   block.evidenceRoot ?? null,
+            omegaRoot:      block.omegaRoot ?? null,
+            evidence:       (block.evidence ?? null) as unknown as null,
+          })
+          .onConflictDoNothing()
+          .returning({ hash: blocksTable.hash });
+        const rows = await tx.select().from(blocksTable).where(eq(blocksTable.hash, block.hash));
+        const row = rows[0];
+        if (!row || !sameStoredBlock(row, block)) throw new Error("persist conflict");
+        const storedTxs = await tx.select().from(transactionsTable).where(eq(transactionsTable.blockHash, block.hash));
+        if (inserted.length === 0) {
+          if (!sameStoredTxs(storedTxs, block)) throw new Error("persist conflict");
+          continue;
+        }
+        if (storedTxs.length !== 0) throw new Error("persist conflict");
+        if (block.transactions.length > 0) {
+          const written = await tx
+            .insert(transactionsTable)
+            .values(block.transactions.map((t, index) => ({
+              hash:        t.hash,
+              blockHash:   block.hash,
+              blockHeight: block.height,
+              from:        t.from,
+              to:          t.to,
+              amount:      t.amount,
+              fee:         t.fee,
+              nonce:       t.nonce,
+              signature:   t.signature ?? "",
+              publicKey:   t.publicKey ?? null,
+              txIndex:     index,
+              status:      "confirmed" as const,
+              timestamp:   t.timestamp,
+            })))
+            .onConflictDoNothing()
+            .returning({ hash: transactionsTable.hash });
+          if (written.length !== block.transactions.length) throw new Error("persist conflict");
+        }
+      }
+      if (abandoned.length > 0) {
+        await tx.delete(transactionsTable).where(inArray(transactionsTable.blockHash, abandoned));
+        await tx.delete(blocksTable).where(inArray(blocksTable.hash, abandoned));
+        await tx.delete(stateSnapshotsTable).where(inArray(stateSnapshotsTable.blockHash, abandoned));
+      }
+    });
+    return { committed: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("persist conflict")) {
+      return { committed: false, reason: "replacement conflicts with a stored row" };
+    }
+    return { committed: false, reason: message };
+  }
 }
 
 /**
