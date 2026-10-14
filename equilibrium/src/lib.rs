@@ -7,6 +7,8 @@ pub mod consensus;
 // ── snarkjs / ceremony prove path ────────────────────────────────────────────
 pub mod circom_reduction;
 pub mod zk_proof;
+/// Integer successor skeleton. Not a proof of `applySuccessor`.
+pub mod transition_circuit;
 pub mod ffi;
 pub mod wallet;
 
