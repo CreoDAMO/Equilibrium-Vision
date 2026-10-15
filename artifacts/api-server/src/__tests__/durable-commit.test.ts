@@ -626,13 +626,11 @@ describe("persistBlock names the database outcome", () => {
       expect(result.outcome === "absent" || result.outcome === "inserted" || result.outcome === "identical").toBe(true);
       expect(result.durable).toBe(result.outcome !== "absent");
     } finally {
-      // This is the shared chain table. A height with no genesis makes the
-      // next initChain refuse to choose a branch. Remove only the row this
-      // test inserted.
-      if (result?.outcome === "inserted") {
-        const pool = getRawPool();
-        if (pool) await pool.query("delete from blocks where hash = $1", [block.hash]);
-      }
+      // This hash is a test sentinel, not a chain block. An inserted row and a
+      // row left by an earlier run are both removed. A missing pool means the
+      // write did not reach the shared table.
+      const pool = getRawPool();
+      if (pool) await pool.query("delete from blocks where hash = $1", [block.hash]);
     }
   });
 });

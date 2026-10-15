@@ -89,6 +89,24 @@ async function database() {
   return { client, db };
 }
 
+describe("an equal residual uses the same tie as the site", () => {
+  it("refuses the larger tip hash and does not refuse the smaller one for weight", async () => {
+    const state = new ChainState();
+    const fork = block({ hash: "aa".repeat(32), height: 0, prevHash: "00".repeat(32), residualFp: 5 });
+    const incumbent = block({ hash: "cc".repeat(32), height: 1, prevHash: fork.hash, residualFp: 10 });
+    state.blocks.push(fork, incumbent);
+    const heavier = block({ hash: "ee".repeat(32), height: 1, prevHash: fork.hash, residualFp: 10 });
+    const lighter = block({ hash: "11".repeat(32), height: 1, prevHash: fork.hash, residualFp: 10 });
+
+    const lost = await state.reorganize([heavier], null);
+    expect(lost.switched).toBe(false);
+    expect(lost.reason).toBe("candidate chain does not have lower cumulative residual");
+
+    const won = await state.reorganize([lighter], null);
+    expect(won.reason).not.toBe("candidate chain does not have lower cumulative residual");
+  });
+});
+
 describe("a branch switch commits the winner and drops the loser together", () => {
   it("does not ask the database when the fork is not on the chain", async () => {
     const state = new ChainState();

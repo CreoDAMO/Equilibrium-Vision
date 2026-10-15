@@ -29,6 +29,7 @@ import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import { canonicalSigningBytes } from "../lib/canonical-tx.js";
 import { canonicalResidual, pressureEvidence } from "./canonical-residual.js";
 import { withDbRetry, persistBlock, persistKeepsMemory, getDb, commitBranchSwitch, type PersistBlockResult } from "./persistence.js";
+import { preferChain } from "../../../../site/src/protocol/frontier.js";
 import { operationalReplaySet } from "./restart-boundary.js";
 import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
 import { btcHeaderHash } from "./btc-header.js";
@@ -1394,7 +1395,12 @@ export class ChainState {
       BigInt(b.residualFp ?? Math.floor(b.residual * 1e18));
     const currentResidual = currentTail.reduce((s, b) => s + toFP(b), 0n);
     const candidateResidual = newBlocks.reduce((s, b) => s + toFP(b), 0n);
-    if (candidateResidual >= currentResidual) {
+    const incumbentTip = currentTail[currentTail.length - 1]?.hash ?? forkHash;
+    const candidateTip = newBlocks[newBlocks.length - 1]!.hash;
+    if (!preferChain(
+      { weight: candidateResidual, tipHash: candidateTip },
+      { weight: currentResidual, tipHash: incumbentTip },
+    )) {
       return { ok: false, reason: "candidate chain does not have lower cumulative residual" };
     }
     for (let i = 1; i < newBlocks.length; i++) {
