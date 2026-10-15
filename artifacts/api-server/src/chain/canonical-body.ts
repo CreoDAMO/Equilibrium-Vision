@@ -1,6 +1,6 @@
-import { successor, initialOmega, openedCouplings, transitionDigest, type CanonicalInputs, type Omega } from "../../../../site/src/protocol/constitution.js";
+import { successor, initialOmega, openedCouplings, transitionDigest, type CanonicalInputs, type Omega, type Successor } from "../../../../site/src/protocol/constitution.js";
 import { asBlockNonce, blockNonce } from "../../../../site/src/protocol/domain.js";
-import { omegaRecord, sealFromSuccessor } from "../../../../site/src/protocol/seal.js";
+import { omegaRecord, sealFromSuccessor, type SealedSuccessor } from "../../../../site/src/protocol/seal.js";
 import type { NetworkId, TransitionEvidence, TxRecord } from "../../../../site/src/protocol/types.js";
 
 /**
@@ -44,48 +44,18 @@ export class CanonicalBody {
         difficulty: number;
       }
   > {
-    const before = this.omega;
-    const prevHash = before.tipHash;
-    const stepped = await successor(before, inputs);
-    if (!stepped.ok) return stepped;
-    if (this.overlapBarrier) await this.overlapBarrier();
-    // A newer successor may have installed while this one was running.
-    // The result was computed from `before` and must not overwrite that tip.
-    if (this.omega !== before || this.omega.tipHash !== prevHash) {
+    const evaluated = await this.evaluate(inputs);
+    if (!evaluated.ok) return evaluated;
+    if (!this.still(evaluated.before, evaluated.prevHash)) {
       return { ok: false, error: "block is not the successor" };
     }
-    const sealed = sealFromSuccessor(before, { ...inputs, wasmAfter: null }, stepped);
-    if (this.omega !== before || this.omega.tipHash !== prevHash) {
-      return { ok: false, error: "block is not the successor" };
-    }
-    const digestRecord = omegaRecord(sealed.digestOmega);
-    const record = omegaRecord(sealed.carried);
-    this.omega = sealed.carried;
-    this.blocks.push({ hash: sealed.hash, height: sealed.carried.height, evidence: sealed.evidence });
-    return {
-      ok: true,
-      hash: sealed.hash,
-      omegaRoot: stepped.omegaRoot,
-      stateRoot: stepped.stateRoot,
-      evidenceRoot: sealed.evidenceRoot,
-      tipHash: sealed.carried.tipHash,
-      record,
-      digestRecord,
-      evidence: sealed.evidence,
-      reward: stepped.reward,
-      liquid: stepped.liquid,
-      residual: stepped.residual,
-      residualFp: stepped.residualFp,
-      merkleRoot: sealed.merkleRoot,
-      prevHash,
-      height: stepped.next.height,
-      difficulty: inputs.difficulty,
-    };
+    this.adopt(evaluated.sealed);
+    return this.published(evaluated);
   }
 
   /**
    * Replay a block that already carries a hash. The successor is re-executed.
-   * A mismatch refuses the block and does not move Ω.
+   * Identity is compared before Ω is assigned. A mismatch leaves Ω where it was.
    */
   async replay(block: {
     hash: string;
@@ -126,7 +96,7 @@ export class CanonicalBody {
     if (block.transitionRoot !== undefined && block.transitionRoot !== claim) {
       return "transition is not this input";
     }
-    const committed = await this.commit({
+    const evaluated = await this.evaluate({
       transactions: block.transactions ?? [],
       evidence: block.evidence,
       timestamp: block.timestamp,
@@ -136,37 +106,83 @@ export class CanonicalBody {
       couplings: openedCouplings(before),
       difficulty: block.difficulty,
     });
-    if (!committed.ok) return committed.error;
-    if (committed.hash !== block.hash) {
-      this.omega = before;
-      this.blocks.pop();
-      return "header is not the successor";
-    }
-    if (block.merkleRoot !== undefined && block.merkleRoot !== committed.merkleRoot) {
-      this.omega = before;
-      this.blocks.pop();
+    if (!evaluated.ok) return evaluated.error;
+    if (evaluated.sealed.hash !== block.hash) return "header is not the successor";
+    if (block.merkleRoot !== undefined && block.merkleRoot !== evaluated.sealed.merkleRoot) {
       return "merkle root is not the transaction set";
     }
-    if (block.prevHash !== undefined && block.prevHash !== committed.prevHash) {
-      this.omega = before;
-      this.blocks.pop();
+    if (block.prevHash !== undefined && block.prevHash !== evaluated.prevHash) {
       return "prevHash is not the predecessor";
     }
-    if (block.height !== undefined && block.height !== committed.height) {
-      this.omega = before;
-      this.blocks.pop();
+    if (block.height !== undefined && block.height !== evaluated.stepped.next.height) {
       return "height is not the successor height";
     }
-    if (block.omegaRoot && block.omegaRoot !== committed.omegaRoot) {
-      this.omega = before;
-      this.blocks.pop();
+    if (block.omegaRoot && block.omegaRoot !== evaluated.stepped.omegaRoot) {
       return "omega root does not replay";
     }
-    if (block.stateRoot && block.stateRoot !== committed.stateRoot) {
-      this.omega = before;
-      this.blocks.pop();
+    if (block.stateRoot && block.stateRoot !== evaluated.stepped.stateRoot) {
       return "state root does not replay";
     }
+    if (!this.still(evaluated.before, evaluated.prevHash)) return "block is not the successor";
+    this.adopt(evaluated.sealed);
     return null;
+  }
+
+  private still(before: Omega, prevHash: string): boolean {
+    return this.omega === before && this.omega.tipHash === prevHash;
+  }
+
+  private adopt(sealed: SealedSuccessor): void {
+    this.omega = sealed.carried;
+    this.blocks.push({ hash: sealed.hash, height: sealed.carried.height, evidence: sealed.evidence });
+  }
+
+  private published(evaluated: Extract<Awaited<ReturnType<CanonicalBody["evaluate"]>>, { ok: true }>) {
+    const { sealed, stepped, prevHash, inputs } = evaluated;
+    return {
+      ok: true as const,
+      hash: sealed.hash,
+      omegaRoot: stepped.omegaRoot,
+      stateRoot: stepped.stateRoot,
+      evidenceRoot: sealed.evidenceRoot,
+      tipHash: sealed.carried.tipHash,
+      record: omegaRecord(sealed.carried),
+      digestRecord: omegaRecord(sealed.digestOmega),
+      evidence: sealed.evidence,
+      reward: stepped.reward,
+      liquid: stepped.liquid,
+      residual: stepped.residual,
+      residualFp: stepped.residualFp,
+      merkleRoot: sealed.merkleRoot,
+      prevHash,
+      height: stepped.next.height,
+      difficulty: inputs.difficulty,
+    };
+  }
+
+  /**
+   * Run the successor and seal it. This does not assign Ω.
+   * A tip that moved while wasm or the overlap barrier ran is not installed.
+   */
+  private async evaluate(inputs: Omit<CanonicalInputs, "wasmAfter">): Promise<
+    | { ok: false; error: string }
+    | {
+        ok: true;
+        before: Omega;
+        prevHash: string;
+        inputs: Omit<CanonicalInputs, "wasmAfter">;
+        stepped: Extract<Successor, { ok: true }>;
+        sealed: SealedSuccessor;
+      }
+  > {
+    const before = this.omega;
+    const prevHash = before.tipHash;
+    const stepped = await successor(before, inputs);
+    if (!stepped.ok) return stepped;
+    if (this.overlapBarrier) await this.overlapBarrier();
+    if (!this.still(before, prevHash)) return { ok: false, error: "block is not the successor" };
+    const sealed = sealFromSuccessor(before, { ...inputs, wasmAfter: null }, stepped);
+    if (!this.still(before, prevHash)) return { ok: false, error: "block is not the successor" };
+    return { ok: true, before, prevHash, inputs, stepped, sealed };
   }
 }

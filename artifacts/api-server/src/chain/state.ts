@@ -669,15 +669,20 @@ export class ChainState {
       if (admitted.kind === "skip") {
         throw new Error("block is not the successor");
       }
-      // A restored row must come back as the block that was stored. Live
-      // admission does not pass expect: the successor replaces the incoming hash.
-      // A mismatch throws here, inside the admission guard, before the operational
-      // row exists. A failed restore is not reported as a clean refusal.
+      // A restored row is compared before Ω moves. Live admission does not pass
+      // expect: the successor replaces the incoming hash. A mismatch throws
+      // here, inside the admission guard, and does not assign the successor.
       if (expect && (admitted.hash !== expect.hash || admitted.merkleRoot !== expect.merkleRoot)) {
         throw new Error(
           `restored block identity mismatch at height ${block.height}: stored ${expect.hash.slice(0, 16)}/${expect.merkleRoot.slice(0, 16)}, recomputed ${admitted.hash.slice(0, 16)}/${admitted.merkleRoot.slice(0, 16)}`,
         );
       }
+      this.canonicalBody.omega = admitted.carried;
+      this.canonicalBody.blocks.push({
+        hash: admitted.hash,
+        height: admitted.carried.height,
+        evidence: admitted.evidence,
+      });
       this.noteBefore(block.height, priorOmega, priorCanonBlocks);
       block.hash = admitted.hash;
       block.merkleRoot = admitted.merkleRoot;
@@ -745,7 +750,8 @@ export class ChainState {
   }
 
   /**
-   * Canonical Ω moves only when this block is the successor.
+   * Compute the successor for this block. This does not assign Ω.
+   * Assignment happens in addBlock, after a restored identity has matched.
    * A candidate G refuses does not change Ω or the operational body.
    * A block that does not extend this Ω is not a candidate.
    */
@@ -764,6 +770,8 @@ export class ChainState {
         reward: number;
         chainId: number;
         transitionRoot: string;
+        carried: Omega;
+        evidence: ReturnType<typeof sealFromSuccessor>["evidence"];
       } {
     const omega = this.canonicalBody.omega;
     const pressure = typeof block.committedPressure === "number" ? block.committedPressure : 0;
@@ -786,12 +794,6 @@ export class ChainState {
     const stepped = applySuccessor(omega, inputs);
     if (!stepped.ok) return { kind: "reject", error: stepped.error };
     const sealed = sealFromSuccessor(omega, inputs, stepped);
-    this.canonicalBody.omega = sealed.carried;
-    this.canonicalBody.blocks.push({
-      hash: sealed.hash,
-      height: sealed.carried.height,
-      evidence: sealed.evidence,
-    });
     return {
       kind: "accept",
       hash: sealed.hash,
@@ -804,6 +806,8 @@ export class ChainState {
       reward: stepped.reward,
       chainId: sealed.evidence.chainId,
       transitionRoot: sealed.transitionRoot,
+      carried: sealed.carried,
+      evidence: sealed.evidence,
     };
   }
 
