@@ -392,6 +392,26 @@ export function verifyZkProof(zkp: ZkProof, threshold = DEFAULT_THRESHOLD): bool
   return true;
 }
 
+/**
+ * The stationarity proof's public inputs are this sealed header.
+ * A proof for a different hash or residual does not verify as this one.
+ * This is not a proof of applySuccessor.
+ */
+export function stationarityBinds(
+  zkp: ZkProof | undefined,
+  blockHash: string,
+  residual: number,
+  threshold = DEFAULT_THRESHOLD,
+): boolean {
+  if (!zkp) return false;
+  const fields = blockHashToFields(blockHash);
+  if (zkp.publicInputs.residual !== fpEncode(residual)) return false;
+  if (zkp.publicInputs.threshold !== fpEncode(threshold)) return false;
+  if (zkp.publicInputs.blockHashLow !== fields.blockHashLow) return false;
+  if (zkp.publicInputs.blockHashHigh !== fields.blockHashHigh) return false;
+  return verifyZkProof(zkp, threshold);
+}
+
 export function getVerificationKey(): VerificationKey {
   return STATIONARITY_VK;
 }

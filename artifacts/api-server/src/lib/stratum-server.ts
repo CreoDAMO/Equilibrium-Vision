@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { logger } from "./logger.js";
 import { broadcast } from "./ws-server.js";
 import { merkleRoot, hash256 } from "../chain/crypto.js";
-import { generateZkProof } from "../chain/zkproof.js";
+import { generateZkProof, stationarityBinds } from "../chain/zkproof.js";
 import { persistKeepsMemory } from "../chain/persistence.js";
 import type { TxRecord } from "../chain/types.js";
 import type { ChainState } from "../chain/state.js";
@@ -405,7 +405,9 @@ export class StratumServer {
 
     const outcome = await cs.commitOperational(block, {
       beforePersist: (admitted) => {
-        admitted.zkProof = generateZkProof(admitted.residual, admitted.hash, admitted.height);
+        if (!stationarityBinds(admitted.zkProof, admitted.hash, admitted.residual, cs.admissionTarget)) {
+          admitted.zkProof = undefined;
+        }
       },
     });
     if (!outcome.admitted) {

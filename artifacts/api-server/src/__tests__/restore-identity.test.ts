@@ -15,6 +15,7 @@ import { minerKey } from "../../../../site/src/protocol/genesis.js";
 import { keypairFromSeed, signTx } from "../../../../site/src/protocol/wallet.js";
 import type { BlockRecord } from "../chain/types.js";
 import type { TxRecord as ProtocolTx } from "../../../../site/src/protocol/types.js";
+import { generateZkProof } from "../chain/zkproof.js";
 import type { PersistBlockResult } from "../chain/persistence.js";
 
 const miner = minerKey("mainnet").address;
@@ -245,6 +246,38 @@ describe("a restored successor must be the stored block", () => {
     const beforeTip = copy.canonicalBody.omega.tipHash;
     const lied = { ...sealed, hash: "ab".repeat(32) };
     expect(() => admitRestoredBlock(copy, lied)).toThrow(/restored block identity mismatch/);
+    expect(copy.canonicalBody.omega.tipHash).toBe(beforeTip);
+    expect(copy.canonicalBody.omega.height).toBe(-1);
+    expect(copy.blocks).toHaveLength(0);
+    expect(copy.canonicalBody.blocks).toHaveLength(0);
+  });
+
+  it("does not restore a stationarity proof for a different header", async () => {
+    const origin = fresh();
+    const omega = origin.canonicalBody.omega;
+    const outcome = await origin.commitOperational({
+      hash: "11".repeat(32),
+      height: omega.height + 1,
+      prevHash: omega.tipHash,
+      merkleRoot: zeros,
+      timestamp: 1_700_000_000,
+      nonce: 6n,
+      difficulty: omega.difficulty,
+      residual: 0,
+      recursionDepth: 2,
+      coinbaseReward: 0,
+      miner,
+      txCount: 0,
+      transactions: [],
+      committedPressure: 0,
+    }, { persist: async () => inserted });
+    expect(outcome.admitted, outcome.error).toBe(true);
+    const sealed = origin.blocks[origin.blocks.length - 1];
+    if (!sealed) throw new Error("operational seal missing");
+    sealed.zkProof = generateZkProof(1e-9, "ab".repeat(32), sealed.height);
+    const copy = fresh();
+    const beforeTip = copy.canonicalBody.omega.tipHash;
+    expect(() => admitRestoredBlock(copy, sealed)).toThrow(/restored stationarity proof is not this successor/);
     expect(copy.canonicalBody.omega.tipHash).toBe(beforeTip);
     expect(copy.canonicalBody.omega.height).toBe(-1);
     expect(copy.blocks).toHaveLength(0);

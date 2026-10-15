@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { chainState } from "../chain/index.js";
 import { merkleRoot, hash256 } from "../chain/crypto.js";
-import { generateZkProof } from "../chain/zkproof.js";
+import { generateZkProof, stationarityBinds } from "../chain/zkproof.js";
 import { persistKeepsMemory } from "../chain/persistence.js";
 import { broadcast } from "../lib/ws-server.js";
 import { logger } from "../lib/logger.js";
@@ -348,7 +348,9 @@ router.post("/blocks/submit", async (req, res) => {
 
   const outcome = await chainState.commitOperational(block, {
     beforePersist: (admitted) => {
-      admitted.zkProof = generateZkProof(admitted.residual, admitted.hash, admitted.height);
+      if (!stationarityBinds(admitted.zkProof, admitted.hash, admitted.residual, chainState.admissionTarget)) {
+        admitted.zkProof = undefined;
+      }
     },
   });
   if (!outcome.admitted) {

@@ -24,7 +24,7 @@ import { GovernanceModule } from "./governance.js";
 import { noteIgnoredGovernanceParams } from "./governanceContract.js";
 import { UTXOSet } from "./utxo.js";
 import { WasmVM } from "./wasm.js";
-import { generateZkProof } from "./zkproof.js";
+import { generateZkProof, stationarityBinds } from "./zkproof.js";
 import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import { canonicalSigningBytes } from "../lib/canonical-tx.js";
 import { canonicalResidual, pressureEvidence } from "./canonical-residual.js";
@@ -676,6 +676,15 @@ export class ChainState {
         throw new Error(
           `restored block identity mismatch at height ${block.height}: stored ${expect.hash.slice(0, 16)}/${expect.merkleRoot.slice(0, 16)}, recomputed ${admitted.hash.slice(0, 16)}/${admitted.merkleRoot.slice(0, 16)}`,
         );
+      }
+      // A stored proof must be a proof of this sealed header, or it is not restored.
+      // A live proof that does not verify for this header is not kept. The
+      // stationarity statement is not applySuccessor: a successor whose residual
+      // is outside that statement has no such proof, and execution still admits it.
+      if (expect && block.zkProof && !stationarityBinds(block.zkProof, admitted.hash, admitted.residual, this.admissionTarget)) {
+        throw new Error("restored stationarity proof is not this successor");
+      } else if (!expect && block.zkProof && !stationarityBinds(block.zkProof, admitted.hash, admitted.residual, this.admissionTarget)) {
+        block.zkProof = undefined;
       }
       this.canonicalBody.omega = admitted.carried;
       this.canonicalBody.blocks.push({
@@ -2621,7 +2630,6 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   };
 
   state.addBlock(block);
-  block.zkProof = generateZkProof(block.residual, block.hash, block.height);
   state.gossipBlock(block.hash);
   return block;
 }

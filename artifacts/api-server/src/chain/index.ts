@@ -20,7 +20,7 @@ import { deployArbitrageIfNeeded } from "./arbitrage.js";
 import { deployCrossChainRelayIfNeeded } from "./crossChainRelay.js";
 import { p2pBridge } from "./p2p-bridge.js";
 import { smtKey } from "./smt.js";
-import { generateZkProof } from "./zkproof.js";
+import { stationarityBinds } from "./zkproof.js";
 import { getVerifiedStateRoot, rebuildStateSmt, snapshotColumnRoot } from "./state-root.js";
 import { prepareGossipBlock } from "./gossip-ingress.js";
 import { selectSnapshotAnchor, lineageReachesGenesis, evidenceToReplay, snapshotContradictsAnchor } from "./restart-boundary.js";
@@ -541,7 +541,9 @@ async function runMiningCycle(generation: number): Promise<void> {
     const block = await mineNextBlockAsync(chainState, minerAddress);
     const outcome = await chainState.commitOperational(block, {
       beforePersist: (admitted) => {
-        admitted.zkProof = generateZkProof(admitted.residual, admitted.hash, admitted.height);
+        if (!stationarityBinds(admitted.zkProof, admitted.hash, admitted.residual, chainState.admissionTarget)) {
+          admitted.zkProof = undefined;
+        }
       },
     });
     if (!outcome.admitted) {
