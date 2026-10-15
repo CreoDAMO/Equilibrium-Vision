@@ -46,6 +46,16 @@ pub struct SkeletonPublic {
     pub after_hi: u64,
 }
 
+/// The Groth16 bytes and the statement they were built for.
+/// Verification reads `public_inputs` from this value. A caller cannot
+/// substitute a different statement and still have this proof accept.
+/// The statement is not `applySuccessor`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SuccessorSkeletonProof {
+    pub bytes: Vec<u8>,
+    pub public_inputs: SkeletonPublic,
+}
+
 #[derive(Clone)]
 struct SkeletonCircuit {
     public: SkeletonPublic,
@@ -196,7 +206,7 @@ fn sample_public() -> SkeletonPublic {
     }
 }
 
-pub fn prove_successor_skeleton(public: &SkeletonPublic) -> Result<Vec<u8>, &'static str> {
+pub fn prove_successor_skeleton(public: &SkeletonPublic) -> Result<SuccessorSkeletonProof, &'static str> {
     let (difference, time_delta) = witnesses(public)?;
     let circuit = SkeletonCircuit { public: *public, difference, time_delta };
     let mut rng = StdRng::seed_from_u64(0x5E11_7014);
@@ -204,10 +214,14 @@ pub fn prove_successor_skeleton(public: &SkeletonPublic) -> Result<Vec<u8>, &'st
     let mut bytes = Vec::new();
     use ark_serialize::CanonicalSerialize;
     proof.serialize_compressed(&mut bytes).map_err(|_| "skeleton proof did not serialize")?;
-    Ok(bytes)
+    Ok(SuccessorSkeletonProof { bytes, public_inputs: *public })
 }
 
-pub fn verify_successor_skeleton(proof_bytes: &[u8], public: &SkeletonPublic) -> bool {
+pub fn verify_successor_skeleton(proof: &SuccessorSkeletonProof) -> bool {
+    verify_skeleton_bytes(&proof.bytes, &proof.public_inputs)
+}
+
+fn verify_skeleton_bytes(proof_bytes: &[u8], public: &SkeletonPublic) -> bool {
     use ark_serialize::CanonicalDeserialize;
     let proof = match ark_groth16::Proof::<Bn254>::deserialize_compressed(proof_bytes) {
         Ok(proof) => proof,
@@ -224,19 +238,20 @@ mod tests {
     fn an_integer_successor_verifies_and_a_different_statement_does_not() {
         let public = sample_public();
         let proof = prove_successor_skeleton(&public).expect("prove");
-        assert!(verify_successor_skeleton(&proof, &public));
+        assert_eq!(proof.public_inputs, public);
+        assert!(verify_successor_skeleton(&proof));
 
-        let mut other_height = public;
-        other_height.height_after = 2;
-        assert!(!verify_successor_skeleton(&proof, &other_height));
+        let mut other_height = proof.clone();
+        other_height.public_inputs.height_after = 2;
+        assert!(!verify_successor_skeleton(&other_height));
 
-        let mut other_balance = public;
-        other_balance.balance_after = 41;
-        assert!(!verify_successor_skeleton(&proof, &other_balance));
+        let mut other_balance = proof.clone();
+        other_balance.public_inputs.balance_after = 41;
+        assert!(!verify_successor_skeleton(&other_balance));
 
-        let mut other_transition = public;
-        other_transition.transition_lo = 9;
-        assert!(!verify_successor_skeleton(&proof, &other_transition));
+        let mut other_transition = proof.clone();
+        other_transition.public_inputs.transition_lo = 9;
+        assert!(!verify_successor_skeleton(&other_transition));
 
         let mut backwards = public;
         backwards.timestamp_after = public.timestamp_before - 1;
