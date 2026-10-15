@@ -94,6 +94,15 @@ export function verifyStationaryEvidence(args: {
       : `claimed ${block.residual} fingerprint ≠ recomputed ${recomputed.canonical}`,
   });
 
+  const fpOk = block.residualFp === recomputed.canonicalFp;
+  checks.push({
+    name: "residual-fingerprint",
+    ok: fpOk,
+    detail: fpOk
+      ? `fingerprint ${recomputed.canonicalFp}`
+      : `claimed fingerprint ${block.residualFp} ≠ recomputed ${recomputed.canonicalFp}`,
+  });
+
   const underThreshold = block.height === 0 || recomputed.canonical < params.residualThreshold;
   checks.push({
     name: "threshold",
@@ -103,7 +112,7 @@ export function verifyStationaryEvidence(args: {
         ? "genesis is a commitment, not a stationary transition"
         : underThreshold
           ? `R < ${params.residualThreshold}`
-          : `R ${block.residual} exceeds ${params.residualThreshold}`,
+          : `R ${recomputed.canonical} exceeds ${params.residualThreshold}`,
   });
 
   const expectedHash = canonicalHeaderHash({
@@ -113,7 +122,7 @@ export function verifyStationaryEvidence(args: {
     timestamp: block.timestamp,
     nonce: block.nonce,
     difficulty: block.difficulty,
-    residualFp: block.residualFp,
+    residualFp: recomputed.canonicalFp,
     miner: block.miner,
     height: block.height,
     committedPressure: block.committedPressure,

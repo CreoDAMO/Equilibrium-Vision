@@ -527,7 +527,7 @@ export class OrganismNode {
         difficulty: this.difficulty,
       },
       txs: args.txs.map((t) => ({ hash: t.hash, fee: t.fee })),
-      state: { cumulativeWork: this.blocks.length, mempoolPressure: pressure },
+      state: { cumulativeWork: Math.max(0, args.height), mempoolPressure: pressure },
       couplings,
       maxIter: args.height === 0 ? 80 : 360,
       recursionDepth: 2,
@@ -609,7 +609,7 @@ export class OrganismNode {
     const report = verifyStationaryEvidence({
       block,
       prev: this.tip,
-      cumulativeWork: this.blocks.length,
+      cumulativeWork: args.height,
       params: this.params,
       now: args.timestamp,
     });
@@ -684,6 +684,10 @@ export class OrganismNode {
   }
 
   private commit(block: BlockRecord, wasmReady?: Map<string, string> | null): boolean {
+    if (block.verified === false) {
+      this.emit("in", "verify", block.verifyNotes.join("; ") || "block did not verify");
+      return false;
+    }
     const ev = block.evidence;
     const wasmAfter = ev?.wasm.length ? (wasmReady ?? (this.wasmOverlayMatches(ev) ? this.pendingWasm : null)) : null;
     const stepped = applySuccessor(this.toOmega(), {

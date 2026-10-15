@@ -686,6 +686,9 @@ export class ChainState {
       } else if (!expect && block.zkProof && !stationarityBinds(block.zkProof, admitted.hash, admitted.residual, this.admissionTarget)) {
         block.zkProof = undefined;
       }
+      if (admitted.height > 0 && !(admitted.residual < this.admissionTarget)) {
+        throw new Error("recomputed residual is not under the admission target");
+      }
       this.canonicalBody.omega = admitted.carried;
       this.canonicalBody.blocks.push({
         hash: admitted.hash,
