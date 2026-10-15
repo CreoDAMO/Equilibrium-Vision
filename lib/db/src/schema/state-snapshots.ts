@@ -36,7 +36,7 @@ export const stateSnapshotsTable = pgTable(
     height:    integer("height").primaryKey(),
     /** Hash of the block at `height` — used to cross-check on restore. */
     blockHash: text("block_hash").notNull(),
-    /** SMT state root at `height` — validated during restore. */
+    /** Operational SMT root at `height`. Not the protocol header stateRoot. */
     stateRoot: text("state_root").notNull(),
     /** Full ledger: address → { balance, nonce } */
     ledger:    jsonb("ledger").$type<LedgerSnapshot>().notNull(),

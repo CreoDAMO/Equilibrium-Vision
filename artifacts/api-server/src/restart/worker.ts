@@ -15,7 +15,7 @@ import {
   saveStateSnapshot,
 } from "../chain/persistence.js";
 import { canonicalResidual } from "../chain/canonical-residual.js";
-import { rebuildStateSmt } from "../chain/state-root.js";
+import { rebuildStateSmt, snapshotColumnRoot } from "../chain/state-root.js";
 import type { BlockRecord } from "../chain/types.js";
 
 const reportPath = process.env["RESTART_REPORT"] ?? "/tmp/eq-restart-report.json";
@@ -92,8 +92,10 @@ async function writeReport(): Promise<void> {
   if (state.currentDifficulty !== 1_200_000) {
     throw new Error(`a 1s block should clamp difficulty to 1200000, got ${state.currentDifficulty}`);
   }
-  const root = rebuildStateSmt(state).root();
-  if (!b1.stateRoot || b1.stateRoot !== root) throw new Error("tip state root is not the rebuilt root");
+  const operationalRoot = rebuildStateSmt(state).root();
+  const protocolStateRoot = b1.stateRoot;
+  if (!protocolStateRoot) throw new Error("tip has no protocol state root");
+  const column = snapshotColumnRoot(operationalRoot, protocolStateRoot);
 
   await persistBlock(b0);
   await persistBlock(b1);
@@ -105,7 +107,7 @@ async function writeReport(): Promise<void> {
   await saveStateSnapshot({
     height: b1.height,
     blockHash: b1.hash,
-    stateRoot: b1.stateRoot,
+    stateRoot: column,
     ledger: snap.ledger,
     utxos: snap.utxos,
     partitions: {
@@ -118,7 +120,7 @@ async function writeReport(): Promise<void> {
     },
   });
   const loaded = await loadLatestSnapshot();
-  if (!loaded || loaded.blockHash !== b1.hash || loaded.stateRoot !== root || loaded.partitions?.difficulty !== 1_200_000) {
+  if (!loaded || loaded.blockHash !== b1.hash || loaded.stateRoot !== column || loaded.partitions?.difficulty !== 1_200_000) {
     throw new Error("saveStateSnapshot did not leave the partitions");
   }
 
@@ -136,7 +138,8 @@ async function writeReport(): Promise<void> {
   const before = {
     tipHash: b1.hash,
     height: state.height,
-    stateRoot: root,
+    stateRoot: operationalRoot,
+    protocolStateRoot,
     difficulty: state.currentDifficulty,
     alice: state.ledger.balance(alice),
     miner: state.ledger.balance(miner),
@@ -167,6 +170,7 @@ async function readReport(): Promise<void> {
       tipHash: string;
       height: number;
       stateRoot: string;
+      protocolStateRoot: string;
       difficulty: number;
       alice: number;
       miner: number;
@@ -203,7 +207,7 @@ async function readReport(): Promise<void> {
   check("stake", chainState.stakes.get(stakeKey)?.amount, report.before.stake);
   const root = rebuildStateSmt(chainState).root();
   check("root", root, report.before.stateRoot);
-  check("tipRoot", chainState.latestBlock?.stateRoot, report.before.stateRoot);
+  check("tipRoot", chainState.latestBlock?.stateRoot, report.before.protocolStateRoot);
   const residual = canonicalResidual(
     {
       prevHash: report.before.tipHash,

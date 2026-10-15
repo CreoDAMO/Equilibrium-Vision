@@ -21,7 +21,7 @@ import { deployCrossChainRelayIfNeeded } from "./crossChainRelay.js";
 import { p2pBridge } from "./p2p-bridge.js";
 import { smtKey } from "./smt.js";
 import { generateZkProof } from "./zkproof.js";
-import { getVerifiedStateRoot } from "./state-root.js";
+import { getVerifiedStateRoot, rebuildStateSmt, snapshotColumnRoot } from "./state-root.js";
 import { prepareGossipBlock } from "./gossip-ingress.js";
 import { selectSnapshotAnchor, lineageReachesGenesis, evidenceToReplay, snapshotContradictsAnchor } from "./restart-boundary.js";
 import { replayCanonicalEvidence } from "./evidence-restore.js";
@@ -497,10 +497,11 @@ async function takeSnapshot(): Promise<boolean> {
   const tip = chainState?.canonicalTip;
   if (!tip) return false;
   const snap = chainState.exportRestartSnapshot();
+  const operationalRoot = rebuildStateSmt(chainState).root();
   return saveStateSnapshot({
     height:    tip.height,
     blockHash: tip.hash,
-    stateRoot: tip.stateRoot ?? "",
+    stateRoot: snapshotColumnRoot(operationalRoot, tip.stateRoot ?? ""),
     ledger:    snap.ledger,
     utxos:     snap.utxos,
     partitions: {

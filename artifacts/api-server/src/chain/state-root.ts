@@ -56,6 +56,14 @@ export function rebuildStateSmt(chainState: ChainState): SparseMerkleTree {
 }
 
 /**
+ * The snapshot column is the operational SMT root.
+ * The protocol header root is a different commitment and is not written here.
+ */
+export function snapshotColumnRoot(operationalRoot: string, _protocolStateRoot: string): string {
+  return operationalRoot;
+}
+
+/**
  * The header commitment is stateRootOf(Ω). The operational SMT is named
  * separately and is not required to equal that commitment.
  * A missing or legacy zero header root is rejected rather than replaced.
@@ -94,12 +102,21 @@ export function getVerifiedStateRoot(
   // admission is not this tip. Rebuild. Do not reuse _stateSmt.
   const smt = rebuildStateSmt(chainState);
   chainState._stateSmt = smt;
+  const operationalRoot = smt.root();
+  if (tip.operationalRoot && tip.operationalRoot !== operationalRoot) {
+    return {
+      error: {
+        status: 409,
+        message: `Operational root mismatch at height ${tip.height}: block ${tip.operationalRoot}, rebuilt ${operationalRoot}`,
+      },
+    };
+  }
   return {
     snapshot: {
       tip,
       smt,
       protocolStateRoot,
-      operationalRoot: smt.root(),
+      operationalRoot,
     },
   };
 }

@@ -223,7 +223,8 @@ router.get("/lightnode/proof/utxo/:txHash/:index", (req, res) => {
   const { tip, smt, protocolStateRoot, operationalRoot } = verified;
   if (isNaN(outputIndex)) { res.status(400).json({ error: "index must be an integer" }); return; }
 
-  const utxo         = chainState.utxoSet.get(txHash, outputIndex);
+  const stored = chainState.utxoSet.get(txHash, outputIndex);
+  const spendable = stored != null && !stored.spent;
   const key          = smtKey("utxo", `${txHash}:${outputIndex}`);
   const proof        = smt.prove(key);
   const compactProof = smt.proveCompact(key);
@@ -231,9 +232,11 @@ router.get("/lightnode/proof/utxo/:txHash/:index", (req, res) => {
   res.json({
     txHash,
     outputIndex,
-    utxo:       utxo ?? null,
+    utxo:       spendable ? stored : null,
+    spent:      stored?.spent === true,
     protocolStateRoot,
     operationalRoot,
+    operationalRootBound: tip.operationalRoot === operationalRoot,
     stateRoot:  protocolStateRoot,
     height:     tip.height,
     proof: {

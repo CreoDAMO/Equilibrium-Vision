@@ -16,7 +16,7 @@ import { callArbitrage } from "../../../../site/src/protocol/wasm-host.js";
 import { hashEthHeader, hexOf, participationMask, signSelected, syncCommittee } from "../../../../site/src/protocol/eth-light.js";
 import { NETWORKS } from "../../../../site/src/protocol/networks.js";
 import { canonicalCoinbase } from "@workspace/coinomics";
-import { rebuildStateSmt } from "../chain/state-root.js";
+import { rebuildStateSmt, snapshotColumnRoot } from "../chain/state-root.js";
 import { allowRandomMiningFallback, assertRandomMiningAllowed } from "../chain/mining-policy.js";
 import type { BlockRecord, ValidatorRecord } from "../chain/types.js";
 import type { ContractRecord } from "../chain/wasm.js";
@@ -777,6 +777,27 @@ describe("ChainState UTXO fee sweep", () => {
     expect(state.pendingUtxoFees).toBe(750);
     expect(state.ledger.balance(miner)).toBe(0);
     expect(state.utxoSet.balance(miner)).toBe(0);
+  });
+
+  it("pending UTXO fees become the purse rollback removes", () => {
+    const state = new ChainState();
+    const miner = "b".repeat(40);
+    state.pendingUtxoFees = 750;
+    const block = { ...fakeBlock(0, 1_700_000_000), miner, height: 0 };
+    state.creditPendingUtxoFees(block);
+    expect(state.pendingUtxoFees).toBe(0);
+    expect(block.utxoFeeCredit).toBe(750);
+    expect(state.utxoSet.balance(miner)).toBe(750);
+    state.creditPendingUtxoFees(block);
+    expect(state.utxoSet.balance(miner)).toBe(750);
+    state.blocks.push(block);
+    state.rollbackToHeight(-1);
+    expect(state.utxoSet.balance(miner)).toBe(0);
+    expect(state.blocks).toHaveLength(0);
+  });
+
+  it("the snapshot column keeps the operational root when the protocol root differs", () => {
+    expect(snapshotColumnRoot("ab".repeat(32), "cd".repeat(32))).toBe("ab".repeat(32));
   });
 
   it("a non-successor does not bind an evidence header", () => {

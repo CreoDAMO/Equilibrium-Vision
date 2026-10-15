@@ -610,14 +610,14 @@ describe("the header root is not the operational SMT", () => {
     expect(verified.snapshot?.operationalRoot).not.toBe(verified.snapshot?.protocolStateRoot);
 
     const served = verified.snapshot?.operationalRoot;
-    const stale = verified.snapshot?.smt;
     state.createPool("EQU-NEW", "EQU", "NEW", 1_000, 1_000);
-    state._stateSmt = stale ?? null;
     const again = getVerifiedStateRoot(state);
-    expect(again.error).toBeUndefined();
-    expect(again.snapshot?.operationalRoot).toBe(rebuildStateSmt(state).root());
-    expect(again.snapshot?.operationalRoot).not.toBe(served);
+    expect(again.snapshot).toBeUndefined();
+    expect(again.error?.status).toBe(409);
+    expect(again.error?.message).toMatch(/Operational root mismatch/);
+    expect(rebuildStateSmt(state).root()).not.toBe(served);
 
+    tip!.operationalRoot = rebuildStateSmt(state).root();
     tip!.stateRoot = "ab".repeat(32);
     const refused = getVerifiedStateRoot(state);
     expect(refused.snapshot).toBeUndefined();

@@ -29,6 +29,7 @@ import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import { canonicalSigningBytes } from "../lib/canonical-tx.js";
 import { canonicalResidual, pressureEvidence } from "./canonical-residual.js";
 import { withDbRetry, persistBlock, persistKeepsMemory, getDb, commitBranchSwitch, type PersistBlockResult } from "./persistence.js";
+import { rebuildStateSmt } from "./state-root.js";
 import { preferChain } from "../../../../site/src/protocol/frontier.js";
 import { operationalReplaySet } from "./restart-boundary.js";
 import { adjustDifficultySeconds, foreignTipFactor } from "./difficulty.js";
@@ -690,6 +691,7 @@ export class ChainState {
       block.transitionRoot = admitted.transitionRoot;
       block.canonicalSuccessor = true;
       this.blocks.push(block);
+      this.creditPendingUtxoFees(block);
       for (const tx of block.transactions) {
         const confirmed: TxRecord = { ...tx, blockHash: block.hash, blockHeight: block.height, status: "confirmed" };
         this.txIndex.set(tx.hash, confirmed);
@@ -701,8 +703,34 @@ export class ChainState {
       }
       this.embodyCanonical();
       this.wasmVM.setBlockHeight(block.height);
+      block.operationalRoot = rebuildStateSmt(this).root();
       this._stateSmt = null;
     });
+  }
+
+  /**
+   * Pending UTXO fees become the output rollback already removes.
+   * A block that already names the credit is the same purse, not a second one.
+   * The account ledger is not this purse, and Ω does not include it.
+   */
+  creditPendingUtxoFees(block: BlockRecord): void {
+    const named = block.utxoFeeCredit ?? 0;
+    const amount = named > 0 ? named : this.pendingUtxoFees;
+    if (amount <= 0) return;
+    const feeTxHash = hash256(`utxo-fees-${block.height}`);
+    if (!this.utxoSet.get(feeTxHash, 0)) {
+      this.utxoSet.add({
+        txHash: feeTxHash,
+        outputIndex: 0,
+        address: block.miner,
+        amount,
+        coinbase: false,
+        blockHeight: block.height,
+        spent: false,
+      });
+    }
+    block.utxoFeeCredit = amount;
+    if (named <= 0) this.pendingUtxoFees = 0;
   }
 
   /**
