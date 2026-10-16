@@ -7,7 +7,7 @@ import type { ContractRecord } from "./wasm.js";
 import { asBlockNonce } from "../../../../site/src/protocol/domain.js";
 import { omegaRecord } from "../../../../site/src/protocol/seal.js";
 import { logger } from "../lib/logger.js";
-import { snapshotCoversPrune, operationalReplaySet, preservedBySnapshotAnchor, rowsReturnedAfterOrphanCleanup, recoveryVerdict } from "./restart-boundary.js";
+import { snapshotCoversPrune, snapshotAncestorPrune, operationalReplaySet, preservedBySnapshotAnchor, rowsReturnedAfterOrphanCleanup, recoveryVerdict } from "./restart-boundary.js";
 import { orderRestoredRows, RestoreIntegrityError, bindStoredEvidenceRoot } from "./block-body.js";
 
 // ── Self-contained persistence layer ─────────────────────────────────────────
@@ -1075,9 +1075,11 @@ export async function commitBranchSwitch(
 /**
  * Prune blocks older than `keepBlocks` from Postgres.
  * Refuses (returns 0) unless the snapshot's own block row would survive the
- * delete. A snapshot one height below the cutoff does not cover it: that row
- * is deleted. ENABLE_UNSAFE_PRUNING bypasses a failed coverage check, not an
- * empty range.
+ * delete and every ancestor of that block would survive it. Height 0 is
+ * never in the delete. A snapshot one height below the cutoff does not
+ * cover it: that row is deleted. ENABLE_UNSAFE_PRUNING bypasses a failed
+ * coverage check, not an empty range. Restart still refuses a snapshot
+ * whose ancestors are gone.
  * Returns the number of blocks deleted.
  */
 export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<number> {
@@ -1130,6 +1132,26 @@ export async function pruneOldBlocks(keepBlocks = DEFAULT_PRUNE_KEEP): Promise<n
         { pruneBelow: decision.pruneBelow, reason: decision.reason },
         "ENABLE_UNSAFE_PRUNING=true — pruning without a retained snapshot anchor (restart will lose state)",
       );
+    }
+
+    if (decision.allowed && snap && anchor) {
+      const lineage = await db
+        .select({ hash: blocksTable.hash, height: blocksTable.height, prevHash: blocksTable.prevHash })
+        .from(blocksTable);
+      const ancestors = snapshotAncestorPrune(lineage, anchor.hash, decision.pruneBelow);
+      if (!ancestors.allowed) {
+        if (process.env["ENABLE_UNSAFE_PRUNING"] !== "true") {
+          logger.warn(
+            { pruneBelow: decision.pruneBelow, reason: ancestors.reason },
+            "Block pruning skipped: an ancestor of the snapshot would not survive",
+          );
+          return 0;
+        }
+        logger.warn(
+          { pruneBelow: decision.pruneBelow, reason: ancestors.reason },
+          "ENABLE_UNSAFE_PRUNING=true — pruning ancestors the restart cannot replay",
+        );
+      }
     }
 
     // Delete blocks with height in (0, pruneBelow) — never prune genesis (0).

@@ -144,6 +144,13 @@ export async function initChain(): Promise<void> {
         );
       } else {
         const reached = lineageReachesGenesis(allRaw, anchor.block);
+        if (!reached.complete && reached.reason === "missing-parent") {
+          // A mismatched root is not a reason to start on the shorter prefix.
+          // The snapshot is not executed in place of the missing ancestors.
+          throw new RestoreIntegrityError(
+            "snapshot ancestors are absent — not starting on a prefix that was not replayed",
+          );
+        }
         if (!reached.complete && reached.reason === "cycle") {
           logger.warn(
             {
@@ -173,19 +180,6 @@ export async function initChain(): Promise<void> {
               anchor: anchor.block.hash.slice(0, 16),
             },
             "Imported Ω does not hash to the anchor header — not restarting from it",
-          );
-        } else if (!reached.complete) {
-          // The suffix rows stay in the table. They are not installed.
-          // A prefix that is not in the walk was not replayed, so the
-          // snapshot is not the canonical state.
-          logger.warn(
-            {
-              snapshotHeight: snapshot.height,
-              anchor: anchor.block.hash.slice(0, 16),
-              suffix: reached.chain.length,
-              reason: reached.reason,
-            },
-            "Snapshot ancestors are absent — not installing a prefix that was not replayed",
           );
         } else {
           // The rows may reach genesis. The snapshot ledger is still not

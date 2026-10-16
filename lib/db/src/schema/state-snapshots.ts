@@ -19,9 +19,10 @@ export interface UTXOSnapshot {
 
 // ── state_snapshots table ─────────────────────────────────────────────────────
 //
-// A durable checkpoint of the full account ledger + UTXO set at a given block
-// height.  Snapshots allow `pruneOldBlocks()` to delete historic block rows
-// without losing the ability to reconstruct current state on restart.
+// A stored ledger at one block hash. Restart does not install this row.
+// It replays retained blocks from height 0. Pruning may not delete an
+// ancestor of the anchor: a missing prefix is a refused start, not a
+// snapshot restore.
 //
 // Contract storage is NOT included here — it is already persisted per-contract
 // in the `contracts` table's `storage` JSONB column.

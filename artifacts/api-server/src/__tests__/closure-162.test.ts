@@ -14,6 +14,7 @@ import {
   operationalReplaySet,
   evidenceToReplay,
   snapshotCoversPrune,
+  snapshotAncestorPrune,
   lineageReachesGenesis,
 } from "../chain/restart-boundary.js";
 import {
@@ -190,6 +191,31 @@ describe("prune keeps the snapshot's own row", () => {
     expect(decision.pruneBelow).toBeLessThanOrEqual(0);
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toBe("nothing to prune");
+  });
+});
+
+describe("prune keeps the ancestors of the snapshot", () => {
+  const chain = [
+    { hash: "g", height: 0, prevHash: "0".repeat(64) },
+    { hash: "a", height: 1, prevHash: "g" },
+    { hash: "anchor", height: 90, prevHash: "a" },
+    { hash: "tip", height: 100, prevHash: "anchor" },
+  ];
+
+  it("refuses a delete that would remove the parent between genesis and the anchor", () => {
+    const decision = snapshotAncestorPrune(chain, "anchor", 90);
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toBe("snapshot ancestor would be deleted");
+  });
+
+  it("allows a delete that stops before every ancestor", () => {
+    expect(snapshotAncestorPrune(chain, "anchor", 1).allowed).toBe(true);
+    expect(snapshotAncestorPrune(chain, "g", 90).reason).toBe("ancestors retained");
+  });
+
+  it("refuses a walk that does not reach height 0", () => {
+    const gapped = chain.filter((block) => block.hash !== "a");
+    expect(snapshotAncestorPrune(gapped, "anchor", 90).reason).toBe("snapshot ancestors are absent");
   });
 });
 

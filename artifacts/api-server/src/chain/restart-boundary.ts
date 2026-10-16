@@ -5,7 +5,9 @@
  * the anchor.
  * Evidence at or below the snapshot is already in the saved Ω. Only later
  * evidence is replayed. A full restore (no snapshot) is the historical path.
- * Pruning may delete a row only when the snapshot's own block survives.
+ * Pruning may delete a row only when the snapshot's own block survives and
+ * every ancestor of that block survives. Height 0 is never deleted.
+ * A missing ancestor is not a lineage restart may start from.
  *
  * Post-snapshot rows are not "later" because their height is greater.
  * They have to descend from the anchor by parent hash. Two children of one
@@ -150,6 +152,40 @@ export function snapshotCoversPrune(input: {
   const survives = input.anchor.height === 0 || input.anchor.height >= pruneBelow;
   if (!survives) return { pruneBelow, allowed: false, reason: "snapshot anchor would be deleted" };
   return { pruneBelow, allowed: true, reason: "anchor retained" };
+}
+
+/**
+ * Heights in [1, pruneBelow) are what pruning deletes. Height 0 is not.
+ * The walk from the anchor has to reach height 0 without crossing that range.
+ * A missing parent is not assumed to be outside the delete. This does not
+ * install the snapshot.
+ */
+export function snapshotAncestorPrune(
+  blocks: readonly { hash: string; height: number; prevHash: string }[],
+  anchorHash: string,
+  pruneBelow: number,
+): { allowed: boolean; reason: string } {
+  if (pruneBelow <= 1) return { allowed: true, reason: "genesis is not pruned" };
+  const byHash = new Map<string, { hash: string; height: number; prevHash: string }>();
+  for (const block of blocks) {
+    if (!byHash.has(block.hash)) byHash.set(block.hash, block);
+  }
+  const anchor = byHash.get(anchorHash);
+  if (!anchor) return { allowed: false, reason: "snapshot anchor missing" };
+  const seen = new Set<string>();
+  let cursor: { hash: string; height: number; prevHash: string } | undefined = anchor;
+  while (cursor) {
+    if (seen.has(cursor.hash)) return { allowed: false, reason: "snapshot lineage cycles" };
+    seen.add(cursor.hash);
+    if (cursor.height === 0) return { allowed: true, reason: "ancestors retained" };
+    if (cursor.hash !== anchor.hash && cursor.height < pruneBelow) {
+      return { allowed: false, reason: "snapshot ancestor would be deleted" };
+    }
+    const parent = byHash.get(cursor.prevHash);
+    if (!parent) return { allowed: false, reason: "snapshot ancestors are absent" };
+    cursor = parent;
+  }
+  return { allowed: false, reason: "snapshot ancestors are absent" };
 }
 
 type LineageRow = { hash: string; height: number; prevHash: string; evidence?: unknown };
