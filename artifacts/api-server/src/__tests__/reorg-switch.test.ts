@@ -179,7 +179,7 @@ describe("a branch switch commits the winner and drops the loser together", () =
     const forkDiff = state.canonicalBody.omega.difficulty;
     const forkTs = 1_700_000_020;
     const ranked: Array<{ nonce: number; fp: number }> = [];
-    for (let nonce = 0; nonce < 40; nonce++) {
+    for (let nonce = 0; ranked.length < 2 && nonce < 50_000; nonce++) {
       const stepped = applySuccessor(state.canonicalBody.omega, {
         transactions: [],
         evidence: undefined,
@@ -191,7 +191,9 @@ describe("a branch switch commits the winner and drops the loser together", () =
         difficulty: forkDiff,
         wasmAfter: null,
       });
-      if (stepped.ok) ranked.push({ nonce, fp: stepped.residualFp });
+      if (stepped.ok && stepped.residual < state.admissionTarget && !ranked.some((row) => row.fp === stepped.residualFp)) {
+        ranked.push({ nonce, fp: stepped.residualFp });
+      }
     }
     ranked.sort((a, b) => (a.fp < b.fp ? -1 : a.fp > b.fp ? 1 : 0));
     const low = ranked[0];

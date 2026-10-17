@@ -730,6 +730,10 @@ export class OrganismNode {
       this.emit("in", "verify", "reward law diverged");
       return false;
     }
+    if (block.height > 0 && !(stepped.residual < this.params.residualThreshold)) {
+      this.emit("in", "verify", "recomputed residual is not under the admission target");
+      return false;
+    }
     this.adopt(block, stepped);
     this.pending = this.sealing ? this.blankEvidence() : this.pending;
     this.pendingWasm = this.sealing ? null : this.pendingWasm;
@@ -2164,6 +2168,9 @@ export class OrganismNode {
     if (stepped.reward !== block.coinbaseReward) return "coinbase is not the reward law";
     if (stepped.liquid !== (block.liquidIssuance ?? block.coinbaseReward)) return "liquid issuance is not the stake law";
     if (!residualsMatch(block.residual, stepped.residual)) return "residual is not the transition";
+    if (block.height > 0 && !(stepped.residual < this.params.residualThreshold)) {
+      return "recomputed residual is not under the admission target";
+    }
     this.adopt(block, stepped);
     return null;
   }

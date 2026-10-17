@@ -28,6 +28,7 @@ import { generateZkProof, stationarityBinds } from "./zkproof.js";
 import { verifyEd25519BatchDetailed } from "./batchVerify.js";
 import { canonicalSigningBytes } from "../lib/canonical-tx.js";
 import { canonicalResidual, pressureEvidence } from "./canonical-residual.js";
+import { solveStationary } from "../../../../site/src/protocol/solver.js";
 import { withDbRetry, persistBlock, persistKeepsMemory, getDb, commitBranchSwitch, type PersistBlockResult } from "./persistence.js";
 import { rebuildStateSmt } from "./state-root.js";
 import { preferChain } from "../../../../site/src/protocol/frontier.js";
@@ -686,7 +687,7 @@ export class ChainState {
       } else if (!expect && block.zkProof && !stationarityBinds(block.zkProof, admitted.hash, admitted.residual, this.admissionTarget)) {
         block.zkProof = undefined;
       }
-      if (admitted.height > 0 && !(admitted.residual < this.admissionTarget)) {
+      if (admitted.carried.height > 0 && !(admitted.residual < this.admissionTarget)) {
         throw new Error("recomputed residual is not under the admission target");
       }
       this.canonicalBody.omega = admitted.carried;
@@ -2570,14 +2571,9 @@ export async function mineNextBlockAsync(
 }
 
 /**
- * Synchronous RNG-based miner — **test / dev only**.
- *
- * Uses Math.random() for the residual and nonce. Throws in production
- * (NODE_ENV=production or REQUIRE_REAL_SOLVER=true) unless
- * ALLOW_RANDOM_MINING=true is set, so this function can never silently
- * emit fake blocks on a production node.
- *
- * For real mining use mineNextBlockAsync() which calls the Rust solver.
+ * Synchronous test miner. It is not the production solver.
+ * The nonce is the site stationary search, not Math.random().
+ * Production refuses this function unless ALLOW_RANDOM_MINING=true.
  */
 export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord {
   assertRandomMiningAllowed("mineNextBlock");
@@ -2593,8 +2589,37 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   const txHashes = selected.map((t) => t.hash);
   const mr = merkleRoot(txHashes.length > 0 ? txHashes : ["0".repeat(64)]);
 
-  const residual = Math.random() * 5e-9 + 1e-10;
-  if (!(residual < state.admissionTarget)) {
+  let nonce = 0;
+  let residual = 1;
+  const solution = solveStationary({
+    header: {
+      prevHash,
+      merkleRoot: mr,
+      timestamp: now,
+      nonce: 1,
+      difficulty: state.canonicalBody.omega.difficulty,
+    },
+    txs: selected.map((t) => ({ hash: t.hash, fee: t.fee })),
+    state: { cumulativeWork: height, mempoolPressure: committedPressure },
+    couplings: state.canonicalBody.omega.couplings,
+    maxIter: height === 0 ? 80 : 360,
+    recursionDepth: 2,
+    target: state.admissionTarget,
+  });
+  nonce = Number(solution.nonce);
+  residual = canonicalResidual(
+    {
+      prevHash,
+      merkleRoot: mr,
+      timestamp: now,
+      nonce,
+      difficulty: state.canonicalBody.omega.difficulty,
+    },
+    selected.map((t) => ({ hash: t.hash, fee: t.fee })),
+    { cumulativeWork: height, mempoolPressure: committedPressure },
+    state.canonicalBody.omega.couplings,
+  );
+  if (height > 0 && !(residual < state.admissionTarget)) {
     throw new Error(`residual ${residual} is not under the admission target ${state.admissionTarget}`);
   }
   const reward = canonicalCoinbase(height, residual, state.admissionTarget);
@@ -2617,7 +2642,7 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
     prevHash: prevHash,
     merkleRoot: mr,
     timestamp: now,
-    nonce: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER),
+    nonce,
     difficulty: state.canonicalBody.omega.difficulty,
     residual,
     residualFp: Math.floor(residual * 1e18),
