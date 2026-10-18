@@ -38,6 +38,7 @@ use crate::{
 ///     mempoolPressure: Double,
 ///     cumWork:         Long,
 ///     maxAttempts:     Long,
+///     target:          Double,        // network admission target. Testnet 2e-3, mainnet 8e-4.
 ///     outNonce:        Array<String>, // out: [decimal u64]. Not a signed Long.
 ///     outResidual:     LongArray      // out: [residual], fixed-point scaled by 10^18
 /// ): Boolean
@@ -61,6 +62,7 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
     mempool_pressure:   jdouble,
     cum_work:           jlong,
     max_attempts:       jlong,
+    target:             jdouble,
     out_nonce:          JObjectArray,
     out_residual:       JLongArray,
 ) -> jboolean {
@@ -108,9 +110,10 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
     };
 
     // Default coupling (1,1,1,1,1). This call does not receive Ω.λ.
-    // It does not apply the successor, and the phone does not install Ω.
-    // The boolean is admission, not "a candidate exists".
-    let (nonce, residual) = search_canonical(&header, &[], &state, (max_attempts as u64).max(1), 2e-3);
+    // The boolean is admission against the network target, not "a candidate exists".
+    // Testnet is 2e-3. Mainnet is 8e-4. A missing target stays on testnet.
+    let admission = if target.is_finite() && target > 0.0 { target } else { 2e-3 };
+    let (nonce, residual) = search_canonical(&header, &[], &state, (max_attempts as u64).max(1), admission);
     // Decimal text. A signed long would turn 2^64-1 into -1.
     let text = match env.new_string(&nonce.to_string()) {
         Ok(s) => s,
@@ -122,7 +125,7 @@ pub extern "system" fn Java_com_equilibrium_MiningWorker_solveBlock(
     if env.set_long_array_region(&out_residual, 0, &[residual_to_fixed(residual)]).is_err() {
         return JNI_FALSE;
     }
-    if (0.0..2e-3).contains(&residual) { JNI_TRUE } else { JNI_FALSE }
+    if (0.0..admission).contains(&residual) { JNI_TRUE } else { JNI_FALSE }
 }
 
 /// Same search as `Java_com_equilibrium_MiningWorker_solveBlock`.
@@ -140,6 +143,7 @@ pub extern "system" fn Java_com_equilibrium_CoreSolver_solveBlock(
     mempool_pressure: jdouble,
     cum_work: jlong,
     max_attempts: jlong,
+    target: jdouble,
     out_nonce: JObjectArray,
     out_residual: JLongArray,
 ) -> jboolean {
@@ -154,6 +158,7 @@ pub extern "system" fn Java_com_equilibrium_CoreSolver_solveBlock(
         mempool_pressure,
         cum_work,
         max_attempts,
+        target,
         out_nonce,
         out_residual,
     )

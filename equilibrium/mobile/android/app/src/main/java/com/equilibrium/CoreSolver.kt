@@ -22,6 +22,7 @@ object CoreSolver {
         mempoolPressure: Double,
         cumWork: Long,
         maxAttempts: Long,
+        target: Double,
         outNonce: Array<String>,
         outResidual: LongArray,
     ): Boolean

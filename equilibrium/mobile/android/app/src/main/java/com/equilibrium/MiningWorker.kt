@@ -46,12 +46,13 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
         mempoolPressure: Double,
         cumWork: Long,
         maxAttempts: Long,
+        target: Double,
         outNonce: Array<String>,
         outResidual: LongArray,
     ): Boolean
 
-    override fun doWork() = MiningCycle(applicationContext) { prev, merkle, timestamp, difficulty, depth, pressure, work, attempts, nonce, residual ->
-        solveBlock(prev, merkle, timestamp, difficulty, depth, pressure, work, attempts, nonce, residual)
+    override fun doWork() = MiningCycle(applicationContext) { prev, merkle, timestamp, difficulty, depth, pressure, work, attempts, target, nonce, residual ->
+        solveBlock(prev, merkle, timestamp, difficulty, depth, pressure, work, attempts, target, nonce, residual)
     }.run(
         inputData.getString(KEY_NODE_URL) ?: DEFAULT_NODE_URL,
         inputData.getString(KEY_MINER_ADDRESS),

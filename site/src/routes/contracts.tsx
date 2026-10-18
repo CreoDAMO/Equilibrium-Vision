@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatAmount, truncateHash } from "@/lib/format";
+import { CONTRACT_ORGANS } from "@/protocol/organs";
 
 export const Route = createFileRoute("/contracts")({ component: ContractsPage });
 

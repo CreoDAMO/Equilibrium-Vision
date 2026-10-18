@@ -2439,7 +2439,8 @@ export async function mineNextBlockAsync(
   const work = state.canonicalWork();
   const prevHash = work.prevHash;
   const height = work.height;
-  const now = Math.floor(Date.now() / 1000);
+  const tipTimestamp = state.canonicalBody.omega.tipTimestamp;
+  const now = Math.max(Math.floor(Date.now() / 1000), tipTimestamp + TARGET_BLOCK_TIME);
 
   const candidates = state.selectCanonical(state.mempool.all());
   const selected = retainCanonicalTransactions(state, candidates);
@@ -2581,7 +2582,8 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
   const work = state.canonicalWork();
   const prevHash = work.prevHash;
   const height = work.height;
-  const now = Math.floor(Date.now() / 1000);
+  const tipTimestamp = state.canonicalBody.omega.tipTimestamp;
+  const now = Math.max(Math.floor(Date.now() / 1000), tipTimestamp + TARGET_BLOCK_TIME);
   const committedPressure = state.mempool.pressure;
 
   const candidates = state.selectCanonical(state.mempool.all());

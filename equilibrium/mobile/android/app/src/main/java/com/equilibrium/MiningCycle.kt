@@ -35,6 +35,7 @@ class MiningCycle(
             mempoolPressure: Double,
             cumWork: Long,
             maxAttempts: Long,
+            target: Double,
             outNonce: Array<String>,
             outResidual: LongArray,
         ): Boolean
@@ -80,7 +81,7 @@ class MiningCycle(
                     }
                 }
             }
-            fetchChainStatus(nodeUrl) ?: run {
+            fetchChainStatus(nodeUrl) ?: fetchSiteWork(nodeUrl) ?: run {
                 noteLightOnly(nodeUrl)
                 return Result.retry()
             }
@@ -96,7 +97,10 @@ class MiningCycle(
         val difficulty = status.getLong("difficulty")
         val height = status.getInt("height")
         val mempoolPressure = status.optDouble("mempoolPressure", 0.0)
-        val cumulativeWork = difficulty * height.toLong()
+        val nextHeight = height + 1
+        // The site residual uses the block height, not difficulty × height.
+        val cumulativeWork = status.optLong("residualWork", nextHeight.toLong()).coerceAtLeast(0L)
+        val admissionTarget = status.optDouble("admissionTarget", TESTNET_ADMISSION)
         MiningState.httpHeight = height.toString()
         if (MiningState.httpTipSource == "—" || MiningState.httpTipSource == "none") {
             MiningState.httpTipSource = "HTTP"
@@ -110,7 +114,8 @@ class MiningCycle(
 
         val prevHashBytes = hexToByteArray(latestHash)
         val merkleRootBytes = ByteArray(32)
-        val timestamp = System.currentTimeMillis() / 1000L
+        val tipTimestamp = status.optLong("latestTimestamp", 0L)
+        val timestamp = maxOf(System.currentTimeMillis() / 1000L, tipTimestamp + TARGET_BLOCK_SECONDS)
         val outNonce = arrayOf("")
         val outResidual = LongArray(1)
 
@@ -120,7 +125,7 @@ class MiningCycle(
             prevHashBytes, merkleRootBytes,
             timestamp, difficulty,
             2, mempoolPressure, cumulativeWork,
-            MAX_SOLVER_ATTEMPTS, outNonce, outResidual,
+            MAX_SOLVER_ATTEMPTS, admissionTarget, outNonce, outResidual,
         )
         if (!solved) {
             MiningState.solver = "idle"
@@ -293,6 +298,35 @@ class MiningCycle(
         }
     }
 
+    /** The site light packet. `/api/chain/status` is the API process, not this host. */
+    private fun fetchSiteWork(nodeUrl: String): JSONObject? {
+        val request = Request.Builder()
+            .url("$nodeUrl/api/light?network=testnet")
+            .get()
+            .build()
+        return try {
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val light = JSONObject(response.body!!.string())
+                val work = light.optJSONObject("work") ?: return null
+                if (!work.has("difficulty") || work.optString("prevHash").isEmpty()) return null
+                MiningState.httpTipSource = "site"
+                JSONObject().apply {
+                    put("hash", work.getString("prevHash"))
+                    put("difficulty", work.getLong("difficulty"))
+                    put("height", work.optInt("tipHeight", light.optInt("height", -1)))
+                    put("latestTimestamp", work.optLong("tipTimestamp", 0L))
+                    put("mempoolPressure", work.optDouble("mempoolPressure", 0.0))
+                    put("admissionTarget", work.optDouble("admissionTarget", TESTNET_ADMISSION))
+                    put("residualWork", work.optLong("cumulativeWork", (work.optInt("tipHeight", -1) + 1).toLong()))
+                    put("network", light.optString("network", "testnet"))
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** Height only. Not a work template. */
     private fun fetchLight(nodeUrl: String): Int? {
         val request = Request.Builder()
@@ -448,6 +482,8 @@ class MiningCycle(
         const val TAG = "MiningCycle"
         const val MAX_SOLVER_ATTEMPTS = 500_000L
         const val RESIDUAL_SCALE = 1_000_000_000_000_000_000.0
+        const val TESTNET_ADMISSION = 2e-3
+        const val TARGET_BLOCK_SECONDS = 15L
         const val VALIDATION_POLL_MS = 50L
         const val VALIDATION_TIMEOUT_MS = 8_000L
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

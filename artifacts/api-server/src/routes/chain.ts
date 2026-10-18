@@ -20,7 +20,8 @@ router.get("/chain/status", (_req, res) => {
     lastResidual: tip?.residual ?? 0,
     avgBlockTime: s.avgBlockTime,
     tps: s.tps,
-    difficulty: s.currentDifficulty,
+    difficulty: s.canonicalBody.omega.difficulty,
+    admissionTarget: s.admissionTarget,
     finalizedHeight: s.finalizedHeight,
     totalBondedStake: s.totalBondedStake,
   });

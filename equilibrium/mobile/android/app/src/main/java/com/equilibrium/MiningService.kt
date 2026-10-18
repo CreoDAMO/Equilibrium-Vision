@@ -83,8 +83,8 @@ class MiningService : Service() {
         MiningState.mining = "active"
         MiningState.solver = "running"
         thread = Thread({
-            val cycle = MiningCycle(applicationContext) { prev, merkle, timestamp, difficulty, depth, pressure, work, attempts, nonce, residual ->
-                CoreSolver.solveBlock(prev, merkle, timestamp, difficulty, depth, pressure, work, attempts, nonce, residual)
+            val cycle = MiningCycle(applicationContext) { prev, merkle, timestamp, difficulty, depth, pressure, work, attempts, target, nonce, residual ->
+                CoreSolver.solveBlock(prev, merkle, timestamp, difficulty, depth, pressure, work, attempts, target, nonce, residual)
             }
             while (running) {
                 try {

@@ -24,6 +24,17 @@ export const Route = createFileRoute("/api/light")({
           persisted: node.persisted,
           canonicalR: tip?.residual ?? null,
           territoryR: tip?.territoryResidual ?? null,
+          work: {
+            prevHash: tip?.hash ?? "0".repeat(64),
+            tipHeight: tip?.height ?? -1,
+            tipTimestamp: tip?.timestamp ?? 0,
+            height: (tip?.height ?? -1) + 1,
+            difficulty: node.difficulty,
+            mempoolPressure: node.mempoolPressure,
+            cumulativeWork: Math.max(0, (tip?.height ?? -1) + 1),
+            admissionTarget: node.params.residualThreshold,
+            merkleRoot: "0".repeat(64),
+          },
           tip: tip
             ? {
                 hash: tip.hash,
