@@ -5,7 +5,7 @@ import {
   type Couplings,
   type ResidualBreakdown,
 } from "./types";
-import { PHI, residualToFixed, u64LeFromHash } from "./crypto";
+import { PHI, residualToFixed, u64LeFromHash, canonicalPressure } from "./crypto";
 
 export interface SolverHeader {
   prevHash: string;
@@ -107,7 +107,7 @@ export function territoryResidual(
  * v_hash        : max(h − τ, 0)          h ∈ [0,1), τ from difficulty
  * v_structural  : |h − 1/φ|
  * v_continuity  : 0 if chain has work else 1
- * v_mempool     : mempool pressure ∈ [0,1]
+ * v_mempool     : pressure as the header records it, six decimals, then clamped to [0,1]
  * v_fees        : uncovered fee demand ∈ [0,1]
  */
 export function evaluateResidual(
@@ -124,7 +124,7 @@ export function evaluateResidual(
   const vHash = Math.max(hFrac - tau, 0);
   const vStruct = Math.abs(hFrac - 1 / PHI);
   const vChain = state.cumulativeWork > 0 ? 0 : 1;
-  const vMem = Math.min(1, Math.max(0, state.mempoolPressure));
+  const vMem = Math.min(1, Math.max(0, canonicalPressure(state.mempoolPressure)));
   const totalFees = txs.reduce((s, t) => s + t.fee, 0);
   const feeDemand = vMem;
   const vFee = Math.max(0, feeDemand - Math.min(1, totalFees / 1_000_000));

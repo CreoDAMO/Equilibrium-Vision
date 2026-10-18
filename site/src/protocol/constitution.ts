@@ -1,4 +1,4 @@
-import { merkleRoot, sha256Hex } from "./crypto";
+import { merkleRoot, sha256Hex, canonicalPressure } from "./crypto";
 import { evaluateResidual, type SolverHeader } from "./solver";
 import { minerReward, slashAmount } from "./coinomics";
 import { applySwap, poolAddress } from "./dex";
@@ -225,7 +225,25 @@ function safeSub(a: number, b: number): number | null {
   return Number.isSafeInteger(diff) ? diff : null;
 }
 
-/** Every monetary field G can reach. Invalid Ω is not a legal start, and not a legal result. */
+/** A projection that omits these fields is only sound when the fields are this function of the committed id. */
+function identityError(omega: Omega): string | null {
+  const seenValidators = new Set<string>();
+  for (const [key, validator] of omega.validators) {
+    if (key !== validator.address || seenValidators.has(validator.address)) return "validator key is not the address";
+    seenValidators.add(validator.address);
+  }
+  const seenPools = new Set<string>();
+  for (const pool of omega.pools) {
+    const symbol = pool.tokenA.length > 0
+      && pool.tokenB.length > 0
+      && !pool.tokenA.includes("-")
+      && !pool.tokenB.includes("-");
+    if (!symbol || seenPools.has(pool.id) || pool.id !== `${pool.tokenA}-${pool.tokenB}`) return "pool id is not the token pair";
+    if (pool.address !== poolAddress(pool.id)) return "pool address is not the id";
+    seenPools.add(pool.id);
+  }
+  return null;
+}
 export function monetaryError(omega: Omega): string | null {
   for (const acc of omega.ledger.values()) {
     if (!isSafeNonNegative(acc.balance) || !isSafeNonNegative(acc.nonce)) return "balance refused";
@@ -418,7 +436,7 @@ export function transitionDigest(omega: Omega, inputs: CanonicalInputs): string 
     String(inputs.timestamp),
     inputs.nonce.toString(),
     inputs.miner,
-    inputs.committedPressure.toFixed(6),
+    canonicalPressure(inputs.committedPressure).toFixed(6),
     String(inputs.difficulty),
     `${num(c.hash)},${num(c.structural)},${num(c.continuity)},${num(c.mempool)},${num(c.fees)}`,
   ].join("|");
@@ -1056,7 +1074,7 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs, derived?: 
   if (typeof inputs.nonce !== "bigint" || inputs.nonce < 0n || inputs.nonce > U64_MAX) {
     return { ok: false, error: "nonce is not a u64" };
   }
-  const invalid = monetaryError(omega);
+  const invalid = monetaryError(omega) ?? identityError(omega);
   if (invalid) return { ok: false, error: invalid };
   if (inputs.difficulty !== omega.difficulty) return { ok: false, error: "difficulty is not the next difficulty" };
   if (!Number.isFinite(inputs.committedPressure) || inputs.committedPressure < 0 || inputs.committedPressure > 1) {
@@ -1138,7 +1156,7 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs, derived?: 
   if (minerV) minerV.blocksProposed += 1;
   const distributed = distribute(next.validators, reward - split.liquid);
   if (distributed) return { ok: false, error: distributed };
-  const still = monetaryError(next);
+  const still = monetaryError(next) ?? identityError(next);
   if (still) return { ok: false, error: still };
   next.height = height;
   next.tipTimestamp = inputs.timestamp;

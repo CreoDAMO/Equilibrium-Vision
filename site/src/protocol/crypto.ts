@@ -6,6 +6,13 @@ export function sha256Hex(data: Uint8Array | string): string {
   return bytesToHex(sha256(bytes));
 }
 
+/** The number `toFixed(6)` already writes into the header and the transition digest. */
+export function canonicalPressure(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  const parsed = Number(value.toFixed(6));
+  return Number.isFinite(parsed) ? parsed : value;
+}
+
 /** Territory (TypeScript stack) double-SHA256 over UTF-8 hex strings. */
 export function hash256String(data: string): string {
   return sha256Hex(utf8(sha256Hex(utf8(data))));
@@ -62,7 +69,7 @@ export function canonicalHeaderHash(parts: HeaderCommitment): string {
     String(parts.residualFp),
     parts.miner,
     String(parts.height),
-    parts.committedPressure.toFixed(6),
+    canonicalPressure(parts.committedPressure).toFixed(6),
   ];
   if (parts.chainId !== undefined && parts.evidenceRoot !== undefined) {
     fields.push(String(parts.chainId), parts.evidenceRoot, parts.omegaRoot ?? "");

@@ -229,7 +229,9 @@ pub fn canonical_residual_lambda(
     let v_hash = (h_frac - tau).max(0.0);
     let v_struct = (h_frac - 1.0 / phi).abs();
     let v_chain: f64 = if cumulative_work > 0 { 0.0 } else { 1.0 };
-    let v_mem = mempool_pressure.clamp(0.0, 1.0);
+    let rendered = format!("{mempool_pressure:.6}");
+    let pressure: f64 = rendered.parse().unwrap_or(mempool_pressure);
+    let v_mem = pressure.clamp(0.0, 1.0);
     let total_fees: u64 = txs.iter().map(|tx| tx.fee).sum();
     let v_fee = (v_mem - (total_fees as f64 / 1_000_000.0).min(1.0)).max(0.0);
     let v = [v_hash, v_struct, v_chain, v_mem, v_fee];

@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { canonicalPressure } from "../../../../site/src/protocol/crypto.js";
 
 export function sha256(data: string | Buffer): string {
   return createHash("sha256").update(data).digest("hex");
@@ -71,7 +72,7 @@ export function canonicalHeaderHash(parts: HeaderCommitment): string {
     String(parts.residualFp),
     parts.miner,
     String(parts.height),
-    parts.committedPressure.toFixed(6),
+    canonicalPressure(parts.committedPressure).toFixed(6),
   ];
   if (parts.chainId !== undefined && parts.evidenceRoot !== undefined) {
     fields.push(String(parts.chainId), parts.evidenceRoot, parts.omegaRoot ?? "");

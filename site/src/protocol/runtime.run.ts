@@ -8,9 +8,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { canonicalHeaderHash, residualToFixed } from "./crypto";
+import { canonicalHeaderHash, canonicalPressure, residualToFixed } from "./crypto";
 import { minerReward } from "./coinomics";
-import { applySuccessor, initialOmega, openedCouplings } from "./constitution";
+import { applySuccessor, initialOmega, omegaDigest, openedCouplings } from "./constitution";
 import { deploymentIdentity, EMBEDDED_WASM } from "./deployment";
 import { minerKey } from "./genesis";
 import { NETWORKS } from "./networks";
@@ -177,12 +177,96 @@ const withTransition = canonicalHeaderHash({
 });
 assert.notEqual(withTransition, thirteen);
 
+const nonce6Header = {
+  prevHash: "00".repeat(32),
+  merkleRoot: "00".repeat(32),
+  timestamp: 1_700_000_000,
+  nonce: 6,
+  difficulty: 1_000_000,
+};
+const pressure0 = evaluateResidual(nonce6Header, [], { cumulativeWork: 1, mempoolPressure: 0 }).canonical;
+const pressureNear = evaluateResidual(nonce6Header, [], { cumulativeWork: 1, mempoolPressure: 0.0000004 }).canonical;
+const pressureHalf = evaluateResidual(nonce6Header, [], { cumulativeWork: 1, mempoolPressure: 0.0000005 }).canonical;
+const pressureUp = evaluateResidual(nonce6Header, [], { cumulativeWork: 1, mempoolPressure: 0.0000006 }).canonical;
+const pressureGrid = evaluateResidual(nonce6Header, [], { cumulativeWork: 1, mempoolPressure: 0.000001 }).canonical;
+assert.equal(pressureNear, pressure0);
+assert.equal(pressureHalf, pressure0);
+assert.equal(pressureUp, pressureGrid);
+assert.equal(Math.floor(pressure0 * 1e18), 201_100_202_523_998);
+assert.equal(canonicalPressure(0.0000004).toFixed(6), (0).toFixed(6));
+assert.equal(canonicalPressure(0.0000005).toFixed(6), (0.0000005).toFixed(6));
+assert.equal(canonicalHeaderHash({ ...tenFields, committedPressure: 0.0000004 }), ten);
+assert.equal(canonicalHeaderHash({ ...tenFields, committedPressure: 0.0000006 }), canonicalHeaderHash({ ...tenFields, committedPressure: 0.000001 }));
+
 for (const row of contract.coinbase) {
   const got = Math.floor(minerReward(row.height, Number(row.residual), Number(row.target), { baseReward: 100, halvingInterval: 2_100_000 }));
   assert.equal(got, row.reward, `coinbase ${row.height} ${row.residual}`);
 }
 
 const omega = initialOmega("mainnet");
+const before = omegaDigest(omega);
+const stepped = applySuccessor(omega, {
+  transactions: [],
+  evidence: undefined,
+  timestamp: 1_700_000_000,
+  nonce: 6n,
+  miner: minerKey("mainnet").address,
+  committedPressure: 0.0000004,
+  couplings: openedCouplings(omega),
+  difficulty: omega.difficulty,
+  wasmAfter: null,
+});
+assert.equal(stepped.ok, true, stepped.ok ? "" : stepped.error);
+assert.equal(omegaDigest(omega), before);
+
+const brokenKey = initialOmega("mainnet");
+const [validatorKey, validator] = [...brokenKey.validators.entries()][0]!;
+brokenKey.validators.delete(validatorKey);
+brokenKey.validators.set("cd".repeat(20), validator);
+const refusedKey = applySuccessor(brokenKey, {
+  transactions: [],
+  evidence: undefined,
+  timestamp: 1_700_000_000,
+  nonce: 6n,
+  miner: validatorKey,
+  committedPressure: 0,
+  couplings: openedCouplings(brokenKey),
+  difficulty: brokenKey.difficulty,
+  wasmAfter: null,
+});
+assert.equal(refusedKey.ok ? "" : refusedKey.error, "validator key is not the address");
+
+const brokenPool = initialOmega("mainnet");
+brokenPool.pools[0]!.tokenB = "DOGE";
+const refusedPool = applySuccessor(brokenPool, {
+  transactions: [],
+  evidence: undefined,
+  timestamp: 1_700_000_000,
+  nonce: 6n,
+  miner: minerKey("mainnet").address,
+  committedPressure: 0,
+  couplings: openedCouplings(brokenPool),
+  difficulty: brokenPool.difficulty,
+  wasmAfter: null,
+});
+assert.equal(refusedPool.ok ? "" : refusedPool.error, "pool id is not the token pair");
+
+const hyphenPool = initialOmega("mainnet");
+hyphenPool.pools[0]!.tokenA = "EQ-U";
+hyphenPool.pools[0]!.id = "EQ-U-WBTC";
+const refusedHyphen = applySuccessor(hyphenPool, {
+  transactions: [],
+  evidence: undefined,
+  timestamp: 1_700_000_000,
+  nonce: 6n,
+  miner: minerKey("mainnet").address,
+  committedPressure: 0,
+  couplings: openedCouplings(hyphenPool),
+  difficulty: hyphenPool.difficulty,
+  wasmAfter: null,
+});
+assert.equal(refusedHyphen.ok ? "" : refusedHyphen.error, "pool id is not the token pair");
+
 const nan = applySuccessor(omega, {
   transactions: [],
   evidence: undefined,

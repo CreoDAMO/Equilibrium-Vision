@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { CANONICAL_RESIDUAL_TARGET } from "@workspace/coinomics";
+import { canonicalPressure } from "../../../../site/src/protocol/crypto.js";
 
 /**
  * Canonical residual. Same quantity as `evaluateResidual` in
@@ -116,7 +117,7 @@ export function canonicalResidual(
   const vHash = Math.max(hFrac - tau, 0);
   const vStruct = Math.abs(hFrac - 1 / PHI);
   const vChain = state.cumulativeWork > 0 ? 0 : 1;
-  const vMem = Math.min(1, Math.max(0, state.mempoolPressure));
+  const vMem = Math.min(1, Math.max(0, canonicalPressure(state.mempoolPressure)));
   const totalFees = txs.reduce((s, t) => s + t.fee, 0);
   const vFee = Math.max(0, vMem - Math.min(1, totalFees / 1_000_000));
   return (
