@@ -29,6 +29,25 @@ function block(partial: Partial<BlockRecord> & Pick<BlockRecord, "hash" | "heigh
   };
 }
 
+function stationaryNonce(chain: ChainState, timestamp: number): number {
+  const omega = chain.canonicalBody.omega;
+  for (let nonce = 0; nonce < 50_000; nonce++) {
+    const stepped = applySuccessor(omega, {
+      transactions: [],
+      evidence: undefined,
+      timestamp,
+      nonce: BigInt(nonce),
+      miner,
+      committedPressure: 0,
+      couplings: openedCouplings(omega),
+      difficulty: omega.difficulty,
+      wasmAfter: null,
+    });
+    if (stepped.ok && stepped.residual < chain.admissionTarget) return nonce;
+  }
+  throw new Error("no nonce under the admission target");
+}
+
 const state = new ChainState();
 const omega = state.canonicalBody.omega;
 const before = omegaDigest(omega);
@@ -138,6 +157,7 @@ assert.equal(restarted.ledger.balance(miner), state.ledger.balance(miner));
 assert.equal(restarted.currentDifficulty, state.currentDifficulty);
 
 const continuedAt = 1_700_000_045;
+const continuedNonce = stationaryNonce(state, continuedAt);
 const liveNext = block({
   hash: "66".repeat(32),
   height: state.canonicalBody.omega.height + 1,
@@ -145,7 +165,7 @@ const liveNext = block({
   miner,
   difficulty: state.canonicalBody.omega.difficulty,
   timestamp: continuedAt,
-  nonce: 6,
+  nonce: continuedNonce,
 });
 const restartNext = block({
   ...liveNext,
@@ -192,6 +212,7 @@ gov.addBlock(block({
   miner,
   difficulty: gov.canonicalBody.omega.difficulty,
   timestamp: 1_700_000_015,
+  nonce: stationaryNonce(gov, 1_700_000_015),
 }));
 assert.equal(gov.couplings.structural, 0);
 assert.equal(gov.canonicalBody.omega.couplings.structural, 0);
@@ -221,7 +242,7 @@ const ancestor = fork.blocks[0]!.hash;
 const forkDiff = fork.canonicalBody.omega.difficulty;
 const forkTs = 1_700_000_020;
 const ranked: Array<{ nonce: number; fp: number }> = [];
-for (let nonce = 0; nonce < 40; nonce++) {
+for (let nonce = 0; ranked.length < 2 && nonce < 50_000; nonce++) {
   const stepped = applySuccessor(fork.canonicalBody.omega, {
     transactions: [],
     evidence: undefined,
@@ -233,7 +254,9 @@ for (let nonce = 0; nonce < 40; nonce++) {
     difficulty: forkDiff,
     wasmAfter: null,
   });
-  if (stepped.ok) ranked.push({ nonce, fp: stepped.residualFp });
+  if (stepped.ok && stepped.residual < fork.admissionTarget && !ranked.some((row) => row.fp === stepped.residualFp)) {
+    ranked.push({ nonce, fp: stepped.residualFp });
+  }
 }
 ranked.sort((a, b) => (a.fp < b.fp ? -1 : a.fp > b.fp ? 1 : 0));
 const low = ranked[0];

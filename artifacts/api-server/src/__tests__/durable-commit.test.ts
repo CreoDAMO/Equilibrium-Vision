@@ -14,7 +14,7 @@ import { persistBlock, persistBlockUsing, deletePrunedBlockRows, deleteAbandoned
 import { operationalReplaySet } from "../chain/restart-boundary.js";
 import { blocksTable } from "../../../../lib/db/src/schema/blocks.ts";
 import { transactionsTable } from "../../../../lib/db/src/schema/transactions.ts";
-import { openedCouplings } from "../../../../site/src/protocol/constitution.js";
+import { applySuccessor, openedCouplings } from "../../../../site/src/protocol/constitution.js";
 import { minerKey } from "../../../../site/src/protocol/genesis.js";
 import type { BlockRecord } from "../chain/types.js";
 import type { Omega } from "../../../../site/src/protocol/constitution.js";
@@ -66,6 +66,25 @@ function candidate(state: ChainState, nonce: number, timestamp: number): BlockRe
     transactions: [],
     committedPressure: 0,
   };
+}
+
+function nonceUnderTarget(state: ChainState, timestamp: number): number {
+  const omega = state.canonicalBody.omega;
+  for (let nonce = 0; nonce < 50_000; nonce++) {
+    const stepped = applySuccessor(omega, {
+      transactions: [],
+      evidence: undefined,
+      timestamp,
+      nonce: BigInt(nonce),
+      miner,
+      committedPressure: 0,
+      couplings: openedCouplings(omega),
+      difficulty: omega.difficulty,
+      wasmAfter: null,
+    });
+    if (stepped.ok && stepped.residual < state.admissionTarget) return nonce;
+  }
+  throw new Error("no nonce under the admission target");
 }
 
 function observe(state: ChainState) {
@@ -183,7 +202,7 @@ describe("a failed write does not remove a block that waited", () => {
     const gate = hold();
     const pendingA = state.commitOperational(blockA, { persist: gate.persist });
     await until(gate.entered);
-    const blockB = candidate(state, 7, 1_700_000_012);
+    const blockB = candidate(state, nonceUnderTarget(state, 1_700_000_012), 1_700_000_012);
     const pendingB = state.commitOperational(blockB, { persist: async () => inserted });
     gate.release(inserted);
     const resultA = await pendingA;

@@ -2591,34 +2591,42 @@ export function mineNextBlock(state: ChainState, minerAddr: string): BlockRecord
 
   let nonce = 0;
   let residual = 1;
-  const solution = solveStationary({
-    header: {
-      prevHash,
-      merkleRoot: mr,
-      timestamp: now,
-      nonce: 1,
-      difficulty: state.canonicalBody.omega.difficulty,
-    },
-    txs: selected.map((t) => ({ hash: t.hash, fee: t.fee })),
-    state: { cumulativeWork: height, mempoolPressure: committedPressure },
-    couplings: state.canonicalBody.omega.couplings,
-    maxIter: height === 0 ? 80 : 360,
-    recursionDepth: 2,
-    target: state.admissionTarget,
-  });
-  nonce = Number(solution.nonce);
-  residual = canonicalResidual(
-    {
-      prevHash,
-      merkleRoot: mr,
-      timestamp: now,
-      nonce,
-      difficulty: state.canonicalBody.omega.difficulty,
-    },
-    selected.map((t) => ({ hash: t.hash, fee: t.fee })),
-    { cumulativeWork: height, mempoolPressure: committedPressure },
-    state.canonicalBody.omega.couplings,
-  );
+  const couplings = openedCouplings(state.canonicalBody.omega);
+  const txFees = selected.map((t) => ({ hash: t.hash, fee: t.fee }));
+  let start = 1;
+  for (let window = 0; window < 32; window++) {
+    const solution = solveStationary({
+      header: {
+        prevHash,
+        merkleRoot: mr,
+        timestamp: now,
+        nonce: start,
+        difficulty: state.canonicalBody.omega.difficulty,
+      },
+      txs: txFees,
+      state: { cumulativeWork: height, mempoolPressure: committedPressure },
+      couplings,
+      maxIter: 2_000,
+      recursionDepth: 1,
+      target: state.admissionTarget,
+    });
+    nonce = Number(solution.nonce);
+    residual = canonicalResidual(
+      {
+        prevHash,
+        merkleRoot: mr,
+        timestamp: now,
+        nonce,
+        difficulty: state.canonicalBody.omega.difficulty,
+      },
+      txFees,
+      { cumulativeWork: height, mempoolPressure: committedPressure },
+      couplings,
+    );
+    if (height === 0 || residual < state.admissionTarget) break;
+    start = (nonce + 1) >>> 0;
+    if (start === 0) start = 1;
+  }
   if (height > 0 && !(residual < state.admissionTarget)) {
     throw new Error(`residual ${residual} is not under the admission target ${state.admissionTarget}`);
   }
