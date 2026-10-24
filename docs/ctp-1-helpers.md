@@ -1,6 +1,6 @@
 # CTP-1 Helpers
 
-Bodies of the transition, as the interpreter computes them.
+Bodies of the transition, as the interpreter computes them. The control flow is [CTP-1 Bodies](ctp-1-bodies.md). That file wins if this commentary disagrees with it.
 
 This file specifies four regions that [CTP-1 Relation](ctp-1-relation.md) previously only named: stake, transaction effects, the residual and the reward, and the wasm host. It does not specify bitcoin admission, ethereum admission, settlement, withdrawals, model admission, or transaction selection. Those remain open. C-007 remains open.
 
@@ -30,7 +30,7 @@ Stake operations run in the evidence array order. The first refusal stops the tr
 
 If the public key and the signature are both empty, refuse. Otherwise verify before any debit. Verification requires a 40-hex delegator, a 40-hex validator, a 64-hex public key, a 128-hex signature, and a positive safe integer amount. The signature is Ed25519 over the UTF-8 text
 
-`eq-authority|v1|chainId|delegate|delegator|validator|amount|||||`
+`eq-authority|v1|chainId|delegate|delegator|validator|amount||||`
 
 and the address derived from the public key must be the delegator. The address derivation is the first 40 hex characters of SHA-256 of the 32-byte key.
 

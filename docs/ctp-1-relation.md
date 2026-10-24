@@ -157,7 +157,7 @@ On \((\Omega_{\mathrm{pre}}, I, C)\), with \(D\) from section 5, the function re
 
 A refusal has no \(\Omega_{\mathrm{rel}}\) and no header. It is not a valid transition.
 
-Steps 10, 14, 16, and 17 name helpers whose field-level effects are not all restated here. Stake, transaction effects, the residual, the reward, and the wasm host are specified in [CTP-1 Helpers](ctp-1-helpers.md). The others remain names. A circuit of an unspecified name is not a circuit of the function.
+Steps 10, 14, 16, and 17 name helpers whose field-level effects are not all restated here. Stake, transaction effects, the residual, the reward, and the wasm host are specified in [CTP-1 Bodies](ctp-1-bodies.md). The commentary is [CTP-1 Helpers](ctp-1-helpers.md). The others remain names. A circuit of an unspecified name is not a circuit of the function.
 
 ## 7. Commitment timing
 
@@ -309,7 +309,7 @@ Map iteration order and array order are part of the triple. Sorting a map before
 
 ## 13. What is still not specified as bytes
 
-[CTP-1 Helpers](ctp-1-helpers.md) specifies the ledger rules, `monetaryError`, `identityError`, stake, transaction effects, the residual, the reward, and the wasm host boundary. These remain names:
+[CTP-1 Bodies](ctp-1-bodies.md) is the control flow for the ledger rules, stake, transaction effects, the residual, the reward, and the wasm host. [CTP-1 Helpers](ctp-1-helpers.md) is the commentary. These remain names:
 
 - `verifyTx` beyond the preimage already named
 - `selectSuccessorTxs`
