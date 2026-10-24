@@ -69,6 +69,7 @@ import { selectSuccessorTxs } from "./tx-select";
 import { chainWeight, preferChain } from "./frontier";
 import { ADOPTION_REQUIRES_TRANSITION_PROOF } from "./transition-proof";
 import { adoptionGate } from "./ctp1";
+import { sealFromSuccessor } from "./seal";
 import {
   applySuccessor,
   cloneOmega,
