@@ -169,6 +169,138 @@ pub fn verify_ctp1_integers(proof: &Ctp1IntegerProof) -> bool {
     Groth16::<Bn254>::verify_proof(&keys().pvk, &parsed, &statement(&proof.public_inputs)).unwrap_or(false)
 }
 
+/// The interior difficulty branch: the factor is not exactly 0.8 or 1.2,
+/// so production uses integer division rather than `floor(difficulty * factor)`.
+/// The 1.2 clamp that produced statement 801861c3… is not this branch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DifficultyInterior {
+    pub difficulty_before: u64,
+    pub target_seconds: u64,
+    pub block_time: u64,
+    pub foreign_num: u64,
+    pub foreign_den: u64,
+    pub difficulty_after: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DifficultyProof {
+    pub bytes: Vec<u8>,
+    pub public_inputs: DifficultyInterior,
+}
+
+struct DifficultyCircuit {
+    public: DifficultyInterior,
+    quotient: u64,
+    remainder: u64,
+    gap: u64,
+    slack: u64,
+}
+
+fn difficulty_witnesses(public: &DifficultyInterior) -> Result<(u64, u64, u64, u64), &'static str> {
+    if public.block_time == 0 || public.foreign_den == 0 || public.target_seconds == 0 || public.foreign_num == 0 {
+        return Err("difficulty divisor is zero");
+    }
+    let divisor = u128::from(public.block_time) * u128::from(public.foreign_den);
+    let numerator = u128::from(public.difficulty_before) * u128::from(public.target_seconds) * u128::from(public.foreign_num);
+    let quotient = numerator / divisor;
+    let remainder = numerator % divisor;
+    if quotient < 100_000 || quotient > u128::from(u64::MAX) || remainder > u128::from(u64::MAX) {
+        return Err("difficulty quotient is outside the interior branch");
+    }
+    if u128::from(public.difficulty_after) != quotient {
+        return Err("difficulty is not the interior quotient");
+    }
+    let gap = divisor - remainder - 1;
+    let slack = quotient - 100_000;
+    Ok((quotient as u64, remainder as u64, gap as u64, slack as u64))
+}
+
+impl ConstraintSynthesizer<Fr> for DifficultyCircuit {
+    fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
+        let before = input(cs.clone(), self.public.difficulty_before)?;
+        let target = input(cs.clone(), self.public.target_seconds)?;
+        let block_time = input(cs.clone(), self.public.block_time)?;
+        let foreign_num = input(cs.clone(), self.public.foreign_num)?;
+        let foreign_den = input(cs.clone(), self.public.foreign_den)?;
+        let after = input(cs.clone(), self.public.difficulty_after)?;
+        for value in [&before, &target, &block_time, &foreign_num, &foreign_den, &after] {
+            fit_u64(value)?;
+        }
+        let quotient = FpVar::new_witness(cs.clone(), || Ok(Fr::from(self.quotient)))?;
+        let remainder = FpVar::new_witness(cs.clone(), || Ok(Fr::from(self.remainder)))?;
+        let gap = FpVar::new_witness(cs.clone(), || Ok(Fr::from(self.gap)))?;
+        let slack = FpVar::new_witness(cs.clone(), || Ok(Fr::from(self.slack)))?;
+        fit_u64(&quotient)?;
+        fit_u64(&remainder)?;
+        fit_u64(&gap)?;
+        fit_u64(&slack)?;
+        let divisor = &block_time * &foreign_den;
+        let numerator = &before * &target * &foreign_num;
+        numerator.enforce_equal(&(&quotient * &divisor + &remainder))?;
+        divisor.enforce_equal(&(&remainder + &gap + FpVar::constant(Fr::one())))?;
+        quotient.enforce_equal(&(&slack + FpVar::constant(Fr::from(100_000u64))))?;
+        after.enforce_equal(&quotient)?;
+        Ok(())
+    }
+}
+
+fn difficulty_statement(public: &DifficultyInterior) -> Vec<Fr> {
+    [
+        public.difficulty_before,
+        public.target_seconds,
+        public.block_time,
+        public.foreign_num,
+        public.foreign_den,
+        public.difficulty_after,
+    ]
+    .into_iter()
+    .map(Fr::from)
+    .collect()
+}
+
+struct DifficultyKeys {
+    pk: ProvingKey<Bn254>,
+    pvk: PreparedVerifyingKey<Bn254>,
+}
+
+fn difficulty_keys() -> &'static DifficultyKeys {
+    DIFFICULTY_KEYS.get_or_init(|| {
+        let public = DifficultyInterior {
+            difficulty_before: 200_000,
+            target_seconds: 15,
+            block_time: 16,
+            foreign_num: 1,
+            foreign_den: 1,
+            difficulty_after: 187_500,
+        };
+        let (quotient, remainder, gap, slack) = difficulty_witnesses(&public).expect("sample difficulty");
+        let circuit = DifficultyCircuit { public, quotient, remainder, gap, slack };
+        let mut rng = StdRng::seed_from_u64(0xD1FF_0016);
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit, &mut rng).expect("difficulty setup");
+        DifficultyKeys { pk, pvk: prepare_verifying_key(&vk) }
+    })
+}
+
+static DIFFICULTY_KEYS: OnceLock<DifficultyKeys> = OnceLock::new();
+
+pub fn prove_difficulty_interior(public: &DifficultyInterior) -> Result<DifficultyProof, &'static str> {
+    let (quotient, remainder, gap, slack) = difficulty_witnesses(public)?;
+    let circuit = DifficultyCircuit { public: *public, quotient, remainder, gap, slack };
+    let mut rng = StdRng::seed_from_u64(0xD1FF_0016);
+    let proof = Groth16::<Bn254>::prove(&difficulty_keys().pk, circuit, &mut rng).map_err(|_| "difficulty proving failed")?;
+    let mut bytes = Vec::new();
+    proof.serialize_compressed(&mut bytes).map_err(|_| "difficulty proof did not serialize")?;
+    Ok(DifficultyProof { bytes, public_inputs: *public })
+}
+
+pub fn verify_difficulty_interior(proof: &DifficultyProof) -> bool {
+    let parsed = match ark_groth16::Proof::<Bn254>::deserialize_compressed(proof.bytes.as_slice()) {
+        Ok(proof) => proof,
+        Err(_) => return false,
+    };
+    Groth16::<Bn254>::verify_proof(&difficulty_keys().pvk, &parsed, &difficulty_statement(&proof.public_inputs)).unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +348,32 @@ mod tests {
         let mut early = proof;
         early.public_inputs.height_after = 2;
         assert!(!verify_ctp1_integers(&early));
+    }
+
+    #[test]
+    fn the_interior_difficulty_branch_is_computed_and_the_clamp_is_not() {
+        let public = DifficultyInterior {
+            difficulty_before: 200_000,
+            target_seconds: 15,
+            block_time: 16,
+            foreign_num: 1,
+            foreign_den: 1,
+            difficulty_after: 187_500,
+        };
+        let proof = prove_difficulty_interior(&public).expect("prove");
+        assert!(verify_difficulty_interior(&proof));
+        let mut other = proof.clone();
+        other.public_inputs.difficulty_after = 187_501;
+        assert!(!verify_difficulty_interior(&other));
+
+        let clamp = DifficultyInterior {
+            difficulty_before: 1_000_000,
+            target_seconds: 15,
+            block_time: 12,
+            foreign_num: 1,
+            foreign_den: 1,
+            difficulty_after: 1_200_000,
+        };
+        assert!(prove_difficulty_interior(&clamp).is_err());
     }
 }
