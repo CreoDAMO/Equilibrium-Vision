@@ -1,7 +1,7 @@
-# C-007 transition statement
+# C-007
 
-The formal specification is [CTP-1](ctp-1.md). This note is only the pointer.
+The relation is [CTP-1 Relation](ctp-1-relation.md). The proof obligation for that relation is [CTP-1](ctp-1.md).
 
-Version-1 statement bytes live in `site/src/protocol/transition-proof.ts`. They are a partial encoding of CTP-1 section 4, not the specification, and not a proof.
+Version-1 statement bytes in `site/src/protocol/transition-proof.ts` are not the relation. They hash `wasmAfter`, which `applySuccessor` does not read, and they hash an evidence string that is not injective. `verifyTransitionProof` rejects every proof. Adoption does not call it.
 
-`verifyTransitionProof` rejects every proof. The adoption paths do not call it. C-007 is open.
+C-007 is open.

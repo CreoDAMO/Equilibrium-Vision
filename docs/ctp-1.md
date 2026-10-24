@@ -4,7 +4,7 @@ Complete Transition Proof Specification
 
 Status: specification only. No proof system implements this document. `verifyTransitionProof` rejects every proof. Adoption does not call it. C-007 is open.
 
-Reference interpreter described here: `successor` and `applySuccessor` in `site/src/protocol/constitution.ts`, as of `f71ca06`. Statement bytes already produced by the program: version 1 in `site/src/protocol/transition-proof.ts`. Those bytes are a partial encoding of section 4. They are not this specification.
+Reference interpreter described here: `applySuccessor` and `successor` in `site/src/protocol/constitution.ts`, as of `0050a84`. The byte-level relation is [CTP-1 Relation](ctp-1-relation.md). That document wins where this one describes a commitment. Statement bytes already produced by the program: version 1 in `site/src/protocol/transition-proof.ts`. Those bytes are a partial encoding of section 4. They are not this specification.
 
 If this document is silent, the case is undefined, and no proof of it may be accepted. If this document and the interpreter disagree, neither one closes C-007.
 
@@ -118,7 +118,7 @@ The witness may be private. Anything the adoption rule compares to the installed
 
 ## 6. Reference relation
 
-Let `Reference(Ω, I, C)` be the following order. It is the order of `successor` then `applySuccessor`. A proof may not reorder it.
+Let `Reference(Ω, I, C)` be the following order. It is one execution of `applySuccessor`, after wasm execution when the evidence contains wasm calls. It is not a second call to `applySuccessor` after `successor`, because `successor` already calls `applySuccessor`. A proof may not reorder it. `I.wasmAfter` is not read.
 
 1. If `I.evidence.wasm` is non-empty, execute `ARBITRAGE_CODE` on a copy of `Ω.wasm`, calls in array order, block number `max(0, Ω.height)`. A failing call refuses. The resulting map is the only admissible derived storage. `I.wasmAfter` is not that map. The reference passes `wasmAfter: null` into the next step.
 2. Refuse unless `paramsOf(Ω.chainId) = C`'s parameter record.
