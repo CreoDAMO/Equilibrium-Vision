@@ -4,7 +4,10 @@
  * It runs the production successor once and compares the public statement
  * with that result. It does not implement a second transition, and it does
  * not build a succinct proof. verifyTransitionProof still rejects every
- * proof. ADOPTION_REQUIRES_TRANSITION_PROOF stays false. C-007 stays open.
+ * proof. ADOPTION_REQUIRES_TRANSITION_PROOF stays false. The integer
+ * projection of one real statement is proved in `equilibrium/src/ctp1_circuit.rs`.
+ * That Groth16 check does not run the successor, and it does not prove
+ * the residual, the header, or the wasm host. C-007 stays open.
  */
 import { sha256Hex } from "./crypto";
 import {
