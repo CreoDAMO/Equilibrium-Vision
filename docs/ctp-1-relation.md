@@ -309,15 +309,10 @@ Map iteration order and array order are part of the triple. Sorting a map before
 
 ## 13. What is still not specified as bytes
 
-[CTP-1 Bodies](ctp-1-bodies.md) is the control flow for the ledger rules, stake, transaction effects, the residual, the reward, and the wasm host. [CTP-1 Helpers](ctp-1-helpers.md) is the commentary. These remain names:
+[CTP-1 Bodies](ctp-1-bodies.md) is the control flow for stake, effects, the residual, and the wasm host. [CTP-1 Rest](ctp-1-rest.md) is the control flow for selection, bitcoin, ethereum, settlement, withdrawals, model binding, and difficulty. These remain names:
 
 - `verifyTx` beyond the preimage already named
-- `selectSuccessorTxs`
-- bitcoin admission, ethereum admission, `applySettlement`, `applyWithdrawal`
-- `admitModels`, `admitBinding`
-- `settleMaturedUnbondings` and `refundMaturedWithdrawals`, beyond the loops already stated
-- `distribute`, beyond the floor already stated
-- `adjustDifficulty` and `foreignDifficultyFactor`, beyond the inputs already named
+- `verifyRotation`, `verifySelectedHeader`, `hashEthHeader`, `parseBtcTx`, and `proveEthEffect`
 - the instruction behavior inside `ARBITRAGE_WASM`
 
 Until those bodies are specified at the same grain, a circuit that implements the names has not been shown to implement the functions. C-007 remains open.
