@@ -67,7 +67,8 @@ import { bytesToHex, hexToBytes } from "./bytes";
 import { ARBITRAGE_CODE } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { chainWeight, preferChain } from "./frontier";
-import { sealFromSuccessor } from "./seal";
+import { ADOPTION_REQUIRES_TRANSITION_PROOF } from "./transition-proof";
+import { adoptionGate } from "./ctp1";
 import {
   applySuccessor,
   cloneOmega,
@@ -2171,6 +2172,24 @@ export class OrganismNode {
     if (block.height > 0 && !(stepped.residual < this.params.residualThreshold)) {
       return "recomputed residual is not under the admission target";
     }
+    const gate = await adoptionGate(
+      ADOPTION_REQUIRES_TRANSITION_PROOF,
+      {
+        before: this.toOmega(),
+        inputs: {
+          transactions: block.transactions,
+          evidence: block.evidence,
+          timestamp: block.timestamp,
+          nonce: asBlockNonce(block.nonce),
+          miner: block.miner,
+          committedPressure: block.committedPressure,
+          couplings: block.couplings,
+          difficulty: block.difficulty,
+        },
+      },
+      null,
+    );
+    if (!gate.ok) return gate.reason;
     this.adopt(block, stepped);
     return null;
   }
