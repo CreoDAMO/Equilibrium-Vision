@@ -8,5 +8,8 @@ The real second-block statement changes difficulty from 1,000,000 to 1,200,000. 
 
 The older integer-division circuit remains the interior quotient without rounding. It is not this law. The same law is not a second proof beside the clock. `prove_composed` puts the statement id, the height step, the timestamp delta, the difficulty law, and the liquid credit in one public statement. The interval fed to the clamp is `timestamp_after - timestamp_before`, not a separate number. The real step is statement `801861c38e8d596f…`: height 0 to 1, time 12 to 24, difficulty 1,000,000 to 1,200,000, balance 1,500,000 plus a liquid credit of 2. Changing the difficulty, the height, or the statement id makes that proof fail.
 
-The liquid credit is still an input. The reward that produced 2 is not computed here. The genesis block uses the target interval instead of a timestamp delta, and that clock is not this statement. The residual and the header are still outside. C-007 remains open.
+The liquid credit is no longer only an added input. For this block the successor returns a reward of 26 and a liquid credit of 2. [reward_split.rs](../equilibrium/src/reward_split.rs) computes that 2 as `floor(26 × 0.1)` and the staking floors in validator order: 6, 6, 4, 4, and 2. Their sum is 22. The remaining 2 is dust and is not credited. A claimed liquid of 3, or a last share of 3, fails the proof.
+
+The 26 is still an input. It comes from `floor(blockReward(1) × quality(R))` with `R = 0.0029637900846207032`, and that residual is not computed in the circuit. `Math.pow` is the missing operation. C-007 remains open.
+
 

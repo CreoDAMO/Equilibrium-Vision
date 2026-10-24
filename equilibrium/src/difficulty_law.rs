@@ -86,7 +86,7 @@ fn at_least(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<Boolean<Fr>, SynthesisError>
     Ok(ge)
 }
 
-fn enforce_from_u64(n: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
+pub(crate) fn enforce_from_u64(n: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
     let cs = n.cs();
     let n_bits = low_bits(n, 53)?;
     let mut hot = Vec::with_capacity(53);
@@ -149,7 +149,7 @@ fn round_pack(
     Ok(&exp * FpVar::constant(Fr::from(1u64 << 52)) + pack(&frac_bits)?)
 }
 
-fn enforce_mul(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
+pub(crate) fn enforce_mul(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
     let a_bits = low_bits(a, 64)?;
     let b_bits = low_bits(b, 64)?;
     a_bits[63].enforce_equal(&Boolean::FALSE)?;
@@ -226,7 +226,7 @@ fn enforce_div(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError
     round_pack(&exp, &significand, &round, &sticky)
 }
 
-fn enforce_floor(bits: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
+pub(crate) fn enforce_floor(bits: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
     let cs = bits.cs();
     let raw = low_bits(bits, 64)?;
     raw[63].enforce_equal(&Boolean::FALSE)?;

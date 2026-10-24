@@ -15,6 +15,8 @@ pub mod ctp1_circuit;
 pub mod binary64;
 /// Groth16 of the production difficulty law, clamp included.
 pub mod difficulty_law;
+/// Liquid split and staking floors. The reward is not yet derived.
+pub mod reward_split;
 pub mod ffi;
 pub mod wallet;
 
