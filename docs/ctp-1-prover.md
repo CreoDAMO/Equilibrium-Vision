@@ -1,9 +1,9 @@
 # CTP-1 prover
 
-The implementation path stays Groth16, in [ctp1_circuit.rs](../equilibrium/src/ctp1_circuit.rs).
+The implementation path stays Groth16.
 
-Plonky3 and RISC Zero are not the next prover. Re-proving height, time, and the liquid credit in a second system would not compute the residual, the header, or the wasm host. RISC Zero is already an optional dependency for a later guest. It is not a second transition. A guest that is not the ECMA-262 successor would be a different relation.
+[difficulty_law.rs](../equilibrium/src/difficulty_law.rs) proves `adjustDifficulty` with binary64 rounding. The circuit computes the unclamped factor, clamps it to the literals 0.8 and 1.2, and selects the branch. It does not take the factor as a public input.
 
-The real second-block statement `801861c38e8d596f…` changes difficulty from 1,000,000 to 1,200,000. The target is 15 seconds and the interval is 12, so the unclamped factor is 1.25 and production takes the `1.2` clamp: `floor(difficulty × 1.2)`. That multiply is binary64. The integer division branch is a different formula, and this circuit refuses the clamp.
+The real second-block statement changes difficulty from 1,000,000 to 1,200,000. The target is 15 seconds and the interval is 12, so the factor is the 1.2 clamp. The proof accepts 1,200,000 and rejects a different result. The same circuit also accepts the interior quotient 187,500, the low clamp 800,000, and `floor(1,000,001 × 1.2) = 1,200,001`.
 
-C-007 remains open. The next computation that has to enter a circuit is that clamp, or the residual digest. Not another proof system.
+The older integer-division circuit remains the interior quotient without rounding. It is not this law. The header, the residual, the evidence, and the wasm host are still outside. Verification of this proof does not run `successor`. C-007 remains open.

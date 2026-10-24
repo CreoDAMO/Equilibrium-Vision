@@ -11,6 +11,10 @@ pub mod zk_proof;
 pub mod transition_circuit;
 /// Integer projection of a CTP-1 statement. Not a proof of `Reference`.
 pub mod ctp1_circuit;
+/// Binary64 difficulty arithmetic. The same rounding ECMA-262 uses.
+pub mod binary64;
+/// Groth16 of the production difficulty law, clamp included.
+pub mod difficulty_law;
 pub mod ffi;
 pub mod wallet;
 
