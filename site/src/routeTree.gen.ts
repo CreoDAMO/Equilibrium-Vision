@@ -24,6 +24,7 @@ import { Route as MeshRouteImport } from './routes/mesh'
 import { Route as MobileRouteImport } from './routes/mobile'
 import { Route as ProtocolRouteImport } from './routes/protocol'
 import { Route as ResearchRouteImport } from './routes/research'
+import { Route as OneRouteImport } from './routes/one'
 import { Route as StateRouteImport } from './routes/state'
 import { Route as ValidatorsRouteImport } from './routes/validators'
 import { Route as VerifyRouteImport } from './routes/verify'
@@ -113,6 +114,11 @@ const ResearchRoute = ResearchRouteImport.update({
   path: '/research',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OneRoute = OneRouteImport.update({
+  id: '/one',
+  path: '/one',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StateRoute = StateRouteImport.update({
   id: '/state',
   path: '/state',
@@ -195,6 +201,7 @@ export interface FileRoutesByFullPath {
   '/mobile': typeof MobileRoute
   '/protocol': typeof ProtocolRouteWithChildren
   '/research': typeof ResearchRoute
+  '/one': typeof OneRoute
   '/state': typeof StateRoute
   '/validators': typeof ValidatorsRoute
   '/verify': typeof VerifyRoute
@@ -225,6 +232,7 @@ export interface FileRoutesByTo {
   '/mobile': typeof MobileRoute
   '/protocol': typeof ProtocolRouteWithChildren
   '/research': typeof ResearchRoute
+  '/one': typeof OneRoute
   '/state': typeof StateRoute
   '/validators': typeof ValidatorsRoute
   '/verify': typeof VerifyRoute
@@ -256,6 +264,7 @@ export interface FileRoutesById {
   '/mobile': typeof MobileRoute
   '/protocol': typeof ProtocolRouteWithChildren
   '/research': typeof ResearchRoute
+  '/one': typeof OneRoute
   '/state': typeof StateRoute
   '/validators': typeof ValidatorsRoute
   '/verify': typeof VerifyRoute
@@ -288,6 +297,7 @@ export interface FileRouteTypes {
     | '/mobile'
     | '/protocol'
     | '/research'
+    | '/one'
     | '/state'
     | '/validators'
     | '/verify'
@@ -318,6 +328,7 @@ export interface FileRouteTypes {
     | '/mobile'
     | '/protocol'
     | '/research'
+    | '/one'
     | '/state'
     | '/validators'
     | '/verify'
@@ -348,6 +359,7 @@ export interface FileRouteTypes {
     | '/mobile'
     | '/protocol'
     | '/research'
+    | '/one'
     | '/state'
     | '/validators'
     | '/verify'
@@ -379,6 +391,7 @@ export interface RootRouteChildren {
   MobileRoute: typeof MobileRoute
   ProtocolRoute: typeof ProtocolRouteWithChildren
   ResearchRoute: typeof ResearchRoute
+  OneRoute: typeof OneRoute
   StateRoute: typeof StateRoute
   ValidatorsRoute: typeof ValidatorsRoute
   VerifyRoute: typeof VerifyRoute
@@ -497,6 +510,13 @@ declare module '@tanstack/react-router' {
       path: '/research'
       fullPath: '/research'
       preLoaderRoute: typeof ResearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/one': {
+      id: '/one'
+      path: '/one'
+      fullPath: '/one'
+      preLoaderRoute: typeof OneRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/state': {
@@ -632,6 +652,7 @@ const rootRouteChildren: RootRouteChildren = {
   MobileRoute: MobileRoute,
   ProtocolRoute: ProtocolRouteWithChildren,
   ResearchRoute: ResearchRoute,
+  OneRoute: OneRoute,
   StateRoute: StateRoute,
   ValidatorsRoute: ValidatorsRoute,
   VerifyRoute: VerifyRoute,

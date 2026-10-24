@@ -29,10 +29,14 @@ function Research() {
           ZK machinery in the source repository binds residual, threshold, and block
           hash. It does not yet prove the canonical state transition. Inference
           attestation is an Ed25519 receipt, not a zkML proof. Those sentences are
-          copied from LIMITATIONS.md on purpose.
+          copied from LIMITATIONS.md on purpose. The carried-chain statement is a byte
+          record. It is not a proof, and adoption does not require one.
         </p>
       </section>
       <div className="flex flex-wrap gap-3">
+        <Link to="/one" className="text-accent">
+          Equilibrium One
+        </Link>
         <Link to="/experiments" className="text-accent">
           Run an experiment
         </Link>

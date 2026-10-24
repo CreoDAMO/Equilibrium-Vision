@@ -28,6 +28,7 @@ const MORE = [
   { to: "/library", label: "Library" },
   { to: "/audit", label: "Claim audit" },
   { to: "/research", label: "Research" },
+  { to: "/one", label: "One" },
   { to: "/mobile", label: "Mobile" },
   { to: "/miner", label: "Miner" },
   { to: "/developers", label: "Developers" },

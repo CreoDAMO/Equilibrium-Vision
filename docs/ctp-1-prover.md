@@ -14,7 +14,10 @@ The reward is no longer a public input of a separate split. [header_reward.rs](.
 
 The 80-byte header in that proof is not yet the header of the carried chain. `applySuccessor` hashes the predecessor's `tipHash`. The seal writes the new tip only into the carried state. The next block therefore starts from `dcace012…`, not from zeros. Its residual is `0.027899958794187343`, its reward is 2, and its liquid credit is 0. Its statement id is `9b81c17e…`, which is the hash of the statement bytes. The id used by the reward proof does not bind to that predecessor: changing the parent tip changes the preimage, and [reward-binding.ts](../site/src/protocol/reward-binding.ts) rejects the zero-parent header for the carried block. The sealed header hash is a different field from this preimage.
 
-The statement id, the FS1 predecessor, the input id, and the context id are the version-1 encodings. They are not yet constraints inside the reward circuit. Adoption still does not require a proof. C-007 remains open.
+The carried second block is now a byte record, not an abbreviated table. [carried-second.json](fixtures/carried-second.json) was taken from the same construction as `eedacf3`, re-run at `74072eb`. The protocol files between those commits did not change. The predecessor is 2,367 FS1 bytes, `031d243b…`. The input encoding is 197 bytes, `8411effd…`. The context encoding is 196 bytes, `104cbf9a…`, and it commits `ARBITRAGE_CODE`, not the wasm bytecode. The residual preimage is 80 bytes whose SHA-256 is `71f4a8c2…`. `Number` of the first eight digest bytes is `8319503366747649137`. The production residual is `0.027899958794187343`, the reward is 2, and the liquid credit is 0. The statement id `9b81c17e…` is the SHA-256 of the statement bytes. The sealed header is `7e2a514b…`, which is not that preimage. The successor FS1 id is `bc7ab2c3…`. The carried FS1 id is `122c0d8a…`.
+
+`structuredInputId` for this evidence is `7944544c…` and is not a field of the statement. An empty cognition, settle, and withdraw list has the same canonical evidence string and a different structured encoding, `67b5b7a5…`. The version-1 input id does not separate those two witnesses. That gap is outside the reward circuit. Adoption still does not require a proof. C-007 remains open.
+
 
 
 
