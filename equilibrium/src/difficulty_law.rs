@@ -301,6 +301,35 @@ fn at_least_floor(value: FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
     FpVar::conditionally_select(&keeps, &floor, &bound)
 }
 
+fn enforce_law(
+    difficulty: &FpVar<Fr>,
+    block_time: &FpVar<Fr>,
+    target_ms: &FpVar<Fr>,
+    foreign_num: &FpVar<Fr>,
+    foreign_den: &FpVar<Fr>,
+) -> Result<FpVar<Fr>, SynthesisError> {
+    let difficulty_bits = enforce_from_u64(difficulty)?;
+    let time_bits = enforce_from_u64(block_time)?;
+    let target_ms_bits = enforce_from_u64(target_ms)?;
+    let num_bits = enforce_from_u64(foreign_num)?;
+    let den_bits = enforce_from_u64(foreign_den)?;
+    let thousand = FpVar::constant(Fr::from(binary64::from_u64(1_000).expect("1000")));
+    let target = enforce_div(&target_ms_bits, &thousand)?;
+    let unclamped = enforce_mul(&enforce_div(&target, &time_bits)?, &enforce_div(&num_bits, &den_bits)?)?;
+    let hi_bits = FpVar::constant(Fr::from(BITS_1_2));
+    let lo_bits = FpVar::constant(Fr::from(BITS_0_8));
+    let above = at_least(&hi_bits, &unclamped)?.not();
+    let high = FpVar::conditionally_select(&above, &hi_bits, &unclamped)?;
+    let below = at_least(&high, &lo_bits)?.not();
+    let factor = FpVar::conditionally_select(&below, &lo_bits, &high)?;
+    let on_clamp = factor.is_eq(&lo_bits)?.or(&factor.is_eq(&hi_bits)?)?;
+    let clamp_result = at_least_floor(enforce_mul(&difficulty_bits, &factor)?)?;
+    let numer = enforce_mul(&enforce_mul(&difficulty_bits, &target)?, &num_bits)?;
+    let denom = enforce_mul(&time_bits, &den_bits)?;
+    let interior_result = at_least_floor(enforce_div(&numer, &denom)?)?;
+    FpVar::conditionally_select(&on_clamp, &clamp_result, &interior_result)
+}
+
 impl ConstraintSynthesizer<Fr> for LawCircuit {
     fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
         let difficulty = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.difficulty)))?;
@@ -308,29 +337,9 @@ impl ConstraintSynthesizer<Fr> for LawCircuit {
         let target_ms = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.target_ms)))?;
         let foreign_num = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.foreign_num)))?;
         let foreign_den = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.foreign_den)))?;
-        let after = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.difficulty_after)))?;
-        let difficulty_bits = enforce_from_u64(&difficulty)?;
-        let time_bits = enforce_from_u64(&block_time)?;
-        let target_ms_bits = enforce_from_u64(&target_ms)?;
-        let num_bits = enforce_from_u64(&foreign_num)?;
-        let den_bits = enforce_from_u64(&foreign_den)?;
-        let thousand = FpVar::constant(Fr::from(binary64::from_u64(1_000).expect("1000")));
-        let target = enforce_div(&target_ms_bits, &thousand)?;
-        let unclamped = enforce_mul(&enforce_div(&target, &time_bits)?, &enforce_div(&num_bits, &den_bits)?)?;
-        let hi_bits = FpVar::constant(Fr::from(BITS_1_2));
-        let lo_bits = FpVar::constant(Fr::from(BITS_0_8));
-        let above = at_least(&hi_bits, &unclamped)?.not();
-        let high = FpVar::conditionally_select(&above, &hi_bits, &unclamped)?;
-        let below = at_least(&high, &lo_bits)?.not();
-        let factor = FpVar::conditionally_select(&below, &lo_bits, &high)?;
-        let on_clamp = factor.is_eq(&lo_bits)?.or(&factor.is_eq(&hi_bits)?)?;
-        let clamp_result = at_least_floor(enforce_mul(&difficulty_bits, &factor)?)?;
-        let numer = enforce_mul(&enforce_mul(&difficulty_bits, &target)?, &num_bits)?;
-        let denom = enforce_mul(&time_bits, &den_bits)?;
-        let interior_result = at_least_floor(enforce_div(&numer, &denom)?)?;
-        let chosen = FpVar::conditionally_select(&on_clamp, &clamp_result, &interior_result)?;
+        let after = FpVar::new_input(cs, || Ok(Fr::from(self.public.difficulty_after)))?;
+        let chosen = enforce_law(&difficulty, &block_time, &target_ms, &foreign_num, &foreign_den)?;
         chosen.enforce_equal(&after)?;
-        let _ = cs;
         Ok(())
     }
 }
@@ -404,6 +413,170 @@ pub fn verify_difficulty_law(proof: &DifficultyLawProof) -> bool {
         Err(_) => return false,
     };
     Groth16::<Bn254>::verify_proof(&keys().pvk, &parsed, &statement(&proof.public_inputs)).unwrap_or(false)
+}
+
+/// One statement. The timestamp delta is the difficulty interval.
+/// The liquid credit is still an input, not a computed reward.
+/// The genesis clock, the residual, and the header are not in this statement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ComposedStep {
+    pub id: [u64; 4],
+    pub height_before: u64,
+    pub height_after: u64,
+    pub timestamp_before: u64,
+    pub timestamp_after: u64,
+    pub difficulty_before: u64,
+    pub difficulty_after: u64,
+    pub target_ms: u64,
+    pub foreign_num: u64,
+    pub foreign_den: u64,
+    pub balance_before: u64,
+    pub liquid: u64,
+    pub balance_after: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComposedProof {
+    pub bytes: Vec<u8>,
+    pub public_inputs: ComposedStep,
+}
+
+#[derive(Clone, Copy)]
+struct StepCircuit {
+    public: ComposedStep,
+}
+
+impl ConstraintSynthesizer<Fr> for StepCircuit {
+    fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
+        let mut id = Vec::with_capacity(4);
+        for limb in self.public.id {
+            let limb = FpVar::new_input(cs.clone(), || Ok(Fr::from(limb)))?;
+            let _ = low_bits(&limb, 64)?;
+            id.push(limb);
+        }
+        let height_before = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.height_before)))?;
+        let height_after = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.height_after)))?;
+        let timestamp_before = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.timestamp_before)))?;
+        let timestamp_after = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.timestamp_after)))?;
+        let difficulty_before = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.difficulty_before)))?;
+        let difficulty_after = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.difficulty_after)))?;
+        let target_ms = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.target_ms)))?;
+        let foreign_num = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.foreign_num)))?;
+        let foreign_den = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.foreign_den)))?;
+        let balance_before = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.balance_before)))?;
+        let liquid = FpVar::new_input(cs.clone(), || Ok(Fr::from(self.public.liquid)))?;
+        let balance_after = FpVar::new_input(cs, || Ok(Fr::from(self.public.balance_after)))?;
+        for value in [&height_before, &height_after, &timestamp_before, &timestamp_after, &balance_before, &liquid, &balance_after] {
+            let _ = low_bits(value, 64)?;
+        }
+        (&height_before + FpVar::constant(Fr::one())).enforce_equal(&height_after)?;
+        let interval = &timestamp_after - &timestamp_before;
+        let chosen = enforce_law(&difficulty_before, &interval, &target_ms, &foreign_num, &foreign_den)?;
+        chosen.enforce_equal(&difficulty_after)?;
+        (&balance_before + &liquid).enforce_equal(&balance_after)?;
+        let _ = id;
+        Ok(())
+    }
+}
+
+fn composed_statement(public: &ComposedStep) -> Vec<Fr> {
+    let mut values = public.id.to_vec();
+    values.extend([
+        public.height_before,
+        public.height_after,
+        public.timestamp_before,
+        public.timestamp_after,
+        public.difficulty_before,
+        public.difficulty_after,
+        public.target_ms,
+        public.foreign_num,
+        public.foreign_den,
+        public.balance_before,
+        public.liquid,
+        public.balance_after,
+    ]);
+    values.into_iter().map(Fr::from).collect()
+}
+
+fn real_step() -> ComposedStep {
+    let bytes = hex::decode("801861c38e8d596fdc42b6e6d63ac2dae0941f723dd9083415fad7240b2aef30").expect("statement id");
+    let mut id = [0u64; 4];
+    for (i, limb) in id.iter_mut().enumerate() {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(&bytes[i * 8..(i + 1) * 8]);
+        *limb = u64::from_be_bytes(raw);
+    }
+    ComposedStep {
+        id,
+        height_before: 0,
+        height_after: 1,
+        timestamp_before: 12,
+        timestamp_after: 24,
+        difficulty_before: 1_000_000,
+        difficulty_after: 1_200_000,
+        target_ms: 15_000,
+        foreign_num: 1,
+        foreign_den: 1,
+        balance_before: 1_500_000,
+        liquid: 2,
+        balance_after: 1_500_002,
+    }
+}
+
+struct StepKeys {
+    pk: ProvingKey<Bn254>,
+    pvk: PreparedVerifyingKey<Bn254>,
+}
+
+fn step_keys() -> &'static StepKeys {
+    STEP_KEYS.get_or_init(|| {
+        let mut rng = StdRng::seed_from_u64(0x57E9_0001);
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(StepCircuit { public: real_step() }, &mut rng)
+            .expect("composed step setup");
+        StepKeys { pk, pvk: prepare_verifying_key(&vk) }
+    })
+}
+
+static STEP_KEYS: OnceLock<StepKeys> = OnceLock::new();
+
+pub fn prove_composed(public: &ComposedStep) -> Result<ComposedProof, &'static str> {
+    if public.height_after != public.height_before.saturating_add(1) || public.height_before == u64::MAX {
+        return Err("height is not the next height");
+    }
+    if public.timestamp_after <= public.timestamp_before {
+        return Err("timestamp did not advance");
+    }
+    let interval = public.timestamp_after - public.timestamp_before;
+    let expected = binary64::adjust(
+        public.difficulty_before,
+        interval,
+        public.target_ms,
+        public.foreign_num,
+        public.foreign_den,
+    )?;
+    if expected != public.difficulty_after {
+        return Err("difficulty is not the binary64 result");
+    }
+    let credited = u128::from(public.balance_before) + u128::from(public.liquid);
+    if credited != u128::from(public.balance_after) {
+        return Err("balance is not the predecessor plus the liquid credit");
+    }
+    let mut rng = StdRng::seed_from_u64(0x57E9_0001);
+    let proof = Groth16::<Bn254>::prove(&step_keys().pk, StepCircuit { public: *public }, &mut rng)
+        .map_err(|_| "composed proving failed")?;
+    let mut bytes = Vec::new();
+    proof.serialize_compressed(&mut bytes).map_err(|_| "composed proof did not serialize")?;
+    Ok(ComposedProof { bytes, public_inputs: *public })
+}
+
+/// One pairing check for the clock, the difficulty law, and the liquid credit.
+/// It does not run `successor`.
+pub fn verify_composed(proof: &ComposedProof) -> bool {
+    let parsed = match ark_groth16::Proof::<Bn254>::deserialize_compressed(proof.bytes.as_slice()) {
+        Ok(proof) => proof,
+        Err(_) => return false,
+    };
+    Groth16::<Bn254>::verify_proof(&step_keys().pvk, &parsed, &composed_statement(&proof.public_inputs)).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -491,5 +664,21 @@ mod tests {
         };
         assert!(verify_difficulty_law(&prove_difficulty_law(&odd).expect("non integer floor")));
         assert!(prove_difficulty_law(&DifficultyLaw { difficulty_after: 1_250_000, ..public }).is_err());
+    }
+
+    #[test]
+    fn one_statement_binds_the_clock_to_the_difficulty_law() {
+        let public = real_step();
+        let proof = prove_composed(&public).expect("prove");
+        assert!(verify_composed(&proof));
+        let mut other = proof.clone();
+        other.public_inputs.difficulty_after = 1_199_999;
+        assert!(!verify_composed(&other));
+        let mut height = proof.clone();
+        height.public_inputs.height_after = 2;
+        assert!(!verify_composed(&height));
+        let mut name = proof;
+        name.public_inputs.id[3] ^= 1;
+        assert!(!verify_composed(&name));
     }
 }
