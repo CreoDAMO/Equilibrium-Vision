@@ -100,4 +100,4 @@ After the state root and the binding check, add one to the miner's `blocksPropos
 
 ## What remains a name
 
-`verifyRotation`, `verifySelectedHeader`, `hashEthHeader`, `parseBtcTx`, `proveEthEffect`, and the instructions inside `ARBITRAGE_WASM` are not transcribed. The arbitrage source directory in this checkout has no Rust or WAT file. The host boundary is specified. Inventing the contract's instructions would not specify them. C-007 remains open.
+`verifyRotation`, `verifySelectedHeader`, `hashEthHeader`, `parseBtcTx`, and `proveEthEffect` are specified in [CTP-1 Named](ctp-1-named.md). The wasm methods the transition calls are specified there too. The rest of the binary is not executed by `Reference`. C-007 remains open.
