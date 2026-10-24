@@ -15,6 +15,10 @@ pub mod ctp1_circuit;
 pub mod binary64;
 /// Groth16 of the production difficulty law, clamp included.
 pub mod difficulty_law;
+/// SHA-256 of the residual header.
+pub mod header_digest;
+/// Header, residual, reward, and split in one statement.
+pub mod header_reward;
 /// Liquid split and staking floors. The reward is not yet derived.
 pub mod reward_split;
 pub mod ffi;

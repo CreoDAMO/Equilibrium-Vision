@@ -65,7 +65,7 @@ fn any(bits: &[Boolean<Fr>]) -> Result<Boolean<Fr>, SynthesisError> {
 }
 
 /// `a >= b` for two integers that fit in 64 bits.
-fn at_least(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<Boolean<Fr>, SynthesisError> {
+pub(crate) fn at_least(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<Boolean<Fr>, SynthesisError> {
     let cs = a.cs().or(b.cs());
     let ge = Boolean::new_witness(cs.clone(), || {
         let av = a.value().unwrap_or(Fr::zero());
@@ -128,6 +128,64 @@ pub(crate) fn enforce_from_u64(n: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisErro
     Ok(encoded)
 }
 
+/// `Number(u64)` rounding, including integers at or above `2^53`.
+pub(crate) fn enforce_rounded_u64(n: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
+    let cs = n.cs();
+    let bits = low_bits(n, 64)?;
+    let mut hot = Vec::with_capacity(64);
+    for i in 0..64 {
+        let bit = Boolean::new_witness(cs.clone(), || {
+            let raw = u64_of(n)?;
+            Ok(i == 63 - raw.leading_zeros() as usize)
+        })?;
+        hot.push(bit);
+    }
+    let mut seen = FpVar::constant(Fr::zero());
+    for bit in &hot {
+        seen += FpVar::conditionally_select(bit, &FpVar::constant(Fr::one()), &FpVar::constant(Fr::zero()))?;
+    }
+    seen.enforce_equal(&FpVar::constant(Fr::one()))?;
+    for i in 0..64 {
+        let keeps = hot[i].not().or(&bits[i])?;
+        keeps.enforce_equal(&Boolean::TRUE)?;
+        for j in (i + 1)..64 {
+            let above = hot[i].not().or(&bits[j].not())?;
+            above.enforce_equal(&Boolean::TRUE)?;
+        }
+    }
+    let mut encoded = FpVar::constant(Fr::zero());
+    for e in 0..64 {
+        let (raw_sig, raw_round, raw_sticky, exp) = if e <= 52 {
+            let mut sig = vec![Boolean::constant(false); 53];
+            sig[52] = Boolean::constant(true);
+            for j in 0..e {
+                sig[52 - e + j] = bits[j].clone();
+            }
+            (sig, Boolean::constant(false), Boolean::constant(false), e as u64 + 1023)
+        } else {
+            let mut sig = Vec::with_capacity(53);
+            for j in 0..53 {
+                sig.push(bits[e - 52 + j].clone());
+            }
+            let round = bits[e - 53].clone();
+            let sticky = if e == 53 { Boolean::constant(false) } else { any(&bits[..e - 53])? };
+            (sig, round, sticky, e as u64 + 1023)
+        };
+        let mut significand = Vec::with_capacity(53);
+        for (j, bit) in raw_sig.iter().enumerate() {
+            let canonical = Boolean::constant(j == 52);
+            significand.push(Boolean::conditionally_select(&hot[e], bit, &canonical)?);
+        }
+        let round = Boolean::conditionally_select(&hot[e], &raw_round, &Boolean::FALSE)?;
+        let sticky = Boolean::conditionally_select(&hot[e], &raw_sticky, &Boolean::FALSE)?;
+        let exp_var = FpVar::new_witness(cs.clone(), || Ok(Fr::from(exp)))?;
+        exp_var.enforce_equal(&FpVar::constant(Fr::from(exp)))?;
+        let packed = round_pack(&exp_var, &significand, &round, &sticky)?;
+        encoded += FpVar::conditionally_select(&hot[e], &packed, &FpVar::constant(Fr::zero()))?;
+    }
+    Ok(encoded)
+}
+
 fn round_pack(
     exp: &FpVar<Fr>,
     significand: &[Boolean<Fr>],
@@ -147,6 +205,158 @@ fn round_pack(
     all.enforce_equal(&Boolean::TRUE)?;
     let frac_bits = low_bits(&(&final_sig - FpVar::constant(Fr::from(1u64 << 52))), 52)?;
     Ok(&exp * FpVar::constant(Fr::from(1u64 << 52)) + pack(&frac_bits)?)
+}
+
+fn equals_usize(bits: &[Boolean<Fr>], n: usize) -> Result<Boolean<Fr>, SynthesisError> {
+    let mut acc = Boolean::constant(true);
+    let mut n = n;
+    for bit in bits {
+        let matches = if (n & 1) == 1 { bit.clone() } else { bit.not() };
+        n >>= 1;
+        acc = acc.and(&matches)?;
+    }
+    Ok(acc)
+}
+
+/// Shift a 56-bit value right by `0..64`. The lost bits become the sticky flag.
+fn align56(wide: &FpVar<Fr>, shift: &FpVar<Fr>) -> Result<(FpVar<Fr>, Boolean<Fr>), SynthesisError> {
+    let cs = wide.cs().or(shift.cs());
+    let bits = low_bits(wide, 56)?;
+    let shift_bits = low_bits(shift, 6)?;
+    let aligned = FpVar::new_witness(cs.clone(), || {
+        let amount = u64_of(shift)?.min(63) as u32;
+        Ok(Fr::from(u64_of(wide)? >> amount))
+    })?;
+    let sticky = Boolean::new_witness(cs, || {
+        let amount = u64_of(shift)?;
+        let value = u64_of(wide)?;
+        let lost = if amount == 0 { 0 } else { value & ((1u64 << amount.min(63)) - 1) };
+        Ok(lost != 0)
+    })?;
+    let mut seen = FpVar::constant(Fr::zero());
+    for s in 0..64 {
+        let chosen = equals_usize(&shift_bits, s)?;
+        seen += FpVar::conditionally_select(&chosen, &FpVar::constant(Fr::one()), &FpVar::constant(Fr::zero()))?;
+        let shifted = if s >= 56 { FpVar::constant(Fr::zero()) } else { pack(&bits[s..])? };
+        FpVar::conditionally_select(&chosen, &aligned, &FpVar::constant(Fr::zero()))?
+            .enforce_equal(&FpVar::conditionally_select(&chosen, &shifted, &FpVar::constant(Fr::zero()))?)?;
+        let lost = if s == 0 {
+            Boolean::constant(false)
+        } else if s >= 56 {
+            any(&bits)?
+        } else {
+            any(&bits[..s])?
+        };
+        Boolean::conditionally_select(&chosen, &sticky, &Boolean::FALSE)?
+            .enforce_equal(&Boolean::conditionally_select(&chosen, &lost, &Boolean::FALSE)?)?;
+    }
+    seen.enforce_equal(&FpVar::constant(Fr::one()))?;
+    Ok((aligned, sticky))
+}
+
+fn normal_parts(bits: &FpVar<Fr>) -> Result<(FpVar<Fr>, FpVar<Fr>), SynthesisError> {
+    let raw = low_bits(bits, 64)?;
+    raw[63].enforce_equal(&Boolean::FALSE)?;
+    let exp = pack(&raw[52..63])?;
+    any(&raw[52..63])?.enforce_equal(&Boolean::TRUE)?;
+    let sig = pack(&raw[..52])? + FpVar::constant(Fr::from(1u64 << 52));
+    Ok((exp, sig))
+}
+
+pub(crate) fn enforce_add(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
+    let (exp_a, sig_a) = normal_parts(a)?;
+    let (exp_b, sig_b) = normal_parts(b)?;
+    let a_first = at_least(&exp_a, &exp_b)?;
+    let exp = FpVar::conditionally_select(&a_first, &exp_a, &exp_b)?;
+    let hi = FpVar::conditionally_select(&a_first, &sig_a, &sig_b)?;
+    let lo = FpVar::conditionally_select(&a_first, &sig_b, &sig_a)?;
+    let shift = FpVar::conditionally_select(&a_first, &(&exp_a - &exp_b), &(&exp_b - &exp_a))?;
+    let hi_wide = &hi * FpVar::constant(Fr::from(8u64));
+    let lo_wide = &lo * FpVar::constant(Fr::from(8u64));
+    let (aligned, sticky) = align56(&lo_wide, &shift)?;
+    let sum0 = &hi_wide + &aligned;
+    let low = low_bits(&sum0, 57)?;
+    let add_one = sticky.and(&low[0].not())?;
+    let sum = &sum0 + FpVar::conditionally_select(&add_one, &FpVar::constant(Fr::one()), &FpVar::constant(Fr::zero()))?;
+    let sum_bits = low_bits(&sum, 57)?;
+    let carry = sum_bits[56].clone();
+    let mut kept = Vec::with_capacity(56);
+    for i in 0..56 {
+        let up = if i + 1 < 57 { sum_bits[i + 1].clone() } else { Boolean::FALSE };
+        kept.push(Boolean::conditionally_select(&carry, &up, &sum_bits[i])?);
+    }
+    let shifted_low = sum_bits[1].or(&sum_bits[0])?;
+    kept[0] = Boolean::conditionally_select(&carry, &shifted_low, &sum_bits[0])?;
+    let exp = &exp + FpVar::conditionally_select(&carry, &FpVar::constant(Fr::one()), &FpVar::constant(Fr::zero()))?;
+    let mut significand = Vec::with_capacity(53);
+    for bit in kept.iter().skip(3).take(53) {
+        significand.push(bit.clone());
+    }
+    let round = kept[2].clone();
+    let sticky = kept[0].or(&kept[1])?;
+    round_pack(&exp, &significand, &round, &sticky)
+}
+
+pub(crate) fn enforce_sub_abs(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
+    let (exp_a, sig_a) = normal_parts(a)?;
+    let (exp_b, sig_b) = normal_parts(b)?;
+    let exp_a_ge = at_least(&exp_a, &exp_b)?;
+    let exp_b_ge = at_least(&exp_b, &exp_a)?;
+    let same_exp = exp_a_ge.and(&exp_b_ge)?;
+    let sig_a_ge = at_least(&sig_a, &sig_b)?;
+    let a_first = Boolean::conditionally_select(&same_exp, &sig_a_ge, &exp_a_ge)?;
+    let exp = FpVar::conditionally_select(&a_first, &exp_a, &exp_b)?;
+    let hi = FpVar::conditionally_select(&a_first, &sig_a, &sig_b)?;
+    let lo = FpVar::conditionally_select(&a_first, &sig_b, &sig_a)?;
+    let shift = FpVar::conditionally_select(&a_first, &(&exp_a - &exp_b), &(&exp_b - &exp_a))?;
+    let hi_wide = &hi * FpVar::constant(Fr::from(8u64));
+    let lo_wide = &lo * FpVar::constant(Fr::from(8u64));
+    let (aligned, sticky) = align56(&lo_wide, &shift)?;
+    let cs = a.cs().or(b.cs());
+    let diff = FpVar::new_witness(cs.clone(), || {
+        let left = u64_of(&hi_wide)?;
+        let right = u64_of(&aligned)?;
+        let borrow = if sticky.value().unwrap_or(false) { 1 } else { 0 };
+        Ok(Fr::from(left - right - borrow))
+    })?;
+    let _ = low_bits(&diff, 56)?;
+    let borrow = FpVar::conditionally_select(&sticky, &FpVar::constant(Fr::one()), &FpVar::constant(Fr::zero()))?;
+    hi_wide.enforce_equal(&(&diff + &aligned + &borrow))?;
+    let diff_bits = low_bits(&diff, 56)?;
+    let lead = FpVar::new_witness(cs, || {
+        let raw = u64_of(&diff)?;
+        Ok(Fr::from(63 - raw.leading_zeros() as u64))
+    })?;
+    let lead_bits = low_bits(&lead, 6)?;
+    let mut seen = FpVar::constant(Fr::zero());
+    let mut norm_bits = vec![Boolean::FALSE; 56];
+    let mut exp_out = FpVar::constant(Fr::zero());
+    for k in 0..56 {
+        let chosen = equals_usize(&lead_bits, k)?;
+        seen += FpVar::conditionally_select(&chosen, &FpVar::constant(Fr::one()), &FpVar::constant(Fr::zero()))?;
+        let top = Boolean::conditionally_select(&chosen, &diff_bits[k], &Boolean::TRUE)?;
+        top.enforce_equal(&Boolean::TRUE)?;
+        for above in (k + 1)..56 {
+            let clear = Boolean::conditionally_select(&chosen, &diff_bits[above], &Boolean::FALSE)?;
+            clear.enforce_equal(&Boolean::FALSE)?;
+        }
+        let rise = 55 - k;
+        for i in 0..56 {
+            let source = if i >= rise { diff_bits[i - rise].clone() } else { Boolean::FALSE };
+            let selected = Boolean::conditionally_select(&chosen, &source, &Boolean::FALSE)?;
+            norm_bits[i] = norm_bits[i].or(&selected)?;
+        }
+        let next_exp = &exp - FpVar::constant(Fr::from(rise as u64));
+        exp_out += FpVar::conditionally_select(&chosen, &next_exp, &FpVar::constant(Fr::zero()))?;
+    }
+    seen.enforce_equal(&FpVar::constant(Fr::one()))?;
+    let mut significand = Vec::with_capacity(53);
+    for bit in norm_bits.iter().skip(3).take(53) {
+        significand.push(bit.clone());
+    }
+    let round = norm_bits[2].clone();
+    let sticky = norm_bits[0].or(&norm_bits[1])?;
+    round_pack(&exp_out, &significand, &round, &sticky)
 }
 
 pub(crate) fn enforce_mul(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
@@ -176,7 +386,7 @@ pub(crate) fn enforce_mul(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<FpVar<Fr>, Syn
     round_pack(&exp, &significand, &round, &sticky)
 }
 
-fn enforce_div(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
+pub(crate) fn enforce_div(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisError> {
     let cs = a.cs();
     let a_bits = low_bits(a, 64)?;
     let b_bits = low_bits(b, 64)?;
@@ -285,7 +495,7 @@ pub(crate) fn enforce_floor(bits: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisErro
     Ok(result)
 }
 
-fn u64_of(value: &FpVar<Fr>) -> Result<u64, SynthesisError> {
+pub(crate) fn u64_of(value: &FpVar<Fr>) -> Result<u64, SynthesisError> {
     let raw = value.value()?;
     let limbs = raw.into_bigint();
     if limbs.as_ref()[1..].iter().any(|limb| *limb != 0) {
@@ -680,5 +890,38 @@ mod tests {
         let mut name = proof;
         name.public_inputs.id[3] ^= 1;
         assert!(!verify_composed(&name));
+    }
+
+    #[test]
+    fn addition_matches_the_binary64_model() {
+        fn check(a: f64, b: f64) {
+            let cs = ConstraintSystem::<Fr>::new_ref();
+            let left = FpVar::new_witness(cs.clone(), || Ok(Fr::from(a.to_bits()))).unwrap();
+            let right = FpVar::new_witness(cs.clone(), || Ok(Fr::from(b.to_bits()))).unwrap();
+            let got = enforce_add(&left, &right).unwrap();
+            let expect = binary64::add(a.to_bits(), b.to_bits()).unwrap();
+            got.enforce_equal(&FpVar::constant(Fr::from(expect))).unwrap();
+            assert!(cs.is_satisfied().unwrap(), "{a} + {b}: {:?}", cs.which_is_unsatisfied().unwrap());
+        }
+        check(0.5, 0.35);
+        check(1_000_000.0, 1_000_000.0);
+        check(1.0, 1e-9);
+        check(0.0008, 1e-9);
+        fn check_sub(a: f64, b: f64) {
+            let cs = ConstraintSystem::<Fr>::new_ref();
+            let left = FpVar::new_witness(cs.clone(), || Ok(Fr::from(a.to_bits()))).unwrap();
+            let right = FpVar::new_witness(cs.clone(), || Ok(Fr::from(b.to_bits()))).unwrap();
+            let got = enforce_sub_abs(&left, &right).unwrap();
+            let expect = binary64::sub_abs(a.to_bits(), b.to_bits()).unwrap();
+            got.enforce_equal(&FpVar::constant(Fr::from(expect))).unwrap();
+            assert!(cs.is_satisfied().unwrap(), "|{a} - {b}|: {:?}", cs.which_is_unsatisfied().unwrap());
+        }
+        check_sub(1.0, 1e-7);
+        check_sub(0.5635932862873007, 2.0 / (1.0 + 5.0_f64.sqrt()));
+        let cs = ConstraintSystem::<Fr>::new_ref();
+        let raw = FpVar::new_witness(cs.clone(), || Ok(Fr::from(10_396_461_113_802_754_501u64))).unwrap();
+        let got = enforce_rounded_u64(&raw).unwrap();
+        got.enforce_equal(&FpVar::constant(Fr::from(binary64::from_u64(10_396_461_113_802_754_501).unwrap()))).unwrap();
+        assert!(cs.is_satisfied().unwrap(), "{:?}", cs.which_is_unsatisfied().unwrap());
     }
 }

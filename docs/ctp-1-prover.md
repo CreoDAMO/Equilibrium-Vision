@@ -10,9 +10,10 @@ The older integer-division circuit remains the interior quotient without roundin
 
 The liquid credit is no longer only an added input. For this block the successor returns a reward of 26 and a liquid credit of 2. [reward_split.rs](../equilibrium/src/reward_split.rs) computes that 2 as `floor(26 × 0.1)` and the staking floors in validator order: 6, 6, 4, 4, and 2. Their sum is 22. The remaining 2 is dust and is not credited. A claimed liquid of 3, or a last share of 3, fails the proof.
 
-The 26 is no longer only a checked formula. For this block the header is 80 bytes: a zero parent hash, a zero merkle root, timestamp 24, and nonce 1. Its SHA-256 begins with the little-endian integer `10396461113802754501`. The binary64 residual of that integer is `0.0029637900846207032`, the halving series at height 1 floors with the quality multiplier to 26, and the split turns 26 into the liquid credit of 2. That chain is an executable check in `binary64.rs`. It is not yet a Groth16 constraint. `Math.pow` is matched here by the same series JavaScript evaluates for this exponent, not by a rational substitute.
+The reward is no longer a public input of a separate split. [header_reward.rs](../equilibrium/src/header_reward.rs) is one Groth16 statement for this second block. It hashes the 80-byte header, rounds the first eight bytes with `Number`, checks the hash fraction is at most the difficulty threshold, squares the distance from `1/φ`, and requires those residual bits. The height is 1. The halving series is the same binary64 addition and multiplication checked against the base-reward bits, the quality floor is 26 inside the circuit, and that 26 is what the commission splits. Changing one header byte, the residual bits, the base-reward bits, or the liquid credit makes the proof fail. The old split proof, which still accepts 26 as an input, is unchanged.
 
-The reward argument of the split circuit is still a public input. C-007 remains open.
+This is the reward of one empty block. It is not the block header, the predecessor, or `Reference`. C-007 remains open.
+
 
 
 
