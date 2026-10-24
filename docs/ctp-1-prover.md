@@ -10,6 +10,9 @@ The older integer-division circuit remains the interior quotient without roundin
 
 The liquid credit is no longer only an added input. For this block the successor returns a reward of 26 and a liquid credit of 2. [reward_split.rs](../equilibrium/src/reward_split.rs) computes that 2 as `floor(26 × 0.1)` and the staking floors in validator order: 6, 6, 4, 4, and 2. Their sum is 22. The remaining 2 is dust and is not credited. A claimed liquid of 3, or a last share of 3, fails the proof.
 
-The 26 is still an input. It comes from `floor(blockReward(1) × quality(R))` with `R = 0.0029637900846207032`, and that residual is not computed in the circuit. `Math.pow` is the missing operation. C-007 remains open.
+The 26 is no longer only a checked formula. For this block the header is 80 bytes: a zero parent hash, a zero merkle root, timestamp 24, and nonce 1. Its SHA-256 begins with the little-endian integer `10396461113802754501`. The binary64 residual of that integer is `0.0029637900846207032`, the halving series at height 1 floors with the quality multiplier to 26, and the split turns 26 into the liquid credit of 2. That chain is an executable check in `binary64.rs`. It is not yet a Groth16 constraint. `Math.pow` is matched here by the same series JavaScript evaluates for this exponent, not by a rational substitute.
+
+The reward argument of the split circuit is still a public input. C-007 remains open.
+
 
 

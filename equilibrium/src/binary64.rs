@@ -111,18 +111,21 @@ pub fn div(a: u64, b: u64) -> Result<Rounded, &'static str> {
     Ok(rounded)
 }
 
-/// Exact encoding of an integer in `0..2^53`.
 pub fn from_u64(n: u64) -> Result<u64, &'static str> {
-    if n >= (1 << 53) {
-        return Err("integer is not exact in binary64");
-    }
     if n == 0 {
         return Ok(0);
     }
     let e = 63 - n.leading_zeros() as i32;
-    let exp = e + BIAS;
-    let frac = (n << (52 - e)) & FRAC_MASK;
-    Ok(((exp as u64) << 52) | frac)
+    if e <= 52 {
+        let exp = e + BIAS;
+        let frac = (n << (52 - e)) & FRAC_MASK;
+        return Ok(((exp as u64) << 52) | frac);
+    }
+    let drop = (e - 52) as u32;
+    let significand = (n >> drop) as u128;
+    let round = ((n >> (drop - 1)) & 1) == 1;
+    let sticky = drop > 1 && (n & ((1u64 << (drop - 1)) - 1)) != 0;
+    Ok(finish(e + BIAS, significand, round, sticky)?.bits)
 }
 
 pub fn floor_u64(bits: u64) -> Result<u64, &'static str> {
@@ -147,6 +150,100 @@ pub fn floor_u64(bits: u64) -> Result<u64, &'static str> {
         return Ok(value as u64);
     }
     Ok((sig >> (52 - e)) as u64)
+}
+
+fn significand(bits: u64) -> Result<(i32, u128), &'static str> {
+    if bits == 0 {
+        return Ok((-1, 0));
+    }
+    let (exp, frac) = split(bits)?;
+    Ok((exp, (1u128 << 52) | u128::from(frac)))
+}
+
+/// Addition of two non-negative finite values.
+pub fn add(a: u64, b: u64) -> Result<u64, &'static str> {
+    if a == 0 {
+        return Ok(b);
+    }
+    if b == 0 {
+        return Ok(a);
+    }
+    let (ea, sa) = significand(a)?;
+    let (eb, sb) = significand(b)?;
+    if eb > ea {
+        return add(b, a);
+    }
+    let shift = (ea - eb) as u32;
+    let hi = sa << 3;
+    let (lo, sticky) = if shift == 0 {
+        (sb << 3, false)
+    } else if shift >= 56 {
+        (0, sb != 0)
+    } else {
+        let wide = sb << 3;
+        let lost = wide & ((1u128 << shift) - 1);
+        (wide >> shift, lost != 0)
+    };
+    let mut sum = hi + lo;
+    if sticky {
+        sum |= 1;
+    }
+    let mut exp = ea;
+    if sum >= (1u128 << 56) {
+        let lost = (sum & 1) != 0;
+        sum >>= 1;
+        if lost {
+            sum |= 1;
+        }
+        exp += 1;
+    }
+    let significand = sum >> 3;
+    let round = ((sum >> 2) & 1) == 1;
+    let sticky = (sum & 0b11) != 0;
+    Ok(finish(exp, significand, round, sticky)?.bits)
+}
+
+/// Absolute difference of two non-negative finite values.
+pub fn sub_abs(a: u64, b: u64) -> Result<u64, &'static str> {
+    if a == b {
+        return Ok(0);
+    }
+    let (ea, sa) = significand(a)?;
+    let (eb, sb) = significand(b)?;
+    let (exp, hi, lo_sig, shift) = if ea > eb || (ea == eb && sa >= sb) {
+        (ea, sa, sb, (ea - eb) as u32)
+    } else {
+        (eb, sb, sa, (eb - ea) as u32)
+    };
+    let hi = hi << 3;
+    let (lo, sticky) = if shift == 0 {
+        (lo_sig << 3, false)
+    } else if shift >= 56 {
+        (0, lo_sig != 0)
+    } else {
+        let wide = lo_sig << 3;
+        let lost = wide & ((1u128 << shift) - 1);
+        (wide >> shift, lost != 0)
+    };
+    let mut diff = hi - lo;
+    if sticky {
+        diff -= 1;
+    }
+    if diff == 0 {
+        return Ok(0);
+    }
+    let mut exp = exp;
+    while diff < (1u128 << 55) {
+        diff <<= 1;
+        exp -= 1;
+        if exp <= 0 {
+            return Ok(0);
+        }
+    }
+    let significand = diff >> 3;
+    let round = ((diff >> 2) & 1) == 1;
+    let sticky_bits = (diff & 0b11) != 0;
+    Ok(finish(exp, significand, round, sticky_bits)?.bits)
 }
 
 fn clamp_bits(bits: u64) -> u64 {
@@ -212,10 +309,56 @@ mod tests {
                 let q = (a as f64) / (b as f64);
                 assert_eq!(div(from_u64(a).unwrap(), from_u64(b).unwrap()).unwrap().bits, q.to_bits(), "div {a} {b}");
                 assert_eq!(floor_u64(ab.to_bits()).unwrap(), ab.floor() as u64, "floor {ab}");
+                let sum = (a as f64) + (b as f64);
+                assert_eq!(add(from_u64(a).unwrap(), from_u64(b).unwrap()).unwrap(), sum.to_bits(), "add {a} {b}");
+                let diff = ((a as f64) - (b as f64)).abs();
+                assert_eq!(sub_abs(from_u64(a).unwrap(), from_u64(b).unwrap()).unwrap(), diff.to_bits(), "sub {a} {b}");
             }
+        }
+        let wide = [1u64 << 53, (1 << 53) + 1, (1 << 53) + 2, 10_396_461_113_802_754_501];
+        for n in wide {
+            assert_eq!(from_u64(n).unwrap(), (n as f64).to_bits(), "{n}");
         }
         assert_eq!(BITS_0_8, 0.8_f64.to_bits());
         assert_eq!(BITS_1_2, 1.2_f64.to_bits());
+    }
+
+    #[test]
+    fn the_second_block_reward_follows_from_its_header() {
+        use sha2::{Digest, Sha256};
+        let mut preimage = [0u8; 80];
+        preimage[64..72].copy_from_slice(&24u64.to_le_bytes());
+        preimage[72..80].copy_from_slice(&1u64.to_le_bytes());
+        let digest = Sha256::digest(preimage);
+        let hash_val = u64::from_le_bytes(digest[..8].try_into().unwrap());
+        assert_eq!(hash_val, 10_396_461_113_802_754_501);
+
+        let two64 = 2.0_f64.powi(64).to_bits();
+        let h = div(from_u64(hash_val).unwrap(), two64).unwrap().bits;
+        let million = from_u64(1_000_000).unwrap();
+        let half = div(million, add(million, million).unwrap()).unwrap().bits;
+        let tau = add(half, 0.35_f64.to_bits()).unwrap();
+        assert!(h < tau);
+        let inv_phi = (2.0_f64 / (1.0 + 5.0_f64.sqrt())).to_bits();
+        let gap = sub_abs(h, inv_phi).unwrap();
+        let residual = mul(gap, gap).unwrap().bits;
+        assert_eq!(residual, 0.0029637900846207032_f64.to_bits());
+
+        let y = div(from_u64(1).unwrap(), from_u64(2_100_000).unwrap()).unwrap().bits;
+        let eps = mul(y, std::f64::consts::LN_2.to_bits()).unwrap().bits;
+        let mut series = (1.0_f64 / 3_628_800.0).to_bits();
+        for denom in [362_880.0_f64, 40_320.0, 5_040.0, 720.0, 120.0, 24.0, 6.0, 2.0, 1.0] {
+            let term = mul(series, eps).unwrap().bits;
+            let constant = (1.0 / denom).to_bits();
+            series = sub_abs(constant, term).unwrap();
+        }
+        let term = mul(series, eps).unwrap().bits;
+        series = sub_abs(from_u64(1).unwrap(), term).unwrap();
+        let base = mul(from_u64(100).unwrap(), series).unwrap().bits;
+        assert_eq!(base, 0x4058ffff758f000f);
+        let quality = div(0.0008_f64.to_bits(), add(residual, 1e-9_f64.to_bits()).unwrap()).unwrap().bits;
+        let reward = floor_u64(mul(base, quality).unwrap().bits).unwrap();
+        assert_eq!(reward, 26);
     }
 
     #[test]
