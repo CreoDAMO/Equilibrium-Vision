@@ -47,7 +47,13 @@ class MiningCycle(
         .writeTimeout(10, TimeUnit.SECONDS)
         .build()
 
-    fun run(nodeUrl: String, minerRaw: String?): Result {
+    /** Gossip topics are shared. A network switch must not read or write them. */
+    private val peerGossipOpen = false
+
+    fun run(nodeUrl: String, minerRaw: String?, networkRaw: String? = MinerNetwork.TESTNET): Result {
+        val network = MinerNetwork.normalize(networkRaw)
+        MiningState.network = network
+        MiningState.chainId = MinerNetwork.chainId(network).toString()
         val minerAddress = MiningWorker.normalizeMinerAddress(minerRaw) ?: run {
             Log.e(TAG, "No miner address configured — aborting mining cycle")
             MiningState.solver = "miner address required"
@@ -56,12 +62,12 @@ class MiningCycle(
             return Result.failure(workDataOf("error" to "miner_address is required"))
         }
 
-        if (P2PNode.isRunning()) P2PNode.startValidator()
+        if (peerGossipOpen && P2PNode.isRunning()) P2PNode.startValidator()
 
-        if (tryAdoptPeerBlock()) return Result.success()
+        if (peerGossipOpen && tryAdoptPeerBlock()) return Result.success()
 
         val status: JSONObject = run {
-            if (P2PNode.isRunning()) {
+            if (peerGossipOpen && P2PNode.isRunning()) {
                 val tipJson = P2PNode.fetchTip()
                 if (tipJson.isNotEmpty()) {
                     val p2pTip = runCatching { JSONObject(tipJson) }.getOrNull()
@@ -71,7 +77,7 @@ class MiningCycle(
                     }
                 }
             }
-            if (P2PNode.isRunning()) {
+            if (peerGossipOpen && P2PNode.isRunning()) {
                 val rrJson = P2PNode.queryLightnodeTip()
                 if (rrJson.isNotEmpty()) {
                     val rrTip = runCatching { JSONObject(rrJson) }.getOrNull()
@@ -81,8 +87,8 @@ class MiningCycle(
                     }
                 }
             }
-            fetchChainStatus(nodeUrl) ?: fetchSiteWork(nodeUrl) ?: run {
-                noteLightOnly(nodeUrl)
+            fetchChainStatus(nodeUrl) ?: fetchSiteWork(nodeUrl, network) ?: run {
+                noteLightOnly(nodeUrl, network)
                 return Result.retry()
             }
         }
@@ -107,10 +113,10 @@ class MiningCycle(
         }
         MiningState.note = ""
 
-        if (P2PNode.isRunning() && latestHash.isNotEmpty()) {
+        if (peerGossipOpen && P2PNode.isRunning() && latestHash.isNotEmpty()) {
             P2PNode.setLocalTip(height.toLong(), latestHash, difficulty)
         }
-        if (tryAdoptPeerBlock()) return Result.success()
+        if (peerGossipOpen && tryAdoptPeerBlock()) return Result.success()
 
         val prevHashBytes = hexToByteArray(latestHash)
         val merkleRootBytes = ByteArray(32)
@@ -147,7 +153,7 @@ class MiningCycle(
         MiningState.solver = "idle"
         Log.i(TAG, "Solution found: nonce=$nonce residual=$residual (fixed-point=$residualFp)")
 
-        if (tryAdoptPeerBlock()) {
+        if (peerGossipOpen && tryAdoptPeerBlock()) {
             MiningState.lastSubmission = "discarded, peer won"
             return Result.success()
         }
@@ -179,7 +185,7 @@ class MiningCycle(
             stateRoot = unknownRoot,
         )
 
-        val hasPeers = P2PNode.isRunning() && P2PNode.getConnectedPeerCount() > 0
+        val hasPeers = peerGossipOpen && P2PNode.isRunning() && P2PNode.getConnectedPeerCount() > 0
         if (hasPeers) {
             val bodySent = P2PNode.gossipBlockBody(blockBodyJson)
             val hashSent = P2PNode.gossipBlock(blockHash)
@@ -212,6 +218,7 @@ class MiningCycle(
         }
         return submitBlock(
             nodeUrl = nodeUrl,
+            network = network,
             miner = minerAddress,
             prevHash = latestHash,
             nonce = nonce,
@@ -222,8 +229,8 @@ class MiningCycle(
         )
     }
 
-    private fun noteLightOnly(nodeUrl: String) {
-        val light = fetchLight(nodeUrl)
+    private fun noteLightOnly(nodeUrl: String, network: String) {
+        val light = fetchLight(nodeUrl, network)
         if (light != null) {
             MiningState.httpHeight = light.toString()
             MiningState.httpTipSource = "HTTP"
@@ -299,9 +306,9 @@ class MiningCycle(
     }
 
     /** The site light packet. `/api/chain/status` is the API process, not this host. */
-    private fun fetchSiteWork(nodeUrl: String): JSONObject? {
+    private fun fetchSiteWork(nodeUrl: String, network: String): JSONObject? {
         val request = Request.Builder()
-            .url("$nodeUrl/api/light?network=testnet")
+            .url(MinerNetwork.lightUrl(nodeUrl, network))
             .get()
             .build()
         return try {
@@ -319,7 +326,7 @@ class MiningCycle(
                     put("mempoolPressure", work.optDouble("mempoolPressure", 0.0))
                     put("admissionTarget", work.optDouble("admissionTarget", TESTNET_ADMISSION))
                     put("residualWork", work.optLong("cumulativeWork", (work.optInt("tipHeight", -1) + 1).toLong()))
-                    put("network", light.optString("network", "testnet"))
+                    put("network", light.optString("network", network))
                 }
             }
         } catch (_: Exception) {
@@ -328,9 +335,9 @@ class MiningCycle(
     }
 
     /** Height only. Not a work template. */
-    private fun fetchLight(nodeUrl: String): Int? {
+    private fun fetchLight(nodeUrl: String, network: String): Int? {
         val request = Request.Builder()
-            .url("$nodeUrl/api/light?network=testnet")
+            .url(MinerNetwork.lightUrl(nodeUrl, network))
             .get()
             .build()
         return try {
@@ -346,6 +353,7 @@ class MiningCycle(
 
     private fun submitBlock(
         nodeUrl: String,
+        network: String,
         miner: String,
         prevHash: String,
         nonce: String,
@@ -360,9 +368,10 @@ class MiningCycle(
             put("nonce", nonce)
             put("residual", residual)
             put("timestamp", timestamp)
+            put("network", network)
         }.toString()
         val request = Request.Builder()
-            .url("$nodeUrl/api/blocks/submit")
+            .url(MinerNetwork.submitUrl(nodeUrl, network))
             .post(payload.toRequestBody(JSON_MEDIA_TYPE))
             .build()
         return try {
@@ -377,8 +386,8 @@ class MiningCycle(
                             P2PNode.setLocalTip(acceptedHeight.toLong(), blockHash, difficulty)
                             MiningState.httpHeight = acceptedHeight.toString()
                         }
-                        if (blockHash.isNotEmpty() && P2PNode.isRunning()) P2PNode.gossipBlock(blockHash)
-                        if (P2PNode.isRunning() && blockBodyJson.isNotEmpty()) P2PNode.gossipBlockBody(blockBodyJson)
+                        if (peerGossipOpen && blockHash.isNotEmpty() && P2PNode.isRunning()) P2PNode.gossipBlock(blockHash)
+                        if (peerGossipOpen && P2PNode.isRunning() && blockBodyJson.isNotEmpty()) P2PNode.gossipBlockBody(blockBodyJson)
                         MiningState.lastSubmission = "accepted height $acceptedHeight"
                         Result.success(workDataOf(
                             "accepted_height" to acceptedHeight,
@@ -391,7 +400,8 @@ class MiningCycle(
                         Result.success()
                     }
                     response.code == 422 -> {
-                        MiningState.lastSubmission = "residual refused"
+                        val err = runCatching { JSONObject(body).optString("error") }.getOrNull()
+                        MiningState.lastSubmission = if (err.isNullOrBlank()) "residual refused" else err
                         Result.success()
                     }
                     response.code in 400..499 -> {

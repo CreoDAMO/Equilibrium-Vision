@@ -2,6 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/eq_ground"
     android:fillViewport="true">
 
     <LinearLayout
@@ -17,17 +18,58 @@
             android:id="@+id/appTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="32dp"
+            android:layout_marginTop="28dp"
+            android:letterSpacing="0.04"
             android:text="@string/app_name"
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            android:textColor="@color/eq_ink"
+            android:textSize="32sp" />
 
         <TextView
             android:id="@+id/versionLabel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:textColor="#666666"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/eq_muted"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:text="@string/network_label"
+            android:textColor="@color/eq_muted"
+            android:textSize="12sp" />
+
+        <RadioGroup
+            android:id="@+id/networkGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <RadioButton
+                android:id="@+id/networkMainnet"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/network_mainnet"
+                android:textColor="@color/eq_ink" />
+
+            <RadioButton
+                android:id="@+id/networkTestnet"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="28dp"
+                android:text="@string/network_testnet"
+                android:textColor="@color/eq_ink" />
+        </RadioGroup>
+
+        <TextView
+            android:id="@+id/chainLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/eq_oxide"
             android:textSize="14sp" />
 
         <!-- ── P2P mode toggle ────────────────────────────────────────────── -->
@@ -37,8 +79,8 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="28dp"
             android:text="@string/p2p_mode_label"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:textColor="@color/eq_muted"
+            android:textSize="12sp" />
 
         <RadioGroup
             android:id="@+id/p2pModeGroup"
@@ -51,6 +93,7 @@
                 android:id="@+id/modeHttp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:checked="true"
                 android:text="@string/mode_http" />
 
             <RadioButton
@@ -58,7 +101,6 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"
-                android:checked="true"
                 android:text="@string/mode_hybrid" />
 
             <RadioButton
@@ -69,6 +111,15 @@
                 android:text="@string/mode_p2p" />
 
         </RadioGroup>
+
+        <TextView
+            android:id="@+id/p2pHold"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/p2p_held"
+            android:textColor="@color/eq_oxide"
+            android:textSize="13sp" />
 
         <TextView
             android:layout_width="wrap_content"
@@ -98,9 +149,9 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/mineButton"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="16dp"
             android:text="@string/start_mining" />
 
         <!-- ── Network status ────────────────────────────────────────────── -->
@@ -117,16 +168,25 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:background="?attr/colorSurfaceVariant"
+            android:background="@color/eq_card"
             android:orientation="vertical"
-            android:padding="12dp">
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/statusNetwork"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/eq_oxide"
+                android:textSize="13sp" />
 
             <TextView
                 android:id="@+id/statusHeight"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
                 android:text="@string/status_height_default"
-                android:textSize="14sp" />
+                android:textColor="@color/eq_ink"
+                android:textSize="28sp" />
 
             <TextView
                 android:id="@+id/statusMining"

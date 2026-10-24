@@ -88,7 +88,10 @@ class MiningService : Service() {
             }
             while (running) {
                 try {
-                    cycle.run(nodeUrl, minerAddress)
+                    val network = MinerNetwork.normalize(
+                        getSharedPreferences(PREFS, MODE_PRIVATE).getString(MinerNetwork.KEY, null),
+                    )
+                    cycle.run(nodeUrl, minerAddress, network)
                 } catch (t: Throwable) {
                     MiningState.solver = "error"
                     MiningState.note = t.message ?: "cycle failed"
@@ -152,7 +155,7 @@ class MiningService : Service() {
             }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
-        val text = "${MiningState.solver} · height ${MiningState.httpHeight}"
+        val text = "${MinerNetwork.label(MiningState.network)} · chain ${MiningState.chainId} · ${MiningState.solver} · height ${MiningState.httpHeight}"
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Equilibrium mining")
             .setContentText(text.ifBlank { nodeUrl })

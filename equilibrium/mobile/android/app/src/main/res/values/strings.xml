@@ -27,10 +27,20 @@
     <string name="join_network_button">Join Network (QR / Share)</string>
 
     <!-- P2P mode toggle -->
-    <string name="p2p_mode_label">Mining Mode</string>
+    <string name="p2p_mode_label">Peer path</string>
     <string name="mode_http">HTTP</string>
     <string name="mode_hybrid">Hybrid</string>
     <string name="mode_p2p">P2P</string>
+    <string name="p2p_held">Peer gossip is held. Its topics are not split by network, so a switch cannot use them.</string>
+    <string name="network_label">Network</string>
+    <string name="network_mainnet">Mainnet</string>
+    <string name="network_testnet">Testnet</string>
+    <string name="switch_network_title">Switch network</string>
+    <string name="switch_network_message">Mining stops. The next search uses %1$s, chain id %2$d. The previous template is dropped.</string>
+    <string name="switch_network_confirm">Switch</string>
+    <string name="switch_network_stay">Stay</string>
+    <string name="release_unpublished">No newer miner is published. This site controls the download.</string>
+    <string name="update_sha">SHA-256\n%1$s</string>
 
     <!-- Network status panel -->
     <string name="mining_status_label">Network Status</string>

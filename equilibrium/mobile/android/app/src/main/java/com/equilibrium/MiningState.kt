@@ -14,4 +14,6 @@ object MiningState {
     @Volatile var httpHeight: String = "—"
     @Volatile var httpTipSource: String = "—"
     @Volatile var note: String = ""
+    @Volatile var network: String = MinerNetwork.TESTNET
+    @Volatile var chainId: String = "2"
 }

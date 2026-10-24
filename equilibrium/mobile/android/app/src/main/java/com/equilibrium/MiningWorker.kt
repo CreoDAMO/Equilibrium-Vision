@@ -56,5 +56,9 @@ class MiningWorker(context: Context, params: WorkerParameters) : Worker(context,
     }.run(
         inputData.getString(KEY_NODE_URL) ?: DEFAULT_NODE_URL,
         inputData.getString(KEY_MINER_ADDRESS),
+        MinerNetwork.normalize(
+            applicationContext.getSharedPreferences("equ_prefs", Context.MODE_PRIVATE)
+                .getString(MinerNetwork.KEY, null),
+        ),
     )
 }

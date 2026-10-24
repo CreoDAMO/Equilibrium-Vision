@@ -31,6 +31,9 @@ import { Route as WalletRouteImport } from './routes/wallet'
 import { Route as AddressAddrRouteImport } from './routes/address.$addr'
 import { Route as ApiLightRouteImport } from './routes/api.light'
 import { Route as ApiRtcRouteImport } from './routes/api.rtc'
+import { Route as ApiMinerReleaseRouteImport } from './routes/api.miner.release'
+import { Route as ApiBlocksSubmitRouteImport } from './routes/api.blocks.submit'
+import { Route as MinerRouteImport } from './routes/miner'
 import { Route as BlocksHashRouteImport } from './routes/blocks.$hash'
 import { Route as ProtocolIdRouteImport } from './routes/protocol.$id'
 import { Route as TxHashRouteImport } from './routes/tx.$hash'
@@ -145,6 +148,21 @@ const ApiRtcRoute = ApiRtcRouteImport.update({
   path: '/api/rtc',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiMinerReleaseRoute = ApiMinerReleaseRouteImport.update({
+  id: '/api/miner/release',
+  path: '/api/miner/release',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBlocksSubmitRoute = ApiBlocksSubmitRouteImport.update({
+  id: '/api/blocks/submit',
+  path: '/api/blocks/submit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MinerRoute = MinerRouteImport.update({
+  id: '/miner',
+  path: '/miner',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BlocksHashRoute = BlocksHashRouteImport.update({
   id: '/$hash',
   path: '/$hash',
@@ -184,6 +202,9 @@ export interface FileRoutesByFullPath {
   '/address/$addr': typeof AddressAddrRoute
   '/api/light': typeof ApiLightRoute
   '/api/rtc': typeof ApiRtcRoute
+  '/api/miner/release': typeof ApiMinerReleaseRoute
+  '/api/blocks/submit': typeof ApiBlocksSubmitRoute
+  '/miner': typeof MinerRoute
   '/blocks/$hash': typeof BlocksHashRoute
   '/protocol/$id': typeof ProtocolIdRoute
   '/tx/$hash': typeof TxHashRoute
@@ -211,6 +232,9 @@ export interface FileRoutesByTo {
   '/address/$addr': typeof AddressAddrRoute
   '/api/light': typeof ApiLightRoute
   '/api/rtc': typeof ApiRtcRoute
+  '/api/miner/release': typeof ApiMinerReleaseRoute
+  '/api/blocks/submit': typeof ApiBlocksSubmitRoute
+  '/miner': typeof MinerRoute
   '/blocks/$hash': typeof BlocksHashRoute
   '/protocol/$id': typeof ProtocolIdRoute
   '/tx/$hash': typeof TxHashRoute
@@ -239,6 +263,9 @@ export interface FileRoutesById {
   '/address/$addr': typeof AddressAddrRoute
   '/api/light': typeof ApiLightRoute
   '/api/rtc': typeof ApiRtcRoute
+  '/api/miner/release': typeof ApiMinerReleaseRoute
+  '/api/blocks/submit': typeof ApiBlocksSubmitRoute
+  '/miner': typeof MinerRoute
   '/blocks/$hash': typeof BlocksHashRoute
   '/protocol/$id': typeof ProtocolIdRoute
   '/tx/$hash': typeof TxHashRoute
@@ -268,6 +295,9 @@ export interface FileRouteTypes {
     | '/address/$addr'
     | '/api/light'
     | '/api/rtc'
+    | '/api/miner/release'
+    | '/api/blocks/submit'
+    | '/miner'
     | '/blocks/$hash'
     | '/protocol/$id'
     | '/tx/$hash'
@@ -295,6 +325,9 @@ export interface FileRouteTypes {
     | '/address/$addr'
     | '/api/light'
     | '/api/rtc'
+    | '/api/miner/release'
+    | '/api/blocks/submit'
+    | '/miner'
     | '/blocks/$hash'
     | '/protocol/$id'
     | '/tx/$hash'
@@ -322,6 +355,9 @@ export interface FileRouteTypes {
     | '/address/$addr'
     | '/api/light'
     | '/api/rtc'
+    | '/api/miner/release'
+    | '/api/blocks/submit'
+    | '/miner'
     | '/blocks/$hash'
     | '/protocol/$id'
     | '/tx/$hash'
@@ -350,6 +386,9 @@ export interface RootRouteChildren {
   AddressAddrRoute: typeof AddressAddrRoute
   ApiLightRoute: typeof ApiLightRoute
   ApiRtcRoute: typeof ApiRtcRoute
+  ApiMinerReleaseRoute: typeof ApiMinerReleaseRoute
+  ApiBlocksSubmitRoute: typeof ApiBlocksSubmitRoute
+  MinerRoute: typeof MinerRoute
   TxHashRoute: typeof TxHashRoute
 }
 
@@ -509,6 +548,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiRtcRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/miner/release': {
+      id: '/api/miner/release'
+      path: '/api/miner/release'
+      fullPath: '/api/miner/release'
+      preLoaderRoute: typeof ApiMinerReleaseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/blocks/submit': {
+      id: '/api/blocks/submit'
+      path: '/api/blocks/submit'
+      fullPath: '/api/blocks/submit'
+      preLoaderRoute: typeof ApiBlocksSubmitRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/miner': {
+      id: '/miner'
+      path: '/miner'
+      fullPath: '/miner'
+      preLoaderRoute: typeof MinerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/blocks/$hash': {
       id: '/blocks/$hash'
       path: '/$hash'
@@ -579,6 +639,9 @@ const rootRouteChildren: RootRouteChildren = {
   AddressAddrRoute: AddressAddrRoute,
   ApiLightRoute: ApiLightRoute,
   ApiRtcRoute: ApiRtcRoute,
+  ApiMinerReleaseRoute: ApiMinerReleaseRoute,
+  ApiBlocksSubmitRoute: ApiBlocksSubmitRoute,
+  MinerRoute: MinerRoute,
   TxHashRoute: TxHashRoute,
 }
 export const routeTree = rootRouteImport
