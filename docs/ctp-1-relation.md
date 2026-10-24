@@ -109,7 +109,7 @@ Transactions are read in array order. The fields the relation can observe are th
 
 Evidence is the object, in category order, not the canonical string. The string is a projection used by \(R_t\) and \(R_e\). It is not injective. Distinct evidence objects can share it, and `applyMaterial` can still tell them apart. A commitment to the string is not a commitment to \(I\).
 
-`CommitInputs` for this relation is not yet a function in the program. It must be injective on the objects above, preserve array order, and omit `wasmAfter`. Until it exists, no public input identifier is the identity of \(I\).
+`CommitInputs` for this relation is not yet a function in the program. It must be injective on the objects above, preserve array order, and omit `wasmAfter`. The version-1 input bytes now omit `wasmAfter`. They still hash `canonicalEvidence`, so they are still not `CommitInputs`.
 
 ## 5. Context and wasm
 
@@ -157,7 +157,7 @@ On \((\Omega_{\mathrm{pre}}, I, C)\), with \(D\) from section 5, the function re
 
 A refusal has no \(\Omega_{\mathrm{rel}}\) and no header. It is not a valid transition.
 
-Steps 10, 14, 16, and 17 name helpers whose field-level effects are not restated here. Those effects are part of the relation. Naming the helper is not a specification of its body. That expansion is still open.
+Steps 10, 14, 16, and 17 name helpers whose field-level effects are not all restated here. Stake, transaction effects, the residual, the reward, and the wasm host are specified in [CTP-1 Helpers](ctp-1-helpers.md). The others remain names. A circuit of an unspecified name is not a circuit of the function.
 
 ## 7. Commitment timing
 
@@ -309,17 +309,15 @@ Map iteration order and array order are part of the triple. Sorting a map before
 
 ## 13. What is still not specified as bytes
 
-The relation names these functions and does not yet give each a complete input-output definition independent of the source file:
+[CTP-1 Helpers](ctp-1-helpers.md) specifies the ledger rules, `monetaryError`, `identityError`, stake, transaction effects, the residual, the reward, and the wasm host boundary. These remain names:
 
-- `monetaryError`, `identityError`
-- `verifyTx`
+- `verifyTx` beyond the preimage already named
 - `selectSuccessorTxs`
-- `applyStake`, bitcoin admission, ethereum admission, `applySettlement`, `applyWithdrawal`
-- `applyEffects`, `applySwap`
+- bitcoin admission, ethereum admission, `applySettlement`, `applyWithdrawal`
 - `admitModels`, `admitBinding`
-- `settleMaturedUnbondings`, `refundMaturedWithdrawals`
-- `distribute`, `adjustDifficulty`, `foreignDifficultyFactor`
-- `evaluateResidual` and the reward split
-- `callArbitrage`
+- `settleMaturedUnbondings` and `refundMaturedWithdrawals`, beyond the loops already stated
+- `distribute`, beyond the floor already stated
+- `adjustDifficulty` and `foreignDifficultyFactor`, beyond the inputs already named
+- the instruction behavior inside `ARBITRAGE_WASM`
 
-Until those bodies are specified at the same grain as section 8, a circuit that implements the names has not been shown to implement the functions. C-007 remains open.
+Until those bodies are specified at the same grain, a circuit that implements the names has not been shown to implement the functions. C-007 remains open.

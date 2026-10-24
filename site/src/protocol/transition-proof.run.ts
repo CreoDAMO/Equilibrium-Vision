@@ -50,8 +50,8 @@ assert.equal(statement.header.length, 64);
 assert.equal(statementId(statement), statementId(statement));
 assert.notEqual(sha256Hex(encodeContext(NETWORKS.mainnet)), sha256Hex(encodeContext(NETWORKS.testnet)));
 
-const emptyAfter = encodeInputs({ ...spec, wasmAfter: new Map() });
-assert.notEqual(Buffer.from(encodeInputs(spec)).toString("hex"), Buffer.from(emptyAfter).toString("hex"));
+const emptyAfter = encodeInputs({ ...spec, wasmAfter: new Map([["k", "v"]]) });
+assert.equal(Buffer.from(encodeInputs(spec)).toString("hex"), Buffer.from(emptyAfter).toString("hex"));
 
 const missing = initialOmega("mainnet");
 delete (missing as { ethExecution?: unknown }).ethExecution;

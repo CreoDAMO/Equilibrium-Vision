@@ -115,7 +115,7 @@ function txBytes(tx: TxRecord): Uint8Array {
   return b.finish();
 }
 
-/** Ordered inputs. Evidence uses the string production already hashes. That string is not injective. */
+/** Ordered inputs the relation reads. wasmAfter is not among them. The evidence string is not injective. */
 export function encodeInputs(inputs: CanonicalInputs): Uint8Array {
   const b = new Buf();
   b.u32(inputs.transactions.length);
@@ -137,16 +137,6 @@ export function encodeInputs(inputs: CanonicalInputs): Uint8Array {
   b.f64(c.continuity);
   b.f64(c.mempool);
   b.f64(c.fees);
-  if (inputs.wasmAfter === null) {
-    b.u8(0);
-  } else {
-    b.u8(1);
-    b.u32(inputs.wasmAfter.size);
-    for (const [key, value] of inputs.wasmAfter) {
-      b.str(key);
-      b.str(value);
-    }
-  }
   return b.finish();
 }
 
