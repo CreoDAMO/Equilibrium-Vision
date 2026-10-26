@@ -44,7 +44,7 @@ fn finish(exp: i32, significand: u128, round: bool, sticky: bool) -> Result<Roun
             exp += 1;
         }
     }
-    if exp <= 0 || exp >= 0x7ff || significand < (1u128 << 52) || significand >= (1u128 << 53) {
+    if exp <= 0 || exp >= 0x7ff || !((1u128 << 52)..(1u128 << 53)).contains(&significand) {
         return Err("binary64 result left the normal range");
     }
     let bits = ((exp as u64) << 52) | ((significand as u64) & FRAC_MASK);

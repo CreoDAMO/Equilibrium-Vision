@@ -93,7 +93,7 @@ pub(crate) fn enforce_from_u64(n: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisErro
     for i in 0..53 {
         let bit = Boolean::new_witness(cs.clone(), || {
             let value = n.value().unwrap_or(Fr::zero());
-            let raw = u64::from(value.into_bigint().as_ref()[0]);
+            let raw = value.into_bigint().as_ref()[0];
             let e = 63 - raw.leading_zeros() as usize;
             Ok(i == e)
         })?;
@@ -107,18 +107,18 @@ pub(crate) fn enforce_from_u64(n: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisErro
     for i in 0..53 {
         let keeps = hot[i].not().or(&n_bits[i])?;
         keeps.enforce_equal(&Boolean::TRUE)?;
-        for j in (i + 1)..53 {
-            let above = hot[i].not().or(&n_bits[j].not())?;
+        for bit in n_bits.iter().take(53).skip(i + 1) {
+            let above = hot[i].not().or(&bit.not())?;
             above.enforce_equal(&Boolean::TRUE)?;
         }
     }
     let mut pow = FpVar::constant(Fr::zero());
     let mut exp = FpVar::constant(Fr::zero());
-    for i in 0..53 {
+    for (i, hot_bit) in hot.iter().enumerate() {
         let place = FpVar::constant(Fr::from(1u64 << (52 - i)));
-        pow += FpVar::conditionally_select(&hot[i], &place, &FpVar::constant(Fr::zero()))?;
+        pow += FpVar::conditionally_select(hot_bit, &place, &FpVar::constant(Fr::zero()))?;
         let position = FpVar::constant(Fr::from(i as u64 + 1023));
-        exp += FpVar::conditionally_select(&hot[i], &position, &FpVar::constant(Fr::zero()))?;
+        exp += FpVar::conditionally_select(hot_bit, &position, &FpVar::constant(Fr::zero()))?;
     }
     let product = n * &pow;
     let product_bits = low_bits(&product, 53)?;
@@ -148,8 +148,8 @@ pub(crate) fn enforce_rounded_u64(n: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisE
     for i in 0..64 {
         let keeps = hot[i].not().or(&bits[i])?;
         keeps.enforce_equal(&Boolean::TRUE)?;
-        for j in (i + 1)..64 {
-            let above = hot[i].not().or(&bits[j].not())?;
+        for bit in bits.iter().take(64).skip(i + 1) {
+            let above = hot[i].not().or(&bit.not())?;
             above.enforce_equal(&Boolean::TRUE)?;
         }
     }
@@ -336,8 +336,8 @@ pub(crate) fn enforce_sub_abs(a: &FpVar<Fr>, b: &FpVar<Fr>) -> Result<FpVar<Fr>,
         seen += FpVar::conditionally_select(&chosen, &FpVar::constant(Fr::one()), &FpVar::constant(Fr::zero()))?;
         let top = Boolean::conditionally_select(&chosen, &diff_bits[k], &Boolean::TRUE)?;
         top.enforce_equal(&Boolean::TRUE)?;
-        for above in (k + 1)..56 {
-            let clear = Boolean::conditionally_select(&chosen, &diff_bits[above], &Boolean::FALSE)?;
+        for bit in diff_bits.iter().take(56).skip(k + 1) {
+            let clear = Boolean::conditionally_select(&chosen, bit, &Boolean::FALSE)?;
             clear.enforce_equal(&Boolean::FALSE)?;
         }
         let rise = 55 - k;
@@ -457,10 +457,10 @@ pub(crate) fn enforce_floor(bits: &FpVar<Fr>) -> Result<FpVar<Fr>, SynthesisErro
     let mut sum = FpVar::constant(Fr::zero());
     let mut drop_pow = FpVar::constant(Fr::zero());
     let mut e_fp = FpVar::constant(Fr::zero());
-    for i in 0..53 {
-        sum += FpVar::conditionally_select(&hot[i], &FpVar::constant(Fr::one()), &FpVar::constant(Fr::zero()))?;
-        drop_pow += FpVar::conditionally_select(&hot[i], &FpVar::constant(Fr::from(1u64 << (52 - i))), &FpVar::constant(Fr::zero()))?;
-        e_fp += FpVar::conditionally_select(&hot[i], &FpVar::constant(Fr::from(i as u64)), &FpVar::constant(Fr::zero()))?;
+    for (i, hot_bit) in hot.iter().enumerate() {
+        sum += FpVar::conditionally_select(hot_bit, &FpVar::constant(Fr::one()), &FpVar::constant(Fr::zero()))?;
+        drop_pow += FpVar::conditionally_select(hot_bit, &FpVar::constant(Fr::from(1u64 << (52 - i))), &FpVar::constant(Fr::zero()))?;
+        e_fp += FpVar::conditionally_select(hot_bit, &FpVar::constant(Fr::from(i as u64)), &FpVar::constant(Fr::zero()))?;
     }
     sum.enforce_equal(&FpVar::constant(Fr::one()))?;
     let active = small.not();

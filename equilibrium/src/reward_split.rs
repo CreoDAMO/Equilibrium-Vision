@@ -81,7 +81,7 @@ impl ConstraintSynthesizer<Fr> for SplitCircuit {
         for (stake, share) in stakes.iter().zip(&shares) {
             range64(share)?;
             let product = FpVar::new_witness(cs.clone(), || {
-                let staked = u64::try_from(self.public.reward - self.public.liquid).unwrap_or(0);
+                let staked = self.public.reward - self.public.liquid;
                 let bonded = u64_field(stake)?;
                 Ok(Fr::from(u128::from(staked) * u128::from(bonded)))
             })?;
