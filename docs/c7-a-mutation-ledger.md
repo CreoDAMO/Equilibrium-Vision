@@ -76,7 +76,8 @@ This order is the relation. Reordering it is a different transition.
 - A negative, fractional, or unsafe amount is refused.
 - `credit(addr, 0)` inserts `{ balance: 0, nonce: 0 }` when the account is absent, and does not change an account that exists.
 - `debit(addr, 0)` returns success and does not insert.
-- A positive credit or debit preserves the nonce. Overflow is refused.
+- A positive credit uses `safeAdd`. A positive debit uses `safeSub` and does not test `balance >= amount`. Two safe integers always have a safe difference, so a debit of a safe amount from a safe nonnegative balance always writes, including when the result is negative. `applyEffects` checks the sender's funds before its own write. `debit` does not. A later `monetaryError` refuses a negative balance only if the transition reaches that check.
+- A positive credit or debit preserves the nonce. A credit that overflows is refused.
 
 `applyEffects` does not use `debit` for the sender. It checks the nonce, subtracts `amount + fee` with `safeSub`, and writes `sender.nonce + 1`. The miner fee is credited before the recipient. Transactions run in array order, so transaction N is visible to N+1.
 
@@ -152,10 +153,10 @@ Finality's stake totals at lines 1166–1169 use `Array.reduce` and `/`, not `sa
 | A3 foreign and escrow | Source-mapped. Not Ethereum consensus |
 | A4 wasm | Source-mapped. Local construction and `absorb` are not the same relation |
 | A5 authority | Source-mapped. Claim, vote, and propose signatures are not in the evidence. Slash has no issuer |
-| B rejection ledger | Not started |
+| B rejection ledger | Pinned in c7-a-rejection.md. The failed clone is not returned. Not closed |
 | C path reconciliation | Named by section 6. Not done |
 | D commitment snapshots | Section 8 names the two roots. Nested field coverage is not a proof |
 | C7-B encodings | Not accepted. FS1 is not what adoption consumes |
 | C7-C circuit | Not authorized by this map |
 
-The next pass is the rejection ledger: every refusal, the condition, and whether the clone had already been mutated. No circuit and no adoption change until Pass C has one relation for local construction and received blocks.
+The next pass is the rejection ledger: every refusal, the condition, and whether the clone had already been mutated. That ledger is [c7-a-rejection.md](c7-a-rejection.md). The pins are `site/src/protocol/c7a-rejection.run.ts`. No circuit and no adoption change until Pass C has one relation for local construction and received blocks.
