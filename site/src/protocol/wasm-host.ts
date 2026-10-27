@@ -16,11 +16,17 @@ function writeStr(memory: WebAssembly.Memory, ptr: number, text: string): number
   return bytes.length;
 }
 
+function instantiate(bytes: BufferSource, imports: WebAssembly.Imports): WebAssembly.Instance {
+  return new WebAssembly.Instance(new WebAssembly.Module(bytes), imports);
+}
+
 /**
  * Run the compiled arbitrage contract. Host effects land in `storage`.
  * dex_multi_swap is refused here: pool movement stays on the signed swap path.
+ * The instance is built synchronously so local sealing and external admission
+ * call one interpreter.
  */
-export async function callArbitrage(
+export function callArbitrageSync(
   methodId: number,
   args: Uint8Array,
   ctx: {
@@ -28,14 +34,14 @@ export async function callArbitrage(
     storage: Map<string, string>;
     blockNumber: number;
   },
-): Promise<WasmCall> {
+): WasmCall {
   const logs: string[] = [];
   let memory: WebAssembly.Memory | undefined;
   const mem = () => {
     if (!memory) throw new Error("wasm memory is not ready");
     return memory;
   };
-  const compiled = (await WebAssembly.instantiate(ARBITRAGE_WASM as BufferSource, {
+  const instance = instantiate(ARBITRAGE_WASM as BufferSource, {
     env: {
       storage_get(keyPtr: number, keyLen: number, resultPtr: number): number {
         const key = readStr(mem(), keyPtr, keyLen);
@@ -57,8 +63,7 @@ export async function callArbitrage(
       dex_multi_swap: () => -1,
       call_contract: () => -1,
     },
-  })) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
-  const instance = compiled.instance;
+  });
   memory = instance.exports.memory as WebAssembly.Memory;
   const alloc = instance.exports.alloc as (size: number) => number;
   const call = instance.exports.call as (method: number, ptr: number, len: number) => number;
@@ -66,4 +71,16 @@ export async function callArbitrage(
   if (args.length) new Uint8Array(memory.buffer, ptr, args.length).set(args);
   const code = call(methodId, ptr, args.length);
   return { code, logs, storage: [...ctx.storage.entries()].sort(([a], [b]) => (a < b ? -1 : 1)) };
+}
+
+export async function callArbitrage(
+  methodId: number,
+  args: Uint8Array,
+  ctx: {
+    caller: string;
+    storage: Map<string, string>;
+    blockNumber: number;
+  },
+): Promise<WasmCall> {
+  return callArbitrageSync(methodId, args, ctx);
 }

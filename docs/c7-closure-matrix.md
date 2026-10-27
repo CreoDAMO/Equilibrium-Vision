@@ -47,13 +47,15 @@ None of these call `verifyTransitionProof`.
 
 | Path | What it executes | What it installs | Gap |
 | --- | --- | --- | --- |
-| `composeBlock` | `applySuccessor` with no `DerivedWasm` | A sealed block. On refusal it clears pending evidence and pending WASM, then tries again with blank evidence | The sealed block can be a different input from the one that was staged |
-| `commit` | `applySuccessor` again | `adopt`, which copies `stepped.next` into the node | `inputs.wasmAfter` is not read. A nonempty WASM list cannot succeed here |
-| `absorb` | `successor`, which does execute WASM | `adoptionGate(false, …)` then `adopt` | Stale check uses `omegaDigest`, not FS1 |
+| `composeBlock` | `executeTransition`, which is `runSuccessor` | The sealed block for that input. A refusal throws and leaves the staged evidence in place | The proof gate is still absent |
+| `commit` | `executeTransition` again, against the live predecessor | `adopt` | `commit` does not call `adoptionGate` |
+| `absorb` | the same `executeTransition` | `adoptionGate(false, …)` then `adopt` | Stale check uses `omegaDigest`, not FS1 |
 | `reorg` | Replays through `absorb` | Replaces the node collections from the replay | Bulk install has no separate gate |
 | `restoreDerived` | Replays stored blocks through `absorb` | The reconstructed node | Stored blocks have no proof field |
 
-`adopt` itself does not build a statement. It installs the stepped state, the block, and finality metadata. A caller that skipped the replay would still be inside the same function. The gate has to be in `adopt`, or every caller of `adopt` has to be impossible to add without it. Today the gate is a flag at the `absorb` call only, and the flag is off. `commit` does not call `adoptionGate` at all.
+`adopt` itself does not build a statement. It installs the stepped state, the block, and finality metadata. The local and external paths now call `executeTransition`. That closed the evidence-clearing fallback and the wasm split between them. It did not close C7-A. `statement.inputId` is still the non-injective encoding. The executor's own `executionInputId` distinguishes an absent list from an empty one, and the statement does not use it. The context id still does not name the host ABI. The adoption flag is still false.
+
+The next gap is C7-B: the statement has to bind `executionInputId`, an FS1 of the state at `stateRoot`, and the host ABI, or it is a description of a different object from the one `executeTransition` returns.
 
 ## What closes each criterion
 
@@ -67,4 +69,4 @@ None of these call `verifyTransitionProof`.
 | C7-F | A restored body carries the statement and a verification record that `restoreDerived` checks | Replaying the blocks |
 | C7-G | Every path above rejects the altered cases and leaves the node snapshot unchanged | The refusal pins, which cover `applySuccessor` and not `adopt` |
 
-The next change that would move C7-A, without a circuit, is to stop `composeBlock` from sealing a second input after the first refusal, and to make that path execute WASM the way `absorb` does. That is a transition-path change. It is not authorized by this matrix. The matrix is the reason it would be the next one: until those two paths are the same relation, a proof of `applySuccessor` does not say what a locally sealed block was.
+The executor is in place. C7-A stays open until the statement binds that executor's input and context, and until a refused input cannot be adopted through any other installation path. The proof gate is still off, so a unified replay is not yet an authorization.

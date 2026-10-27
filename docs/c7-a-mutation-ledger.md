@@ -2,6 +2,8 @@
 
 Checkpoint: `3f3a600506c02da9591e8ec60248c99a4f128388`
 
+The field map below is that checkpoint. A later change removed the local fallback: `composeBlock`, `commit`, and `absorb` call `executeTransition`, and a refused staged input is not replaced with blank evidence. `applySuccessor` itself was not reordered. C7-A stays open.
+
 Source: `site/src/protocol/constitution.ts`, `dex.ts`, `authority.ts`, `chain.ts`, `wasm-host.ts`, `coinomics.ts`, `site/src/lib/chain-api.ts`
 
 This is a source map of the production transition. It is not a normative freeze, not a circuit, and not a change to `applySuccessor`. C7-A stays open. C-007 stays open.

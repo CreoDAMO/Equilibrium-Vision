@@ -72,6 +72,6 @@ const api = readFileSync(new URL("../lib/chain-api.ts", import.meta.url), "utf8"
 assert.equal(chain.includes("node.slash"), false);
 assert.equal(api.includes("node.slash"), false);
 assert.match(chain, /private async absorb\(block: BlockRecord\)/);
-assert.match(chain, /const stepped = await successor\(this\.toOmega\(\)/);
+assert.match(chain, /executeTransition\(this\.toOmega\(\), inputs\)/);
 assert.match(chain, /this\.pending = this\.blankEvidence\(\)/);
-assert.match(chain, /applySuccessor\(omega,/);
+assert.equal(chain.includes("stepInputs"), false);

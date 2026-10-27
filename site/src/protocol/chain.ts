@@ -69,7 +69,7 @@ import { selectSuccessorTxs } from "./tx-select";
 import { chainWeight, preferChain } from "./frontier";
 import { ADOPTION_REQUIRES_TRANSITION_PROOF } from "./transition-proof";
 import { adoptionGate } from "./ctp1";
-import { sealFromSuccessor } from "./seal";
+import { executeTransition } from "./executor";
 import {
   applySuccessor,
   cloneOmega,
@@ -78,7 +78,6 @@ import {
   openOmega,
   openedCouplings,
   omegaDigest,
-  successor,
   transitionDigest,
   type Successor,
 } from "./constitution";
@@ -535,32 +534,9 @@ export class OrganismNode {
       recursionDepth: 2,
       target: this.params.residualThreshold,
     });
-    let evidence = this.cloneEvidence(this.pending);
-    let wasmAfter = evidence.wasm.length ? this.pendingWasm : null;
+    const evidence = this.cloneEvidence(this.pending);
     const omega = this.toOmega();
-    const stepInputs = (ev: TransitionEvidence, wasm: Map<string, string> | null) =>
-      applySuccessor(omega, {
-        transactions: args.txs,
-        evidence: ev,
-        timestamp: args.timestamp,
-        nonce: asBlockNonce(solution.nonce),
-        miner: args.miner,
-        committedPressure: pressure,
-        couplings,
-        difficulty: this.difficulty,
-        wasmAfter: wasm,
-      });
-    let stepped = stepInputs(evidence, wasmAfter);
-    if (!stepped.ok) {
-      this.emit("in", "verify", stepped.error);
-      this.pending = this.blankEvidence();
-      this.pendingWasm = null;
-      evidence = this.blankEvidence();
-      wasmAfter = null;
-      stepped = stepInputs(evidence, wasmAfter);
-    }
-    if (!stepped.ok) throw new Error(stepped.error);
-    const sealed = sealFromSuccessor(omega, {
+    const inputs = {
       transactions: args.txs,
       evidence,
       timestamp: args.timestamp,
@@ -569,8 +545,14 @@ export class OrganismNode {
       committedPressure: pressure,
       couplings,
       difficulty: this.difficulty,
-      wasmAfter,
-    }, stepped);
+    };
+    const executed = executeTransition(omega, inputs);
+    if (!executed.ok) {
+      this.emit("in", "verify", executed.error);
+      throw new Error(executed.error);
+    }
+    const stepped = executed.execution.stepped;
+    const sealed = executed.execution.sealed;
     const hash = sealed.hash;
     const txs = args.txs.map((t) => ({
       ...t,
@@ -677,22 +659,13 @@ export class OrganismNode {
 
   private sealing = false;
 
-  private wasmOverlayMatches(ev: TransitionEvidence): boolean {
-    if (!this.pendingWasm || ev.wasm.length !== this.pending.wasm.length) return false;
-    return ev.wasm.every((call, i) => {
-      const queued = this.pending.wasm[i];
-      return queued && queued.method === call.method && queued.caller === call.caller;
-    });
-  }
-
-  private commit(block: BlockRecord, wasmReady?: Map<string, string> | null): boolean {
+  private commit(block: BlockRecord): boolean {
     if (block.verified === false) {
       this.emit("in", "verify", block.verifyNotes.join("; ") || "block did not verify");
       return false;
     }
     const ev = block.evidence;
-    const wasmAfter = ev?.wasm.length ? (wasmReady ?? (this.wasmOverlayMatches(ev) ? this.pendingWasm : null)) : null;
-    const stepped = applySuccessor(this.toOmega(), {
+    const inputs = {
       transactions: block.transactions,
       evidence: ev,
       timestamp: block.timestamp,
@@ -701,24 +674,15 @@ export class OrganismNode {
       committedPressure: block.committedPressure,
       couplings: block.couplings,
       difficulty: block.difficulty,
-      wasmAfter,
-    });
-    if (!stepped.ok) {
-      this.emit("in", "verify", stepped.error);
+    };
+    const executed = executeTransition(this.toOmega(), inputs);
+    if (!executed.ok) {
+      this.emit("in", "verify", executed.error);
       return false;
     }
+    const stepped = executed.execution.stepped;
     if (block.transitionRoot) {
-      const expected = transitionDigest(this.toOmega(), {
-        transactions: block.transactions,
-        evidence: ev,
-        timestamp: block.timestamp,
-        nonce: asBlockNonce(block.nonce),
-        miner: block.miner,
-        committedPressure: block.committedPressure,
-        couplings: block.couplings,
-        difficulty: block.difficulty,
-        wasmAfter: null,
-      });
+      const expected = transitionDigest(this.toOmega(), { ...inputs, wasmAfter: null });
       if (block.transitionRoot !== expected) {
         this.emit("in", "verify", "transition is not this input");
         return false;
@@ -2137,7 +2101,7 @@ export class OrganismNode {
     if (!report.ok) return report.checks.filter((c) => !c.ok).map((c) => c.name).join(", ");
     const baseTip = this.tip?.hash ?? "0".repeat(64);
     const baseOmega = omegaDigest(this.toOmega());
-    const stepped = await successor(this.toOmega(), {
+    const inputs = {
       transactions: block.transactions,
       evidence: block.evidence,
       timestamp: block.timestamp,
@@ -2146,26 +2110,17 @@ export class OrganismNode {
       committedPressure: block.committedPressure,
       couplings: block.couplings,
       difficulty: block.difficulty,
-    });
-    if (!stepped.ok) return stepped.error;
+    };
+    const executed = executeTransition(this.toOmega(), inputs);
+    if (!executed.ok) return executed.error;
+    const stepped = executed.execution.stepped;
     if ((this.tip?.hash ?? "0".repeat(64)) !== baseTip || omegaDigest(this.toOmega()) !== baseOmega) {
       return "successor is stale";
     }
     if (stepped.stateRoot !== block.stateRoot) return "state root does not replay";
     if (block.omegaRoot !== undefined && stepped.omegaRoot !== block.omegaRoot) return "omega root does not replay";
-    if (block.transitionRoot !== undefined) {
-      const expected = transitionDigest(this.toOmega(), {
-        transactions: block.transactions,
-        evidence: block.evidence,
-        timestamp: block.timestamp,
-        nonce: asBlockNonce(block.nonce),
-        miner: block.miner,
-        committedPressure: block.committedPressure,
-        couplings: block.couplings,
-        difficulty: block.difficulty,
-        wasmAfter: null,
-      });
-      if (block.transitionRoot !== expected) return "transition is not this input";
+    if (block.transitionRoot !== undefined && block.transitionRoot !== executed.execution.transitionRoot) {
+      return "transition is not this input";
     }
     if (stepped.reward !== block.coinbaseReward) return "coinbase is not the reward law";
     if (stepped.liquid !== (block.liquidIssuance ?? block.coinbaseReward)) return "liquid issuance is not the stake law";

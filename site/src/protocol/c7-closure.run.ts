@@ -72,11 +72,10 @@ assert.deepEqual(verifyTransitionProof(statement, null), {
 assert.equal(c007Status().closed, false);
 
 const chain = readFileSync(new URL("./chain.ts", import.meta.url), "utf8");
-const absorbAt = chain.indexOf("private async absorb(");
 const composeAt = chain.indexOf("private composeBlock(");
-assert.ok(absorbAt > composeAt);
-assert.match(chain.slice(composeAt, absorbAt), /applySuccessor\(omega,/);
-assert.match(chain.slice(composeAt, absorbAt), /this\.pending = this\.blankEvidence\(\)/);
-assert.match(chain.slice(absorbAt), /await successor\(this\.toOmega\(\)/);
-assert.match(chain.slice(absorbAt), /adoptionGate\(\s*ADOPTION_REQUIRES_TRANSITION_PROOF/);
+const mineAt = chain.indexOf("\n  mine(");
+assert.ok(composeAt > 0 && mineAt > composeAt);
+assert.equal(chain.slice(composeAt, mineAt).includes("this.pending = this.blankEvidence()"), false);
+assert.match(chain, /executeTransition\(omega, inputs\)/);
+assert.match(chain, /executeTransition\(this\.toOmega\(\), inputs\)/);
 assert.equal(chain.includes("verifyTransitionProof"), false);

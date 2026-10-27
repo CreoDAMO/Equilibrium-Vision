@@ -4,7 +4,7 @@ import { minerReward, slashAmount } from "./coinomics";
 import { applySwap, poolAddress } from "./dex";
 import { decodeHeaderHex, decodeTxHex, isBtcDestination, parseBtcHeader, proveBtcOutput, verifyBtcPow } from "./btc";
 import { decodeEvenHex, isEthAsset, isEthDestination, parseExecutionHeader, proveEthEffect } from "./eth-exec";
-import { callArbitrage } from "./wasm-host";
+import { callArbitrageSync } from "./wasm-host";
 import {
   ETH_MIN_PARTICIPANTS,
   committeeAggregate,
@@ -1066,7 +1066,7 @@ class DerivedWasm {
 
 /**
  * The relation. One (Ω, inputs) value, one next Ω.
- * Wasm storage is not an input. Only successor() can pass a DerivedWasm.
+ * Wasm storage is not an input. Only runSuccessor can pass a DerivedWasm.
  */
 export function applySuccessor(omega: Omega, inputs: CanonicalInputs, derived?: DerivedWasm): Successor {
   const params = paramsOf(omega.chainId);
@@ -1210,26 +1210,31 @@ function distribute(validators: Map<string, ValidatorRecord>, staked: number): s
   return null;
 }
 
-async function executeWasm(omega: Omega, ev: TransitionEvidence, blockNumber: number): Promise<Map<string, string> | string> {
+function executeWasm(omega: Omega, ev: TransitionEvidence, blockNumber: number): Map<string, string> | string {
   const storage = new Map(omega.wasm);
   for (const call of ev.wasm) {
     const methodId = call.method === "init" ? 0 : call.method === "pause" ? 2 : 3;
     const args = call.method === "init" ? new TextEncoder().encode(call.caller) : new Uint8Array();
-    const result = await callArbitrage(methodId, args, { caller: call.caller, storage, blockNumber });
+    const result = callArbitrageSync(methodId, args, { caller: call.caller, storage, blockNumber });
     if (result.code !== 1) return `wasm ${call.method} returned ${result.code}`;
   }
   return storage;
 }
 
-/** Constitution entry. Executes wasm. A caller-supplied map is not Ω.wasm. */
-export async function successor(omega: Omega, inputs: Omit<CanonicalInputs, "wasmAfter">): Promise<Successor> {
+/** The relation, including wasm. A caller-supplied map is not Ω.wasm. */
+export function runSuccessor(omega: Omega, inputs: Omit<CanonicalInputs, "wasmAfter">): Successor {
   let derived: DerivedWasm | undefined;
   if (inputs.evidence?.wasm.length) {
-    const executed = await executeWasm(omega, inputs.evidence, Math.max(0, omega.height));
+    const executed = executeWasm(omega, inputs.evidence, Math.max(0, omega.height));
     if (typeof executed === "string") return { ok: false, error: executed };
     derived = new DerivedWasm(executed);
   }
   return applySuccessor(omega, { ...inputs, wasmAfter: null }, derived);
+}
+
+/** Constitution entry. Same body as runSuccessor. */
+export async function successor(omega: Omega, inputs: Omit<CanonicalInputs, "wasmAfter">): Promise<Successor> {
+  return runSuccessor(omega, inputs);
 }
 
 /** Ω before any block. Two networks are not the same object. */
