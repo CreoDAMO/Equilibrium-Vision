@@ -6,6 +6,7 @@ import { decodeHeaderHex, decodeTxHex, isBtcDestination, parseBtcHeader, proveBt
 import { decodeEvenHex, isEthAsset, isEthDestination, parseExecutionHeader, proveEthEffect } from "./eth-exec";
 import { callArbitrageSync } from "./wasm-host";
 import { fullStateId } from "./fullstate";
+import { wasmStorageError } from "./host-abi";
 import {
   ETH_MIN_PARTICIPANTS,
   committeeAggregate,
@@ -1223,8 +1224,11 @@ function executeWasm(omega: Omega, ev: TransitionEvidence, blockNumber: number):
     const methodId = call.method === "init" ? 0 : call.method === "pause" ? 2 : 3;
     const args = call.method === "init" ? new TextEncoder().encode(call.caller) : new Uint8Array();
     const result = callArbitrageSync(methodId, args, { caller: call.caller, storage, blockNumber });
+    if (result.refusal) return `wasm ${call.method} refused: ${result.refusal}`;
     if (result.code !== 1) return `wasm ${call.method} returned ${result.code}`;
   }
+  const stored = wasmStorageError(storage);
+  if (stored) return stored;
   return storage;
 }
 

@@ -12,7 +12,7 @@
  *                and the block claims. Not the canonical evidence string.
  *                status, blockHash, and blockHeight are not part of it.
  *   stateRootStateId  FS1 of the clone at the stateRoot line.
- *   context      the network parameters and the wasm program id. Not the host ABI.
+ *   context      the network parameters, the wasm program id, and the host ABI manifest.
  *   successor    FS1 of the Ω the relation returned, tipHash still previous.
  *   carried      FS1 of the Ω the next block reads, tipHash = H.
  *   adopted      the header commitments sealFromSuccessor already publishes.
@@ -25,6 +25,7 @@ import { NUMERIC_MODEL, paramsOf, type CanonicalInputs, type Omega, type Success
 import { encodeEvidence } from "./ctp1";
 import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
 import { encodeOmega, fullStateId } from "./fullstate";
+import { hostAbiManifest } from "./host-abi";
 import type { SealedSuccessor } from "./seal";
 import type { NetworkParams, TxRecord } from "./types";
 
@@ -208,6 +209,7 @@ export function encodeContext(params: NetworkParams): Uint8Array {
   b.u8(params.allowFaucet ? 1 : 0);
   b.f64(params.faucetAmount);
   b.str(ARBITRAGE_CODE);
+  b.str(hostAbiManifest());
   return b.finish();
 }
 
@@ -262,6 +264,38 @@ export function transitionStatement(execution: {
     residualFp: String(execution.stepped.residualFp),
     wasm: ARBITRAGE_CODE,
   };
+}
+
+/** The block's statement names this execution and this header. Replay produced the execution. This is not a proof. */
+export function statementAgrees(
+  statement: TransitionStatement,
+  execution: {
+    predecessor: string;
+    inputId: string;
+    contextId: string;
+    stateRoot: string;
+    stateRootStateId: string;
+    omegaRoot: string;
+    successor: string;
+    carried: string;
+    evidenceRoot: string;
+    transitionRoot: string;
+    header: string;
+  },
+  header: string,
+): string | null {
+  if (statement.predecessor !== execution.predecessor) return "predecessor is not installed";
+  if (statement.header !== header || statement.header !== execution.header) return "statement is not this header";
+  if (statement.inputId !== execution.inputId) return "statement is not this input";
+  if (statement.contextId !== execution.contextId) return "statement is not this context";
+  if (statement.stateRoot !== execution.stateRoot) return "statement is not this state root";
+  if (statement.stateRootStateId !== execution.stateRootStateId) return "statement is not this checkpoint";
+  if (statement.omegaRoot !== execution.omegaRoot) return "statement is not this omega root";
+  if (statement.successor !== execution.successor) return "statement is not this successor";
+  if (statement.carried !== execution.carried) return "statement is not this carried state";
+  if (statement.evidenceRoot !== execution.evidenceRoot) return "statement is not this evidence";
+  if (statement.transitionRoot !== execution.transitionRoot) return "statement is not this transition";
+  return null;
 }
 
 /** Predecessor is FS1. transitionRoot still commits omegaDigest. Those bytes are not the same field. */

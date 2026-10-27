@@ -67,9 +67,11 @@ import { bytesToHex, hexToBytes } from "./bytes";
 import { ARBITRAGE_CODE } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { chainWeight, preferChain } from "./frontier";
-import { ADOPTION_REQUIRES_TRANSITION_PROOF } from "./transition-proof";
+import { ADOPTION_REQUIRES_TRANSITION_PROOF, statementAgrees, transitionStatement } from "./transition-proof";
 import { adoptionGate } from "./ctp1";
+import { canonicalCaller, wasmStorageError } from "./host-abi";
 import { executeTransition } from "./executor";
+import { fullStateId } from "./fullstate";
 import {
   applySuccessor,
   cloneOmega,
@@ -194,6 +196,8 @@ export class OrganismNode {
     n.ethPubkey = body.ethPubkey ?? "";
     n.ethCommittee = body.ethCommittee ?? "";
     n.wasmStorage = new Map(body.wasmStorage ?? []);
+    const stored = wasmStorageError(n.wasmStorage);
+    if (stored) throw new RestoreRefused(stored);
     n.delegations = body.delegations ?? [];
     n.unbonding = body.unbonding ?? [];
     n.withdrawals = body.withdrawals ?? [];
@@ -328,7 +332,15 @@ export class OrganismNode {
     if (this.swaps.length > 40) this.swaps.length = 40;
   }
 
-  private adopt(block: BlockRecord, stepped: Extract<Successor, { ok: true }>) {
+  private adopt(
+    block: BlockRecord,
+    stepped: Extract<Successor, { ok: true }>,
+    execution: Parameters<typeof statementAgrees>[1],
+  ): string | null {
+    if (!block.statement) return "statement is absent";
+    if (block.statement.predecessor !== fullStateId(this.toOmega())) return "predecessor is not installed";
+    const mismatch = statementAgrees(block.statement, execution, block.hash);
+    if (mismatch) return mismatch;
     this.installNext(stepped.next, stepped.swaps);
     for (const tx of block.transactions) {
       this.mempool.delete(tx.hash);
@@ -369,6 +381,7 @@ export class OrganismNode {
       p.height = block.height;
       p.latencyMs = Math.max(8, Math.round(p.latencyMs + (Math.random() - 0.5) * 6));
     }
+    return null;
   }
 
   private blankEvidence(): TransitionEvidence {
@@ -588,6 +601,7 @@ export class OrganismNode {
       evidence,
       omegaRoot: stepped.omegaRoot,
       transitionRoot: sealed.transitionRoot,
+      statement: transitionStatement(executed.execution),
     };
     block.relation = stationarityRelation(block, this.params.residualThreshold);
     const report = verifyStationaryEvidence({
@@ -700,7 +714,11 @@ export class OrganismNode {
       this.emit("in", "verify", "recomputed residual is not under the admission target");
       return false;
     }
-    this.adopt(block, stepped);
+    const adopted = this.adopt(block, stepped, executed.execution);
+    if (adopted) {
+      this.emit("in", "verify", adopted);
+      return false;
+    }
     this.pending = this.sealing ? this.blankEvidence() : this.pending;
     this.pendingWasm = this.sealing ? null : this.pendingWasm;
     if (this.kinStarted) this.noteKin(block);
@@ -862,7 +880,10 @@ export class OrganismNode {
     logs: string[];
     error?: string;
   }> {
-    const owner = caller.slice(0, 40).padEnd(40, "0");
+    const owner = canonicalCaller(caller);
+    if (!owner) {
+      return { ok: false, code: 0, logs: [], error: "caller is not 40 hex" };
+    }
     const methodId = method === "init" ? 0 : method === "pause" ? 2 : 3;
     const args = method === "init" ? new TextEncoder().encode(owner) : new Uint8Array();
     const storage = new Map(this.pendingWasm ?? this.wasmStorage);
@@ -2146,8 +2167,7 @@ export class OrganismNode {
       null,
     );
     if (!gate.ok) return gate.reason;
-    this.adopt(block, stepped);
-    return null;
+    return this.adopt(block, stepped, executed.execution);
   }
 
   /** What a person can do with this kernel. Run on forks. The live chain is not the experiment. */

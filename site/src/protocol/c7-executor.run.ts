@@ -132,3 +132,13 @@ const replayed = await replay.submitExternal(withCall);
 assert.equal(replayed.ok, true, replayed.error ?? "wasm block was not admitted");
 assert.equal(replay.wasmStorage.size, caller.wasmStorage.size);
 assert.deepEqual([...replay.wasmStorage.entries()], [...caller.wasmStorage.entries()]);
+
+const tampered = { ...withCall, statement: withCall.statement && { ...withCall.statement, predecessor: "0".repeat(64) } };
+const fresh = new OrganismNode("testnet");
+const beforeHeight = fresh.height;
+const beforeTip = fresh.tip?.hash;
+const rejected = await fresh.submitExternal(tampered);
+assert.equal(rejected.ok, false);
+assert.match(rejected.error ?? "", /predecessor is not installed/);
+assert.equal(fresh.height, beforeHeight);
+assert.equal(fresh.tip?.hash, beforeTip);

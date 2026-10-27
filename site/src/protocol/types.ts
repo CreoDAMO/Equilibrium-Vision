@@ -1,3 +1,5 @@
+import type { TransitionStatement } from "./transition-proof";
+
 export type NetworkId = "testnet" | "mainnet";
 
 export interface Couplings {
@@ -255,6 +257,8 @@ export interface BlockRecord {
   omegaRoot?: string;
   /** Digest of (Ω, I). Bound in the header when evidence is present. */
   transitionRoot?: string;
+  /** The execution this block adopted. Absent on blocks sealed before the statement was required. */
+  statement?: TransitionStatement;
 }
 
 export interface ValidatorRecord {

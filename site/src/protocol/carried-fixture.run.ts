@@ -93,7 +93,7 @@ const record = {
   statementIdIsHash: statementId(carried.statement) === carried.statementId,
   structuredInputId: structuredInputId(full),
   structuredInputIdInStatement: false,
-  contextCommits: "numeric model, network parameters, and ARBITRAGE_CODE. That is the SHA-256 of the wasm bytecode, not the bytecode.",
+  contextCommits: "numeric model, network parameters, ARBITRAGE_CODE, and the host ABI manifest. ARBITRAGE_CODE is the SHA-256 of the wasm bytecode, not the bytecode. The manifest is the caller and storage contract, not a proof.",
   production: {
     height: carried.stepped.next.height,
     residual: String(carried.stepped.residual),

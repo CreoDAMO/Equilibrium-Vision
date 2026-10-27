@@ -1,19 +1,11 @@
 import { ARBITRAGE_WASM } from "./arbitrage-wasm";
+import { canonicalCaller, decodeHostUtf8, STORAGE_MAX_BYTES } from "./host-abi";
 
 export interface WasmCall {
   code: number;
   logs: string[];
   storage: Array<[string, string]>;
-}
-
-function readStr(memory: WebAssembly.Memory, ptr: number, len: number): string {
-  return new TextDecoder().decode(new Uint8Array(memory.buffer, ptr, len));
-}
-
-function writeStr(memory: WebAssembly.Memory, ptr: number, text: string): number {
-  const bytes = new TextEncoder().encode(text);
-  new Uint8Array(memory.buffer, ptr, bytes.length).set(bytes);
-  return bytes.length;
+  refusal?: string;
 }
 
 function instantiate(bytes: BufferSource, imports: WebAssembly.Imports): WebAssembly.Instance {
@@ -35,29 +27,64 @@ export function callArbitrageSync(
     blockNumber: number;
   },
 ): WasmCall {
+  const caller = canonicalCaller(ctx.caller);
+  if (!caller) {
+    return { code: 0, logs: [], storage: [...ctx.storage.entries()], refusal: "caller is not 40 hex" };
+  }
   const logs: string[] = [];
+  const overlay = new Map<string, string>();
+  let refusal: string | null = null;
   let memory: WebAssembly.Memory | undefined;
   const mem = () => {
     if (!memory) throw new Error("wasm memory is not ready");
     return memory;
   };
+  const bytesAt = (ptr: number, len: number): Uint8Array | null => {
+    if (!Number.isInteger(ptr) || !Number.isInteger(len) || ptr < 0 || len < 0) return null;
+    if (len > STORAGE_MAX_BYTES) return null;
+    const view = new Uint8Array(mem().buffer, ptr, len);
+    return view.slice();
+  };
   const instance = instantiate(ARBITRAGE_WASM as BufferSource, {
     env: {
       storage_get(keyPtr: number, keyLen: number, resultPtr: number): number {
-        const key = readStr(mem(), keyPtr, keyLen);
-        const val = ctx.storage.get(key);
+        const raw = bytesAt(keyPtr, keyLen);
+        const key = raw && decodeHostUtf8(raw);
+        if (!key) {
+          refusal = "storage key refused";
+          return 0;
+        }
+        const val = overlay.has(key) ? overlay.get(key) : ctx.storage.get(key);
         if (!val) return 0;
-        return writeStr(mem(), resultPtr, val);
+        const encoded = new TextEncoder().encode(val);
+        if (encoded.length > STORAGE_MAX_BYTES) {
+          refusal = "storage value refused";
+          return 0;
+        }
+        new Uint8Array(mem().buffer, resultPtr, encoded.length).set(encoded);
+        return encoded.length;
       },
       storage_set(keyPtr: number, keyLen: number, valPtr: number, valLen: number) {
-        ctx.storage.set(readStr(mem(), keyPtr, keyLen), readStr(mem(), valPtr, valLen));
+        const keyRaw = bytesAt(keyPtr, keyLen);
+        const valRaw = bytesAt(valPtr, valLen);
+        const key = keyRaw && decodeHostUtf8(keyRaw);
+        const val = valRaw && decodeHostUtf8(valRaw);
+        if (!key || val === null) {
+          refusal = "storage write refused";
+          return;
+        }
+        overlay.set(key, val);
       },
       log(ptr: number, len: number) {
-        logs.push(readStr(mem(), ptr, len));
+        const raw = bytesAt(ptr, len);
+        const line = raw && decodeHostUtf8(raw);
+        if (line) logs.push(line);
       },
       block_number: () => ctx.blockNumber >>> 0,
       caller_address(outPtr: number): number {
-        return writeStr(mem(), outPtr, ctx.caller.slice(0, 40));
+        const encoded = new TextEncoder().encode(caller);
+        new Uint8Array(mem().buffer, outPtr, encoded.length).set(encoded);
+        return encoded.length;
       },
       gov_param: () => 0,
       dex_multi_swap: () => -1,
@@ -70,6 +97,10 @@ export function callArbitrageSync(
   const ptr = args.length ? alloc(args.length) : 0;
   if (args.length) new Uint8Array(memory.buffer, ptr, args.length).set(args);
   const code = call(methodId, ptr, args.length);
+  if (refusal) {
+    return { code: 0, logs, storage: [...ctx.storage.entries()], refusal };
+  }
+  for (const [key, value] of overlay) ctx.storage.set(key, value);
   return { code, logs, storage: [...ctx.storage.entries()].sort(([a], [b]) => (a < b ? -1 : 1)) };
 }
 

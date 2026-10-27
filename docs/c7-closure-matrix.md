@@ -55,7 +55,7 @@ None of these call `verifyTransitionProof`.
 
 `adopt` itself does not build a statement. It installs the stepped state, the block, and finality metadata. The local and external paths call `executeTransition`, and `transitionStatement` reads that execution. `inputId` is the projected input plus structured evidence. `stateRootStateId` is the FS1 taken on the line after `stateRootOf`. A swap timestamp is an unauthenticated copy. The context id still does not name the host ABI. The adoption flag is still false.
 
-The next gap is the host ABI inside the context, and a verifier that does not call `runSuccessor`. The statement now names the execution. It is not yet an authorization.
+The host ABI manifest is in the context. `adopt` refuses a block whose statement does not name the installed predecessor and the execution it just replayed. The next gap is a verifier that accepts a proof of that statement without calling `runSuccessor`. Until that exists, the adoption flag stays off.
 
 ## What closes each criterion
 
@@ -69,4 +69,4 @@ The next gap is the host ABI inside the context, and a verifier that does not ca
 | C7-F | A restored body carries the statement and a verification record that `restoreDerived` checks | Replaying the blocks |
 | C7-G | Every path above rejects the altered cases and leaves the node snapshot unchanged | The refusal pins, which cover `applySuccessor` and not `adopt` |
 
-The executor is in place. C7-A stays open until the statement binds that executor's input and context, and until a refused input cannot be adopted through any other installation path. The proof gate is still off, so a unified replay is not yet an authorization.
+The executor is in place, and the host ABI manifest is in the context. Against the checklist below, C7-A and C7-E are closed. C7-B is not: the successor identity is checked by replaying the execution, and that replay is not an anchor the statement cannot influence. C7-C, C7-D, and C-007 stay open because no verifier accepts a proof without calling the host. C7-F is closed for a body this node sealed, because the statement is on the block and `restoreDerived` absorbs through `adopt`. A saved body from before the statement was required is refused, not adopted. C7-G is closed for an altered statement on the external path: the predecessor snapshot does not move. It is not closed for an altered proof, because there is no proof to alter.
