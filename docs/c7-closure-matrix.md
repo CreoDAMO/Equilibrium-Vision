@@ -53,9 +53,9 @@ None of these call `verifyTransitionProof`.
 | `reorg` | Replays through `absorb` | Replaces the node collections from the replay | Bulk install has no separate gate |
 | `restoreDerived` | Replays stored blocks through `absorb` | The reconstructed node | Stored blocks have no proof field |
 
-`adopt` itself does not build a statement. It installs the stepped state, the block, and finality metadata. The local and external paths now call `executeTransition`. That closed the evidence-clearing fallback and the wasm split between them. It did not close C7-A. `statement.inputId` is still the non-injective encoding. The executor's own `executionInputId` distinguishes an absent list from an empty one, and the statement does not use it. The context id still does not name the host ABI. The adoption flag is still false.
+`adopt` itself does not build a statement. It installs the stepped state, the block, and finality metadata. The local and external paths call `executeTransition`, and `transitionStatement` reads that execution. `inputId` is the projected input plus structured evidence. `stateRootStateId` is the FS1 taken on the line after `stateRootOf`. A swap timestamp is an unauthenticated copy. The context id still does not name the host ABI. The adoption flag is still false.
 
-The next gap is C7-B: the statement has to bind `executionInputId`, an FS1 of the state at `stateRoot`, and the host ABI, or it is a description of a different object from the one `executeTransition` returns.
+The next gap is the host ABI inside the context, and a verifier that does not call `runSuccessor`. The statement now names the execution. It is not yet an authorization.
 
 ## What closes each criterion
 

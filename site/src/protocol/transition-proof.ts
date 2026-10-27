@@ -8,9 +8,11 @@
  *
  * Public, all of it. There is no witness yet.
  *   predecessor  FS1 of Ω before the transition. Not omegaDigest.
- *   inputs       the ordered transactions, evidence string, and claims
- *                applySuccessor actually receives.
- *   context      the network parameters and the wasm program id.
+ *   inputs       the projected transaction fields, the structured evidence,
+ *                and the block claims. Not the canonical evidence string.
+ *                status, blockHash, and blockHeight are not part of it.
+ *   stateRootStateId  FS1 of the clone at the stateRoot line.
+ *   context      the network parameters and the wasm program id. Not the host ABI.
  *   successor    FS1 of the Ω the relation returned, tipHash still previous.
  *   carried      FS1 of the Ω the next block reads, tipHash = H.
  *   adopted      the header commitments sealFromSuccessor already publishes.
@@ -20,9 +22,10 @@
  */
 import { canonicalPressure, sha256Hex } from "./crypto";
 import { NUMERIC_MODEL, paramsOf, type CanonicalInputs, type Omega, type Successor } from "./constitution";
+import { encodeEvidence } from "./ctp1";
 import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
 import { encodeOmega, fullStateId } from "./fullstate";
-import { sealFromSuccessor, type SealedSuccessor } from "./seal";
+import type { SealedSuccessor } from "./seal";
 import type { NetworkParams, TxRecord } from "./types";
 
 export const TRANSITION_PROOF_VERSION = 1;
@@ -42,6 +45,7 @@ export type TransitionStatement = {
   inputId: string;
   contextId: string;
   stateRoot: string;
+  stateRootStateId: string;
   omegaRoot: string;
   successor: string;
   carried: string;
@@ -115,7 +119,7 @@ function txBytes(tx: TxRecord): Uint8Array {
   return b.finish();
 }
 
-/** Ordered inputs the relation reads. wasmAfter is not among them. The evidence string is not injective. */
+/** The canonical evidence string. Not injective. Not the statement input. */
 export function encodeInputs(inputs: CanonicalInputs): Uint8Array {
   const b = new Buf();
   b.u32(inputs.transactions.length);
@@ -138,6 +142,50 @@ export function encodeInputs(inputs: CanonicalInputs): Uint8Array {
   b.f64(c.mempool);
   b.f64(c.fees);
   return b.finish();
+}
+
+/** Transactions without the fields sealing stamps on afterwards. Timestamp stays. It is not signed. */
+export function encodeProjectedInputs(inputs: Omit<CanonicalInputs, "wasmAfter">): Uint8Array {
+  const b = new Buf();
+  b.u32(inputs.transactions.length);
+  for (const tx of inputs.transactions) {
+    b.str(tx.hash);
+    b.str(tx.from);
+    b.str(tx.to);
+    b.f64(tx.amount);
+    b.f64(tx.fee);
+    b.f64(tx.nonce);
+    b.f64(tx.timestamp);
+    b.str(tx.signature);
+    b.str(tx.publicKey);
+  }
+  b.f64(inputs.timestamp);
+  if (typeof inputs.nonce !== "bigint" || inputs.nonce < 0n || inputs.nonce > 0xffffffffffffffffn) {
+    throw new Error("nonce is not a u64");
+  }
+  const nonce = new Uint8Array(8);
+  new DataView(nonce.buffer).setBigUint64(0, inputs.nonce, true);
+  b.bytes(nonce);
+  b.str(inputs.miner);
+  b.f64(canonicalPressure(inputs.committedPressure));
+  b.f64(inputs.difficulty);
+  const c = inputs.couplings;
+  b.f64(c.hash);
+  b.f64(c.structural);
+  b.f64(c.continuity);
+  b.f64(c.mempool);
+  b.f64(c.fees);
+  return b.finish();
+}
+
+/** Projected inputs plus structured evidence. Absent is not empty. */
+export function executionInputId(inputs: Omit<CanonicalInputs, "wasmAfter">): string {
+  const rest = encodeProjectedInputs(inputs);
+  const evidence = encodeEvidence(inputs.evidence);
+  const body = new Uint8Array(rest.length + evidence.length);
+  body.set(rest, 0);
+  body.set(evidence, rest.length);
+  return sha256Hex(body);
 }
 
 /** Parameters that change the transition, plus the wasm program this process executes. */
@@ -163,33 +211,55 @@ export function encodeContext(params: NetworkParams): Uint8Array {
   return b.finish();
 }
 
-export function transitionStatement(
-  before: Omega,
-  inputs: CanonicalInputs,
-  stepped: Extract<Successor, { ok: true }>,
-  sealed: SealedSuccessor,
-): TransitionStatement {
-  const params = paramsOf(before.chainId);
+/** The statement is this execution. It does not accept a separate successor. */
+export function transitionStatement(execution: {
+  predecessor: string;
+  inputId: string;
+  contextId: string;
+  stateRoot: string;
+  stateRootStateId: string;
+  omegaRoot: string;
+  successor: string;
+  carried: string;
+  evidenceRoot: string;
+  transitionRoot: string;
+  header: string;
+  before: Omega;
+  inputs: Omit<CanonicalInputs, "wasmAfter">;
+  stepped: Extract<Successor, { ok: true }>;
+  sealed: SealedSuccessor;
+}): TransitionStatement {
+  if (fullStateId(execution.before) !== execution.predecessor) throw new Error("predecessor is not this execution");
+  const params = paramsOf(execution.before.chainId);
   if (!params) throw new Error("no network parameters for this chain");
-  if (fullStateId(sealed.digestOmega) !== fullStateId(stepped.next)) {
-    throw new Error("seal is not this successor");
+  if (executionInputId(execution.inputs) !== execution.inputId) throw new Error("input is not this execution");
+  if (sha256Hex(encodeContext(params)) !== execution.contextId) throw new Error("context is not this execution");
+  if (fullStateId(execution.stepped.next) !== execution.successor) throw new Error("successor is not this execution");
+  if (fullStateId(execution.sealed.digestOmega) !== execution.successor) throw new Error("seal is not this successor");
+  if (fullStateId(execution.sealed.carried) !== execution.carried) throw new Error("carried is not this execution");
+  if (execution.sealed.hash !== execution.header) throw new Error("header is not this execution");
+  if (execution.stepped.stateRoot !== execution.stateRoot) throw new Error("state root is not this execution");
+  if (execution.stepped.stateRootStateId !== execution.stateRootStateId) {
+    throw new Error("state root identity is not this execution");
   }
-  const carriedId = fullStateId(sealed.carried);
-  const successorId = fullStateId(stepped.next);
+  if (execution.stepped.omegaRoot !== execution.omegaRoot) throw new Error("omega root is not this execution");
+  if (execution.sealed.evidenceRoot !== execution.evidenceRoot) throw new Error("evidence root is not this execution");
+  if (execution.sealed.transitionRoot !== execution.transitionRoot) throw new Error("transition root is not this execution");
   return {
     version: 1,
     numericModel: NUMERIC_MODEL,
-    predecessor: fullStateId(before),
-    inputId: sha256Hex(encodeInputs(inputs)),
-    contextId: sha256Hex(encodeContext(params)),
-    stateRoot: stepped.stateRoot,
-    omegaRoot: stepped.omegaRoot,
-    successor: successorId,
-    carried: carriedId,
-    evidenceRoot: sealed.evidenceRoot,
-    transitionRoot: sealed.transitionRoot,
-    header: sealed.hash,
-    residualFp: String(stepped.residualFp),
+    predecessor: execution.predecessor,
+    inputId: execution.inputId,
+    contextId: execution.contextId,
+    stateRoot: execution.stateRoot,
+    stateRootStateId: execution.stateRootStateId,
+    omegaRoot: execution.omegaRoot,
+    successor: execution.successor,
+    carried: execution.carried,
+    evidenceRoot: execution.evidenceRoot,
+    transitionRoot: execution.transitionRoot,
+    header: execution.header,
+    residualFp: String(execution.stepped.residualFp),
     wasm: ARBITRAGE_CODE,
   };
 }
@@ -204,6 +274,7 @@ export function statementBytes(statement: TransitionStatement): Uint8Array {
   b.str(statement.inputId);
   b.str(statement.contextId);
   b.str(statement.stateRoot);
+  b.str(statement.stateRootStateId);
   b.str(statement.omegaRoot);
   b.str(statement.successor);
   b.str(statement.carried);

@@ -4,9 +4,10 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { applySuccessor, initialOmega, omegaDigest, openedCouplings, type CanonicalInputs, type Omega } from "./constitution";
+import { initialOmega, omegaDigest, openedCouplings, type CanonicalInputs, type Omega } from "./constitution";
 import { minerKey } from "./genesis";
-import { blankEvidence, sealFromSuccessor } from "./seal";
+import { blankEvidence } from "./seal";
+import { executeTransition } from "./executor";
 import { fullStateId } from "./fullstate";
 import { NETWORKS } from "./networks";
 import {
@@ -37,11 +38,10 @@ function inputs(omega: Omega): CanonicalInputs {
 const before = initialOmega("mainnet");
 const digest = omegaDigest(before);
 const spec = inputs(before);
-const stepped = applySuccessor(before, spec);
-assert.equal(stepped.ok, true);
-if (!stepped.ok) throw new Error(stepped.error);
-const sealed = sealFromSuccessor(before, spec, stepped);
-const statement = transitionStatement(before, spec, stepped, sealed);
+const executed = executeTransition(before, spec);
+assert.equal(executed.ok, true);
+if (!executed.ok) throw new Error(executed.error);
+const statement = transitionStatement(executed.execution);
 
 assert.equal(statement.predecessor, fullStateId(before));
 assert.notEqual(statement.predecessor, digest);

@@ -11,12 +11,11 @@
  */
 import { sha256Hex } from "./crypto";
 import {
-  successor,
   type CanonicalInputs,
   type Omega,
   type Successor,
 } from "./constitution";
-import { sealFromSuccessor } from "./seal";
+import { executeTransition } from "./executor";
 import {
   ADOPTION_REQUIRES_TRANSITION_PROOF,
   statementId,
@@ -285,17 +284,15 @@ export type Ctp1Failure = { ok: false; reason: string };
 
 /** One production execution. The caller does not supply the successor. */
 export async function evaluateCtp1(witness: Ctp1Witness): Promise<Ctp1Evaluation | Ctp1Failure> {
-  const stepped = await successor(witness.before, witness.inputs);
-  if (!stepped.ok) return { ok: false, reason: stepped.error };
-  const full: CanonicalInputs = { ...witness.inputs, wasmAfter: null };
-  const sealed = sealFromSuccessor(witness.before, full, stepped);
-  const statement = transitionStatement(witness.before, full, stepped, sealed);
+  const executed = executeTransition(witness.before, witness.inputs);
+  if (!executed.ok) return { ok: false, reason: executed.error };
+  const statement = transitionStatement(executed.execution);
   return {
     ok: true,
     statement,
     statementId: statementId(statement),
-    structuredInputId: structuredInputId(full),
-    stepped,
+    structuredInputId: structuredInputId(witness.inputs),
+    stepped: executed.execution.stepped,
   };
 }
 

@@ -5,10 +5,11 @@
  */
 import { sha256Hex } from "./crypto";
 import { paramsOf, runSuccessor, type CanonicalInputs, type Omega, type Successor } from "./constitution";
-import { encodeEvidence } from "./ctp1";
 import { fullStateId } from "./fullstate";
 import { sealFromSuccessor, type SealedSuccessor } from "./seal";
-import { encodeContext, encodeInputs } from "./transition-proof";
+import { encodeContext, executionInputId } from "./transition-proof";
+
+export { executionInputId };
 
 export type ExecutedTransition = {
   predecessor: string;
@@ -17,23 +18,16 @@ export type ExecutedTransition = {
   successor: string;
   carried: string;
   stateRoot: string;
+  stateRootStateId: string;
   omegaRoot: string;
   header: string;
   evidenceRoot: string;
   transitionRoot: string;
+  before: Omega;
+  inputs: Omit<CanonicalInputs, "wasmAfter">;
   stepped: Extract<Successor, { ok: true }>;
   sealed: SealedSuccessor;
 };
-
-/** Evidence bytes are the structured encoding. Absent is not empty. */
-export function executionInputId(inputs: Omit<CanonicalInputs, "wasmAfter">): string {
-  const rest = encodeInputs({ ...inputs, evidence: undefined, wasmAfter: null });
-  const evidence = encodeEvidence(inputs.evidence);
-  const body = new Uint8Array(rest.length + evidence.length);
-  body.set(rest, 0);
-  body.set(evidence, rest.length);
-  return sha256Hex(body);
-}
 
 export function executeTransition(
   before: Omega,
@@ -55,10 +49,13 @@ export function executeTransition(
       successor: fullStateId(stepped.next),
       carried: fullStateId(sealed.carried),
       stateRoot: stepped.stateRoot,
+      stateRootStateId: stepped.stateRootStateId,
       omegaRoot: stepped.omegaRoot,
       header: sealed.hash,
       evidenceRoot: sealed.evidenceRoot,
       transitionRoot: sealed.transitionRoot,
+      before,
+      inputs,
       stepped,
       sealed,
     },

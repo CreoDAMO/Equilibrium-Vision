@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { OrganismNode } from "./chain";
 import { cloneOmega, initialOmega } from "./constitution";
 import { executeTransition, executionInputId } from "./executor";
+import { transitionStatement } from "./transition-proof";
 import { fullStateId } from "./fullstate";
 import { minerKey } from "./genesis";
 import { blankEvidence } from "./seal";
@@ -52,6 +53,34 @@ assert.notEqual(moved.execution.header, once.execution.header);
 const absent = executionInputId({ ...spec, evidence: undefined });
 const empty = executionInputId({ ...spec, evidence: blankEvidence(before.chainId) });
 assert.notEqual(absent, empty);
+assert.equal(once.execution.stateRootStateId, once.execution.stepped.stateRootStateId);
+assert.notEqual(once.execution.stateRootStateId, once.execution.successor);
+assert.throws(
+  () => transitionStatement({ ...once.execution, predecessor: "0".repeat(64) }),
+  /predecessor is not this execution/,
+);
+
+const tx = {
+  hash: "ab".repeat(32),
+  from: "cd".repeat(20),
+  to: "ef".repeat(20),
+  amount: 10,
+  fee: 1,
+  nonce: 0,
+  timestamp: 15,
+  status: "pending" as const,
+  signature: "11".repeat(64),
+  publicKey: "22".repeat(32),
+  blockHash: null,
+  blockHeight: null,
+};
+const rawId = executionInputId({ ...spec, transactions: [tx] });
+const stampedId = executionInputId({
+  ...spec,
+  transactions: [{ ...tx, status: "confirmed" as const, blockHash: "33".repeat(32), blockHeight: 4 }],
+});
+assert.equal(rawId, stampedId);
+assert.notEqual(rawId, executionInputId({ ...spec, transactions: [{ ...tx, timestamp: 16 }] }));
 
 const bad = executeTransition(before, {
   ...spec,

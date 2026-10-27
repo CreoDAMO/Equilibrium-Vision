@@ -1,8 +1,9 @@
 /**
  * FS1 — exact bytes of one Ω.
  *
- * Not a consensus commitment. constitution, seal, commit, and absorb do not
- * call this. omegaDigest remains the digest those paths compare.
+ * applySuccessor records fullStateId at the stateRoot line. That string is the
+ * checkpoint identity. It is not what commit or absorb compare, and it is not
+ * the header. omegaDigest remains the digest those paths compare.
  *
  * The bytes are the U2 representation: every declared field, in the order
  * Omega declares it, with map insertion order and IEEE-754 bits kept.

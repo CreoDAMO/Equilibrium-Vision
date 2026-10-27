@@ -10,7 +10,7 @@ import { concatBytes, hex32, u64ToLe } from "./bytes";
 import { fullStateId } from "./fullstate";
 import {
   encodeContext,
-  encodeInputs,
+  executionInputId,
   statementId,
   type TransitionStatement,
 } from "./transition-proof";
@@ -52,7 +52,7 @@ export function predecessorBinds(before: Omega, statement: TransitionStatement):
 }
 
 export function inputIdBinds(inputs: CanonicalInputs, statement: TransitionStatement): boolean {
-  return statement.inputId === sha256Hex(encodeInputs(inputs));
+  return statement.inputId === executionInputId(inputs);
 }
 
 export function contextIdBinds(before: Omega, statement: TransitionStatement): boolean {

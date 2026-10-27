@@ -5,6 +5,7 @@ import { applySwap, poolAddress } from "./dex";
 import { decodeHeaderHex, decodeTxHex, isBtcDestination, parseBtcHeader, proveBtcOutput, verifyBtcPow } from "./btc";
 import { decodeEvenHex, isEthAsset, isEthDestination, parseExecutionHeader, proveEthEffect } from "./eth-exec";
 import { callArbitrageSync } from "./wasm-host";
+import { fullStateId } from "./fullstate";
 import {
   ETH_MIN_PARTICIPANTS,
   committeeAggregate,
@@ -107,6 +108,8 @@ export type Successor =
       ok: true;
       next: Omega;
       stateRoot: string;
+      /** FS1 of the clone at the stateRoot line, before the writes that follow it. */
+      stateRootStateId: string;
       omegaRoot: string;
       reward: number;
       liquid: number;
@@ -1025,6 +1028,8 @@ function applyEffects(
           amountOut: out,
           tokenIn: pool.tokenA,
           tokenOut: pool.tokenB,
+          // Decision B. The swap copies the transaction's timestamp. It is not signed,
+          // not in the transaction hash, and not a header field. It is not historical authority.
           timestamp: tx.timestamp,
         });
       }
@@ -1150,6 +1155,7 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs, derived?: 
   const refunded = refundMaturedWithdrawals(next, height);
   if (refunded) return { ok: false, error: refunded };
   const stateRoot = stateRootOf(next);
+  const stateRootStateId = fullStateId(next);
   const bindError = admitBinding(inputs.evidence, breakdown.canonicalFp, stateRoot);
   if (bindError) return { ok: false, error: bindError };
   const minerV = next.validators.get(inputs.miner);
@@ -1176,6 +1182,7 @@ export function applySuccessor(omega: Omega, inputs: CanonicalInputs, derived?: 
     ok: true,
     next,
     stateRoot,
+    stateRootStateId,
     omegaRoot: omegaDigest(next),
     reward,
     liquid: split.liquid,

@@ -7,6 +7,7 @@ import { initialOmega, openedCouplings, successor } from "./constitution";
 import { minerKey } from "./genesis";
 import { blankEvidence, sealFromSuccessor } from "./seal";
 import { evaluateCtp1 } from "./ctp1";
+import { executeTransition } from "./executor";
 import { omegaDigest } from "./constitution";
 import { statementId, transitionStatement } from "./transition-proof";
 import {
@@ -70,7 +71,10 @@ const renamed = { ...carried.statement, predecessor: "00".repeat(32) };
 assert.notEqual(statementId(renamed), carried.statementId);
 assert.notEqual(carried.statement.header, Buffer.from(carriedHeader).toString("hex"));
 
-const again = transitionStatement(sealed.carried, { ...carriedIn, wasmAfter: null }, carried.stepped, sealFromSuccessor(sealed.carried, { ...carriedIn, wasmAfter: null }, carried.stepped));
+const againRun = executeTransition(sealed.carried, carriedIn);
+assert.equal(againRun.ok, true);
+if (!againRun.ok) throw new Error(againRun.error);
+const again = transitionStatement(againRun.execution);
 assert.equal(statementId(again), carried.statementId);
 assert.equal(carried.stepped.reward, 2);
 assert.equal(carried.stepped.liquid, 0);

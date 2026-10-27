@@ -4,14 +4,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  applySuccessor,
   initialOmega,
   omegaDigest,
 } from "./constitution";
 import { canonicalEvidence } from "./evidence";
 import { fullStateId } from "./fullstate";
 import { blankEvidence } from "./seal";
-import { sealFromSuccessor } from "./seal";
+import { executeTransition } from "./executor";
 import { encodeEvidence, structuredInputId } from "./ctp1";
 import { c007Status } from "./ctp1";
 import {
@@ -34,11 +33,12 @@ const spec = {
   difficulty: before.difficulty,
   wasmAfter: null,
 };
-const stepped = applySuccessor(before, spec);
-assert.equal(stepped.ok, true);
-if (!stepped.ok) throw new Error(stepped.error);
-const sealed = sealFromSuccessor(before, spec, stepped);
-const statement = transitionStatement(before, spec, stepped, sealed);
+const executed = executeTransition(before, spec);
+assert.equal(executed.ok, true);
+if (!executed.ok) throw new Error(executed.error);
+const stepped = executed.execution.stepped;
+const sealed = executed.execution.sealed;
+const statement = transitionStatement(executed.execution);
 
 assert.equal(statement.predecessor, fullStateId(before));
 assert.equal(statement.successor, fullStateId(stepped.next));
@@ -49,6 +49,10 @@ assert.notEqual(statement.predecessor, statement.successor);
 assert.notEqual(statement.successor, statement.carried);
 assert.notEqual(statement.stateRoot, statement.omegaRoot);
 assert.notEqual(omegaDigest(before), statement.predecessor);
+assert.equal(statement.inputId, executed.execution.inputId);
+assert.equal(statement.stateRootStateId, stepped.stateRootStateId);
+assert.notEqual(statement.stateRootStateId, statement.successor);
+assert.throws(() => transitionStatement({ ...executed.execution, inputId: "0".repeat(64) }), /input is not this execution/);
 
 const absent = blankEvidence(before.chainId);
 const emptyLists = { ...absent, cognition: [], settle: [], withdraw: [] };

@@ -16,13 +16,7 @@ import { canonicalEvidence } from "./evidence";
 import { encodeOmega, fullStateId } from "./fullstate";
 import { paramsOf } from "./constitution";
 import { bytesToHex } from "./bytes";
-import {
-  encodeContext,
-  encodeInputs,
-  predecessorBytes,
-  statementBytes,
-  statementId,
-} from "./transition-proof";
+import { encodeContext, encodeInputs, encodeProjectedInputs, executionInputId, predecessorBytes, statementBytes, statementId } from "./transition-proof";
 import { residualPreimage } from "./reward-binding";
 
 const FIXTURE = new URL("../../../docs/fixtures/carried-second.json", import.meta.url);
@@ -85,8 +79,8 @@ const absentStructured = encodeEvidence(absent);
 const emptyStructured = encodeEvidence(emptyLists);
 
 const record = {
-  checkpoint: "74072eb",
-  protocolUnchangedSince: "eedacf3",
+  checkpoint: "fbcc0d0",
+  statementBinding: "the statement is transitionStatement(executeTransition(...))",
   network: "mainnet",
   sequence: "genesis → first successor → sealed carried state → second successor",
   firstHeader: sealed.hash,
@@ -119,7 +113,7 @@ const record = {
     canonicalFp: String(breakdown.canonicalFp),
   },
   evidenceIdentity: {
-    note: "inputId hashes encodeInputs, which stores canonicalEvidence. structuredInputId is not a statement field. Absent optional lists and empty lists share one canonical string and not one structured encoding.",
+    note: "statement inputId is the projected transaction fields plus structured evidence. status, blockHash, and blockHeight are not in it. The canonical evidence string still collapses absent and empty lists. That string is not the statement input.",
     canonicalEqual: canonicalEvidence(absent) === canonicalEvidence(emptyLists),
     structuredEqual: sha256Hex(absentStructured) === sha256Hex(emptyStructured),
     absentStructured: artifact("evidence-absent", absentStructured),
@@ -129,6 +123,7 @@ const record = {
     predecessor: artifact("fs1-predecessor", predecessorBytes(sealed.carried)),
     structuredEvidence: artifact("structured-evidence", encodeEvidence(full.evidence)),
     inputs: artifact("encode-inputs", encodeInputs(full)),
+    projected: artifact("projected-inputs", encodeProjectedInputs(full)),
     context: artifact("encode-context", encodeContext(params)),
     statement: artifact("statement-bytes", statementBytes(carried.statement)),
     residualPreimage: artifact("residual-preimage", preimage),
@@ -139,7 +134,8 @@ const record = {
 
 assert.equal(record.artifacts.predecessor.sha256, record.predecessorFs1);
 assert.equal(record.artifacts.statement.sha256, record.statementId);
-assert.equal(record.artifacts.inputs.sha256, carried.statement.inputId);
+assert.equal(executionInputId(full), carried.statement.inputId);
+assert.notEqual(record.artifacts.inputs.sha256, carried.statement.inputId);
 assert.equal(record.artifacts.context.sha256, carried.statement.contextId);
 assert.equal(record.artifacts.omega.sha256, record.artifacts.predecessor.sha256);
 assert.equal(record.evidenceIdentity.canonicalEqual, true);
