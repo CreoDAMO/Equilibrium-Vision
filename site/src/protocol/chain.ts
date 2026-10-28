@@ -71,6 +71,7 @@ import { ADOPTION_REQUIRES_TRANSITION_PROOF, statementAgrees, transitionStatemen
 import { adoptionGate } from "./ctp1";
 import { canonicalCaller, wasmStorageError } from "./host-abi";
 import { executeTransition } from "./executor";
+import { genesisStateId } from "./ancestry";
 import { fullStateId } from "./fullstate";
 import {
   applySuccessor,
@@ -340,6 +341,12 @@ export class OrganismNode {
     if (!block.statement) return "statement is absent";
     // Predecessor packaging: the installed Ω, not a header field. The header hash does not carry FS1.
     if (block.statement.predecessor !== fullStateId(this.toOmega())) return "predecessor is not installed";
+    const carriedPrev = this.blocks[this.blocks.length - 1];
+    if (!carriedPrev) {
+      if (block.statement.predecessor !== genesisStateId(this.network)) return "predecessor is not genesis";
+    } else if (!carriedPrev.statement || block.statement.predecessor !== carriedPrev.statement.carried) {
+      return "predecessor is not the carried chain";
+    }
     const mismatch = statementAgrees(block.statement, execution, block.hash);
     if (mismatch) return mismatch;
     this.installNext(stepped.next, stepped.swaps);
@@ -1730,6 +1737,19 @@ export class OrganismNode {
   async submitExternal(claimed: BlockRecord): Promise<{ ok: boolean; report: VerificationReport; error?: string }> {
     this.emit("in", "network", `external candidate ${claimed.hash.slice(0, 12)}… at membrane`);
     if (this.blocks.some((b) => b.hash === claimed.hash)) {
+      const held = this.blocks.find((b) => b.hash === claimed.hash);
+      if (
+        held?.statement?.predecessor !== claimed.statement?.predecessor ||
+        held?.statement?.carried !== claimed.statement?.carried
+      ) {
+        const report = verifyStationaryEvidence({
+          block: claimed,
+          prev: claimed.height === 0 ? null : (this.blocks.find((b) => b.hash === claimed.prevHash) ?? null),
+          cumulativeWork: claimed.height,
+          params: this.params,
+        });
+        return { ok: false, report, error: "statement is not the canonical block" };
+      }
       const report = verifyStationaryEvidence({
         block: claimed,
         prev: claimed.height === 0 ? null : (this.blocks.find((b) => b.hash === claimed.prevHash) ?? null),

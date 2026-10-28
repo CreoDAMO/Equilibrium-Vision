@@ -54,8 +54,18 @@ predecessor, ordered inputs, context → successor, carried tip, header, state r
 
 Groth16 stays the system. The circuits already built for difficulty, reward, and stationarity are not this obligation. A second prover is not adopted. `verifyTransitionProof` stays fail-closed until a proof of this obligation exists. The adoption flag stays false.
 
-## Not adopted
+## Ancestry
+
+The root is genesis. No checkpoint authority is adopted.
+
+Each block's predecessor is the carried state of the block before it. The first block's predecessor is the genesis state. `adopt` refuses a break in that chain. A block already in the chain is refused when the same header is offered with a different predecessor or carried state.
+
+An accumulated proof is the bootstrap layer for a verifier that should not replay every step. It is not built. When it is built, it has to prove this same chain, not a shorter one. Groth16 remains the step system. Recursion is reserved for that bootstrap layer. It is not a second transition relation.
+
+`importRestartSnapshot` is still a local copy of a node's own export. It is not peer adoption, and it is not closed. The flag stays off.
 
 FS1 NaN canonicalization is not decided.
+
+
 
 
