@@ -11,6 +11,7 @@
  * never ends a field.
  */
 import { sha256Hex } from "./crypto";
+import type { Omega } from "./constitution";
 import type {
   AccountState,
   BtcHeaderRecord,
@@ -20,7 +21,6 @@ import type {
   EthExecutionHeader,
   EthHeaderRecord,
   ModelClaim,
-  Omega,
   Proposal,
   Settlement,
   Unbonding,
@@ -677,6 +677,6 @@ export function decodeOmega(bytes: Uint8Array): Omega {
     omega.ethCommittee = ethCommittee ?? "";
   }
   if (executionTag === T.list) omega.ethExecution = ethExecution ?? [];
-  else if (executionTag === T.null) (omega as { ethExecution: null }).ethExecution = null as unknown as EthExecutionHeader[];
+  else if (executionTag === T.null) (omega as { ethExecution: EthExecutionHeader[] | null }).ethExecution = null;
   return omega;
 }

@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ChainState } from "../../../artifacts/api-server/src/chain/state";
 import { authorityPreimage, signAuthority, verifyDelegateEvidence, verifyUnbondEvidence } from "./authority";
-import { applySuccessor, cloneOmega, initialOmega, omegaDigest, openedCouplings, stateRootOf, type Omega, type Successor } from "./constitution";
+import { applySuccessor, cloneOmega, initialOmega, omegaDigest, openedCouplings, stateRootOf, unbondMatureAt, type Omega, type Successor } from "./constitution";
 import { canonicalEvidence } from "./evidence";
 import { NETWORKS } from "./networks";
 import { blankEvidence } from "./seal";
@@ -500,26 +500,25 @@ assert.notEqual(pendingDigest.digest, digests[3]?.digest);
 assert.notEqual(digests[4]?.digest, digests[5]?.digest);
 assert.ok(digests.every((item) => item.stateRoot === emptyDigest.stateRoot));
 
-const savedPeriod = NETWORKS.mainnet.unbondingPeriod;
-NETWORKS.mainnet.unbondingPeriod = 99;
-try {
-  const fresh = cloneOmega(born);
-  fresh.height = 0;
-  fresh.ledger.set(payer.address, { balance: 1000, nonce: 0 });
-  fresh.delegations = [lot(payer.address, validator, 40)];
-  const created = must(step(fresh, [unbondOp(validator, 10, prove("unbond", validator, 10))]));
-  assert.equal(created.next.unbonding[0]?.matureAt, 99);
-  const prior = cloneOmega(born);
-  prior.height = 0;
-  prior.ledger.set(payer.address, { balance: 50, nonce: 0 });
-  prior.unbonding = [position(10, 10)];
-  const held = must(step(prior));
-  assert.equal(held.next.height, 1);
-  assert.equal(held.next.unbonding[0]?.matureAt, 10);
-  assert.equal(held.next.ledger.get(payer.address)?.balance, 50);
-} finally {
-  NETWORKS.mainnet.unbondingPeriod = savedPeriod;
-}
+assert.throws(() => {
+  (NETWORKS.mainnet as { unbondingPeriod: number }).unbondingPeriod = 99;
+}, TypeError);
+assert.equal(NETWORKS.mainnet.unbondingPeriod, 10);
+assert.equal(unbondMatureAt(0, 99), 99);
+const fresh = cloneOmega(born);
+fresh.height = 0;
+fresh.ledger.set(payer.address, { balance: 1000, nonce: 0 });
+fresh.delegations = [lot(payer.address, validator, 40)];
+const created = must(step(fresh, [unbondOp(validator, 10, prove("unbond", validator, 10))]));
+assert.equal(created.next.unbonding[0]?.matureAt, unbondMatureAt(0, NETWORKS.mainnet.unbondingPeriod));
+const prior = cloneOmega(born);
+prior.height = 0;
+prior.ledger.set(payer.address, { balance: 50, nonce: 0 });
+prior.unbonding = [position(10, 10)];
+const held = must(step(prior));
+assert.equal(held.next.height, 1);
+assert.equal(held.next.unbonding[0]?.matureAt, 10);
+assert.equal(held.next.ledger.get(payer.address)?.balance, 50);
 
 const operational = new ChainState();
 const queued = "cd".repeat(20);

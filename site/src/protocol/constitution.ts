@@ -17,7 +17,8 @@ import {
   verifyRotation,
   verifySelectedHeader,
 } from "./eth-light";
-import { participationBytes, popcount, U64_MAX } from "./domain";
+import { participationBytes, popcount } from "./domain";
+import { nonceRefused, pressureRefused, timestampRefused } from "./bounds";
 import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { challengeBinding, modelBinding, residualBinding } from "./membranes";
@@ -428,7 +429,7 @@ export function transitionDigest(omega: Omega, inputs: CanonicalInputs): string 
     .map((t) => `${t.hash}:${t.from}:${t.to}:${t.amount}:${t.fee}:${t.nonce}`)
     .join(";");
   const evidence = inputs.evidence ? canonicalEvidence(inputs.evidence) : "";
-  if (typeof inputs.nonce !== "bigint" || inputs.nonce < 0n || inputs.nonce > U64_MAX) {
+  if (typeof inputs.nonce !== "bigint" || nonceRefused(inputs.nonce)) {
     throw new Error("nonce is not a u64");
   }
   const c = inputs.couplings;
@@ -531,6 +532,11 @@ function authoritySnapshot(
   return { power, total, quorum: quorumRatio * total };
 }
 
+/** matureAt is the pre-state height plus the network period. The period is not a harness write. */
+export function unbondMatureAt(height: number, period: number): number {
+  return height + period;
+}
+
 function applyStake(
   omega: Omega,
   op: StakeEvidence,
@@ -552,7 +558,7 @@ function applyStake(
     if (available < op.amount) return "unbond funds refused";
     const nextStake = safeSub(v.bondedStake, op.amount);
     if (nextStake === null) return "unbond refused";
-    const matureAt = omega.height + params.unbondingPeriod;
+    const matureAt = unbondMatureAt(omega.height, params.unbondingPeriod);
     if (!Number.isSafeInteger(matureAt)) return "unbond refused";
     let left = op.amount;
     const kept: Delegation[] = [];
@@ -1077,16 +1083,16 @@ class DerivedWasm {
 export function applySuccessor(omega: Omega, inputs: CanonicalInputs, derived?: DerivedWasm): Successor {
   const params = paramsOf(omega.chainId);
   if (!params) return { ok: false, error: "unknown chain" };
-  if (typeof inputs.nonce !== "bigint" || inputs.nonce < 0n || inputs.nonce > U64_MAX) {
+  if (nonceRefused(inputs.nonce)) {
     return { ok: false, error: "nonce is not a u64" };
   }
   const invalid = monetaryError(omega) ?? identityError(omega);
   if (invalid) return { ok: false, error: invalid };
   if (inputs.difficulty !== omega.difficulty) return { ok: false, error: "difficulty is not the next difficulty" };
-  if (!Number.isFinite(inputs.committedPressure) || inputs.committedPressure < 0 || inputs.committedPressure > 1) {
+  if (pressureRefused(inputs.committedPressure)) {
     return { ok: false, error: "pressure is not in [0,1]" };
   }
-  if (!Number.isSafeInteger(inputs.timestamp) || inputs.timestamp < 0) return { ok: false, error: "timestamp is not a time" };
+  if (timestampRefused(inputs.timestamp)) return { ok: false, error: "timestamp is not a time" };
   if (omega.height >= 0 && inputs.timestamp < omega.tipTimestamp) return { ok: false, error: "timestamp is not monotonic" };
   for (const tx of inputs.transactions) {
     if (!verifyTx(tx, omega.chainId)) return { ok: false, error: "signature refused" };

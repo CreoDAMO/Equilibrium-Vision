@@ -30,7 +30,32 @@ Versioning is position 2. The host ABI is its own identity, and it is coupled to
 
 This does not close C7-C. The host contract is not a proof.
 
+## Numeric domain — §2.5-a
+
+The admitted domain is the one `applySuccessor` already refuses outside of:
+
+- Nonce: integer in `[0, 2^64 - 1]`.
+- Timestamp: safe integer, `>= 0`, and not behind the previous tip once height is non-negative.
+- Pressure: finite and inside `[0, 1]`.
+- Amounts, fees, balances, stake: safe integers. Amounts that move value are positive. Fees are non-negative.
+- Difficulty: the input must equal the predecessor's difficulty. `adjustDifficulty` does not return a value below `100_000`. That floor is not a new admission check.
+
+`bounds.ts` is that domain. A proof of the transition has to use these bounds. A tighter domain would be a different relation.
+
+## Predecessor packaging
+
+The predecessor is `fullStateId` of the omega installed on the node. It is not a header field. Putting it in the header would change the hash the residual is computed from. `adopt` compares the statement's predecessor to the installed state before it installs the successor. A statement about a different predecessor is refused.
+
+## Proof obligation
+
+The obligation is one relation:
+
+predecessor, ordered inputs, context → successor, carried tip, header, state root, omega root, evidence root, transition root.
+
+Groth16 stays the system. The circuits already built for difficulty, reward, and stationarity are not this obligation. A second prover is not adopted. `verifyTransitionProof` stays fail-closed until a proof of this obligation exists. The adoption flag stays false.
+
 ## Not adopted
 
-Forward-only activation height and FS1 NaN canonicalization are not decided. `verifyTransitionProof` still rejects every proof. `ADOPTION_REQUIRES_TRANSITION_PROOF` stays false, because turning it on would reject every block.
+FS1 NaN canonicalization is not decided.
+
 

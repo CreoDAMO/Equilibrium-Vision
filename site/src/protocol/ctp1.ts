@@ -263,7 +263,7 @@ export function encodeEvidence(ev: TransitionEvidence | undefined): Uint8Array {
   return b.finish();
 }
 
-export function structuredInputId(inputs: CanonicalInputs): string {
+export function structuredInputId(inputs: { evidence?: TransitionEvidence }): string {
   return sha256Hex(encodeEvidence(inputs.evidence));
 }
 

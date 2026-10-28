@@ -1,7 +1,12 @@
 import type { NetworkId, NetworkParams } from "./types";
 
-export const NETWORKS: Record<NetworkId, NetworkParams> = {
-  testnet: {
+function net(params: NetworkParams): NetworkParams {
+  return Object.freeze(params);
+}
+
+/** Shared, frozen, and not a place a harness may write. A copy is a different object. */
+export const NETWORKS: Record<NetworkId, NetworkParams> = Object.freeze({
+  testnet: net({
     id: "testnet",
     chainId: 2,
     name: "Equilibrium Testnet",
@@ -20,8 +25,8 @@ export const NETWORKS: Record<NetworkId, NetworkParams> = {
     withdrawalTimeout: 10,
     allowFaucet: true,
     faucetAmount: 1_000_000,
-  },
-  mainnet: {
+  }),
+  mainnet: net({
     id: "mainnet",
     chainId: 1,
     name: "Equilibrium Mainnet",
@@ -40,5 +45,6 @@ export const NETWORKS: Record<NetworkId, NetworkParams> = {
     withdrawalTimeout: 10,
     allowFaucet: false,
     faucetAmount: 0,
-  },
-};
+  }),
+});
+

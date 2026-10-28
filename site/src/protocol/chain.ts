@@ -338,6 +338,7 @@ export class OrganismNode {
     execution: Parameters<typeof statementAgrees>[1],
   ): string | null {
     if (!block.statement) return "statement is absent";
+    // Predecessor packaging: the installed Ω, not a header field. The header hash does not carry FS1.
     if (block.statement.predecessor !== fullStateId(this.toOmega())) return "predecessor is not installed";
     const mismatch = statementAgrees(block.statement, execution, block.hash);
     if (mismatch) return mismatch;
