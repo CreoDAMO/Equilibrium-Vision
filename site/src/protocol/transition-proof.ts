@@ -26,6 +26,7 @@ import { encodeEvidence } from "./ctp1";
 import { ARBITRAGE_CODE, canonicalEvidence } from "./evidence";
 import { encodeOmega, fullStateId } from "./fullstate";
 import { hostAbiManifest } from "./host-abi";
+import { V1_RELATION_ID } from "./v1-relation";
 import type { SealedSuccessor } from "./seal";
 import type { NetworkParams, TxRecord } from "./types";
 
@@ -42,6 +43,8 @@ const text = new TextEncoder();
 export type TransitionStatement = {
   version: 1;
   numericModel: typeof NUMERIC_MODEL;
+  /** Names the v1 claim. A stronger property is not this field. */
+  v1: typeof V1_RELATION_ID;
   predecessor: string;
   inputId: string;
   contextId: string;
@@ -250,6 +253,7 @@ export function transitionStatement(execution: {
   return {
     version: 1,
     numericModel: NUMERIC_MODEL,
+    v1: V1_RELATION_ID,
     predecessor: execution.predecessor,
     inputId: execution.inputId,
     contextId: execution.contextId,
@@ -286,6 +290,7 @@ export function statementAgrees(
   header: string,
 ): string | null {
   if (statement.version !== TRANSITION_PROOF_VERSION) return "statement version is not this relation";
+  if (statement.v1 !== V1_RELATION_ID) return "relation is not v1";
   if (statement.numericModel !== NUMERIC_MODEL) return "numeric model is not this relation";
   if (statement.wasm !== ARBITRAGE_CODE) return "wasm is not this program";
   if (statement.residualFp !== String(execution.residualFp)) return "residual bits are not this transition";
@@ -308,6 +313,7 @@ export function statementBytes(statement: TransitionStatement): Uint8Array {
   const b = new Buf();
   b.bytes(text.encode("EQTP"));
   b.u8(statement.version);
+  b.str(statement.v1);
   b.str(statement.numericModel);
   b.str(statement.predecessor);
   b.str(statement.inputId);
