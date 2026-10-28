@@ -1016,6 +1016,8 @@ export class ChainState {
     hooks: {
       persist?: (block: BlockRecord) => Promise<PersistBlockResult>;
       beforePersist?: (block: BlockRecord) => void | Promise<void>;
+      /** When set, the announced hash and merkle root must be the recomputed ones. */
+      expect?: { hash: string; merkleRoot: string };
     } = {},
   ): Promise<{
     admitted: boolean;
@@ -1028,7 +1030,7 @@ export class ChainState {
       const beforeHeight = this.canonicalBody.omega.height;
       const beforeTip = this.canonicalBody.omega.tipHash;
       try {
-        this.addBlock(block);
+        this.addBlock(block, hooks.expect);
       } catch (err) {
         // addBlock already restored, or restore itself failed. A second
         // rollback would hide the failed restore and report a clean refusal.

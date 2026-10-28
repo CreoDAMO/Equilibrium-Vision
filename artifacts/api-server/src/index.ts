@@ -183,7 +183,9 @@ if (Number.isNaN(port) || port <= 0) {
               return;
             }
 
-            const outcome = await chainState.commitOperational(remote);
+            const outcome = await chainState.commitOperational(remote, {
+              expect: { hash: String(remote.hash ?? ""), merkleRoot: String(remote.merkleRoot ?? "") },
+            });
             if (!outcome.admitted) {
               logger.warn({ blockHash, height: remoteHeight, error: outcome.error }, "P2P sync: block is not the successor");
               return;

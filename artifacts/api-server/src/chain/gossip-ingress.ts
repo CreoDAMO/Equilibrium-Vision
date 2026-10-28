@@ -29,6 +29,11 @@ export function prepareGossipBlock(
   if (Object.prototype.hasOwnProperty.call(body, "evidence") && body.evidence != null) {
     return { ok: false, error: "evidence is not a gossip body" };
   }
+  for (const key of ["evidenceRoot", "stateRoot", "omegaRoot", "transitionRoot", "statement"]) {
+    if (Object.prototype.hasOwnProperty.call(body, key) && body[key] != null) {
+      return { ok: false, error: "announced identity is not a gossip body" };
+    }
+  }
   let nonce: bigint;
   try {
     nonce = foreignNonce(body.nonce);

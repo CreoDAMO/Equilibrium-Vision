@@ -144,6 +144,13 @@ describe("a gossip body keeps the transaction list it carried", () => {
     expect(prepared).toEqual({ ok: false, error: "evidence is not a gossip body" });
   });
 
+  it("refuses a body that carries an evidence root and no evidence", () => {
+    const prepared = prepareGossipBlock(body({
+      evidenceRoot: "ab".repeat(32),
+    }), { difficulty: 1_000_000, couplings, admissionTarget: target });
+    expect(prepared).toEqual({ ok: false, error: "announced identity is not a gossip body" });
+  });
+
   it("refuses a difficulty that is not the canonical difficulty", () => {
     const prepared = prepareGossipBlock(body({ difficulty: 2 }), {
       difficulty: 1_000_000,

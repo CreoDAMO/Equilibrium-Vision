@@ -451,7 +451,9 @@ export async function initChain(): Promise<void> {
     const block = prepared.block;
     logger.info({ hash: block.hash.slice(0, 16), height: block.height, txCount: block.txCount }, "p2p: received block body via gossip");
     try {
-      const outcome = await chainState.commitOperational(block);
+      const outcome = await chainState.commitOperational(block, {
+        expect: { hash: block.hash, merkleRoot: block.merkleRoot },
+      });
       if (!outcome.admitted) {
         logger.warn({ hash: block.hash.slice(0, 16), height: block.height, error: outcome.error }, "p2p: block is not the successor");
         return;

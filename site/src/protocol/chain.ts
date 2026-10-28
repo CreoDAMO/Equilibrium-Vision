@@ -67,7 +67,8 @@ import { bytesToHex, hexToBytes } from "./bytes";
 import { ARBITRAGE_CODE } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { chainWeight, preferChain } from "./frontier";
-import { ADOPTION_REQUIRES_TRANSITION_PROOF, statementAgrees, transitionStatement } from "./transition-proof";
+import { ADOPTION_REQUIRES_TRANSITION_PROOF, statementAgrees, statementId, transitionStatement } from "./transition-proof";
+import { statementIdBinds } from "./reward-binding";
 import { admissionAllows } from "./admission-policy";
 import { adoptionGate } from "./ctp1";
 import { canonicalCaller, wasmStorageError } from "./host-abi";
@@ -350,6 +351,13 @@ export class OrganismNode {
     }
     const mismatch = statementAgrees(block.statement, { ...execution, residualFp: stepped.residualFp }, block.hash);
     if (mismatch) return mismatch;
+    let boundId: string;
+    try {
+      boundId = statementId(transitionStatement(execution));
+    } catch (err) {
+      return err instanceof Error ? err.message : "statement is not this execution";
+    }
+    if (!statementIdBinds(block.statement, boundId)) return "statement is not this execution";
     this.installNext(stepped.next, stepped.swaps);
     for (const tx of block.transactions) {
       this.mempool.delete(tx.hash);
