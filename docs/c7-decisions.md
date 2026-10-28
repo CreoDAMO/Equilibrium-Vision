@@ -60,6 +60,9 @@ Staged. One step is one statement. The component circuits are not bundled into a
 
 The API server is an operational mirror. It replays `applySuccessor` and keeps its own copy. It is not a second constitution and it is not the C-007 gate. Its blocks do not carry the site statement, so it is not refused from here. Workstream 3's proof gate is the site boundary: both site paths, not five independent gates, and not the API until that wire carries the statement.
 
+Body gossip is not an evidence channel. A body that carries evidence is refused. Evidence stays on the sync path, which keeps it. A peer's identity does not admit a block.
+
+
 ## Missing proof
 
 When a transition proof is required, a missing proof, an invalid proof, and a reexecution receipt all stop admission. A new block has no compatibility path. The flag stays false until a proof of the full relation exists, because turning it on now would stop the chain.

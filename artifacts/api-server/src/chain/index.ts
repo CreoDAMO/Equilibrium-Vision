@@ -434,6 +434,7 @@ export async function initChain(): Promise<void> {
   // gossips the full block body via the block-bodies topic.  This lets desktop
   // nodes (and other phones) add the block to their chain without needing a
   // separate sync RR request or direct HTTP submission.
+  // Body gossip is not an evidence channel. A peer id is transport, not admission.
   p2pBridge.onBlockBody = async (body, _peerId) => {
     if (!chainState) return;
     const claimed = typeof body["hash"] === "string" ? body["hash"] : "";

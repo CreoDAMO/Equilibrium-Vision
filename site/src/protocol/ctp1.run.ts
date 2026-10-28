@@ -9,7 +9,7 @@ import { initialOmega, openedCouplings, type CanonicalInputs, type Omega } from 
 import { canonicalEvidence } from "./evidence";
 import { genesisValidators, minerKey } from "./genesis";
 import { blankEvidence } from "./seal";
-import { admissionAllows, API_CANONICAL_ROLE, AUTHORITATIVE_MUTATION } from "./admission-policy";
+import { admissionAllows, API_CANONICAL_ROLE, AUTHORITATIVE_MUTATION, PEER_IDENTITY_GATES_ADMISSION } from "./admission-policy";
 import { ADOPTION_REQUIRES_TRANSITION_PROOF, verifyTransitionProof } from "./transition-proof";
 import {
   adoptionGate,
@@ -144,6 +144,7 @@ assert.equal(AUTHORITATIVE_MUTATION, "site-adopt");
 assert.equal(API_CANONICAL_ROLE, "operational-mirror");
 assert.equal(admissionAllows(false).ok, true);
 assert.equal(admissionAllows(true).ok, false);
+assert.equal(PEER_IDENTITY_GATES_ADMISSION, false);
 
 function CTP1Name() {
   return "reexecution-v1";

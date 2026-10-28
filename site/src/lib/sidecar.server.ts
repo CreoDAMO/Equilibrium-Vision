@@ -98,7 +98,9 @@ export function attachSidecar(getNode: (network: NetworkId) => OrganismNode | un
 function mirror(child: ChildProcess, nextId: () => string, block: BlockRecord) {
   write(child, { id: nextId(), method: "set_local_tip", height: block.height, hash: block.hash, difficulty: block.difficulty });
   write(child, { id: nextId(), method: "gossip_block", blockHash: block.hash });
-  write(child, { id: nextId(), method: "gossip_block_body", body: block });
+  if (!block.evidence) {
+    write(child, { id: nextId(), method: "gossip_block_body", body: block });
+  }
 }
 
 function asBlock(value: unknown): BlockRecord | null {

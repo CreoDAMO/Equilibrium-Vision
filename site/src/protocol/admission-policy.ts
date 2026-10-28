@@ -24,6 +24,8 @@ export const AUTHORITATIVE_MUTATION = "site-adopt";
 export const API_CANONICAL_ROLE = "operational-mirror";
 export const PROOF_COMPOSITION = "staged-hybrid";
 export const PROOF_UNAVAILABLE = "stop";
+/** A peer id authenticates a connection. It does not admit a block. */
+export const PEER_IDENTITY_GATES_ADMISSION = false;
 
 export function admissionAllows(requireProof: boolean): { ok: true } | { ok: false; reason: string } {
   if (!requireProof) return { ok: true };

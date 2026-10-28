@@ -26,6 +26,9 @@ export function prepareGossipBlock(
   const prevHash = typeof body.prevHash === "string" ? body.prevHash : "";
   const miner = typeof body.miner === "string" ? body.miner : "";
   if (!hash || height < 0 || !prevHash || !miner) return { ok: false, error: "gossip body is incomplete" };
+  if (Object.prototype.hasOwnProperty.call(body, "evidence") && body.evidence != null) {
+    return { ok: false, error: "evidence is not a gossip body" };
+  }
   let nonce: bigint;
   try {
     nonce = foreignNonce(body.nonce);
