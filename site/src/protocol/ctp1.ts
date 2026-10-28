@@ -10,7 +10,7 @@
  * the residual, the header, or the wasm host. C-007 stays open.
  */
 import { sha256Hex } from "./crypto";
-import { PROOF_UNAVAILABLE } from "./admission-policy";
+import { admissionAllows } from "./admission-policy";
 import {
   type CanonicalInputs,
   type Omega,
@@ -350,9 +350,9 @@ export async function adoptionGate(
   _witness: Ctp1Witness | null,
   _proof: Ctp1Proof | null,
 ): Promise<{ ok: true; enforced: boolean } | Ctp1Failure> {
-  if (!requireProof) return { ok: true, enforced: false };
-  if (PROOF_UNAVAILABLE !== "stop") return { ok: false, reason: "proof policy is not stop" };
-  return { ok: false, reason: "no complete transition proof is defined" };
+  const verdict = admissionAllows(requireProof);
+  if (!verdict.ok) return verdict;
+  return { ok: true, enforced: false };
 }
 
 export function statementsMatch(left: TransitionStatement, right: TransitionStatement): boolean {

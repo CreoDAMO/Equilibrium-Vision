@@ -68,6 +68,7 @@ import { ARBITRAGE_CODE } from "./evidence";
 import { selectSuccessorTxs } from "./tx-select";
 import { chainWeight, preferChain } from "./frontier";
 import { ADOPTION_REQUIRES_TRANSITION_PROOF, statementAgrees, transitionStatement } from "./transition-proof";
+import { admissionAllows } from "./admission-policy";
 import { adoptionGate } from "./ctp1";
 import { canonicalCaller, wasmStorageError } from "./host-abi";
 import { executeTransition } from "./executor";
@@ -720,6 +721,11 @@ export class OrganismNode {
     }
     if (block.height > 0 && !(stepped.residual < this.params.residualThreshold)) {
       this.emit("in", "verify", "recomputed residual is not under the admission target");
+      return false;
+    }
+    const gate = admissionAllows(ADOPTION_REQUIRES_TRANSITION_PROOF);
+    if (!gate.ok) {
+      this.emit("in", "verify", gate.reason);
       return false;
     }
     const adopted = this.adopt(block, stepped, executed.execution);

@@ -54,6 +54,12 @@ The production check is the site replay of `applySuccessor`. Rust consensus is n
 
 Staged. One step is one statement. The component circuits are not bundled into an admission requirement. The accumulated proof, when it exists, bootstraps this same chain. It is not a second relation.
 
+## Authoritative path
+
+`adopt` is the only site function that installs canonical state. Local `commit` and peer `absorb` both call `admissionAllows` before they reach it. A block this node mines is held to the same rule as a block a peer sends. While the proof flag is false, that call allows the replay through. When the flag is true, both paths stop.
+
+The API server is an operational mirror. It replays `applySuccessor` and keeps its own copy. It is not a second constitution and it is not the C-007 gate. Its blocks do not carry the site statement, so it is not refused from here. Workstream 3's proof gate is the site boundary: both site paths, not five independent gates, and not the API until that wire carries the statement.
+
 ## Missing proof
 
 When a transition proof is required, a missing proof, an invalid proof, and a reexecution receipt all stop admission. A new block has no compatibility path. The flag stays false until a proof of the full relation exists, because turning it on now would stop the chain.

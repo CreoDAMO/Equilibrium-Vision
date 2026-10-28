@@ -9,6 +9,7 @@ import { initialOmega, openedCouplings, type CanonicalInputs, type Omega } from 
 import { canonicalEvidence } from "./evidence";
 import { genesisValidators, minerKey } from "./genesis";
 import { blankEvidence } from "./seal";
+import { admissionAllows, API_CANONICAL_ROLE, AUTHORITATIVE_MUTATION } from "./admission-policy";
 import { ADOPTION_REQUIRES_TRANSITION_PROOF, verifyTransitionProof } from "./transition-proof";
 import {
   adoptionGate,
@@ -138,7 +139,11 @@ assert.equal(verifyTransitionProof(proved.evaluation.statement, { system: CTP1Na
 
 const chain = readFileSync(new URL("./chain.ts", import.meta.url), "utf8");
 assert.equal(chain.includes("adoptionGate"), true);
-assert.equal(chain.includes("ADOPTION_REQUIRES_TRANSITION_PROOF"), true);
+assert.equal(chain.includes("admissionAllows(ADOPTION_REQUIRES_TRANSITION_PROOF)"), true);
+assert.equal(AUTHORITATIVE_MUTATION, "site-adopt");
+assert.equal(API_CANONICAL_ROLE, "operational-mirror");
+assert.equal(admissionAllows(false).ok, true);
+assert.equal(admissionAllows(true).ok, false);
 
 function CTP1Name() {
   return "reexecution-v1";
