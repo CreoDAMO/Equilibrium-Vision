@@ -46,6 +46,18 @@ The admitted domain is the one `applySuccessor` already refuses outside of:
 
 The predecessor is `fullStateId` of the omega installed on the node. It is not a header field. Putting it in the header would change the hash the residual is computed from. `adopt` compares the statement's predecessor to the installed state before it installs the successor. A statement about a different predecessor is refused.
 
+## Production admission
+
+The production check is the site replay of `applySuccessor`. Rust consensus is not wired as a gate. A stationarity proof stays a residual artifact. It is not this relation, and a block is not refused because that narrower proof is absent.
+
+## Proof composition
+
+Staged. One step is one statement. The component circuits are not bundled into an admission requirement. The accumulated proof, when it exists, bootstraps this same chain. It is not a second relation.
+
+## Missing proof
+
+When a transition proof is required, a missing proof, an invalid proof, and a reexecution receipt all stop admission. A new block has no compatibility path. The flag stays false until a proof of the full relation exists, because turning it on now would stop the chain.
+
 ## Proof obligation
 
 The obligation is one relation:

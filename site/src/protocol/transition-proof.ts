@@ -281,9 +281,14 @@ export function statementAgrees(
     evidenceRoot: string;
     transitionRoot: string;
     header: string;
+    residualFp: number;
   },
   header: string,
 ): string | null {
+  if (statement.version !== TRANSITION_PROOF_VERSION) return "statement version is not this relation";
+  if (statement.numericModel !== NUMERIC_MODEL) return "numeric model is not this relation";
+  if (statement.wasm !== ARBITRAGE_CODE) return "wasm is not this program";
+  if (statement.residualFp !== String(execution.residualFp)) return "residual bits are not this transition";
   if (statement.predecessor !== execution.predecessor) return "predecessor is not installed";
   if (statement.header !== header || statement.header !== execution.header) return "statement is not this header";
   if (statement.inputId !== execution.inputId) return "statement is not this input";
@@ -302,7 +307,7 @@ export function statementAgrees(
 export function statementBytes(statement: TransitionStatement): Uint8Array {
   const b = new Buf();
   b.bytes(text.encode("EQTP"));
-  b.u8(TRANSITION_PROOF_VERSION);
+  b.u8(statement.version);
   b.str(statement.numericModel);
   b.str(statement.predecessor);
   b.str(statement.inputId);

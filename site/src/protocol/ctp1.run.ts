@@ -127,9 +127,8 @@ assert.equal(open.ok, true);
 if (!open.ok) throw new Error("open");
 assert.equal(open.enforced, false);
 const forced = await adoptionGate(true, { before, inputs: spec }, proved.proof);
-assert.equal(forced.ok, true);
-if (!forced.ok) throw new Error(forced.reason);
-assert.equal(forced.enforced, true);
+assert.equal(forced.ok, false);
+if (forced.ok) throw new Error("a reexecution receipt is not a transition proof");
 const blocked = await adoptionGate(true, { before, inputs: spec }, null);
 assert.equal(blocked.ok, false);
 

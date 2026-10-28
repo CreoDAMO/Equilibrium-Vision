@@ -10,6 +10,7 @@
  * the residual, the header, or the wasm host. C-007 stays open.
  */
 import { sha256Hex } from "./crypto";
+import { PROOF_UNAVAILABLE } from "./admission-policy";
 import {
   type CanonicalInputs,
   type Omega,
@@ -343,16 +344,15 @@ export function c007Status(): { closed: false; reason: string } {
   };
 }
 
-/** Live adoption passes requireProof false. The true branch is what a mandatory check would refuse. */
+/** Live adoption passes requireProof false. The true branch stops. Reexecution is not a proof. */
 export async function adoptionGate(
   requireProof: boolean,
-  witness: Ctp1Witness | null,
-  proof: Ctp1Proof | null,
+  _witness: Ctp1Witness | null,
+  _proof: Ctp1Proof | null,
 ): Promise<{ ok: true; enforced: boolean } | Ctp1Failure> {
   if (!requireProof) return { ok: true, enforced: false };
-  const verdict = await verifyCtp1(proof, witness);
-  if (!verdict.ok) return verdict;
-  return { ok: true, enforced: true };
+  if (PROOF_UNAVAILABLE !== "stop") return { ok: false, reason: "proof policy is not stop" };
+  return { ok: false, reason: "no complete transition proof is defined" };
 }
 
 export function statementsMatch(left: TransitionStatement, right: TransitionStatement): boolean {

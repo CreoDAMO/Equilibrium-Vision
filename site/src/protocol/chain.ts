@@ -347,7 +347,7 @@ export class OrganismNode {
     } else if (!carriedPrev.statement || block.statement.predecessor !== carriedPrev.statement.carried) {
       return "predecessor is not the carried chain";
     }
-    const mismatch = statementAgrees(block.statement, execution, block.hash);
+    const mismatch = statementAgrees(block.statement, { ...execution, residualFp: stepped.residualFp }, block.hash);
     if (mismatch) return mismatch;
     this.installNext(stepped.next, stepped.swaps);
     for (const tx of block.transactions) {
