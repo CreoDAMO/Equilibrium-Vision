@@ -28,8 +28,8 @@ const replay = {
   residualFp: Number(live.residualFp),
 };
 assert.equal(statementAgrees(live, replay, live.header), null);
-assert.equal(live.v1, "faithful-v1");
-assert.equal(statementAgrees({ ...live, v1: "stronger" as "faithful-v1" }, replay, live.header), "relation is not v1");
+assert.equal(live.v1, "faithful-v1.1");
+assert.equal(statementAgrees({ ...live, v1: "faithful-v1" as "faithful-v1.1" }, replay, live.header), "relation is not v1");
 assert.equal(statementAgrees({ ...live, version: 2 as 1 }, replay, live.header), "statement version is not this relation");
 assert.equal(statementAgrees({ ...live, wasm: "0" }, replay, live.header), "wasm is not this program");
 
