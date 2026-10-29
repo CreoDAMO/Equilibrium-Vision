@@ -9,7 +9,31 @@ export const Route = createFileRoute("/api/light")({
         const url = new URL(request.url);
         const network = url.searchParams.get("network") === "mainnet" ? "mainnet" : "testnet";
         const { getNode } = await import("@/lib/node.server");
-        const node = await getNode(network);
+        const { RestoreRefused } = await import("@/protocol/chain");
+        const { heldRestore } = await import("@/protocol/restore-hold");
+        const { dbSource } = await import("@/lib/db");
+        let node;
+        try {
+          node = await getNode(network);
+        } catch (err) {
+          if (err instanceof RestoreRefused) {
+            const held = heldRestore(
+              network,
+              err.message,
+              dbSource,
+              process.env.RENDER_GIT_COMMIT || process.env.EQUILIBRIUM_COMMIT || null,
+            );
+            return new Response(stringifyCanonical(held), {
+              status: 503,
+              headers: {
+                "content-type": "application/json",
+                "access-control-allow-origin": "*",
+                "cache-control": "no-store",
+              },
+            });
+          }
+          throw err;
+        }
         const tip = node.tip;
         const prev = tip && tip.height > 0 ? node.getBlock(String(tip.height - 1)) ?? null : null;
         const { independentVerify } = await import("@/protocol/light");
@@ -22,6 +46,8 @@ export const Route = createFileRoute("/api/light")({
           height: node.height,
           finalizedHeight: node.finalizedHeight,
           persisted: node.persisted,
+          restored: true,
+          persistence: dbSource,
           canonicalR: tip?.residual ?? null,
           territoryR: tip?.territoryResidual ?? null,
           work: {

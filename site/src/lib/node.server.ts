@@ -1,4 +1,4 @@
-import { OrganismNode } from "@/protocol/chain";
+import { OrganismNode, RestoreRefused } from "@/protocol/chain";
 import type { NetworkId } from "@/protocol/types";
 import { dbSource } from "./db";
 import { persistNode, recordBidirectional, restoreNode } from "./persist.server";
@@ -9,31 +9,51 @@ const g = globalThis as unknown as {
   __eqReadyV7?: Promise<void>;
   __eqTestnetV7?: OrganismNode;
   __eqMainnetV7?: OrganismNode;
+  __eqHoldV7?: Partial<Record<NetworkId, string>>;
   __eqTimersV7?: boolean;
 };
+
+async function restoreOrHold(network: NetworkId): Promise<OrganismNode | undefined> {
+  try {
+    return await restoreNode(network);
+  } catch (err) {
+    if (err instanceof RestoreRefused) {
+      g.__eqHoldV7 ??= {};
+      g.__eqHoldV7[network] = err.message;
+      console.error(`[equilibrium] ${network} preserved, not restored: ${err.message}`);
+      return undefined;
+    }
+    throw err;
+  }
+}
 
 async function ensure() {
   if (!g.__eqReadyV7) {
     g.__eqReadyV7 = (async () => {
       console.log(`[equilibrium] persistence ${dbSource}`);
-      g.__eqTestnetV7 = await restoreNode("testnet");
-      g.__eqMainnetV7 = await restoreNode("mainnet");
+      g.__eqHoldV7 = {};
+      g.__eqTestnetV7 = await restoreOrHold("testnet");
+      g.__eqMainnetV7 = await restoreOrHold("mainnet");
       if (!g.__eqTimersV7) {
         g.__eqTimersV7 = true;
         attachSidecar((network) => (network === "mainnet" ? g.__eqMainnetV7 : g.__eqTestnetV7));
         setInterval(() => {
           try {
-            const t = g.__eqTestnetV7?.tick() ?? null;
-            const m = g.__eqMainnetV7?.tick() ?? null;
-            if (t && g.__eqTestnetV7) {
-              void persistNode(g.__eqTestnetV7).then((ok) => {
-                if (ok && g.__eqTestnetV7) g.__eqTestnetV7.persisted = true;
-              });
+            if (!g.__eqHoldV7?.testnet) {
+              const t = g.__eqTestnetV7?.tick() ?? null;
+              if (t && g.__eqTestnetV7) {
+                void persistNode(g.__eqTestnetV7).then((ok) => {
+                  if (ok && g.__eqTestnetV7) g.__eqTestnetV7.persisted = true;
+                });
+              }
             }
-            if (m && g.__eqMainnetV7) {
-              void persistNode(g.__eqMainnetV7).then((ok) => {
-                if (ok && g.__eqMainnetV7) g.__eqMainnetV7.persisted = true;
-              });
+            if (!g.__eqHoldV7?.mainnet) {
+              const m = g.__eqMainnetV7?.tick() ?? null;
+              if (m && g.__eqMainnetV7) {
+                void persistNode(g.__eqMainnetV7).then((ok) => {
+                  if (ok && g.__eqMainnetV7) g.__eqMainnetV7.persisted = true;
+                });
+              }
             }
           } catch (err) {
             console.error("[equilibrium] miner tick", err);
@@ -50,6 +70,8 @@ async function ensure() {
 
 export async function getNode(network: NetworkId): Promise<OrganismNode> {
   await ensure();
+  const held = g.__eqHoldV7?.[network];
+  if (held) throw new RestoreRefused(held);
   return network === "mainnet" ? g.__eqMainnetV7! : g.__eqTestnetV7!;
 }
 
