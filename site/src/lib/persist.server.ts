@@ -110,15 +110,10 @@ export async function restoreNode(network: NetworkId): Promise<OrganismNode> {
     }
   } catch (err) {
     if (err instanceof RestoreRefused) {
-      if (err.message === "statement is absent") {
-        const node = new OrganismNode(network);
-        node.persisted = false;
-        await persistNode(node);
-        return node;
-      }
       throw err;
     }
     console.error("[equilibrium] restore", err);
+    throw err;
   }
   const node = new OrganismNode(network);
   node.persisted = false;

@@ -1,5 +1,6 @@
 import { OrganismNode } from "@/protocol/chain";
 import type { NetworkId } from "@/protocol/types";
+import { dbSource } from "./db";
 import { persistNode, recordBidirectional, restoreNode } from "./persist.server";
 import { attachSidecar } from "./sidecar.server";
 import { evaluateResidual } from "@/protocol/solver";
@@ -14,6 +15,7 @@ const g = globalThis as unknown as {
 async function ensure() {
   if (!g.__eqReadyV7) {
     g.__eqReadyV7 = (async () => {
+      console.log(`[equilibrium] persistence ${dbSource}`);
       g.__eqTestnetV7 = await restoreNode("testnet");
       g.__eqMainnetV7 = await restoreNode("mainnet");
       if (!g.__eqTimersV7) {
