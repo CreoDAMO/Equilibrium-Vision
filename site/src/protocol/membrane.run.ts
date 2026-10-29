@@ -253,7 +253,9 @@ const slashIn = spec(born, {
   stake: [{ op: "slash", validator: "cec6a4f606263f462db50d853f599b758cede73b", reason: "downtime" }],
 });
 const slashSite = run(born, slashIn);
-assert.equal(slashSite.ok, true);
+assert.equal(slashSite.ok, false);
+if (slashSite.ok) throw new Error("downtime");
+assert.equal(slashSite.error, "downtime is not punishable");
 
 const claimIn = spec(born, {
   ...blankEvidence(1),
@@ -605,11 +607,9 @@ const doubleIn = spec(born, {
   stake: [{ op: "slash", validator: "cec6a4f606263f462db50d853f599b758cede73b", reason: "double_sign" }],
 });
 const doubleSite = run(born, doubleIn);
-assert.equal(doubleSite.ok, true);
-if (!doubleSite.ok) throw new Error("double");
-const doubleStepped = applySuccessor(born, doubleIn);
-if (!doubleStepped.ok) throw new Error(doubleStepped.error);
-assert.equal(doubleStepped.next.validators.get("cec6a4f606263f462db50d853f599b758cede73b")?.jailed, true);
+assert.equal(doubleSite.ok, false);
+if (doubleSite.ok) throw new Error("double");
+assert.equal(doubleSite.error, "double sign is not proved");
 
 const paid = applySuccessor(quiet, spec(quiet));
 assert.equal(paid.ok, true);

@@ -192,10 +192,9 @@ const slashedThenVoted = run(omega, [
   { op: "slash", validator: rich[1]!.address, reason: "double_sign" },
   { op: "vote", voter: v1.address, id: 1, option: "yes" },
 ]);
-assert.equal(slashedThenVoted.ok, true);
-if (!slashedThenVoted.ok) throw new Error(slashedThenVoted.error);
-assert.equal(slashedThenVoted.next.proposals.find((p) => p.id === 1)!.yes, v1.bondedStake);
-assert.notEqual(slashedThenVoted.next.proposals.find((p) => p.id === 1)!.status, "passed");
+assert.equal(slashedThenVoted.ok, false);
+if (slashedThenVoted.ok) throw new Error("slash");
+assert.equal(slashedThenVoted.error, "double sign is not proved");
 
 const doubleSlash = run(omega, [
   { op: "slash", validator: v1.address, reason: "double_sign" },

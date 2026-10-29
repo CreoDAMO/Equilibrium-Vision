@@ -41,7 +41,6 @@ import { evaluateResidual, solveStationary } from "./solver";
 import { verifyStationaryEvidence } from "./verify";
 import { signTx, verifyTx, type Keypair } from "./wallet";
 import { signWithdraw, verifyDelegateEvidence, verifyUnbondEvidence, verifyWithdrawEvidence, withdrawalId, WITHDRAWAL_ESCROW } from "./authority";
-import { slashAmount } from "./coinomics";
 import { challengeBinding, modelBinding } from "./membranes";
 import { applySwap, poolAddress, quoteSwap } from "./dex";
 import { buildP2pkhTx, decodeHeaderHex, decodeTxHex, isBtcDestination, parseBtcHeader, parseBtcTx, proveBtcOutput, verifyBtcMerkle, verifyBtcPow } from "./btc";
@@ -83,6 +82,7 @@ import {
   openOmega,
   openedCouplings,
   omegaDigest,
+  slashAuthorization,
   transitionDigest,
   type Successor,
 } from "./constitution";
@@ -1394,15 +1394,8 @@ export class OrganismNode {
   }
 
   slash(validator: string, reason: "double_sign" | "downtime"): { ok: boolean; error?: string; burned?: number } {
-    const v = this.validators.get(validator);
-    if (!v) return { ok: false, error: "unknown validator" };
-    if (this.pending.stake.some((s) => s.op === "slash" && s.validator === validator)) {
-      return { ok: false, error: "slash already queued" };
-    }
-    const burned = slashAmount(v.bondedStake, reason);
-    this.pending.stake.push({ op: "slash", validator, reason });
-    this.emit("in", "governance", `slash ${reason} ${burned} on ${v.moniker} · queued`);
-    return { ok: true, burned };
+    if (!this.validators.get(validator)) return { ok: false, error: "unknown validator" };
+    return { ok: false, error: slashAuthorization(reason) };
   }
 
   claimRewards(address: string): { ok: boolean; error?: string; amount?: number } {

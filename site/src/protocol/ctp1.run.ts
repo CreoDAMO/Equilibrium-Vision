@@ -88,9 +88,9 @@ const slashed = await proveCtp1({
     },
   },
 });
-assert.equal(slashed.ok, true);
-if (!slashed.ok) throw new Error(slashed.reason);
-assert.equal(slashed.evaluation.stepped.next.validators.get(otherMiner.address)?.slashed, true);
+assert.equal(slashed.ok, false);
+if (slashed.ok) throw new Error("downtime");
+assert.match(slashed.reason, /not punishable/);
 const unsigned = await proveCtp1({
   before,
   inputs: {

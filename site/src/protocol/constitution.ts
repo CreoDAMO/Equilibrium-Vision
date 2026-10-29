@@ -1,6 +1,6 @@
 import { merkleRoot, sha256Hex, canonicalPressure } from "./crypto";
 import { evaluateResidual, type SolverHeader } from "./solver";
-import { minerReward, slashAmount } from "./coinomics";
+import { minerReward } from "./coinomics";
 import { applySwap, poolAddress } from "./dex";
 import { decodeHeaderHex, decodeTxHex, isBtcDestination, parseBtcHeader, proveBtcOutput, verifyBtcPow } from "./btc";
 import { decodeEvenHex, isEthAsset, isEthDestination, parseExecutionHeader, proveEthEffect } from "./eth-exec";
@@ -498,6 +498,13 @@ export function foreignDifficultyFactor(omega: Pick<Omega, "btc" | "eth">): { nu
   return { num, den };
 }
 
+/** Downtime is not punishable here. A double sign is not a slash until the two headers are proved. An unknown reason is not downtime. */
+export function slashAuthorization(reason: string): string {
+  if (reason === "downtime") return "downtime is not punishable";
+  if (reason === "double_sign") return "double sign is not proved";
+  return "slash reason refused";
+}
+
 export function adjustDifficulty(
   difficulty: number,
   blockTime: number,
@@ -612,19 +619,7 @@ function applyStake(
     v.accumulatedRewards = 0;
     return null;
   }
-  if (op.op === "slash") {
-    const v = omega.validators.get(op.validator);
-    if (!v || v.slashed || v.jailed) return "slash refused";
-    if (!isSafePositive(v.bondedStake)) return "slash refused";
-    const burned = slashAmount(v.bondedStake, op.reason);
-    if (!isSafeNonNegative(burned) || burned > v.bondedStake) return "slash refused";
-    const nextStake = safeSub(v.bondedStake, burned);
-    if (nextStake === null) return "slash refused";
-    v.bondedStake = nextStake;
-    v.slashed = true;
-    if (op.reason === "double_sign") v.jailed = true;
-    return null;
-  }
+  if (op.op === "slash") return slashAuthorization(op.reason);
   if (op.op === "vote") {
     const p = omega.proposals.find((x) => x.id === op.id);
     if (!p || p.status !== "open") return "vote refused";

@@ -40,7 +40,7 @@ const evidence: TransitionEvidence = {
     { op: "header", ...fields, participation: hexOf(bits), signature: hexOf(signSelected(committee.secrets, fields, bits)) },
   ],
   wasm: [{ method: "init", caller: miner }],
-  stake: [{ op: "slash", validator: victim.address, reason: "double_sign" }],
+  stake: [],
 };
 const inputs = {
   transactions: [],
@@ -79,9 +79,15 @@ assert.equal(committed.omegaRoot, stepped.omegaRoot);
 
 const slashed = committed.record.validators.find((v) => v.address === victim.address);
 assert.ok(slashed);
-assert.equal(slashed.slashed, true);
-assert.equal(slashed.jailed, true);
-assert.equal(slashed.bondedStake, bondedBefore - Math.floor(bondedBefore * 0.05));
+assert.equal(slashed.slashed, false);
+assert.equal(slashed.bondedStake, bondedBefore);
+const unauthorized = await successor(kernel.omega, {
+  ...inputs,
+  evidence: { ...evidence, stake: [{ op: "slash", validator: victim.address, reason: "double_sign" }] },
+});
+assert.equal(unauthorized.ok, false);
+if (unauthorized.ok) throw new Error("slash");
+assert.equal(unauthorized.error, "double sign is not proved");
 assert.equal(committed.record.wasm.length > 0, true);
 assert.equal(committed.record.btc.length, 1);
 assert.equal(committed.record.eth.length, 1);

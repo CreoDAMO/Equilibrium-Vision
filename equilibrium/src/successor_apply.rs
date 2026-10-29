@@ -878,34 +878,14 @@ fn apply_stake(omega: &mut OmegaSnap, op: &StakeOp, auth: &Auth) -> Result<(), S
             credit(&mut omega.ledger, address, amount).map_err(|_| "claim refused".to_string())?;
             Ok(())
         }
-        StakeOp::Slash { validator, reason } => {
-            let Some(v) = omega
-                .validators
-                .iter_mut()
-                .find(|v| v.address == *validator)
-            else {
-                return Err("slash refused".into());
-            };
-            if v.slashed || v.jailed || !safe_positive(v.bonded_stake) {
-                return Err("slash refused".into());
+        StakeOp::Slash { reason, .. } => {
+            if reason == "downtime" {
+                return Err("downtime is not punishable".into());
             }
-            let pct = if reason == "double_sign" {
-                0.05
-            } else if reason == "downtime" {
-                0.01
-            } else {
-                return Err("slash refused".into());
-            };
-            let burned = (v.bonded_stake * pct).floor();
-            if !safe_non_negative(burned) || burned > v.bonded_stake {
-                return Err("slash refused".into());
-            }
-            v.bonded_stake -= burned;
-            v.slashed = true;
             if reason == "double_sign" {
-                v.jailed = true;
+                return Err("double sign is not proved".into());
             }
-            Ok(())
+            Err("slash reason refused".into())
         }
         StakeOp::Vote { voter, id, option } => {
             let Some(p) = omega.proposals.iter_mut().find(|p| p.id == *id) else {
