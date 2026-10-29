@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { HELD_STATUS, heldRestore, networkMayMine } from "./restore-hold";
+import { HELD_STATUS, heldRestore, mineInterval, networkMayMine } from "./restore-hold";
 
 const body = heldRestore("mainnet", "double sign is not proved", "neon", "10ecd05");
 assert.equal(body.restored, false);
@@ -21,4 +21,43 @@ const both = { testnet: "double sign is not proved", mainnet: "statement is abse
 assert.equal(networkMayMine(both, "testnet"), false);
 assert.equal(networkMayMine(both, "mainnet"), false);
 
+const ticks = { testnet: 0, mainnet: 0 };
+const wrote: string[] = [];
+mineInterval(
+  { testnet: "double sign is not proved" },
+  {
+    testnet: { tick: () => { ticks.testnet += 1; return { height: 1 }; } },
+    mainnet: { tick: () => { ticks.mainnet += 1; return null; } },
+  },
+  (network) => wrote.push(network),
+);
+assert.equal(ticks.testnet, 0);
+assert.equal(ticks.mainnet, 1);
+assert.deepEqual(wrote, []);
+
+mineInterval(
+  { mainnet: "statement is absent" },
+  {
+    testnet: { tick: () => { ticks.testnet += 1; return { height: 2 }; } },
+    mainnet: { tick: () => { ticks.mainnet += 1; return { height: 9 }; } },
+  },
+  (network) => wrote.push(network),
+);
+assert.equal(ticks.testnet, 1);
+assert.equal(ticks.mainnet, 1);
+assert.deepEqual(wrote, ["testnet"]);
+
+mineInterval(
+  both,
+  {
+    testnet: { tick: () => { ticks.testnet += 1; return { height: 3 }; } },
+    mainnet: { tick: () => { ticks.mainnet += 1; return { height: 4 }; } },
+  },
+  (network) => wrote.push(network),
+);
+assert.equal(ticks.testnet, 1);
+assert.equal(ticks.mainnet, 1);
+assert.deepEqual(wrote, ["testnet"]);
+
 console.log("a refused restore is held, and only that network stops mining");
+

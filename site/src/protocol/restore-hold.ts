@@ -19,3 +19,17 @@ export function heldRestore(network: string, reason: string, persistence: string
 export function networkMayMine(hold: Partial<Record<NetworkName, string>>, network: NetworkName): boolean {
   return hold[network] === undefined;
 }
+
+/** The one-second miner. A held network is not asked to tick, and nothing is written for it. */
+export function mineInterval<T extends { tick: () => unknown }>(
+  hold: Partial<Record<NetworkName, string>>,
+  nodes: Partial<Record<NetworkName, T | undefined>>,
+  onMined: (network: NetworkName, node: T) => void,
+): void {
+  for (const network of ["testnet", "mainnet"] as const) {
+    if (!networkMayMine(hold, network)) continue;
+    const node = nodes[network];
+    if (!node) continue;
+    if (node.tick()) onMined(network, node);
+  }
+}

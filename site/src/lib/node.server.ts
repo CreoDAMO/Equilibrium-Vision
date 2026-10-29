@@ -4,7 +4,7 @@ import { dbSource } from "./db";
 import { persistNode, recordBidirectional, restoreNode } from "./persist.server";
 import { attachSidecar } from "./sidecar.server";
 import { evaluateResidual } from "@/protocol/solver";
-import { networkMayMine } from "@/protocol/restore-hold";
+import { mineInterval } from "@/protocol/restore-hold";
 
 const g = globalThis as unknown as {
   __eqReadyV7?: Promise<void>;
@@ -40,22 +40,15 @@ async function ensure() {
         attachSidecar((network) => (network === "mainnet" ? g.__eqMainnetV7 : g.__eqTestnetV7));
         setInterval(() => {
           try {
-            if (networkMayMine(g.__eqHoldV7 ?? {}, "testnet")) {
-              const t = g.__eqTestnetV7?.tick() ?? null;
-              if (t && g.__eqTestnetV7) {
-                void persistNode(g.__eqTestnetV7).then((ok) => {
-                  if (ok && g.__eqTestnetV7) g.__eqTestnetV7.persisted = true;
+            mineInterval(
+              g.__eqHoldV7 ?? {},
+              { testnet: g.__eqTestnetV7, mainnet: g.__eqMainnetV7 },
+              (_network, node) => {
+                void persistNode(node).then((ok) => {
+                  if (ok) node.persisted = true;
                 });
-              }
-            }
-            if (networkMayMine(g.__eqHoldV7 ?? {}, "mainnet")) {
-              const m = g.__eqMainnetV7?.tick() ?? null;
-              if (m && g.__eqMainnetV7) {
-                void persistNode(g.__eqMainnetV7).then((ok) => {
-                  if (ok && g.__eqMainnetV7) g.__eqMainnetV7.persisted = true;
-                });
-              }
-            }
+              },
+            );
           } catch (err) {
             console.error("[equilibrium] miner tick", err);
           }
