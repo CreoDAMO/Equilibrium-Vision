@@ -9,6 +9,8 @@ pub mod circom_reduction;
 pub mod zk_proof;
 /// Integer successor skeleton. Not a proof of `applySuccessor`.
 pub mod transition_circuit;
+/// Opening of `faithful-v1.1`. Integer checks and the pinned relation. Not `applySuccessor`.
+pub mod faithful_v1;
 /// Integer projection of a CTP-1 statement. Not a proof of `Reference`.
 pub mod ctp1_circuit;
 /// Binary64 difficulty arithmetic. The same rounding ECMA-262 uses.

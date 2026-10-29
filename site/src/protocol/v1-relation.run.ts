@@ -16,6 +16,10 @@ assert.equal(V1_RELATION_ID, "faithful-v1.1");
 assert.equal(V1_RELATION.id, V1_RELATION_ID);
 assert.equal(descriptorDigest(FAITHFUL_V1), PINS["faithful-v1"]);
 assert.equal(descriptorDigest(V1_RELATION), PINS[V1_RELATION_ID]);
+assert.equal(
+  PINS["faithful-v1.1"],
+  "83ea7e2c265abe5911667eb47724a5c4" + "7f227afdcdacc3f20fd5105e9a114bb2",
+);
 
 assert.equal("claims" in V1_RELATION.ethBeacon, false);
 assert.equal(V1_RELATION.ethBeacon.bootstrap.claims.includes("first committee"), true);
