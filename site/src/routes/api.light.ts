@@ -10,7 +10,7 @@ export const Route = createFileRoute("/api/light")({
         const network = url.searchParams.get("network") === "mainnet" ? "mainnet" : "testnet";
         const { getNode } = await import("@/lib/node.server");
         const { RestoreRefused } = await import("@/protocol/chain");
-        const { heldRestore } = await import("@/protocol/restore-hold");
+        const { heldRestore, HELD_STATUS } = await import("@/protocol/restore-hold");
         const { dbSource } = await import("@/lib/db");
         let node;
         try {
@@ -24,7 +24,7 @@ export const Route = createFileRoute("/api/light")({
               process.env.RENDER_GIT_COMMIT || process.env.EQUILIBRIUM_COMMIT || null,
             );
             return new Response(stringifyCanonical(held), {
-              status: 503,
+              status: HELD_STATUS,
               headers: {
                 "content-type": "application/json",
                 "access-control-allow-origin": "*",
