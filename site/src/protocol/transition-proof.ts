@@ -335,6 +335,24 @@ export function statementId(statement: TransitionStatement): string {
   return sha256Hex(statementBytes(statement));
 }
 
+/** What a proof of this statement still does not constrain. Admission stays closed. */
+export const TRANSITION_PROOF_MISSING = [
+  "ordered evidence and its cross-array prefixes",
+  "ledger effects other than one liquid credit",
+  "validator updates, including slash refusal",
+  "binary64 residual and difficulty",
+  "state root before the later writes, and omega root after them",
+  "successor and carried full-state bytes",
+  "signature checks",
+  "foreign header admission and settlement",
+  "cognition",
+  "wasm host execution",
+] as const;
+
+export function transitionProofCoversRelation(): boolean {
+  return false;
+}
+
 /** No proof system is defined. Every call fails closed. */
 export function verifyTransitionProof(
   _statement: TransitionStatement,

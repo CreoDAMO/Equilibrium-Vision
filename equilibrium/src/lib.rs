@@ -9,6 +9,8 @@ pub mod circom_reduction;
 pub mod zk_proof;
 /// Integer successor skeleton. Not a proof of `applySuccessor`.
 pub mod transition_circuit;
+/// Integer checks bound to a statement id. Not a proof of `applySuccessor`.
+pub mod transition_statement;
 /// Opening of `faithful-v1.1`. Integer checks and the pinned relation. Not `applySuccessor`.
 pub mod faithful_v1;
 /// Integer projection of a CTP-1 statement. Not a proof of `Reference`.
